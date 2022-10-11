@@ -1,0 +1,195 @@
+#!/bin/bash
+
+usage() {
+    echo "Usage: cs_input_analyzer [--help] [--available-nodes] [--mount-dirs] command_for_validate_compile"
+}
+
+die() {
+    printf '%s\n' "$1" >&2
+    exit 1
+}
+
+help() {
+    usage
+
+    echo $''
+    echo 'Description:'
+    echo '    Analyzes your input pipeline after completing a compile or validation. A report'
+    echo '    containing recommended Slurm configurations for use when running on the CS-1, along'
+    echo '    with the estimated input performance is logged at the end. Please see the description'
+    echo '    for the <command_for_validate_compile> argument for how to specify full-compile or'
+    echo '    validate-only options.'
+    echo ''
+    echo '    To adhere to the recommended slurm settings printed in the report, please specify them'
+    echo '    when calling cs_run.'
+    echo ''
+    echo '    Note that the quality of the performance estimates and the generated Slurm settings'
+    echo '    improves if (1) full-compile is performed instead of validate-only and (2) the cs_ip'
+    echo '    argument is set in CSRunConfig (this can generally be set through the run.py as well).'
+    echo ''
+    echo '    IMPORTANT: To ensure consistent results, this script allocates a whole node while executing.'
+    echo '    IMPORTANT: This script is only applicable to Tensorflow pipelines execution'
+    echo ''
+
+    echo $'Arguments:'
+    echo $'    command_for_validate_compile   A Python command to initiate a full-compile or validation-only.'
+    echo $'                                       ex: python run.py --mode=compile_only --cs_ip=0.0.0.0'
+    echo $'                                       ex: python run.py --mode=validate_only'
+    echo $'    --available-nodes                  (Optional) Set this to the number of nodes available when executing'
+    echo $'                                        on the CS system. Note this value is only used for'
+    echo $'                                        estimating the performance and generating recommended Slurm'
+    echo $'                                        configuration. Defaults is 1.'
+    echo $'    --mount-dirs                   (Optional) String of comma-seperated paths to mount in addition to'
+    echo $'                                        the standard paths listed in csrun_cpu.'
+    echo $'                                        Default is an empty string (only paths listed in csrun_cpu are mounted)'
+    echo $''
+
+    echo 'Example usage:'
+    echo '    cs_input_analyzer --available-nodes=3 python run.py --mode=validate_only --cs_ip=0.0.0.0'
+    echo '        - Executes the command "python run.py --mode=validate_only --cs_ip=0.0.0.0", which'
+    echo '          sets the cs_ip in the CSRunConfig and runs validation, inside the Cerebras container'
+    echo '          on a CPU node. The input pipeline performance is then analyzed using the validation'
+    echo '          information and the knowledge that 3 nodes will be available for training, to print'
+    echo '          a performance report. Providing the cs_ip enhances the quality of the estimates as it'
+    echo '          allows us to read the fabric layout. Note this will not actually run on the fabric'
+    echo ''
+    echo '    cs_input_analyzer --mount-dirs="/data/ml,/lab/ml" python run.py --mode=compile_only'
+    echo '        - Mounts "/data/ml" and "/lab/ml" in addition to the default mount directories, and executes'
+    echo '          the command "python run.py --mode=compile_only", which runs a full compilation, inside the Cerebras '
+    echo '          container on a CPU node. The input pipeline performance is then analyzed using the compile information'
+    echo '          to print a performance report and recommended slurm settings'
+}
+
+NUM_NODES=$(bash csrun_cpu --def_nodes)
+RUN_ARGS=
+
+# Collect the arguments. Note that -- optional args can be placed anywhere
+EXTRA_MOUNT_DIRS=
+GRES_NODE=$(bash csrun_cpu --def_gres_node)
+while :; do
+    case $1 in
+        -h|-\?|--help)
+            help
+            exit
+            ;;
+        --available-nodes)
+            if [ "$2" ]; then
+                NUM_NODES=$2
+                shift
+                shift
+            else
+                die 'ERROR: "--available-nodes" requires a non-empty integer argument'
+            fi
+            ;;
+        --available-nodes=*)
+            NUM_NODES="${1#*=}"
+            shift
+            ;;
+        --mount-dirs)
+            if [ "$2" ]; then
+                EXTRA_MOUNT_DIRS=$2
+                shift
+                shift
+            else
+                die 'ERROR: "--mount-dirs" requires a non-empty argument (directories to mount)'
+            fi
+	    ;;
+        --mount-dirs=*)
+            EXTRA_MOUNT_DIRS="${1#*=}"
+            shift
+            ;;
+        --)
+            shift
+            ;;
+        -?*)
+            printf 'WARN: Unknown option (ignored): %s\n' "$1" >&2
+            shift
+            ;;
+        *)
+            RUN_ARGS=$@
+            shift
+            #RUN_FILE_FLAGS=$@
+            break
+            ;;
+    esac
+done
+
+# Verify we have all the args we need
+if [[ -z $RUN_ARGS ]]; then
+    usage
+    exit 1
+fi
+
+if [[ $NUM_NODES -lt 1 ]]; then
+    echo "Invalid argument: --available-nodes must be given an integer greater than 0"
+    usage
+    exit 1
+fi
+
+# run the compile command first
+csrun_cpu --mount-dirs=$EXTRA_MOUNT_DIRS $RUN_ARGS
+if [[ $? -ne 0 ]]; then
+    exit $?
+fi
+
+RESOURCE_ESTIMATOR_FILE="./estimate_pipeline_perf_info.yaml"
+
+# Once the compile is completed, a resourse_estimator_info.yaml. If RUN_PERF_CHECK=True
+# then start the run. Otherwise exit
+echo "------------ Starting input performance analysis and resource estimator ------------"
+THREADS=( 12 16 20 )
+csrun_cpu --alloc-node=False --logging=False --mount-dirs=$EXTRA_MOUNT_DIRS python /cbcore/src/tf/tools/utils.py add_to_params_file $RESOURCE_ESTIMATOR_FILE "all_threads" ${THREADS[@]}
+csrun_cpu --alloc-node=False --logging=False --mount-dirs=$EXTRA_MOUNT_DIRS python /cbcore/src/tf/tools/utils.py add_to_params_file $RESOURCE_ESTIMATOR_FILE "nodes" $NUM_NODES
+
+ALL_MAX_WORKERS=()
+PERFS=()
+for i in ${!THREADS[@]}; do
+    CURR_THREAD=${THREADS[$i]}
+
+    # Create temp files to store data in
+    TEMP_DIRECTORY="$(pwd)/temp_perf_dir_$CURR_THREAD_$(date +"%T")"
+    mkdir $TEMP_DIRECTORY
+    TEMP_FILE="$TEMP_DIRECTORY/temp_out_$(date +"%T")"
+    touch $TEMP_FILE
+
+    # get the number of workers possible per node with this thread count
+    csrun_cpu --alloc-node=False --logging=False --mount-dirs=$EXTRA_MOUNT_DIRS python /cbcore/src/tf/tools/utils.py get_max_workers_per_node $CURR_THREAD --out_file=$TEMP_FILE
+    if [ $? -ne 0 ]; then
+        exit $?
+    fi
+    NUM_WORKERS=$(cat $TEMP_FILE)
+    ALL_MAX_WORKERS+=( $NUM_WORKERS )
+
+    # run the actual estimator
+    srun --unbuffered --kill-on-bad-exit --exclusive --exclude=$GRES_NODE --nodes=1 --tasks-per-node=$NUM_WORKERS --cpus-per-task=$CURR_THREAD csrun_cpu --alloc-node=False --logging=False --mount-dirs=$EXTRA_MOUNT_DIRS python /cbcore/src/tf/tools/estimate_input_pipeline_perf.py $RESOURCE_ESTIMATOR_FILE --output_dir=$TEMP_DIRECTORY
+    if [ $? -ne 0 ]; then
+        exit $?
+    fi
+
+    # collect and average all the data
+    csrun_cpu --alloc-node=False --logging=False --mount-dirs=$EXTRA_MOUNT_DIRS python /cbcore/src/tf/tools/utils.py parse_json_for_avg_perf $TEMP_DIRECTORY --out_file=$TEMP_FILE
+    if [ $? -ne 0 ]; then
+        exit $?
+    fi
+    AVG_PERF=$(cat $TEMP_FILE)
+    PERFS+=( $AVG_PERF )
+
+    rm -rf $TEMP_DIRECTORY
+
+    if [ $CURR_THREAD -eq 12 ]; then
+        echo -ne '######################                                              (33%)\r'
+    elif [ $CURR_THREAD -eq 16 ]; then
+        echo -ne '############################################                        (66%)\r'
+    fi
+done
+
+# Obtain the thread with the best extrapolated performance
+echo -ne '################################################################### (100%)\r'
+echo -ne '\n'
+TEMP_FILE="$(pwd)/temp_out_$(date +"%T")"
+echo "------------------------------- Finished Analysis ----------------------------------"
+csrun_cpu --alloc-node=False --logging=False --mount-dirs=$EXTRA_MOUNT_DIRS python /cbcore/src/tf/tools/utils.py get_optimal_thread_index_wrapper $RESOURCE_ESTIMATOR_FILE ${PERFS[@]} --out_file=$TEMP_FILE
+rm $TEMP_FILE
+
+
+

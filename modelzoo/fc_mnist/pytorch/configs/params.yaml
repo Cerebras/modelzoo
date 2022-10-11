@@ -1,0 +1,32 @@
+train_input:
+    data_dir: "./data/mnist/train"
+    batch_size: 128
+    drop_last_batch: True
+    shuffle: True
+
+eval_input:
+    data_dir: "./data/mnist/val"
+    batch_size: 128
+    drop_last_batch: True
+    shuffle: False
+
+model:
+    name: "fc_mnist"
+    mixed_precision: True
+    depth: 10
+    hidden_size: 50
+    dropout: 0.0
+    activation_fn: "relu"
+
+optimizer:
+    optimizer_type: "SGD"
+    learning_rate: 0.001
+    momentum: 0.9
+    loss_scaling_factor: 1.0
+
+runconfig:
+    max_steps: 10000
+    checkpoint_steps: 2000
+    log_steps: 50
+    seed: 1
+    save_losses: True

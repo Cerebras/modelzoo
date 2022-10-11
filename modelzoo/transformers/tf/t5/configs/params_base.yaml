@@ -1,0 +1,83 @@
+# T5-base config file.
+# Based on this config file for base from https://huggingface.co/transformers/pretrained_models.html.
+
+### Input
+train_input:
+    data_processor: T5DynamicDataProcessor
+    vocab_file: "./t5/c4/vocab.txt" # https://huggingface.co/t5-small/resolve/main/spiece.model.
+    data_dir: "./c4/en/train"
+    extra_ids: 100 # A number of extra ids added to the end of the vocabulary for use as sentinels.
+    src_max_sequence_length: 512
+    tgt_max_sequence_length: 114
+    shuffle: True
+    shuffle_buffer_size: 5000000
+    seed: 10
+    batch_size: 128
+    use_multiple_workers: True
+
+eval_input:
+    data_processor: T5DynamicDataProcessor
+    vocab_file: "./t5/c4/vocab.txt" # https://huggingface.co/t5-small/resolve/main/spiece.model.
+    data_dir: "./c4/en/validation"
+    extra_ids: 100 # A number of extra ids added to the end of the vocabulary for use as sentinels.
+    src_max_sequence_length: 512
+    tgt_max_sequence_length: 114
+    shuffle: True
+    shuffle_buffer_size: 5000000
+    seed: 10
+    batch_size: 128
+
+
+model:
+    # Embedding
+    positional_embedding_type: "fixed"
+
+    ## Encoder
+    encoder_num_hidden_layers: 12
+    dropout_rate: 0.1
+
+    # Encoder -- Attention
+    d_kv: 64 # Size of the key, query, value projections per attention head.
+    num_heads: 12 # d_kv * num_heads = hidden size.
+    attention_type: "dot_product"
+    use_relative_attention_bias: True
+
+    # Encoder -- ffn
+    d_ff: 3072 # Size of the intermediate feed forward layer in t5 blocks.
+    d_model: 768  # Size of the encoder layers and the pooler layer.
+    use_ffn_bias: False
+    encoder_nonlinearity: "relu"
+    decoder_nonlinearity: "relu"
+    layer_norm_epsilon: 1.0e-6
+
+    ## Decoder
+    decoder_num_hidden_layers: 12
+
+    # Cerebras configs.
+    mixed_precision: True
+    boundary_casting: False
+    tf_summary: False
+    use_vsl: True
+
+### Optimization
+optimizer:
+    learning_rate:
+        - scheduler: "Constant"
+          learning_rate: 0.0001
+    loss_scaling_factor: "dynamic"
+    optimizer_type: "adamw" # in the paper AdaFactor is used, but AdamW should be a good alternative.
+    weight_decay_rate: 0.0
+
+### Cerebras parameters
+runconfig:
+    max_steps: 524288
+    save_summary_steps: 1000
+    save_checkpoints_steps: 10000
+    keep_checkpoint_max: 3
+    tf_random_seed: 1202
+    enable_distributed: False
+
+### CS-specific configurations
+csconfig:
+    use_cbfloat16: False
+
