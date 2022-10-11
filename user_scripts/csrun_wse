@@ -1,0 +1,277 @@
+#!/bin/bash
+set -e
+
+usage() {
+    echo "Usage: csrun_wse [--help] [--mount-dirs] [--total-nodes] [--tasks-per-node] [--cpus-per-task] [--single-task-nodes] [--cyclic] command_for_cs_execution"
+}
+
+die() {
+    printf '%s\n' "$1" >&2
+    exit 1
+}
+
+
+DEF_NODES=$(bash csrun_cpu --def_nodes)
+DEF_TASKS=$(bash csrun_cpu --def_tasks)
+DEF_CPUS=$(bash csrun_cpu --def_cpus)
+DEF_GRES=$(bash csrun_cpu --def_gres)
+DEF_SINGULARITY=$(bash csrun_cpu --singularity)
+DEF_MOUNT_DIRS=$(bash csrun_cpu --def_mount_dirs)
+
+help() {
+    usage
+
+    echo $''
+    echo 'Description:'
+    echo '     Runs the given <command_for_cs_execution> command on the CS system.'
+    echo '     The following applies:'
+    echo '         - The specific type of the execution task, i.e., training or prediction or evaluation,'
+    echo '               is specified in the <command_for_cs_execution> command.'
+    echo '         - Executing on the CS system requires running multiple tasks on the cpu cluster. For'
+    echo '               example, the input pipeline is a task run on the cpu cluster. These tasks are'
+    echo '               are co-ordinated by Slurm and automatically brought up via this script.'
+    echo '         - Unless the optional arguments for Slurm configuration are specified, we use the'
+    echo '           following default values:'
+    echo '               total-nodes:    ' $DEF_NODES
+    echo '               tasks-per-node: ' $DEF_TASKS
+    echo '               cpus-per-task:  ' $DEF_CPUS
+    echo ''
+
+    echo 'Arguments:'
+    echo '    command_for_cs_execution     A Python command to initiate a task (train, eval, etc) that will'
+    echo '                                     execute on the CS system.'
+    echo
+    echo '    --mount-dirs                 (Optional) String of comma-seperated paths to mount, in addition to'
+    echo '                                     the standard paths listed in csrun_cpu.'
+    echo '                                     Default is an empty string (only paths listed in csrun_cpu are mounted)'
+    echo '    --total-nodes                (Optional) Number of nodes to execute with (passed to slurm).'
+    echo '                                     Default is listed above.'
+    echo '    --tasks-per-node             (Optional) Number of tasks per node to execute with (passed to slurm).'
+    echo '                                     Default is listed above.'
+    echo '    --cpus-per-task              (Optional) Number of cpus per task to execute with (passed to slurm).'
+    echo '                                     Default is listed above.'
+    echo '    --single-task-nodes          (Optional) Number of nodes, among the total nodes, that will only run a single task.'
+    echo '                                     Refer to Cerebras documentation for this flag.'
+    echo '                                     Default is 0 (all nodes will have multiple tasks running on them)'
+    echo '    --cyclic                     (Optional) Distribute tasks to nodes in a round-robin fashion.'
+    echo '                                     Refer to Cerebras documentation for this flag.'
+    echo '                                     Default is block allocation, where tasks are sequentially assigned to one node'
+    echo '                                     before moving on to the next node.'
+
+    echo 'Example usage:'
+    echo '    csrun_wse --total-nodes=3 --tasks-per-node=5 --cpus-per-task=16 python run.py --mode=train --cs_ip=0.0.0.0'
+    echo '        - Executes the command "python run.py --mode=train --cs_ip=0.0.0.0", which initiates model training'
+    echo '          on the CS system at the given ip address. The specified slurm settings - 3 nodes with 5 workers each'
+    echo '          and 16 cpus assigned per worker - is used for this training task. '
+    echo '    csrun_wse --mount-dirs="/data/ml,/lab/ml" python run.py --mode=eval --eval_steps=1000 --cs_ip=0.0.0.0'
+    echo '        - Mounts "/data/ml/" and "/lab/ml" in addition to the default mount directories.'
+    echo '          Executes the command "python run.py --mode=eval --eval_steps=1000 --cs_ip=0.0.0.0",'
+    echo '          which initiates model evaluation on the CS system at the given cs_ip address'
+    echo '          The default Slurm settings are used.'
+    echo '    csrun_wse --total_nodes=5 --single-task-nodes=2 --tasks-per-node=4 python-ws run.py --mode=train --cs_ip=0.0.0.0'
+    echo '        - Executes the command "python_ws run.py --mode=train --cs_ip=0.0.0.0" which initates model training'
+    echo '          On the CS system at the given ip address. A total of 5 nodes are used, the first 2 of which run'
+    echo '          only a single task. The remaining 3 nodes run 4 tasks per node. Thus, a total of 14 tasks are'
+    echo '          associated with this job'
+}
+
+## Parse and capture user arguments
+USER_NODES=
+USER_TASKS=
+USER_CPUS=
+SINGLE_TASK_NODES=
+EXTRA_MOUNT_DIRS=
+TASK_DISTRIBUTION=
+while :; do
+    case $1 in
+        -h|-\?|--help)
+            help
+            exit
+            ;;
+        --total-nodes)
+            if [ "$2" ]; then
+                USER_NODES=$2
+                shift
+                shift
+            else
+                die 'ERROR: "--total-nodes" requires a non-empty integer argument'
+            fi
+	    ;;
+        --total-nodes=*)
+            USER_NODES="${1#*=}"
+            shift
+            ;;
+        --tasks-per-node)
+            if [ "$2" ]; then
+                USER_TASKS=$2
+                shift
+                shift
+            else
+                die 'ERROR: "--tasks-per-node" requires a non-empty integer argument'
+            fi
+	    ;;
+        --tasks-per-node=*)
+            USER_TASKS="${1#*=}"
+            shift
+            ;;
+        --cpus-per-task)
+            if [ "$2" ]; then
+                USER_CPUS=$2
+                shift
+                shift
+            else
+                die 'ERROR: "--cpus-per-task" requires a non-empty integer argument'
+            fi
+	    ;;
+        --cpus-per-task=*)
+            USER_CPUS="${1#*=}"
+            shift
+            ;;
+        --single-task-nodes)
+            if [ "$2" ]; then
+                SINGLE_TASK_NODES=$2
+                shift
+                shift
+            else
+                die 'ERROR: "--single-task-nodes" requires a non-empty integer argument'
+            fi
+	    ;;
+        --single-task-nodes=*)
+            SINGLE_TASK_NODES="${1#*=}"
+            shift
+            ;;
+        --cyclic)
+            TASK_DISTRIBUTION="cyclic"
+            shift
+            ;;
+        --mount-dirs)
+            if [ "$2" ]; then
+                EXTRA_MOUNT_DIRS=$2
+                shift
+                shift
+            else
+                die 'ERROR: "--mount-dirs" requires a non-empty argument (directories to mount)'
+            fi
+	    ;;
+        --mount-dirs=*)
+            EXTRA_MOUNT_DIRS="${1#*=}"
+            shift
+            ;;
+	--)
+            shift
+            ;;
+        -?*)
+            printf 'WARN: Unknown option (ignored): %s\n' "$1" >&2
+            shift
+            ;;
+        *)
+            RUN_ARGS=$@
+            shift
+            break
+            ;;
+    esac
+done
+
+
+### Create the arguments we will pass to slurm. Value passed in via the script argument
+### will supercede all else
+NODES=
+TASKS_PER_NODE=
+# we store the whole arg here as it can be empty unlike the other two
+CPUS_PER_TASK_ARG=
+GRES_ARG=
+MOUNT_DIR_ARG=
+TASK_DISTRIBUTION_ARG=
+if [[ -z $USER_NODES ]]; then
+    NODES=$DEF_NODES
+else
+    NODES=$USER_NODES
+fi
+
+### Get the single task nodes and check bounds
+if [[ -z $SINGLE_TASK_NODES ]]; then
+    SINGLE_TASK_NODES=0
+fi
+if [[ $SINGLE_TASK_NODES -ge $NODES ]]; then
+    die "ERROR: ''--single-task-nodes'' (${SINGLE_TASK_NODES}) must be less than the number of nodes (${NODES})"
+    exit
+fi
+
+if [[ -z $USER_CPUS ]] && [[ -z $USER_TASKS ]]; then
+    TASKS_PER_NODE=$DEF_TASKS
+    CPUS_PER_TASK_ARG="--cpus-per-task=${DEF_CPUS}"
+elif [[ -z $USER_CPUS ]] && [[ ! -z $USER_TASKS ]]; then
+    TASKS_PER_NODE=$USER_TASKS
+    # Determine if default number of cpus-per-task can be satisfied with this setting
+    # If so, use that. Otherwise, let slurm figure it out.
+    echo "INFO: --tasks-per-node specified but --cpus-per-task is not specified"
+    echo "    Will first attempt to use default value for cpus-per-task."
+    echo "    If incompatible, will let Slurm resolve this."
+    TEMP_FILE="temp_out_$(date +"%T")"
+    csrun_cpu --logging=False --alloc-node=false --mount-dirs=$EXTRA_MOUNT_DIRS python /cbcore/src/tf/tools/utils.py get_max_workers_per_node $DEF_CPUS --out_file=$TEMP_FILE
+    if [ $? -ne 0 ]; then
+        exit $?
+    fi
+    MAX_TASKS_PER_NODE=$(cat $TEMP_FILE)
+    CPUS_PER_TASK_ARG=
+    if [ $TASKS_PER_NODE -le $MAX_TASKS_PER_NODE ]; then
+	echo "    Using default value for cpus_per_task"
+	CPUS_PER_TASK_ARG="--cpus-per-task=${DEF_CPUS}"
+    else
+	echo "    Slurm will choose value for cpus-per-task as default value is not compatible with given value of tasks-per-node."
+    fi
+elif [[ ! -z $USER_CPUS ]] && [[ -z $USER_TASKS ]]; then
+    echo "INFO: cpus_per_task specified but tasks-per-node is not specified"
+    echo "    Attempting to determine the maximum number of tasks possible"
+    TEMP_FILE="temp_out_$(date +"%T")"
+    csrun_cpu --logging=False --alloc-node=false --mount-dirs=$EXTRA_MOUNT_DIRS python /cbcore/src/tf/tools/utils.py get_max_workers_per_node $USER_CPUS --out_file=$TEMP_FILE
+    if [ $? -ne 0 ]; then
+        exit $?
+    fi
+    TASKS_PER_NODE=$(cat $TEMP_FILE)
+    CPUS_PER_TASK_ARG="--cpus-per-task=${USER_CPUS}"
+    rm $TEMP_FILE
+else
+    TASKS_PER_NODE=$USER_TASKS
+    CPUS_PER_TASK_ARG="--cpus-per-task=${USER_CPUS}"
+fi
+
+if [[ ! -z $DEF_GRES ]]; then
+    GRES_ARG="--gres=$DEF_GRES"
+fi
+
+if [[ ! -z $DEF_MOUNT_DIRS ]]; then
+    MOUNT_DIR_ARG="-B ${DEF_MOUNT_DIRS} "
+fi
+
+if [[ ! -z $EXTRA_MOUNT_DIRS ]]; then
+    MOUNT_DIR_ARG+="-B ${EXTRA_MOUNT_DIRS}"
+fi
+
+if [[ ! -z $TASK_DISTRIBUTION ]]; then
+    TASK_DISTRIBUTION_ARG="--distribution=$TASK_DISTRIBUTION"
+fi
+
+### Actually run the command
+ARG=
+if [[ $NODES -gt 1 ]]; then
+    if [[ $SINGLE_TASK_NODES -gt 0 ]]; then
+        # First node always queues for gres resource if specified
+        ARG="srun --unbuffered --kill-on-bad-exit --exclusive --nodes=1 --tasks-per-node=1 $GRES_ARG :"
+        if [[ $SINGLE_TASK_NODES -gt 1 ]]; then
+            for (( i=2; i<=$SINGLE_TASK_NODES; i++ )); do
+                ARG="${ARG} --nodes=1 --tasks-per-node=1 --exclusive :"
+            done
+        fi
+        LEFTOVER_NODES=$(( NODES - SINGLE_TASK_NODES ))
+        ARG="${ARG} --nodes=$LEFTOVER_NODES --tasks-per-node=$TASKS_PER_NODE $CPUS_PER_TASK_ARG $TASK_DISTRIBUTION_ARG --exclusive singularity exec $MOUNT_DIR_ARG $DEF_SINGULARITY $RUN_ARGS"
+    else
+        ARG="srun --unbuffered --kill-on-bad-exit --nodes=1 --tasks-per-node=$TASKS_PER_NODE $CPUS_PER_TASK_ARG $GRES_ARG : --nodes=$(( NODES - 1 )) --tasks-per-node=$TASKS_PER_NODE $CPUS_PER_TASK_ARG $TASK_DISTRIBUTION_ARG --exclusive singularity exec $MOUNT_DIR_ARG $DEF_SINGULARITY $RUN_ARGS"
+    fi
+else
+    ARG="srun --unbuffered --kill-on-bad-exit --exclusive --nodes=$NODES --tasks-per-node=$TASKS_PER_NODE $CPUS_PER_TASK_ARG $GRES_ARG singularity exec $MOUNT_DIR_ARG $DEF_SINGULARITY $RUN_ARGS"
+fi
+
+echo "Launching: ${ARG}"
+eval $ARG
+

@@ -1,0 +1,54 @@
+# BertSummarizationModel config file. Base Bert backbone is used.
+# Parameters tuned with bert-base pre-trained weights used for init.
+
+### Input
+train_input:
+    data_dir: "./input/cnn_dailymail/train/"
+    data_processor: BertSumTfRecordsProcessor
+    vocab_file: "../../../../vocab/google_research_uncased_L-12_H-768_A-12.txt"
+    max_sequence_length: 512
+    max_cls_tokens: 50
+    batch_size: 10
+
+eval_input:
+    data_dir: "./input/cnn_dailymail/eval/"
+    data_processor: BertSumTfRecordsProcessor
+    vocab_file: "../../../../vocab/google_research_uncased_L-12_H-768_A-12.txt"
+    max_sequence_length: 512
+    max_cls_tokens: 50
+    batch_size: 10
+
+model:
+    pretrain_params_path: "../../configs/params_bert_base_msl512.yaml"
+    mixed_precision: True
+    boundary_casting: False
+    tf_summary: False
+    # average number of CLS tokens per batch = 16, thus 1.0 / 16 = 0.0625.
+    loss_weight: 0.0625 # `loss_weight` allows us to apply scaling of the loss
+                     # not just across the batch size, but also
+                     # across number of CLS tokens with this formula
+                     # `loss_weight` = 1 / {average number of CLS tokens per batch}
+                     # and the `loss_weight_type` set to "batch_size".
+
+### Optimization
+optimizer:
+    optimizer_type: "adam"
+    beta_1: 0.9
+    beta_2: 0.999
+    learning_rate:
+        - steps: 4000
+          scheduler: "Linear"
+          initial_learning_rate: 0.0
+          end_learning_rate: 0.00004
+    log_summaries: True
+
+### Cerebras parameters
+runconfig:
+    max_steps: 4000
+    save_summary_steps: 100
+    save_checkpoints_steps: 1000
+    eval_steps: 0 # eval_steps <= 0 means we use all of the eval data
+    keep_checkpoint_max: 3
+    tf_random_seed: 1202
+    throttle_secs: 0
+    enable_gpu_optimizations: False

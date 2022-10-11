@@ -1,0 +1,252 @@
+#!/bin/bash
+
+# All that needs to be set by system admins for different systems is here
+########################################################################
+# sif image location
+SINGULARITY_IMAGE=
+
+# Comma seperated string of directories to mount.
+# ex: MOUNT_DIRS="/data/,/home/"
+# Note that the current directory is always mounted. So no need to add ${pwd}
+MOUNT_DIRS=
+
+# Default slurm cluster settings (must be set)
+DEF_NODES=
+DEF_TASKS_PER_NODE=
+DEF_CPUS_PER_TASK=
+
+#### More slurm configurations (recommended but not required) #####
+# The name of the GRES resource.
+GRES_RESOURCE=
+
+# The GRES node associated with the gres resource
+GRES_NODE=
+########################################################################
+
+usage() {
+    echo "Usage: csrun_cpu [--help] [--alloc-node] [--mount-dirs] command_to_execute"
+}
+
+die() {
+    printf '%s\n' "$1" >&2
+    exit 1
+}
+
+assert_set() {
+    : "${!1:? "Please ensure the ''$1'' variable is set in csrun_cpu"}"
+}
+
+env_var_unset() {
+    if [[ ! -z ${!1} ]]; then
+        echo "Unsetting $1 within the singularity container scope"
+        unset $1
+    fi
+}
+
+help() {
+    usage
+
+    echo $''
+    echo 'Description:'
+    echo '     Runs the given <command_to_execute> inside the Cerebras environment on a CPU node.'
+    echo $''
+
+    echo 'Arguments:'
+    echo '     command_to_execute       Executes <command_to_execute> inside the Cerebras'
+    echo '                                  container on a CPU node.'
+    echo '     --alloc-node             (Optional) Set this to "False" if you do not wish to reserve the'
+    echo '                                  CPU node exclusively to execute <command_to_execute>.'
+    echo '                                  Default is "True".'
+    echo '     --mount-dirs             (Optional) String of comma-seperated paths to mount in addition to'
+    echo '                                  the standard paths listed in csrun_cpu.'
+    echo '                                  Default is an empty string (only paths listed in csrun_cpu are mounted)'
+    echo $''
+
+    echo $'Example usage:'
+    echo $'    csrun_cpu --mount-dirs="/data/ml,/lab/ml" python run.py --mode=validate_only'
+    echo $'        - Mounts "/data/ml" and "/lab/ml" in addition to the default mount directories and then executes'
+    echo $'          the command "python run.py --mode=validate_only", which runs validation inside the Cerebras'
+    echo $'          container on a CPU node.'
+    echo $'    csrun_cpu --alloc-node=True python run.py --mode=compile_only'
+    echo $'        - Reserves the whole CPU node and executes the command "python run.py --mode=compile_only",'
+    echo $'          which runs the compilation inside the Cerebras container on the reserved CPU node.'
+    echo $'    csrun_cpu python'
+    echo $'        - Launches a Python interpreter inside the Cerebras container on a CPU node.'
+}
+
+
+# We maintain a logging flag so that we can disable the message printed at startup
+# when running it for internal tools
+LOGGING="True"
+
+# Whether to allocate the whole node or not
+ALLOC_NODE="True"
+
+# Additional directories to be mounted at execution time
+EXTRA_MOUNT_DIRS=
+
+# Whether we want to exlcude the GRES node (we should if only running CPU jobs)
+EXCLUDE_GRES="True"
+
+while :; do
+    case $1 in
+        -h|-\?|--help)
+            help
+            exit
+            ;;
+        --alloc-node)
+            if [ "$2" ]; then
+                ALLOC_NODE=$2
+                shift
+                shift
+            else
+                die 'ERROR: "--alloc-node" requires a non-empty argument ("True"/"False")'
+            fi
+	    ;;
+        --alloc-node=*)
+            ALLOC_NODE="${1#*=}"
+            shift
+            ;;
+        --mount-dirs)
+            if [ "$2" ]; then
+                EXTRA_MOUNT_DIRS=$2
+                shift
+                shift
+            else
+                die 'ERROR: "--mount-dirs" requires a non-empty argument (directories to mount)'
+            fi
+	    ;;
+        --mount-dirs=*)
+            EXTRA_MOUNT_DIRS="${1#*=}"
+            shift
+            ;;
+        --logging)
+            if [ "$2" ]; then
+                LOGGING=$2
+                shift
+                shift
+            else
+                die 'ERROR: "--logging" requires a non-empty argument ("True"/"False")'
+            fi
+	    ;;
+        --logging=*)
+            LOGGING="${1#*=}"
+            shift
+            ;;
+        --exclude_gres)
+            if [ "$2" ]; then
+                EXCLUDE_GRES=$2
+                shift
+                shift
+            else
+                die 'ERROR: "--alloc-node" requires a non-empty argument ("True"/"False")'
+            fi
+	    ;;
+        --exclude_gres=*)
+            EXCLUDE_GRES="${1#*=}"
+            shift
+            ;;
+        --def_nodes)
+            assert_set DEF_NODES
+            echo $DEF_NODES
+	        shift
+	        exit 0
+	        ;;
+        --def_tasks)
+            assert_set DEF_TASKS_PER_NODE
+            echo $DEF_TASKS_PER_NODE
+	        shift
+	        exit 0
+	        ;;
+        --def_cpus)
+            assert_set DEF_CPUS_PER_TASK
+            echo $DEF_CPUS_PER_TASK
+	        shift
+	        exit 0
+	        ;;
+        --singularity)
+            assert_set SINGULARITY_IMAGE
+            echo $SINGULARITY_IMAGE
+	        shift
+	        exit 0
+	        ;;
+        --def_mount_dirs)
+            echo $MOUNT_DIRS
+	        shift
+	        exit 0
+	        ;;
+        --def_gres)
+            echo $GRES_RESOURCE
+	        shift
+	        exit 0
+            ;;
+        --def_gres_node)
+            echo $GRES_NODE
+	        shift
+	        exit 0
+	        ;;
+	    --)
+            shift
+            ;;
+        -?*)
+            printf 'WARN: Unknown option (ignored): %s\n' "$1" >&2
+            shift
+            ;;
+        *)
+            RUN_ARGS=$@
+            shift
+            break
+            ;;
+    esac
+done
+
+# The following environment variables, if set, leak into the singularity container
+# we use, causing issues. So just unset them here.
+# Note the scope of this is only the current process. In other words, the unsetting
+# done here will not persist beyond this scope.
+env_var_unset PYTHONPATH
+env_var_unset GITTOP
+env_var_unset LLVM_TOP
+env_var_unset LLVM_MLIR_PATH
+env_var_unset LD_LIBRARY_PATH
+env_var_unset CBCORE
+env_var_unset CEREBRAS_INCLUDE_PATH
+env_var_unset CEREBRAS_ANGLER_SHARE_PATH
+
+MOUNT_DIRS="${MOUNT_DIRS},${EXTRA_MOUNT_DIRS}"
+
+# Verify we have all the args we need
+assert_set SINGULARITY_IMAGE
+assert_set DEF_NODES
+assert_set DEF_TASKS_PER_NODE
+assert_set DEF_CPUS_PER_TASK
+if [[ $MOUNT_DIRS == $(pwd) ]]; then
+    echo "WARNING: The variable ''MOUNT_DIRS'' in csrun_cpu contains only the current working directory."
+    echo "         Singularity container will only mount this directory."
+    echo "         Please ensure everything is accessible from here or add more directories to mount"
+fi
+
+ALLOC_NODE=$(echo "$ALLOC_NODE" | tr '[:upper:]' '[:lower:]')
+LOGGING=$(echo "$LOGGING" | tr '[:upper:]' '[:lower:]')
+EXCLUDE_GRES=$(echo "$EXCLUDE_GRES" | tr '[:upper:]' '[:lower:]')
+
+exclude_arg=
+if [ $EXCLUDE_GRES == "true" ]; then
+    exclude_arg="--exclude=$GRES_NODE"
+fi
+
+singularity_msg="singularity exec -B $MOUNT_DIRS $SINGULARITY_IMAGE $RUN_ARGS"
+if [ $ALLOC_NODE == "true" ]; then
+    if [ $LOGGING == "true" ]; then
+    	echo "Running: srun --pty --nodes=1 $exclude_arg --exclusive singularity exec -B $MOUNT_DIRS $SINGULARITY_IMAGE $RUN_ARGS"
+    fi
+    srun --pty --nodes=1 $exclude_arg --exclusive singularity exec -B $MOUNT_DIRS $SINGULARITY_IMAGE $RUN_ARGS
+else
+    if [ $LOGGING == "true" ]; then
+   	    echo "Running: $singularity_msg"
+    fi
+    singularity exec -B $MOUNT_DIRS $SINGULARITY_IMAGE $RUN_ARGS
+fi
+
+
+
