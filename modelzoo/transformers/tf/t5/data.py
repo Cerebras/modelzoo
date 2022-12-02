@@ -14,10 +14,12 @@
 
 """ Data input for T5. """
 
+import os
 import sys
 
 import tensorflow as tf
 
+sys.path.append(os.path.join(os.path.dirname(__file__), "../../../.."))
 from modelzoo.transformers.tf.t5.input.T5DynamicDataProcessor import (  # noqa
     T5DynamicDataProcessor,
 )

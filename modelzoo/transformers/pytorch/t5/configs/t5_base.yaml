@@ -90,7 +90,7 @@ runconfig:
     max_steps: 524288
     log_steps: 100
     checkpoint_steps: 10000
-    eval_steps: 24000
+    eval_steps: 2510
     seed: 1
     model_dir: "./model_dir"
     show_debug_metrics: False

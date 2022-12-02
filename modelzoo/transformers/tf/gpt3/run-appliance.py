@@ -32,7 +32,6 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "../../../.."))
 
 from cerebras_tensorflow.cs_estimator_app import CerebrasAppEstimator
 
-from cerebras_appliance.cluster_client import VolumeMount
 from cerebras_appliance.cs_run_config import CSRunConfig
 from cerebras_appliance.CSConfig import CSConfig
 from modelzoo.common.tf.appliance_utils import (
@@ -51,8 +50,8 @@ def main():
     # Parser cmdline arguments and get params
     params = parse_args_and_params(run_dir, set_default_params=set_defaults)
     runconfig_params = params["runconfig"]
-    with tempfile.TemporaryDirectory() as ini_dir:
-        with open(os.path.join(ini_dir, "debug.ini")) as fp:
+    with tempfile.TemporaryDirectory(dir=run_dir) as ini_dir:
+        with open(os.path.join(ini_dir, "debug.ini"), "w") as fp:
             fp.write("ws_dense_dmatmul: true")
         debug_args = get_debug_args(ini_dir)
 
@@ -79,16 +78,11 @@ def main():
             mgmt_address=runconfig_params["mgmt_address"],
             credentials_path=runconfig_params["credentials_path"],
             debug_args=debug_args,
-            volume_mounts=[
-                VolumeMount(
-                    name="training-data-volume",
-                    mount_path=runconfig_params["data_mount_path"],
-                ),
-                VolumeMount(
-                    name="modelzoo-volume",
-                    mount_path=runconfig_params["modelzoo_mount_path"],
-                ),
+            mount_dirs=[
+                runconfig_params["data_mount_path"],
+                runconfig_params["modelzoo_mount_path"],
             ],
+            python_paths=[runconfig_params["modelzoo_mount_path"]],
         ),
         **csrunconfig_dict,
     )

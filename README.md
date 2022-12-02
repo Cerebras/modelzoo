@@ -90,7 +90,7 @@ To learn more about multi-replica, please visit the developer doc page on the sa
 | BERT (fine-tuning) Named Entity Recognition | [TensorFlow code](./modelzoo/transformers/tf/bert/fine_tuning/token_classifier/)<br>[PyTorch code](./modelzoo/transformers/pytorch/bert/fine_tuning/token_classifier/) | - |
 | BERT (fine-tuning) Summarization | [TensorFlow code](./modelzoo/transformers/tf/bert/fine_tuning/extractive_summarization/)<br>[PyTorch code](./modelzoo/transformers/pytorch/bert/fine_tuning/extractive_summarization/) | - |
 | BERT (fine-tuning) Question Answering | [TensorFlow code](./modelzoo/transformers/tf/bert/fine_tuning/qa/)<br>[PyTorch code](./modelzoo/transformers/pytorch/bert/fine_tuning/qa/) | - |
-| GPT-2 | [TensorFlow code](./modelzoo/transformers/tf/gpt2/)<br>[PyTorch code](./modelzoo/transformers/pytorch/gpt2/) | [TensorFlow code](./modelzoo/transformers/tf/gpt2/) |
+| GPT-2 | [TensorFlow code](./modelzoo/transformers/tf/gpt2/)<br>[PyTorch code](./modelzoo/transformers/pytorch/gpt2/) | [TensorFlow code](./modelzoo/transformers/tf/gpt2/)<br>[PyTorch code](./modelzoo/transformers/pytorch/gpt2/) |
 | GPT-3 | - | [TensorFlow code](./modelzoo/transformers/tf/gpt3/) |
 | GPT-J | - | [TensorFlow code](./modelzoo/transformers/tf/gptj/) |
 | GPT-J (fine-tuning) Summarization | - | [TensorFlow code](./modelzoo/transformers/tf/gptj/fine_tuning/abstractive_summarization/) |

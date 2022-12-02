@@ -22,7 +22,11 @@ import argparse
 import os
 
 from cerebras_appliance.pb.client.common_config_pb2 import DebugArgs
-from modelzoo.common.tf.run_utils import get_params, update_params_from_args
+from modelzoo.common.tf.run_utils import (
+    get_params,
+    save_params,
+    update_params_from_args,
+)
 
 
 def get_debug_args(debug_ini_path):
@@ -148,5 +152,6 @@ def parse_args_and_params(
 
     runconfig_params = params["runconfig"]
     update_params_from_args(args, runconfig_params)
+    save_params(params, model_dir=runconfig_params["model_dir"])
 
     return params

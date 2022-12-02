@@ -76,9 +76,10 @@ class PyTorchBaseModel(ABC):
         self.mixed_precision = params["model"]["mixed_precision"]
 
         # Whether or not to allow multireplica runs
+        # default to false for eval runs.
         self.allow_multireplica = params["model"].get(
             "allow_multireplica", True
-        )
+        ) and self.mode == "train"
 
         seed = params["runconfig"].get("seed", None)
         if seed is not None:
