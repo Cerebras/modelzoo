@@ -902,7 +902,19 @@ class PyTorchBaseRunner(metaclass=abc.ABCMeta):
         """
         runconfig_params = params["runconfig"]
 
-        cs_ip = runconfig_params["cs_ip"]
+        # For k8s flow, cs_ip is determined based on our custom scheduler. When K8S_CS_IP
+        # is set, we use its value as cs_ip. We raise an error if cs_ip is set in the runconfig.
+        k8s_cs_ip = os.environ.get("K8S_CS_IP", None)
+        if k8s_cs_ip:
+            if runconfig_params["cs_ip"] is not None:
+                raise ValueError(
+                    "cs_ip is determined internally and should not be specified"
+                )
+            cs_ip = k8s_cs_ip
+            logging.info(f"Setting cs_ip to: {cs_ip}")
+        else:
+            cs_ip = runconfig_params["cs_ip"]
+
         if (
             runconfig_params["compile_only"]
             and runconfig_params["validate_only"]

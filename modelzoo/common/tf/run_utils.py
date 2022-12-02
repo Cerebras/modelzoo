@@ -80,9 +80,14 @@ def is_cs(params):
     Check if the runtime enviroment is that of a Cerebras System.
     If yes, return True, else False
 
+    For legacy k8s flow, the user does not need to specify cs_ip, since k8s
+    schedule determines which CS system to use internally. When a CS
+    is needed for the run, K8S_CS_IP will be set. This functions returns
+    true if K8S_CS_IP is set.
+
     :param dict params: runconfig dict to provide parameters for check
     """
-    return params.get("cs_ip") is not None
+    return params.get("cs_ip") is not None or os.environ.get("K8S_CS_IP", None) is not None
 
 
 def check_env(params):
@@ -207,7 +212,10 @@ def update_params_from_args(args, params):
             params["eval_steps"] = None
 
     # setting cs_ip based on is_cs
-    params["cs_ip"] = params["cs_ip"] + ":9000" if is_cs(params) else None
+    if not is_cs(params):
+        params["cs_ip"] = None
+    elif os.environ.get("K8S_CS_IP", None) is None:
+        params["cs_ip"] = params["cs_ip"] + ":9000"
 
 
 #######################################

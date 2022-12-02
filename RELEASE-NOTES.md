@@ -2,6 +2,11 @@
 
 The following are the release notes for the Model Zoo repository.
 
+## Version 1.6.1
+
+- First Weight Streaming model support for PyTorch GPT2 XL model as an early access.
+- Improvements on Pipeline Legacy flow using Kubernetes and appliance mode.
+
 ## Version 1.6.0
 
 ### New features and enhancements

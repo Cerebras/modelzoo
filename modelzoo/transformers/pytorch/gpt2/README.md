@@ -132,7 +132,8 @@ In order to train the model, you need to provide a yaml config file. Some popula
 
 - `params_gpt2_small.yaml` have the standard gpt2-base config with `hidden_size=768`, `num_hidden_layers=12`, `num_heads=12`
 - `params_gpt2_medium.yaml` have the standard gpt2-medium config with `hidden_size=1024`, `num_hidden_layers=24`, `num_heads=16`
-- `params_gpt2_large.yaml` have the standard gpt2-medium config with `hidden_size=1280`, `num_hidden_layers=36`, `num_heads=20`
+- `params_gpt2_large.yaml` have the standard gpt2-large config with `hidden_size=1280`, `num_hidden_layers=36`, `num_heads=20`
+- `params_gpt2_xl_ws_early_access.yaml` have the standard gpt2-extra large config (The GPT2) with `hidden_size=1600`, `num_hidden_layers=48`, `num_heads=16`. Works in Weight Streaming mode.
 
 All configs are meant to be run on Pipeline mode using Appliance mode and Kubernetes flow. Slurm workflow is available as a legacy support.
 

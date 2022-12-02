@@ -87,6 +87,13 @@ def update_params_from_args(args: argparse.Namespace, params: dict):
             "'--checkpoint_path' is provided."
         )
 
+    mode = params.get("mode")
+    if mode != "train" and params.get("multireplica"):
+        logging.warning(
+            f"Multireplica is only supported in `train` mode. Disabling it for "
+            f"{mode} mode."
+        )
+
     model_dir = params["model_dir"]
     os.makedirs(model_dir, exist_ok=True)
     params.setdefault("service_dir", model_dir)
