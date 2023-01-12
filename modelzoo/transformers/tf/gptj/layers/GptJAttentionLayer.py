@@ -52,6 +52,8 @@ class GptJAttentionLayer(BaseLayer):
             0.0.
         dropout_seed (int): Seed with which to initialize the dropout layer.
             Defaults to ``None``.
+        softmax_dtype_fp32 (bool): If ``True``, cast query-key logits to FP32
+            before sending into softmax calculation in FP32.
         boundary_casting (bool): If ``True``, then outputs the values in half
             precision and casts the  input values up to full precision.
         tf_summary (bool): If ``True``, then saves the activations with
@@ -74,6 +76,7 @@ class GptJAttentionLayer(BaseLayer):
         attn_dropout_rate=0.0,
         residual_dropout_rate=0.0,
         dropout_seed=None,
+        softmax_dtype_fp32=True,
         boundary_casting=False,
         tf_summary=False,
         **kwargs,
@@ -155,6 +158,7 @@ class GptJAttentionLayer(BaseLayer):
         )
 
         self.rotary_dim = rotary_dim
+        self.softmax_dtype_fp32 = softmax_dtype_fp32
 
     def call(
         self,
@@ -309,9 +313,9 @@ class GptJAttentionLayer(BaseLayer):
             )
             attn_weights += attention_bias
 
-        attn_weights = tf.cast(
-            tf.nn.softmax(tf.cast(attn_weights, tf.float32)), self.compute_dtype
-        )
+        if self.compute_dtype != 'float32' and self.softmax_dtype_fp32:
+            attn_weights = tf.cast(attn_weights, tf.float32)
+        attn_weights = tf.cast(tf.nn.softmax(attn_weights), self.compute_dtype)
         if self.attn_dropout is not None:
             attn_weights = self.attn_dropout(attn_weights, training=training)
 

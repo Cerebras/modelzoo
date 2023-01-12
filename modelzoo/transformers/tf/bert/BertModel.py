@@ -68,6 +68,11 @@ class BertModel(TFBaseModel):
         layer_norm_epsilon = params["model"]["layer_norm_epsilon"]
         use_ffn_bias = params["model"]["use_ffn_bias"]
         use_pre_normalization = params["model"]["use_pre_normalization"]
+        attention_type = params["model"]["attention_type"]
+        use_projection_bias_in_attention = params["model"][
+            "use_projection_bias_in_attention"
+        ]
+        use_ffn_bias_in_attention = params["model"]["use_ffn_bias_in_attention"]
 
         # Task-specific layer params
         share_embedding_weights = params["model"]["share_embedding_weights"]
@@ -187,8 +192,8 @@ class BertModel(TFBaseModel):
             num_heads,
             num_hidden_layers,
             filter_size,
-            use_projection_bias_in_attention=True,
-            use_ffn_bias_in_attention=True,
+            use_projection_bias_in_attention=use_projection_bias_in_attention,
+            use_ffn_bias_in_attention=use_ffn_bias_in_attention,
             use_ffn_bias=use_ffn_bias,
             attention_initializer=initializer,
             ffn_initializer=initializer,

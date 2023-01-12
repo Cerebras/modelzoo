@@ -33,6 +33,7 @@
 
 import os
 import sys
+
 from tokenizers import Tokenizer
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "../../../../../.."))

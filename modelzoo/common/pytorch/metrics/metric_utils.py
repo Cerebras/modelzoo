@@ -21,9 +21,8 @@ def divide_no_nan(num: Tensor, denom: Tensor) -> Tensor:
     Prevent zero division.
     Replicate the behavior of tf.math.divide_no_nan()
     """
-    denom_zero_idx = denom == 0.0
-    num[denom_zero_idx] = 0.0
-    denom[denom_zero_idx] = 1.0
+    num = torch.where(denom == 0, torch.zeros_like(num), num)
+    denom = torch.where(denom == 0, torch.ones_like(denom), denom)
     return num / denom
 
 

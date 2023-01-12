@@ -24,7 +24,6 @@ from modelzoo.common.pytorch.model_utils.create_initializer import (
 
 class RelativePositionEmbeddingLayer(nn.Module):
     """Relative Position Embedding Layer
-
     Args:
         relative_attention_bias (Tensor): Tensor with relative attention weights.
             Shape: [`num_relative_attention_buckets`, `num_heads`]. Defaults set to None.
@@ -57,14 +56,17 @@ class RelativePositionEmbeddingLayer(nn.Module):
         self.num_relative_attention_buckets = num_relative_attention_buckets
         self.bidirectional_relative_attention = bidirectional_relative_attention
 
-        self.relative_attn_bias_initializer = create_initializer(
-            relative_attn_bias_initializer
+        self.relative_attn_bias_initializer = relative_attn_bias_initializer
+
+        self.__reset_parameters()
+
+    def reset_parameters(self):
+        self.__reset_parameters()
+
+    def __reset_parameters(self):
+        weight_initializer = create_initializer(
+            self.relative_attn_bias_initializer
         )
-
-        self._reset_parameters()
-
-    def _reset_parameters(self):
-        weight_initializer = self.relative_attn_bias_initializer
         weight_initializer(self.relative_attention_bias.weight.data)
 
     def forward(
@@ -81,16 +83,15 @@ class RelativePositionEmbeddingLayer(nn.Module):
 
     def _compute_bias(self, query_length, key_length):
         """Compute binned relative position bias.
-
         Args:
             query_length (int): length of the query tensor.
             key_length (int): length of the key tensor.
-
         Returns:
             values (Tensor): computed values for position bias.
         """
-        context_position = torch.arange(query_length)[:, None]
-        memory_position = torch.arange(key_length)[None, :]
+        device = self.relative_attention_bias.weight.device
+        context_position = torch.arange(query_length, device=device)[:, None]
+        memory_position = torch.arange(key_length, device=device)[None, :]
 
         # shape (query_length, key_length)
         relative_position = memory_position - context_position
@@ -103,7 +104,7 @@ class RelativePositionEmbeddingLayer(nn.Module):
         # shape (query_length, key_length, num_heads)
         values = self.relative_attention_bias(relative_position_bucket)
         # shape (1, num_heads, query_length, key_length)
-        values = values.permute([2, 0, 1]).unsqueeze(0)
+        values = values.permute([2, 0, 1])
         return values
 
     def _relative_position_bucket(
@@ -124,13 +125,11 @@ class RelativePositionEmbeddingLayer(nn.Module):
         All relative positions <= -max_distance map to the same bucket.
         This should allow for more graceful generalization to longer sequences
         than the model has been trained on.
-
         Args:
             relative_position (Tensor): Tensor with relative positions.
             bidirectional (bool): Whether attention is bidirectional
             num_buckets (int): number of buckets for relative positions
             max_distance (int): Used in order to calculate relative position buckets.
-
         Returns:
             a Tensor with the same shape as ``relative_position``,
             containing int32 values in the range [0, self.num_relative_attention_buckets).
@@ -155,7 +154,7 @@ class RelativePositionEmbeddingLayer(nn.Module):
             torch.log(relative_position / max_exact)
             / math.log(max_distance / max_exact)
             * (num_buckets - max_exact)
-        )
+        ).to(torch.long)
         relative_position_if_large = torch.min(
             relative_position_if_large,
             torch.full_like(relative_position_if_large, num_buckets - 1),
@@ -164,4 +163,6 @@ class RelativePositionEmbeddingLayer(nn.Module):
         relative_buckets += torch.where(
             is_small, relative_position, relative_position_if_large
         )
-        return relative_buckets
+
+        # cast to int32_t because WS weight host gather can only handle int32
+        return relative_buckets.to(torch.int32)

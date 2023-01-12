@@ -1,24 +1,24 @@
 train_input:
     data_processor : "T5DynamicDataProcessor"
-    src_vocab_file: "./c4/vocab.txt" # https://huggingface.co/t5-small/resolve/main/spiece.model.
-    src_data_dir: "./c4/en/train.tok.sentencepiece.3200"
+    src_vocab_file: "./t5/c4/vocab.txt" # https://huggingface.co/t5-small/resolve/main/spiece.model.
+    src_data_dir: "./t5/c4/en/train.tok.sentencepiece.3200"
     extra_ids: 100 # A number of extra ids added to the end of the vocabulary for use as sentinels.
     src_max_sequence_length: 512
     tgt_max_sequence_length: 114
     shuffle: True
     shuffle_seed: 1
+    shuffle_buffer: 16384 # large buffer size allows batches to contain samples from multiple documents
     batch_size: 216 # this gives roughly 2**16 tokens per batch
                     # for GPU(16GB) set batch_size: 8
                     # 8 * 27 = 216 with grad_accum_steps: 27
     num_workers: 8
     prefetch_factor: 10
     persistent_workers: True
-    dynamic_loss_weight: True
 
 eval_input:
     data_processor : "T5DynamicDataProcessor"
-    src_vocab_file: "./c4/vocab.txt" # https://huggingface.co/t5-small/resolve/main/spiece.model.
-    src_data_dir: "./c4/en/validation.tok.sentencepiece.3200"
+    src_vocab_file: "./t5/c4/vocab.txt" # https://huggingface.co/t5-small/resolve/main/spiece.model.
+    src_data_dir: "./t5/c4/en/validation.tok.sentencepiece.3200"
     extra_ids: 100 # A number of extra ids added to the end of the vocabulary for use as sentinels.
     src_max_sequence_length: 512
     tgt_max_sequence_length: 114
@@ -57,13 +57,16 @@ model:
     d_model: 768  # Size of the encoder layers and the pooler layer.
     encoder_nonlinearity: "relu" # {"gelu", "relu", "gated-gelu"}
     decoder_nonlinearity: "relu" # {"gelu", "relu", "gated-gelu"}
-    layer_norm_epsilon: 1.0e-6
+    layer_norm_epsilon: 1.0e-5
 
     ## Decoder
     decoder_num_hidden_layers: 12
 
     # Loss scaling weight, 1/{average_number_valid_tokens}
     lm_loss_weight: 0.015
+    # Loss scaling config: `precomputed_num_masked` (for vts only)
+    #                      `batch_size` is scaling loss by batch size
+    mlm_loss_scaling: "precomputed_num_masked"
 
     # Cerebras configs.
     mixed_precision: True
@@ -81,7 +84,6 @@ optimizer:
           initial_learning_rate: 0.0001
           end_learning_rate: 0.00001
           steps: 514288
-    loss_scaling_factor: "dynamic"
     weight_decay_rate: 0.01
     max_gradient_norm: 1.0
     # grad_accum_steps: 27 # helps fit in GPU memory

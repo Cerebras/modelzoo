@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 import random
 from pathlib import Path
 
@@ -19,8 +20,12 @@ import h5py
 import numpy as np
 import torch
 
-from modelzoo.common.pytorch import cb_model as cm
 from modelzoo.common.pytorch.utils import BufferedShuffleDataset
+from modelzoo.transformers.pytorch.input_utils import (
+    num_tasks,
+    shard_list_of_chunks_contiguous,
+    task_id,
+)
 
 
 class GptHDF5DataProcessor(torch.utils.data.IterableDataset):
@@ -46,7 +51,7 @@ class GptHDF5DataProcessor(torch.utils.data.IterableDataset):
     - "num_workers" (int):  How many subprocesses to use for data loading.
     - "drop_last" (bool): If True and the dataset size is not divisible
        by the batch size, the last incomplete batch will be dropped.
-    - "prefetch_factor" (int): Number of samples loaded in advance by each worker.
+    - "prefetch_factor" (int): Number of batches loaded in advance by each worker.
     - "persistent_workers" (bool): If True, the data loader will not shutdown
        the worker processes after a dataset has been consumed once.
     """
@@ -66,25 +71,28 @@ class GptHDF5DataProcessor(torch.utils.data.IterableDataset):
         self.drop_last = params.get("drop_last", True)
         self.prefetch_factor = params.get("prefetch_factor", 10)
         self.persistent_workers = params.get("persistent_workers", True)
+        self.dataloader_state = params.get('cerebras', {})
 
-        # Features in HDF5 record files
+        # Features in HDF5 files
         self.features_list = ["input_ids", "attention_mask", "labels"]
 
         assert self.batch_size > 0, "Batch size should be positive."
 
-        p = Path(self.data_dir)
-        assert p.is_dir()
+        if not isinstance(self.data_dir, list):
+            self.data_dir = [self.data_dir]
 
-        files = sorted(p.glob('*.h5'))
+        files = []
+        for directory in self.data_dir:
+            p = Path(directory)
+            assert p.is_dir()
+            files.extend(p.glob('*.h5'))
+
+        files = sorted(files)
         if not files:
             raise RuntimeError('No hdf5 datasets found')
 
-        self.num_tasks = cm.num_streamers() if cm.is_streamer() else 1
-        self.task_id = cm.get_streaming_rank() if cm.is_streamer() else 0
-
-        assert (
-            len(files) % self.num_tasks == 0
-        ), f"Number of h5 files {len(files)} should be divisible by the number of Slurm tasks {self.num_tasks}, to correctly shard the dataset between the streamers"
+        self.num_tasks = num_tasks()
+        self.task_id = task_id()
 
         # Shard H5 files between the tasks and resolve the paths
         files_in_this_task = [
@@ -106,44 +114,133 @@ class GptHDF5DataProcessor(torch.utils.data.IterableDataset):
             random.seed(self.shuffle_seed)
             random.shuffle(self.files_in_this_task)
 
+        # Single worker
+        # laod dataloader state from previous run for restart
+        self.dataloader_state_file = self.dataloader_state.get(
+            'dataloader_state_file', None
+        )
+        self.num_workers_prev_state = self.dataloader_state.get(
+            'num_workers', None
+        )
+        if self.num_workers_prev_state is not None:
+            assert (
+                self.num_workers == self.num_workers_prev_state
+            ), "num_workers should be the same at the restart"
+
+        # Sanity check whether or not "dataloader_state_file" is readable
+        if self.dataloader_state_file is not None:
+            assert os.path.isfile(
+                self.dataloader_state_file
+            ), f"Invalid dataloader state file: '{self.dataloader_state_file}'"
+            with open(self.dataloader_state_file, 'r') as f:
+                self.prev_worker_iter_index = int(f.readline())
+        else:
+            self.prev_worker_iter_index = 0
+
     def _load_buffer(self, data_partitions):
-        for file_path, start_idx, num_examples in data_partitions:
-            with h5py.File(file_path, mode='r') as h5_file:
-                for idx in range(start_idx, start_idx + num_examples):
-                    yield np.array(h5_file[f"example_{idx}"])
+        worker_info = torch.utils.data.get_worker_info()
+        if worker_info is not None:
+            worker_id = worker_info.id
+        else:
+            # 1 sub-process
+            worker_id = 0
 
-    def _shard_dataset(self, worker_id, num_workers):
-        per_worker_partition = []
-        for file, num_examples_in_file in self.files_in_this_task:
-            # Try to evenly distribute number of examples between workers
-            num_examples_all_workers = [
-                (num_examples_in_file // num_workers)
-            ] * num_workers
-            for i in range(num_examples_in_file % num_workers):
-                num_examples_all_workers[i] += 1
+        restart_iter_partition_id = (
+            0  # partition id should default to 0 if not reading iter from file
+        )
+        restart_iter_start_idx = 0  # start_idx should default to 0
+        # Sanity check whether or not "dataloader_state_file" is readable
+        if self.prev_worker_iter_index > 0:
+            iters_until_current_partition = 0
+            prev_partition_offset_start_idx = 0
+            current_partition_offset_start_idx = 0
+            for partition_idx, partition_specs in enumerate(data_partitions):
+                start_idx = partition_specs[1]
+                num_examples = partition_specs[2]
 
-            assert sum(num_examples_all_workers) == num_examples_in_file
+                if partition_idx > 0:
+                    num_examples_prev_partition = (
+                        data_partitions[partition_idx - 1][2]
+                        - prev_partition_offset_start_idx
+                    )
+                    if (
+                        num_examples_prev_partition
+                        - (num_examples_prev_partition // self.batch_size)
+                        * self.batch_size
+                    ) > 0:
+                        current_partition_offset_start_idx = self.batch_size - (
+                            num_examples_prev_partition
+                            - (num_examples_prev_partition // self.batch_size)
+                            * self.batch_size
+                        )
+                    else:
+                        current_partition_offset_start_idx = 0
+                    prev_partition_offset_start_idx = (
+                        current_partition_offset_start_idx
+                    )
+                    num_examples_curr_partition = (
+                        num_examples - current_partition_offset_start_idx
+                    )
+                else:
+                    num_examples_curr_partition = num_examples
+                    current_partition_offset_start_idx = 0
 
-            per_worker_partition.append(
-                (
-                    file,
-                    sum(num_examples_all_workers[:worker_id])
-                    if worker_id > 0
-                    else 0,  # Start index
-                    num_examples_all_workers[worker_id],  # Length of data chunk
+                iters_until_current_partition += np.ceil(
+                    num_examples_curr_partition / self.batch_size
                 )
-            )
-        return per_worker_partition
+                if (
+                    self.prev_worker_iter_index
+                    <= iters_until_current_partition - 1
+                ):
+                    restart_iter_partition_id = partition_idx
+                    restart_iter_start_idx = int(
+                        self.batch_size
+                        * (
+                            self.prev_worker_iter_index
+                            - (
+                                iters_until_current_partition
+                                - np.ceil(
+                                    num_examples_curr_partition
+                                    / self.batch_size
+                                )
+                            )
+                        )
+                    )
+
+                    restart_iter_start_idx += current_partition_offset_start_idx
+
+                    break
+
+        for partition_idx, partition_specs in enumerate(
+            data_partitions[restart_iter_partition_id:]
+        ):
+            file_path = partition_specs[0]
+            start_idx_org = partition_specs[1]
+            num_examples = partition_specs[2]
+            if restart_iter_partition_id >= 0 and partition_idx == 0:
+                start_idx = restart_iter_start_idx
+            else:
+                start_idx = start_idx_org
+            with h5py.File(file_path, mode='r') as h5_file:
+                for idx in range(
+                    start_idx, start_idx_org + num_examples, self.batch_size
+                ):
+                    load_len = min(
+                        self.batch_size, start_idx_org + num_examples - idx
+                    )
+                    load_data = h5_file["data"][idx : idx + load_len]
+                    for i in range(load_len):
+                        yield load_data[i]
 
     def __iter__(self):
         """
         Iterating over the data to construct input features.
         """
         for example in self._load_buffer(self.data_partitions):
-            example_dict = {}
-            for idx, feature in enumerate(self.features_list):
-                example_dict[feature] = example[idx, :]
-            yield example_dict
+            yield {
+                feature: np.array(example[i], np.int32)
+                for i, feature in enumerate(self.features_list)
+            }
 
     def __len__(self):
         """
@@ -166,7 +263,9 @@ class GptHDF5DataProcessor(torch.utils.data.IterableDataset):
             # Use a unique seed for each worker.
             random.seed(self.shuffle_seed + worker_id)
 
-        self.data_partitions = self._shard_dataset(worker_id, num_workers)
+        self.data_partitions = shard_list_of_chunks_contiguous(
+            self.files_in_this_task, worker_id, num_workers
+        )
 
     def create_dataloader(self, is_training=True):
         """
@@ -176,7 +275,7 @@ class GptHDF5DataProcessor(torch.utils.data.IterableDataset):
             BufferedShuffleDataset(
                 dataset=self, buffer_size=self.shuffle_buffer
             )
-            if self.shuffle
+            if self.shuffle and not bool(self.dataloader_state)
             else self,
             batch_size=self.batch_size,
             drop_last=self.drop_last,
@@ -187,7 +286,7 @@ class GptHDF5DataProcessor(torch.utils.data.IterableDataset):
             else False,
             worker_init_fn=self._worker_init_fn,
         )
-        # set self.data_partitions in case self.num_workers == 0
         if self.num_workers == 0:
             self._worker_init_fn(0)
+
         return data_loader

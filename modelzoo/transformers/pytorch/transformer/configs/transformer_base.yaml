@@ -1,13 +1,13 @@
 # Transformer Base - according to Table 3.
-# Based on transformer_base_v1() : 
+# Based on transformer_base_v1() :
 # https://github.com/tensorflow/tensor2tensor/blob/5623deb79cfcd28f8f8c5463b58b5bd76a81fd0d/tensor2tensor/models/transformer.py#L1771
 
 train_input:
     data_processor : "TransformerDynamicDataProcessor"
-    src_vocab_file: "./data/wmt16_en_de/vocab.bpe.32000.en"
-    tgt_vocab_file: "./data/wmt16_en_de/vocab.bpe.32000.de"
-    src_data_dir: "./data/wmt16_en_de/pytorch/train.tok.clean.bpe.32000.en"
-    tgt_data_dir: "./data/wmt16_en_de/pytorch/train.tok.clean.bpe.32000.de"
+    src_vocab_file: "./transformer/wmt16_en_de/vocab.bpe.32000.en"
+    tgt_vocab_file: "./transformer/wmt16_en_de/vocab.bpe.32000.de"
+    src_data_dir: "./transformer/wmt16_en_de/pytorch/train.tok.clean.bpe.32000.en"
+    tgt_data_dir: "./transformer/wmt16_en_de/pytorch/train.tok.clean.bpe.32000.de"
     src_max_sequence_length: 256
     tgt_max_sequence_length: 256
     batch_size: 4096 # for GPU(16GB) set batch_size: 16
@@ -17,14 +17,13 @@ train_input:
     num_workers: 8
     prefetch_factor: 10
     persistent_workers: True
-    dynamic_loss_weight: True
 
 eval_input:
     data_processor : "TransformerDynamicDataProcessor"
-    src_vocab_file: "./data/wmt16_en_de/vocab.bpe.32000.en"
-    tgt_vocab_file: "./data/wmt16_en_de/vocab.bpe.32000.de"
-    src_data_dir: "./data/wmt16_en_de/pytorch/newstest2014.tok.clean.bpe.32000.en"
-    tgt_data_dir: "./data/wmt16_en_de/pytorch/newstest2014.tok.clean.bpe.32000.de"
+    src_vocab_file: "./transformer/wmt16_en_de/vocab.bpe.32000.en"
+    tgt_vocab_file: "./transformer/wmt16_en_de/vocab.bpe.32000.de"
+    src_data_dir: "./transformer/wmt16_en_de/pytorch/newstest2014.tok.clean.bpe.32000.en"
+    tgt_data_dir: "./transformer/wmt16_en_de/pytorch/newstest2014.tok.clean.bpe.32000.de"
     src_max_sequence_length: 256
     tgt_max_sequence_length: 256
     shuffle: False
@@ -80,8 +79,12 @@ model:
 
     use_transformer_initialization: True
 
+    # Loss scaling config: `precomputed_num_masked` (for vts only)
+    #                      `batch_size` is scaling loss by batch size
+    mlm_loss_scaling: "precomputed_num_masked"
     # Cerebras configs.
     mixed_precision: True
+
     enable_vts: True
 
 optimizer:
@@ -187,4 +190,3 @@ runconfig:
     show_debug_metrics: False
     save_losses: True
     eval_steps: 3001 # comment out this line for GPU eval
-    multireplica: True

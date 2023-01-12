@@ -16,14 +16,14 @@ import torch
 from torchvision import datasets, transforms
 
 from modelzoo.common.pytorch import cb_model as cm
-from modelzoo.common.pytorch.utils import get_input_dtype
+from modelzoo.common.pytorch.utils import SampleGenerator, get_input_dtype
 
 
 def get_train_dataloader(params):
     """
     :param <dict> params: dict containing input parameters for creating dataset.
     Expects the following fields:
-    
+
     - "data_dir" (string): path to the data files to use.
     - "batch_size" (int): batch size
     - "to_float16" (bool): whether to convert to float16 or not
@@ -31,21 +31,26 @@ def get_train_dataloader(params):
     """
     input_params = params["train_input"]
     use_cs = cm.use_cs()
-    if use_cs:
-        import torch_xla.utils.utils as xu
+    is_appliance = cm.is_appliance()
 
     batch_size = input_params.get("batch_size")
     to_float16 = input_params.get("to_float16", True)
     dtype = get_input_dtype(to_float16)
     shuffle = input_params["shuffle"]
 
-    if use_cs and input_params.get("use_fake_data", False):
-        train_loader = xu.SampleGenerator(
+    if input_params.get("use_fake_data", False):
+        num_streamers = cm.num_streamers() if cm.is_streamer() else 1
+        train_loader = SampleGenerator(
             data=(
                 torch.zeros(batch_size, 1, 28, 28, dtype=dtype),
-                torch.zeros(batch_size, dtype=torch.int32),
+                torch.zeros(
+                    batch_size,
+                    dtype=torch.int32
+                    if use_cs or is_appliance
+                    else torch.int64,
+                ),
             ),
-            sample_count=60000 // batch_size // cm.num_streamers(),
+            sample_count=60000 // batch_size // num_streamers,
         )
     else:
         if use_cs and not cm.is_master_ordinal():
@@ -96,20 +101,25 @@ def get_train_dataloader(params):
 def get_eval_dataloader(params):
     input_params = params["eval_input"]
     use_cs = cm.use_cs()
-    if use_cs:
-        import torch_xla.utils.utils as xu
+    is_appliance = cm.is_appliance()
 
     batch_size = input_params.get("batch_size")
     to_float16 = input_params.get("to_float16", True)
     dtype = get_input_dtype(to_float16)
 
-    if use_cs and input_params.get("use_fake_data", False):
-        eval_loader = xu.SampleGenerator(
+    if input_params.get("use_fake_data", False):
+        num_streamers = cm.num_streamers() if cm.is_streamer() else 1
+        eval_loader = SampleGenerator(
             data=(
                 torch.zeros(batch_size, 1, 28, 28, dtype=dtype),
-                torch.zeros(batch_size, dtype=torch.int32),
+                torch.zeros(
+                    batch_size,
+                    dtype=torch.int32
+                    if use_cs or is_appliance
+                    else torch.int64,
+                ),
             ),
-            sample_count=10000 // batch_size // cm.num_streamers(),
+            sample_count=10000 // batch_size // num_streamers,
         )
     else:
         if use_cs and not cm.is_master_ordinal():

@@ -147,7 +147,7 @@ class Transformer(nn.Module):
                 decoder_layer, num_decoder_layers, self.decoder_norm
             )
 
-        self._reset_parameters()
+        self.__reset_parameters()
 
         self.d_model = d_model
         self.nhead = nhead
@@ -215,13 +215,20 @@ class Transformer(nn.Module):
 
         is_batched = src.dim() == 3
         if not self.batch_first and src.size(1) != tgt.size(1) and is_batched:
-            raise RuntimeError("the batch number of src and tgt must be equal")
+            raise RuntimeError(
+                f"The batch number of `src` and `tgt` must be equal. "
+                f"They were {src.size(1)} and {tgt.size(1)} respectively."
+            )
         elif self.batch_first and src.size(0) != tgt.size(0) and is_batched:
-            raise RuntimeError("the batch number of src and tgt must be equal")
+            raise RuntimeError(
+                f"The batch number of `src` and `tgt` must be equal. "
+                f"They were {src.size(0)} and {tgt.size(0)} respectively."
+            )
 
         if src.size(-1) != self.d_model or tgt.size(-1) != self.d_model:
             raise RuntimeError(
-                "the feature number of src and tgt must be equal to d_model"
+                f"The feature number of `src` and `tgt` must be equal to `d_model`. "
+                f"They were {src.size(-1)}, {tgt.size(-1)}, and {self.d_model} respectively."
             )
 
         memory = self.encoder(
@@ -237,7 +244,10 @@ class Transformer(nn.Module):
         )
         return output
 
-    def _reset_parameters(self):
+    def reset_parameters(self):
+        self.__reset_parameters()
+
+    def __reset_parameters(self):
         if self.encoder_norm:
             self.encoder_norm.bias.data.zero_()
             self.encoder_norm.weight.data.fill_(1.0)

@@ -50,7 +50,6 @@ def set_defaults(params):
     params["model"]["cls_dropout_rate"] = params["model"].get(
         "cls_dropout_rate", 0.0
     )
-
     # use eval_input params as defaults for predict_input
     predict_input_params = params["eval_input"].copy()
     if "predict_input" in params:

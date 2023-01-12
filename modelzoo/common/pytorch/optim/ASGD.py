@@ -64,12 +64,8 @@ class ASGD(CSOptimizer):
         """
         for group in self.param_groups:
             for p in group["params"]:
-                self.state[p]["eta"] = torch.tensor(
-                    group["lr"], device="cpu"
-                ).to(p.device)
-                self.state[p]["mu"] = torch.tensor(1.0, device="cpu").to(
-                    p.device
-                )
+                self.state[p]["eta"] = torch.tensor(group["lr"]).to(p.device)
+                self.state[p]["mu"] = torch.tensor(1.0).to(p.device)
                 self.state[p]["ax"] = torch.zeros_like(p, device="cpu").to(
                     p.device
                 )
@@ -118,18 +114,16 @@ class ASGD(CSOptimizer):
                     p.add_(grad * eta.neg())
 
                     # averaging
-                    one = torch.tensor(
-                        1.0, dtype=torch.float32, device=p.device
-                    )
-                    new_ax = torch.where(
-                        mu == one, p, ax.add(p.sub(ax).mul(mu))
-                    )
+                    new_ax = torch.where(mu == 1, p, ax.add(p.sub(ax).mul(mu)))
                     ax.copy_(new_ax)
 
-                    new_eta = lr / torch.pow(one + lambd * lr * step, alpha)
+                    new_eta = lr / torch.pow(1 + lambd * lr * step, alpha)
                     eta.copy_(new_eta)
 
-                    new_mu = one / torch.maximum(one, step - t0,)
+                    new_mu = 1 / torch.maximum(
+                        torch.ones(size=[], dtype=mu.dtype),
+                        torch.tensor(step - t0, dtype=mu.dtype),
+                    )
                     mu.copy_(new_mu)
 
         return loss

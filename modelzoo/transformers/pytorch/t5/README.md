@@ -51,7 +51,7 @@ The steps to perform are listed in the diagram below. Bold files are scripts to 
 
 ## Key features from CSoft platform
 
-* T5 models support [Variable Tensor Shape (VTS)](https://docs.cerebras.net/en/private/pytorch-docs/pytorch-vts.html) configurations.  At a high-level, this means that we can take advantage of Cerebras hardware's differences from GPU's to perform operations on different sized sequences in parallel, without requiring padding tokens. This reduces the amount of time spent on computations that are never used in the end. For more details, see [\[4\]](https://www.cerebras.net/software/increasing-model-throughput-with-variable-tensor-shape-computations/) and [\[5\]](https://docs.cerebras.net/en/latest/pytorch-docs/pytorch-vts.html).
+* T5 models support [Variable Tensor Shape (VTS)](https://docs.cerebras.net/en/latest/pytorch-docs/pytorch-vts.html) configurations.  At a high-level, this means that we can take advantage of Cerebras hardware's differences from GPU's to perform operations on different sized sequences in parallel, without requiring padding tokens. This reduces the amount of time spent on computations that are never used in the end. For more details, see [\[4\]](https://www.cerebras.net/software/increasing-model-throughput-with-variable-tensor-shape-computations/) and [\[5\]](https://docs.cerebras.net/en/latest/pytorch-docs/pytorch-vts.html).
 To run either model with VTS, simply add `enable_vts: True` to the `model` section of the configuration YAML file for a training run.  
 * T5 currently support pipeline execution mode, in which the entire model is loaded onto the Wafer-Scale Engine (WSE) and data streams across the layers. See [\[6\]](https://docs.cerebras.net/en/latest/cerebras-basics/cerebras-execution-modes.html#layer-pipelined-mode) for further details. 
 
@@ -63,7 +63,7 @@ The following few scripts are relatively generic and shared between models. They
 
 * `run.py`: A generic training script that connects all models and dataloaders to the training pipeline. Not much is contained in this script; it imports the correct model and dataloader from `model.py` and `data.py` respectively.
 * `data.py`: A generic script that wraps code in a format to work with `run.py`. The real work for data-processing is done in the `input/` directory, which creates classes that are imported in `data.py`.  
-* `model.py`: Provides a common wrapper for all models, using the `PyTorchBaseModel` class, which interfaces with  model-specific code. In this repo the model-specific code is in `../huggingface_common/modeling_t5.py`. The wrapper provides a common interface for handling the function call of the model with its specific data format. It also provides a common interface to use the same format of configuration files from `configs/` to construct various models.
+* `model.py`: Provides a common wrapper for all models, using the `PyTorchBaseModel` class, which interfaces with  model-specific code. In this repo the model-specific code is in `t5_model.py`. The wrapper provides a common interface for handling the function call of the model with its specific data format. It also provides a common interface to use the same format of configuration files from `configs/` to construct various models.
 * `utils.py`: Miscellaneous functions that are used to interface with the YAML files.
 
 The following directories contain the specific implementation details for the current model.
@@ -134,6 +134,8 @@ In the [configs](./configs/) directory we have files for T5.
 All configs are meant to be run on Pipeline mode using Appliance mode and Kubernetes flow. Slurm workflow is available as a legacy support.
 
 These files are just samples, and can be adjusted for any changes in training procedure that you desire, such as different number of layers or hidden sizes, or different number of steps.  
+
+**NOTE:** When trying out a new dataset by switching it in the provided configs, if you run into errors, we advise to disable VTS as a first step of debugging. 
 
 ## Citations
 

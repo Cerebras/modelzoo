@@ -22,7 +22,7 @@ import warnings
 import torch
 
 from modelzoo.common.pytorch import cb_model as cm
-from modelzoo.common.pytorch import modes
+from modelzoo.common.pytorch import cbtorch, modes, perf_utils
 from modelzoo.common.pytorch.pytorch_base_runner import PyTorchBaseRunner
 
 COMPILE_MSG = (
@@ -57,29 +57,53 @@ class PyTorchBaseCSRunner(PyTorchBaseRunner, metaclass=abc.ABCMeta):
             cm.set_target_num_replicas(num_replicas)
 
     ##################################################################
-    #                         Training Hooks                         #
-    ##################################################################
-
-    def backward(self, loss):
-        """Runs the backward pass."""
-        self._model.grad_scaler(loss).backward()
-
-    ##################################################################
     #                   Override Abstract Methods                    #
     ##################################################################
+
+    def on_train_batch_start(self, data):
+        cm.set_state_names(self._model.get_state())
+        return data
+
+    def on_eval_batch_start(self, data):
+        cm.set_state_names(self._model.get_state())
+        return data
 
     def train_and_eval(
         self,
         train_data_loader: torch.utils.data.DataLoader,
         eval_data_loader: torch.utils.data.DataLoader,
-    ):
+    ):  # pylint: disable=arguments-renamed
         raise RuntimeError(
             "Training with Eval on CS is not currently supported."
         )
 
+    def on_train_end(self, early_exit: bool):
+        rate_tracker = cbtorch.state().rate_tracker
+        if rate_tracker is None:
+            logging.info(f"Training Complete.")
+            return
+
+        pd = perf_utils.collect_perf_data(rate_tracker)
+        logging.info(
+            f"Training Complete. Completed {int(pd.total_samples)} sample(s)"
+            f" in {pd.total_time} seconds."
+        )
+
+    def on_eval_end(self, early_exit: bool):
+        rate_tracker = cbtorch.state().rate_tracker
+        if rate_tracker is None:
+            logging.info(f"Evaluation Complete.")
+            return
+
+        pd = perf_utils.collect_perf_data(rate_tracker)
+        logging.info(
+            f"Evaluation Complete. Completed {int(pd.total_samples)} sample(s)"
+            f" in {pd.total_time} seconds."
+        )
+
     @property
     def _perf_dir(self) -> str:
-        """Return the directory to use for saving perfomance metrics."""
+        """Return the directory to use for saving performance metrics."""
         return os.path.join(self._model_dir, "performance")
 
     @property
@@ -95,8 +119,6 @@ class PyTorchBaseCSRunner(PyTorchBaseRunner, metaclass=abc.ABCMeta):
             self._save_stream(train_data_loader, modes.TRAIN)
             self._save_stream(eval_data_loader, modes.EVAL)
             return
-
-        from modelzoo.common.pytorch import cbtorch
 
         assert isinstance(
             data_loader, cbtorch.utils.data.dataloader.DataLoader

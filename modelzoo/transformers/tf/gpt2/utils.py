@@ -67,6 +67,10 @@ def set_defaults(params):
     params["model"]["weight_initialization_seed"] = params["model"].get(
         "weight_initialization_seed", None
     )
+    params["model"]["use_ffn_bias_in_attention"] = params["model"].get(
+        "use_ffn_bias_in_attention", True
+    )
+    params["model"]["use_ffn_bias"] = params["model"].get("use_ffn_bias", True)
 
     # Train vocabulary size
     vocab_size = params["train_input"].get("vocab_size")
@@ -118,6 +122,9 @@ def set_defaults(params):
     )
     params["model"]["layer_norm_epsilon"] = float(
         params["model"].get("layer_norm_epsilon", 1e-8)
+    )
+    params["model"]["attention_softmax_fp32"] = params["model"].get(
+        "attention_softmax_fp32", True
     )
 
     params["model"]["loss_scaling"] = (

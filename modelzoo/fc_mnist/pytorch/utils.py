@@ -26,3 +26,4 @@ def set_defaults(params):
     params["eval_input"]["shuffle"] = params["eval_input"].get("shuffle", False)
 
     params["model"]["to_float16"] = params["model"].get("to_float16", False)
+    params["model"]["use_bfloat16"] = params["model"].get("use_bfloat16", False)

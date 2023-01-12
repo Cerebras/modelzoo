@@ -15,6 +15,7 @@
 import copy
 from typing import Callable
 
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
@@ -33,3 +34,12 @@ def _get_activation_fn(activation: str) -> Callable[[Tensor], Tensor]:
     raise RuntimeError(
         "activation should be relu/gelu, not {}".format(activation)
     )
+
+
+def apply_loss_reduction(loss, reduction):
+    if reduction == 'mean':
+        return torch.mean(loss)
+    elif reduction == 'sum':
+        return torch.sum(loss)
+    else:
+        return loss

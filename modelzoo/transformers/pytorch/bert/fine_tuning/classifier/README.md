@@ -50,7 +50,7 @@ Fine-tuning classification model configs are supported in the [Layer Pipelined m
 
 - `configs/`: YAML configuration files.
 - `input/`: Input pipeline implementation for the above mentioned datasets.
-- `model.py`: Model implementation leveraging [BertForSequenceClassification](../../../huggingface_common/modeling_bert.py) class.
+- `model.py`: Model implementation leveraging [BertForSequenceClassification](../../bert_model.py) class.
 - `data.py`: The entry point to the data input pipeline code.
 - `run.py`: Training script. Performs training and validation.
 - `utils.py`: Miscellaneous helper functions.

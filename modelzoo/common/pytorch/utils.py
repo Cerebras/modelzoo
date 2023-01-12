@@ -24,10 +24,39 @@ import torch
 import yaml
 
 
+class ExecutionStrategy:
+    pipeline = "pipeline"
+    weight_streaming = "weight_streaming"
+
+    @classmethod
+    def strategies(cls):
+        return [cls.pipeline, cls.weight_streaming]
+
+
 def read_params_file(params_file: str) -> dict:
     with open(params_file, 'r') as stream:
         params = yaml.safe_load(stream)
     return params
+
+
+def get_debug_args(debug_args_path, debug_ini_path):
+    """Appliance mode DebugArgs."""
+    from cerebras_appliance.pb.workflow.appliance.common.common_config_pb2 import (
+        DebugArgs,
+    )
+    from cerebras_appliance.run_utils import get_debug_args as parse_debug_args
+
+    if debug_args_path:
+        debug_args = parse_debug_args(debug_args_path)
+    else:
+        debug_args = DebugArgs()
+
+    debug_ini_fp = os.path.join(debug_ini_path, "debug.ini")
+    if os.path.exists(debug_ini_fp):
+        with open(debug_ini_fp, "r") as fp:
+            ini_content = fp.read()
+            debug_args.debug_ini.frozen_content = ini_content
+    return debug_args
 
 
 def get_params(params_file: str, config: Optional[str] = None,) -> dict:
@@ -151,7 +180,7 @@ def get_parser(
     parser.add_argument(
         "-dist_addr",
         "--dist_addr",
-        default=None,
+        default="localhost:8888",
         help="To init master_addr and master_port of distributed, ex. localhost:8888",
     )
     parser.add_argument(
@@ -212,6 +241,15 @@ def get_parser(
         help="Enables appliance mode training/evaluation",
     )
     parser.add_argument(
+        "--execution_strategy",
+        choices=ExecutionStrategy.strategies(),
+        type=str,
+        default=None,
+        help="Execution strategy for running the model. For appliance mode, it "
+        "defaults to weight_streaming. For non-appliance mode it "
+        "defaults to pipeline",
+    )
+    parser.add_argument(
         "--fabric_config_file",
         type=str,
         default=None,
@@ -265,7 +303,19 @@ def get_parser(
         "--num_csx", default=1, type=int, help="number of CS nodes",
     )
     parser.add_argument(
-        "--num_wgt_servers", default=12, type=int, help="number of WGT server",
+        "--num_wgt_servers",
+        default=None,
+        type=int,
+        help="Maximum number of weight servers to use in weight streaming "
+        "execution strategy.",
+    )
+    parser.add_argument(
+        "--num_workers_per_csx",
+        default=0,
+        type=int,
+        help="Number of workers to use for streaming inputs per CS node. If "
+        "0, a default value based on the model will be chosen. Defaults "
+        "to 0.",
     )
     parser.add_argument(
         "--debug_args_path", default=None, help="path to debugs args file",
@@ -280,10 +330,11 @@ def get_parser(
         nargs="+",
         help="a list of paths to be exported into PYTHONPATH for worker containers",
     )
-    # This argument is deprecated.
-    # We should use "--mount_dirs" and "--python_paths" instead.
     parser.add_argument(
-        "--volume_mount_path", default=None, help="path to volume mount file",
+        "--transfer_processes",
+        type=int,
+        default=None,
+        help="Number of processes to use when transferring weights.",
     )
     return parser
 
@@ -312,12 +363,21 @@ def get_params_from_args(
 def get_input_dtype(to_float16: bool):
     from modelzoo.common.pytorch import cb_model as cm
 
+    try:
+        from modelzoo.common.pytorch import amp
+
+        half_dtype = amp._amp_state.half_dtype
+    except:
+        from modelzoo.common.pytorch.run_utils import half_dtype_instance
+
+        half_dtype = half_dtype_instance.half_dtype
+
     if to_float16 and not cm.use_cs() and not torch.cuda.is_available():
         print(
             f"to_float16 == True for input dtype not supported with vanilla PyTorch CPU workflow, setting to_float16 to False"
         )
         to_float16 = False
-    dtype = torch.float16 if to_float16 else torch.float32
+    dtype = half_dtype if to_float16 else torch.float32
     return dtype
 
 
@@ -409,10 +469,13 @@ def to_cpu(tensor):
     if isinstance(tensor, torch.Tensor):
         return tensor.to("cpu")
     if isinstance(tensor, (list, tuple)):
-        return type(tensor)(t.to("cpu") if t is not None else t for t in tensor)
+        return type(tensor)(
+            t.to("cpu") if isinstance(t, torch.Tensor) else t for t in tensor
+        )
     if isinstance(tensor, dict):
         return {
-            k: t.to("cpu") if t is not None else None for k, t in tensor.items()
+            k: t.to("cpu") if isinstance(t, torch.Tensor) else t
+            for k, t in tensor.items()
         }
 
     raise TypeError(
@@ -452,7 +515,7 @@ def setup_logging(chief_logging_level: str, streamer_logging_level: str):
             else:
                 ordinal_msg = ""
 
-            fmt = f"%(levelname)s: {ordinal_msg}  %(message)s"
+            fmt = f"%(asctime)s %(levelname)s: {ordinal_msg}  %(message)s"
             super().__init__(fmt=fmt)
 
             self.info_formatter = None
@@ -495,33 +558,56 @@ def setup_logging(chief_logging_level: str, streamer_logging_level: str):
     logging.basicConfig(level=level, handlers=[handler])
 
 
-def group_optimizer_params(trainable_params, oparams: dict):
-    no_decay = oparams.get(
-        "exclude_from_weight_decay",
-        [
-            "bias",
-            "LayerNorm.bias",
-            "LayerNorm.weight",
-            "BatchNorm.bias",
-            "BatchNorm.weight",
-        ],
-    )
+def group_optimizer_params(
+    trainable_params, no_decay_layers, weight_decay_rate
+):
     optimizer_grouped_parameters = [
         {
             "params": [
                 p
                 for n, p in trainable_params
-                if not any(nd in n for nd in no_decay)
+                if not any(nd in n for nd in no_decay_layers)
             ],
-            "weight_decay": oparams.get("weight_decay_rate", 0.0),
+            "weight_decay": weight_decay_rate,
         },
         {
             "params": [
                 p
                 for n, p in trainable_params
-                if any(nd in n for nd in no_decay)
+                if any(nd in n for nd in no_decay_layers)
             ],
             "weight_decay": 0.0,
         },
     ]
     return optimizer_grouped_parameters
+
+
+class SampleGenerator(object):
+    """Iterator which returns multiple samples of a given input data.
+
+  Can be used in place of a PyTorch `DataLoader` to generate synthetic data.
+
+  Args:
+    data: The data which should be returned at each iterator step.
+    sample_count: The maximum number of `data` samples to be returned.
+  """
+
+    def __init__(self, data, sample_count):
+        self._data = data
+        self._sample_count = sample_count
+        self._count = 0
+
+    def __iter__(self):
+        return SampleGenerator(self._data, self._sample_count)
+
+    def __len__(self):
+        return self._sample_count
+
+    def __next__(self):
+        return self.next()
+
+    def next(self):
+        if self._count >= self._sample_count:
+            raise StopIteration
+        self._count += 1
+        return self._data

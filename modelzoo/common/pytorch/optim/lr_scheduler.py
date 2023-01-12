@@ -14,6 +14,7 @@
 
 import abc
 import math
+import string
 import warnings
 from bisect import bisect_right
 from typing import List
@@ -144,7 +145,7 @@ class LRScheduler(torch.optim.lr_scheduler.LambdaLR, abc.ABC):
             super().step(*args, **kwargs)
 
 
-class Constant(LRScheduler):
+class ConstantLR(LRScheduler):
     """
     Constant update
 
@@ -157,31 +158,34 @@ class Constant(LRScheduler):
     def __init__(
         self,
         optimizer: torch.optim.Optimizer,
-        val: int,
+        val: float,
         decay_steps: int = None,
         disable_lr_steps_reset: bool = False,
     ):
-        self.val = val
+        self.learning_rate = val
         super().__init__(optimizer, decay_steps, disable_lr_steps_reset)
 
     def _configure_cerebras_lrs(self, optimizer):
         from modelzoo.common.pytorch import cbtorch
 
         return cbtorch.optim.lr_scheduler.Constant(
-            optimizer, self.val, self.decay_steps, self.disable_lr_steps_reset
+            optimizer,
+            self.learning_rate,
+            self.decay_steps,
+            self.disable_lr_steps_reset,
         )
 
     def _lr_function(self, global_step):
-        return torch.tensor(self.val, device=global_step.device)
+        return torch.tensor(self.learning_rate, device=global_step.device)
 
 
-class Polynomial(LRScheduler):
+class PolynomialLR(LRScheduler):
     """
     Polynomial Decay
 
     Args:
         optimizer: The optimizer to schedule
-        learning_rate: The initial learning rate.
+        initial_learning_rate: The initial learning rate.
         end_learning_rate: The final learning rate
         decay_steps: Number of steps to perform the decay
         power: Exponent to apply to "x" (as in y=mx+b),
@@ -193,14 +197,14 @@ class Polynomial(LRScheduler):
     def __init__(
         self,
         optimizer: torch.optim.Optimizer,
-        learning_rate: float,
+        initial_learning_rate: float,
         end_learning_rate: float,
         decay_steps: int,
         power: float = 1.0,
         cycle: bool = False,
         disable_lr_steps_reset: bool = False,
     ):
-        self.learning_rate = learning_rate
+        self.initial_learning_rate = initial_learning_rate
         self.end_learning_rate = end_learning_rate
         self.power = power
         self.cycle = cycle
@@ -211,7 +215,7 @@ class Polynomial(LRScheduler):
 
         return cbtorch.optim.lr_scheduler.Polynomial(
             optimizer,
-            self.learning_rate,
+            self.initial_learning_rate,
             self.end_learning_rate,
             self.decay_steps,
             self.power,
@@ -220,7 +224,7 @@ class Polynomial(LRScheduler):
         )
 
     def _lr_function(self, global_step):
-        lr_diff = self.learning_rate - self.end_learning_rate
+        lr_diff = self.initial_learning_rate - self.end_learning_rate
         alpha = torch.tensor(
             1.0, dtype=torch.float32, device=global_step.device
         )
@@ -244,13 +248,13 @@ class Polynomial(LRScheduler):
         )
 
 
-class Exponential(LRScheduler):
+class ExponentialLR(LRScheduler):
     """
     Exponential Decay
 
     Args:
         optimizer: The optimizer to schedule
-        learning_rate: The initial learning rate.
+        initial_learning_rate: The initial learning rate.
         decay_steps: Number of steps to perform the decay
         decay_rate: The decay rate
         staircase: If True decay the learning rate at discrete intervals
@@ -259,13 +263,13 @@ class Exponential(LRScheduler):
     def __init__(
         self,
         optimizer: torch.optim.Optimizer,
-        learning_rate: float,
+        initial_learning_rate: float,
         decay_steps: int,
-        decay_rate: int,
+        decay_rate: float,
         staircase: bool = False,
         disable_lr_steps_reset: bool = False,
     ):
-        self.learning_rate = float(learning_rate)
+        self.initial_learning_rate = float(initial_learning_rate)
         self.decay_rate = decay_rate
         self.staircase = staircase
         super().__init__(optimizer, decay_steps, disable_lr_steps_reset)
@@ -275,7 +279,7 @@ class Exponential(LRScheduler):
 
         return cbtorch.optim.lr_scheduler.Exponential(
             optimizer,
-            self.learning_rate,
+            self.initial_learning_rate,
             self.decay_steps,
             self.decay_rate,
             self.staircase,
@@ -286,21 +290,33 @@ class Exponential(LRScheduler):
         power = torch.div(global_step, self.decay_steps)
         if self.staircase:
             power.floor_()
-        return torch.pow(self.decay_rate, power).mul(self.learning_rate)
+        return torch.pow(self.decay_rate, power).mul(self.initial_learning_rate)
 
 
-class InverseExponentialTimeDecay(LRScheduler):
+class InverseExponentialTimeDecayLR(LRScheduler):
+    """
+    InverseExponentialTimeDecay
+
+    Args:
+        optimizer: The optimizer to schedule
+        initial_learning_rate: The initial learning rate.
+        step_exponent: Exponential value.
+        decay_steps: Number of steps to perform the decay.
+        decay_rate: The decay rate.
+        staircase: If True decay the learning rate at discrete intervals.
+    """
+
     def __init__(
         self,
         optimizer: torch.optim.Optimizer,
-        learning_rate: float,
+        initial_learning_rate: float,
         step_exponent: int,
         decay_steps: int,
-        decay_rate: int,
+        decay_rate: float,
         staircase: bool = False,
         disable_lr_steps_reset: bool = False,
     ):
-        self.learning_rate = learning_rate
+        self.initial_learning_rate = initial_learning_rate
         self.step_exponent = step_exponent
         self.decay_rate = decay_rate
         self.staircase = staircase
@@ -311,7 +327,7 @@ class InverseExponentialTimeDecay(LRScheduler):
 
         return cbtorch.optim.lr_scheduler.InverseExponentialTimeDecay(
             optimizer,
-            self.learning_rate,
+            self.initial_learning_rate,
             self.step_exponent,
             self.decay_steps,
             self.decay_rate,
@@ -327,7 +343,7 @@ class InverseExponentialTimeDecay(LRScheduler):
             alpha.floor_()
         return torch.div(
             torch.tensor(
-                self.learning_rate,
+                self.initial_learning_rate,
                 dtype=torch.float32,
                 device=global_step.device,
             ),
@@ -335,13 +351,70 @@ class InverseExponentialTimeDecay(LRScheduler):
         )
 
 
-class CosineDecay(LRScheduler):
+class InverseSquareRootDecayLR(LRScheduler):
+    """
+    InverseSquareRootDecay
+
+    Args:
+        optimizer: The optimizer to schedule
+        initial_learning_rate: The initial learning rate.
+        scale: Multiplicative factor to scale the result.
+        warmup_steps: use initial_learning_rate for the first warmup_steps.
+    """
+
+    def __init__(
+        self,
+        optimizer: torch.optim.Optimizer,
+        initial_learning_rate: float,
+        scale: float,
+        warmup_steps: int,
+        disable_lr_steps_reset: bool = False,
+    ):
+        self.initial_learning_rate = initial_learning_rate
+        self.scale = scale
+        self.warmup_steps = warmup_steps
+        super().__init__(
+            optimizer,
+            decay_steps=None,
+            disable_lr_steps_reset=disable_lr_steps_reset,
+        )
+
+    def _configure_cerebras_lrs(self, optimizer):
+        from modelzoo.common.pytorch import cbtorch
+
+        return cbtorch.optim.lr_scheduler.InverseSquareRootDecay(
+            optimizer,
+            self.initial_learning_rate,
+            self.scale,
+            self.warmup_steps,
+            self.disable_lr_steps_reset,
+        )
+
+    def _lr_function(self, global_step):
+        return torch.div(
+            torch.tensor(
+                self.scale, dtype=torch.float32, device=global_step.device
+            ),
+            torch.sqrt(
+                torch.max(
+                    torch.tensor(
+                        self.warmup_steps,
+                        dtype=torch.float32,
+                        device=global_step.device,
+                    ),
+                    global_step,
+                )
+            ),
+        ).mul(self.initial_learning_rate)
+
+
+class CosineDecayLR(LRScheduler):
     """
     Cosine Decay
 
     Args:
         optimizer: The optimizer to schedule
-        learning_rate: The initial learning rate.
+        initial_learning_rate: The initial learning rate.
         end_learning_rate: The final learning rate
         decay_steps: Number of steps to perform the decay
     """
@@ -349,12 +422,12 @@ class CosineDecay(LRScheduler):
     def __init__(
         self,
         optimizer: torch.optim.Optimizer,
-        learning_rate: float,
+        initial_learning_rate: float,
         end_learning_rate: float,
         decay_steps: int,
         disable_lr_steps_reset: bool = False,
     ):
-        self.learning_rate = learning_rate
+        self.initial_learning_rate = initial_learning_rate
         self.end_learning_rate = end_learning_rate
 
         super().__init__(optimizer, decay_steps, disable_lr_steps_reset)
@@ -364,14 +437,14 @@ class CosineDecay(LRScheduler):
 
         return cbtorch.optim.lr_scheduler.CosineDecay(
             optimizer,
-            self.learning_rate,
+            self.initial_learning_rate,
             self.end_learning_rate,
             self.decay_steps,
             self.disable_lr_steps_reset,
         )
 
     def _lr_function(self, global_step):
-        lr_diff = self.learning_rate - self.end_learning_rate
+        lr_diff = self.initial_learning_rate - self.end_learning_rate
         # clip the steps to be at most decay_steps
 
         step = torch.minimum(
@@ -443,7 +516,7 @@ class SequentialLR(torch.optim.lr_scheduler.SequentialLR):
             res = torch.where(
                 global_step < milestone,
                 new_lr,
-                self._schedulers[idx + 1].lr_function(global_step),
+                self._schedulers[idx + 1].lr_function(global_step - milestone),
             )
             new_lr = res
         return new_lr
@@ -457,7 +530,7 @@ class SequentialLR(torch.optim.lr_scheduler.SequentialLR):
         idx = bisect_right(self._milestones, self.last_epoch)
         scheduler = self._schedulers[idx]
         if idx > 0 and self._milestones[idx - 1] == self.last_epoch:
-            scheduler.last_epoch = 0
+            scheduler.last_epoch = -1
 
         scheduler.step()
 
@@ -465,7 +538,7 @@ class SequentialLR(torch.optim.lr_scheduler.SequentialLR):
             self._last_lr = scheduler.get_last_lr()
 
 
-class PiecewiseConstant(SequentialLR):
+class PiecewiseConstantLR(SequentialLR):
     def __init__(
         self,
         optimizer,
@@ -478,11 +551,11 @@ class PiecewiseConstant(SequentialLR):
         boundaries.extend(milestones)
         for lr, b1, b2 in zip(learning_rates, boundaries[:-1], boundaries[1:]):
             schedulers.append(
-                Constant(optimizer, lr, b2 - b1, disable_lr_steps_reset)
+                ConstantLR(optimizer, lr, b2 - b1, disable_lr_steps_reset)
             )
         # Final learning rate
         schedulers.append(
-            Constant(
+            ConstantLR(
                 optimizer,
                 learning_rates[-1],
                 disable_lr_steps_reset=disable_lr_steps_reset,
@@ -492,16 +565,26 @@ class PiecewiseConstant(SequentialLR):
         super().__init__(optimizer, schedulers, milestones)
 
 
-class MultiStep(LRScheduler):
+class MultiStepLR(LRScheduler):
+    """
+    MultiStep
+
+    Args:
+        optimizer: The optimizer to schedule
+        initial_learning_rate: The initial learning rate.
+        gamma: Multiplicative factor of learning rate decay.
+        milestones: List of step indices. Must be increasing.
+    """
+
     def __init__(
         self,
         optimizer: torch.optim.Optimizer,
-        learning_rate: float,
+        initial_learning_rate: float,
         gamma: float,
         milestones: List[int],
         disable_lr_steps_reset: bool = False,
     ):
-        self.learning_rate = learning_rate
+        self.initial_learning_rate = initial_learning_rate
         self.gamma = gamma
         self.milestones = milestones
         super().__init__(
@@ -513,7 +596,7 @@ class MultiStep(LRScheduler):
 
         return cbtorch.optim.lr_scheduler.MultiStep(
             optimizer,
-            self.learning_rate,
+            self.initial_learning_rate,
             self.gamma,
             self.milestones,
             self.disable_lr_steps_reset,
@@ -521,7 +604,9 @@ class MultiStep(LRScheduler):
 
     def _lr_function(self, global_step):
         new_lr = torch.tensor(
-            self.learning_rate, dtype=torch.float32, device=global_step.device
+            self.initial_learning_rate,
+            dtype=torch.float32,
+            device=global_step.device,
         )
         for milestone in self.milestones:
             res = torch.where(
@@ -540,24 +625,26 @@ class MultiStep(LRScheduler):
         return new_lr
 
 
-class Step(LRScheduler):
+class StepLR(LRScheduler):
     """
     Step Decay
 
     Args:
         optimizer: The optimizer to schedule
-        learning_rate: The initial learning rate.
+        initial_learning_rate: The initial learning rate.
+        step_size: Period of learning rate decay.
+        gamma: Multiplicative factor of learning rate decay.
     """
 
     def __init__(
         self,
         optimizer: torch.optim.Optimizer,
-        learning_rate: float,
+        initial_learning_rate: float,
         step_size: int,
-        gamma: int,
+        gamma: float,
         disable_lr_steps_reset: bool = False,
     ):
-        self.learning_rate = float(learning_rate)
+        self.initial_learning_rate = float(initial_learning_rate)
         self.gamma = gamma
         self.step_size = step_size
         super().__init__(
@@ -569,7 +656,7 @@ class Step(LRScheduler):
 
         return cbtorch.optim.lr_scheduler.Step(
             optimizer,
-            self.learning_rate,
+            self.initial_learning_rate,
             self.gamma,
             self.step_size,
             self.disable_lr_steps_reset,
@@ -583,20 +670,30 @@ class Step(LRScheduler):
                 ),
                 torch.div(global_step, self.step_size).floor_(),
             ),
-            self.learning_rate,
+            self.initial_learning_rate,
         )
 
 
-class CosineAnnealing(LRScheduler):
+class CosineAnnealingLR(LRScheduler):
+    """
+    CosineAnnealing
+
+    Args:
+        optimizer: The optimizer to schedule
+        initial_learning_rate: The initial learning rate.
+        T_max: Maximum number of iterations.
+        eta_min: Minimum learning rate.
+    """
+
     def __init__(
         self,
         optimizer: torch.optim.Optimizer,
-        learning_rate: float,
+        initial_learning_rate: float,
         T_max: int,
         eta_min: float,
         disable_lr_steps_reset: bool = False,
     ):
-        self.learning_rate = float(learning_rate)
+        self.initial_learning_rate = float(initial_learning_rate)
         self.T_max = T_max
         self.eta_min = eta_min
         super().__init__(
@@ -608,14 +705,14 @@ class CosineAnnealing(LRScheduler):
 
         return cbtorch.optim.lr_scheduler.CosineAnnealing(
             optimizer,
-            self.learning_rate,
+            self.initial_learning_rate,
             self.T_max,
             self.eta_min,
             self.disable_lr_steps_reset,
         )
 
     def _lr_function(self, global_step):
-        lr_diff = self.learning_rate - self.eta_min
+        lr_diff = self.initial_learning_rate - self.eta_min
         a = torch.div(
             torch.mul(torch.div(global_step, self.T_max), math.pi).cos().add(1),
             2,
@@ -623,14 +720,22 @@ class CosineAnnealing(LRScheduler):
         return torch.add(torch.mul(a, lr_diff), self.eta_min)
 
 
-class Lambda(LRScheduler):
+class LambdaLR(LRScheduler):
+    """
+    CosineAnnealing
+
+    Args:
+        optimizer: The optimizer to schedule
+        initial_learning_rate: The initial learning rate.
+    """
+
     def __init__(
         self,
         optimizer: torch.optim.Optimizer,
-        learning_rate: float,
+        initial_learning_rate: float,
         disable_lr_steps_reset: bool = False,
     ):
-        self.learning_rate = learning_rate
+        self.initial_learning_rate = initial_learning_rate
         super().__init__(
             optimizer, decay_steps=None, disable_lr_steps_reset=False
         )
@@ -647,28 +752,460 @@ class Lambda(LRScheduler):
         from modelzoo.common.pytorch import cbtorch
 
         return cbtorch.optim.lr_scheduler.Lambda(
-            optimizer, self.learning_rate, self.disable_lr_steps_reset,
+            optimizer, self.initial_learning_rate, self.disable_lr_steps_reset,
+        )
+
+    def _lr_function(self, global_step):
+        new_lr = torch.tensor(
+            1.0, dtype=torch.float32, device=global_step.device,
+        )
+        lr_lambda = self.set_lr_lambda()
+        for lr in lr_lambda:
+            new_lr = torch.mul(
+                torch.mul(
+                    torch.tensor(
+                        self.initial_learning_rate,
+                        dtype=torch.float32,
+                        device=global_step.device,
+                    ),
+                    lr(global_step),
+                ),
+                new_lr,
+            )
+        return new_lr
+
+
+class CosineAnnealingWarmRestarts(LRScheduler):
+    """
+    CosineAnnealingWarmRestarts
+
+    Args:
+        optimizer: The optimizer to schedule
+        initial_learning_rate: The initial learning rate.
+        T_0: Number of iterations for the first restart.
+        T_mult: A factor increases Ti after a restart.
+        eta_min: Minimum learning rate.
+    """
+
+    def __init__(
+        self,
+        optimizer: torch.optim.Optimizer,
+        initial_learning_rate: float,
+        T_0: int,
+        T_mult: int,
+        eta_min: float,
+        disable_lr_steps_reset: bool = False,
+    ):
+        if T_mult != 1.0:
+            raise ValueError(
+                f"Unsupported value of Parameters 'T_mult' for LR scheduler type CosineAnnealingWarmRestarts, "
+                f"Only supported default T_mult value: 1.0 (SW-76459). "
+            )
+        self.initial_learning_rate = float(initial_learning_rate)
+        self.T_0 = T_0
+        self.T_mult = T_mult
+        self.eta_min = eta_min
+        super().__init__(
+            optimizer, decay_steps=None, disable_lr_steps_reset=False
+        )
+
+    def _configure_cerebras_lrs(self, optimizer):
+        from modelzoo.common.pytorch import cbtorch
+
+        return cbtorch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+            optimizer,
+            self.initial_learning_rate,
+            self.T_0,
+            self.T_mult,
+            self.eta_min,
+            self.disable_lr_steps_reset,
+        )
+
+    def _lr_function(self, global_step):
+        tensor_t_i_1 = torch.tensor(
+            self.T_0, dtype=torch.float32, device=global_step.device
+        )
+
+        tensor_t_cur_1 = global_step.float()
+        tensor_t_cur_2 = torch.sub(
+            torch.torch.mul(
+                torch.div(global_step, self.T_0).floor_(), self.T_0
+            ),
+            self.T_0,
+        )
+
+        tensor_t_mul = torch.tensor(
+            self.T_mult, dtype=torch.float32, device=global_step.device
+        )
+        nn = torch.mul(
+            torch.div(global_step, self.T_0), tensor_t_mul.sub(1)
+        ).add(1)
+        n = torch.div(torch.log(nn), torch.log(tensor_t_mul)).floor_()
+
+        tensor_t_i_3 = torch.pow(tensor_t_mul, n).mul(self.T_0)
+        tensor_t_cur_3 = torch.sub(
+            global_step,
+            torch.div(
+                torch.pow(tensor_t_mul, n).sub(1), tensor_t_mul.sub(1)
+            ).mul(self.T_0),
+        ).float()
+
+        T_i = torch.where(tensor_t_mul == 1, tensor_t_i_1, tensor_t_i_3)
+        T_cur = torch.where(
+            global_step < self.T_0,
+            tensor_t_cur_1,
+            torch.where(tensor_t_mul == 1, tensor_t_cur_2, tensor_t_cur_3),
+        )
+        lr_diff = self.initial_learning_rate - self.eta_min
+        a = torch.div(
+            torch.mul(torch.div(T_cur, T_i), math.pi).cos().add(1), 2,
+        )
+        return torch.add(torch.mul(a, lr_diff), self.eta_min)
+
+
+class MultiplicativeLR(LRScheduler):
+    """
+    Multiplicative
+
+    Args:
+        optimizer: The optimizer to schedule
+        initial_learning_rate: The initial learning rate.
+        coefficient: Multiplicative factor of learning rate.
+    """
+
+    def __init__(
+        self,
+        optimizer: torch.optim.Optimizer,
+        initial_learning_rate: float,
+        coefficient: float,
+        disable_lr_steps_reset: bool = False,
+    ):
+        self.initial_learning_rate = initial_learning_rate
+        self.coefficient = coefficient
+        super().__init__(
+            optimizer, decay_steps=None, disable_lr_steps_reset=False
+        )
+
+    def set_lr_lambda(self):
+        lr_lambda = lambda epoch: self.coefficient
+        return lr_lambda
+
+    def _configure_cerebras_lrs(self, optimizer):
+        from modelzoo.common.pytorch import cbtorch
+
+        return cbtorch.optim.lr_scheduler.Multiplicative(
+            optimizer,
+            self.initial_learning_rate,
+            self.coefficient,
+            self.disable_lr_steps_reset,
         )
 
     def _lr_function(self, global_step):
         new_lr = None
         lr_lambda = self.set_lr_lambda()
-        tmp_var = global_step
-        for lr in lr_lambda:
-            new_lr = torch.mul(
+        new_lr = torch.mul(
+            torch.pow(
                 torch.tensor(
-                    self.learning_rate,
+                    lr_lambda(global_step),
                     dtype=torch.float32,
                     device=global_step.device,
                 ),
-                lr(tmp_var),
+                global_step,
+            ),
+            self.initial_learning_rate,
+        )
+        return new_lr
+
+
+class ChainedScheduler(torch.optim.lr_scheduler.ChainedScheduler):
+    """
+    ChainedScheduler
+
+    Chains list of learning rate schedulers.
+    It takes a list of chainable learning rate schedulers and
+    performs consecutive step() functions belonging to them by just one call.
+    """
+
+    def __init__(self, *args, **kwargs):
+        if cm.use_cs():
+            pass
+
+        super().__init__(*args, **kwargs)
+        self.optimizer = self._schedulers[0].optimizer
+        self._init_step()
+
+    def _init_step(self):
+        if not cm.use_cs():
+            scheduler = self._schedulers
+            scheduler[0].last_epoch = -1
+            scheduler[0]._step_count = -1
+            scheduler[0].step()
+            lrs = scheduler[0].get_last_lr()
+            for sched in scheduler[1:]:
+                sched.last_epoch = -1
+                sched._step_count = 0
+                sched.step()
+                for idx, lr in enumerate(lrs):
+                    lrs[idx] *= (
+                        sched.get_last_lr()[idx] / sched.initial_learning_rate
+                    )
+            self._last_lr = lrs
+            # Save the new rescaled lr into optimizer
+            for idx, group in enumerate(
+                self._schedulers[-1].optimizer.param_groups
+            ):
+                group['lr'] = self._last_lr[idx]
+
+    def lr_function(self, global_step):
+        if cm.use_cs():
+            return self._lr_function(global_step)
+        else:
+            return self._lr_function(torch.tensor(global_step)).item()
+
+    def _lr_function(self, global_step):
+        new_lr = self._schedulers[0].lr_function(global_step)
+        for scheduler in self._schedulers[1:]:
+            new_lr = torch.mul(
+                new_lr,
+                torch.div(
+                    scheduler.lr_function(global_step),
+                    scheduler.initial_learning_rate,
+                ),
             )
-        return torch.where(
-            tmp_var > 0,
-            new_lr,
-            torch.tensor(
-                self.learning_rate,
-                dtype=torch.float32,
-                device=global_step.device,
+        return new_lr
+
+    def step(self):
+        if not cm.use_cs():
+            scheduler = self._schedulers
+            scheduler[0].step()
+            lrs = scheduler[0].get_last_lr()
+            for sched in scheduler[1:]:
+                sched.step()
+                for idx, lr in enumerate(lrs):
+                    lrs[idx] *= (
+                        sched.get_last_lr()[idx] / sched.initial_learning_rate
+                    )
+
+            self._last_lr = lrs
+            # Save the new rescaled lr into optimizer
+            for idx, group in enumerate(
+                self._schedulers[-1].optimizer.param_groups
+            ):
+                group['lr'] = self._last_lr[idx]
+
+
+class CyclicLR(LRScheduler):
+    """
+    Cyclic
+
+    Args:
+        optimizer: The optimizer to schedule.
+        base_lr: Initial learning rate which is the lower boundary in the cycle.
+        max_lr: Upper learning rate boundaries in the cycle.
+        step_size_up: Number of training iterations in the increasing half of a cycle.
+        step_size_down: Number of training iterations in the decreasing half of a cycle.
+        mode: One of {triangular, triangular2, exp_range}.
+        gamma: Constant in 'exp_range' scaling function: gamma**(cycle iterations).
+        scale_mode: Defines whether scale_fn is evaluated on cycle number or cycle iterations.
+    """
+
+    def __init__(
+        self,
+        optimizer: torch.optim.Optimizer,
+        base_lr: float,
+        max_lr: float,
+        step_size_up: int,
+        step_size_down: int,
+        mode: string,
+        gamma: float,
+        scale_mode: string,
+        disable_lr_steps_reset: bool = False,
+    ):
+        self.base_lr = base_lr
+        self.max_lr = max_lr
+        self.step_size_up = step_size_up
+        self.step_size_down = step_size_down
+        self.mode = mode
+        self.gamma = gamma
+        self.scale_mode = scale_mode
+        if self.step_size_down == None:
+            self.step_size_down = step_size_up
+        super().__init__(
+            optimizer, decay_steps=None, disable_lr_steps_reset=False
+        )
+
+    def _triangular_scale_fn(self, x):
+        return 1.0
+
+    def _triangular2_scale_fn(self, x):
+        return torch.div(
+            torch.tensor(1, dtype=torch.float32, device=x.device),
+            torch.pow(
+                torch.tensor(2, dtype=torch.float32, device=x.device),
+                torch.sub(x, 1),
             ),
         )
+
+    def _exp_range_scale_fn(self, x):
+        return torch.pow(
+            torch.tensor(self.gamma, dtype=torch.float32, device=x.device), x
+        )
+
+    def _configure_cerebras_lrs(self, optimizer):
+        from modelzoo.common.pytorch import cbtorch
+
+        return cbtorch.optim.lr_scheduler.CyclicLR(
+            optimizer,
+            self.base_lr,
+            self.max_lr,
+            self.step_size_up,
+            self.step_size_down,
+            self.mode,
+            self.gamma,
+            self.scale_mode,
+            self.disable_lr_steps_reset,
+        )
+
+    def set_scale_fn(self):
+        scale_fn = None
+        if self.mode == 'triangular':
+            scale_fn = self._triangular_scale_fn
+            self.scale_mode = 'cycle'
+        elif self.mode == 'triangular2':
+            scale_fn = self._triangular2_scale_fn
+            self.scale_mode = 'cycle'
+        else:
+            scale_fn = self._exp_range_scale_fn
+            self.scale_mode = 'iterations'
+        return scale_fn
+
+    def _lr_function(self, global_step):
+        scale_fn = self.set_scale_fn()
+        total_size = self.step_size_up + self.step_size_down
+        step_ratio = self.step_size_up / total_size
+        cycle = torch.floor(torch.div(global_step, total_size).add(1))
+        x = torch.sub(torch.div(global_step, total_size), cycle).add(1)
+        scale_factor = torch.where(
+            x <= step_ratio,
+            torch.div(x, step_ratio),
+            torch.div(torch.sub(x, 1), torch.sub(step_ratio, 1)),
+        )
+
+        base_height = torch.mul((scale_factor), (self.max_lr - self.base_lr))
+        if self.scale_mode == "cycle":
+            return torch.add(
+                torch.mul(base_height, scale_fn(cycle)), self.base_lr
+            )
+        else:
+            return torch.add(
+                torch.mul(base_height, scale_fn(global_step)), self.base_lr,
+            )
+
+
+class OneCycleLR(LRScheduler):
+    """
+    OneCycle
+
+    Args:
+        optimizer: The optimizer to schedule
+        initial_learning_rate: Initial learning rate. Compared with PyTorch, this is equivalent to max_lr / div_factor.
+        max_lr: Upper learning rate boundaries in the cycle.
+        total_steps: The total number of steps in the cycle.
+        pct_start: The percentage of the cycle (in number of steps) spent increasing the learning rate.
+        final_div_factor: Determines the minimum learning rate via min_lr = initial_lr/final_div_factor.
+        three_phase: If True, use a third phase of the schedule to annihilate the learning rate
+        anneal_strategy: Specifies the annealing strategy: “cos” for cosine annealing, “linear” for linear annealing.
+    """
+
+    def __init__(
+        self,
+        optimizer: torch.optim.Optimizer,
+        initial_learning_rate: float,
+        max_lr: float,
+        total_steps: int,
+        pct_start: float,
+        final_div_factor: float,
+        three_phase: bool,
+        anneal_strategy: string,
+        disable_lr_steps_reset: bool = False,
+    ):
+        self.initial_learning_rate = initial_learning_rate
+        self.max_lr = max_lr
+        self.total_steps = total_steps
+        self.pct_start = pct_start
+        self.final_div_factor = final_div_factor
+        self.three_phase = three_phase
+        self.anneal_strategy = anneal_strategy
+        super().__init__(
+            optimizer, decay_steps=None, disable_lr_steps_reset=False
+        )
+
+    def _configure_cerebras_lrs(self, optimizer):
+        from modelzoo.common.pytorch import cbtorch
+
+        return cbtorch.optim.lr_scheduler.OneCycleLR(
+            optimizer,
+            self.initial_learning_rate,
+            self.max_lr,
+            self.total_steps,
+            self.pct_start,
+            self.final_div_factor,
+            self.three_phase,
+            self.anneal_strategy,
+            self.disable_lr_steps_reset,
+        )
+
+    def _annealing_cos(self, start, end, pct):
+        "Cosine anneal from `start` to `end` as pct goes from 0.0 to 1.0."
+        cos_out = torch.mul(pct, math.pi).cos().add(1)
+        return torch.add(torch.mul(cos_out, ((start - end) / 2.0)), end)
+
+    def _annealing_linear(self, start, end, pct):
+        "Linearly anneal from `start` to `end` as pct goes from 0.0 to 1.0."
+        return torch.add(torch.mul(pct, (end - start)), start)
+
+    def _lr_function(self, global_step):
+
+        min_lr = self.initial_learning_rate / self.final_div_factor
+        if self.three_phase:
+            milestones = [
+                self.pct_start * self.total_steps - 1,
+                2 * self.pct_start * self.total_steps - 2,
+                self.total_steps - 1,
+            ]
+            lr_start = [
+                self.initial_learning_rate,
+                self.max_lr,
+                self.initial_learning_rate,
+            ]
+            lr_end = [self.max_lr, self.initial_learning_rate, min_lr]
+        else:
+            milestones = [
+                self.pct_start * self.total_steps - 1,
+                self.total_steps - 1,
+            ]
+            lr_start = [self.initial_learning_rate, self.max_lr]
+            lr_end = [self.max_lr, min_lr]
+
+        if self.anneal_strategy == "cos":
+            anneal_func = self._annealing_cos
+        else:
+            anneal_func = self._annealing_linear
+
+        start_step = 0
+        pct = torch.div(
+            torch.sub(global_step, start_step), (milestones[0] - start_step),
+        )
+        lr = anneal_func(lr_start[0], lr_end[0], pct)
+        start_step = milestones[0]
+        for idx, milestone in enumerate(milestones[1:]):
+            pct = torch.div(
+                torch.sub(global_step, start_step), (milestone - start_step),
+            )
+            lr = torch.where(
+                global_step > milestones[idx],
+                anneal_func(lr_start[idx + 1], lr_end[idx + 1], pct),
+                lr,
+            )
+            start_step = milestone
+        return lr

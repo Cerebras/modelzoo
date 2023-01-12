@@ -62,17 +62,17 @@ Regardless of the setting of this flag, VTS is not used for running in the eval 
 In order to take full advantage of the potential speedups from the VTS, it is helpful to batch samples such that every sample in a given batch has a similar length.
 Accordingly, for BERT pre-training we bucket samples of similar lengths together before batching. The boundaries between different buckets are defined by `train_input.buckets`.
 For more details about VTS, please refer to [PyTorch Variable Tensor Shape
-](https://docs.cerebras.net/en/private/pytorch-docs/pytorch-vts.html) documentation page.
+](https://docs.cerebras.net/en/latest/pytorch-docs/pytorch-vts.html) documentation page.
 
 ## Multi-Replica data parallel training  
 When training on the Cerebras System, the `--multireplica` flag can be used to perform data-parallel training
-across multiple copies of the model at the same time. For more details about this feature, please refer to [Multi-Replica Data Parallel Training](https://docs.cerebras.net/en/private/general/multi-replica-data-parallel-training.html) documentation page.
+across multiple copies of the model at the same time. For more details about this feature, please refer to [Multi-Replica Data Parallel Training](https://docs.cerebras.net/en/latest/general/multi-replica-data-parallel-training.html) documentation page.
 
 # Structure of the code
 * `configs/`: YAML configuration files.
 * `fine_tuning/`: Code for fine-tuning the BERT model.
 * `input/`: Input pipeline implementation based on the [Open Web Text dataset](https://skylion007.github.io/OpenWebTextCorpus/). This directory also contains the scripts you can use to download and prepare the Open Web Text dataset. Vocab files are located in `transformers/vocab/`.
-* `model.py`: Model implementation leveraging HuggingFace's [`BertForPreTraining`](https://github.com/huggingface/transformers/blob/v4.21.0/src/transformers/models/bert/modeling_bert.py#L1053) class.
+* `model.py`: Provides a common wrapper for all models, using the `PyTorchBaseModel` class, which interfaces with  model-specific code. In this repo the model-specific code is in `bert_pretrain_models.py` and `bert_finetune_models.py`. The wrapper provides a common interface for handling the function call of the model with its specific data format. It also provides a common interface to use the same format of configuration files from `configs/` to construct various models.
 * `data.py`: The entry point to the data input pipeline code.
 * `run.py`: Training script. Performs training and validation.
 * `utils.py`: Miscellaneous helper functions.

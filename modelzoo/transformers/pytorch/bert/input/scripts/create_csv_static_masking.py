@@ -177,6 +177,11 @@ def parse_args():
     parser.add_argument(
         "--seed", type=int, default=0, help="random seed. Defaults to 0.",
     )
+    parser.add_argument(
+        "--sop_labels",
+        action="store_true",
+        help="generate SOP labels instead of NSP",
+    )
 
     return parser.parse_args()
 
@@ -204,6 +209,7 @@ def create_csv(
     seed=None,
     spacy_model="en",
     input_files_prefix="",
+    sop_labels=False,
 ):
 
     num_output_files = max(num_output_files, 1)
@@ -263,6 +269,7 @@ def create_csv(
             seed=seed,
             spacy_model=spacy_model,
             input_files_prefix=input_files_prefix,
+            sop_labels=sop_labels,
         )
 
     writer_index = 0
@@ -325,6 +332,7 @@ def main():
         filename_initial_index=args.init_findex,
         output_dir=args.output_dir,
         num_output_files=args.num_output_files,
+        sop_labels=args.sop_labels,
     )
     print("total_written = ", total_written, flush=True)
 

@@ -47,6 +47,8 @@ class ScalarSummary(CBSummary):
         """
         super().__init__(name)
 
+        self._output_idx = None
+
         if reduction is None:
             self._reduction_fn = lambda x: x  # no-op
         else:

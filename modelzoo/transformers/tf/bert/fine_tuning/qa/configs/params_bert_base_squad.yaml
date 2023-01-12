@@ -2,17 +2,24 @@
 
 ### Input
 train_input:
-    data_processor: QuestionAnsweringDataProcessor
-    data_file: "./input/data/train.tf_record"
-    vocab_file: '../../../../vocab/google_research_uncased_L-12_H-768_A-12.txt'
+    data_processor: "QuestionAnsweringDataProcessor"
+    data_file: "./squad/uncased_msl384_ds128_mql64/train.tf_record"
+    vocab_file: "../../../../vocab/google_research_uncased_L-12_H-768_A-12.txt"
     max_sequence_length: 384
     batch_size: 32
     shuffle: True
 
+eval_input:
+    data_processor: "QuestionAnsweringDataProcessor"
+    data_file: "./squad/uncased_msl384_ds128_mql64/eval.tf_record"
+    vocab_file: "../../../../vocab/google_research_uncased_L-12_H-768_A-12.txt"
+    max_sequence_length: 384
+    batch_size: 32
+
 predict_input:
-    data_processor: QuestionAnsweringDataProcessor
-    data_file: "./input/data/predict.tf_record"
-    vocab_file: '../../../../vocab/google_research_uncased_L-12_H-768_A-12.txt'
+    data_processor: "QuestionAnsweringDataProcessor"
+    data_file: "./squad/uncased_msl384_ds128_mql64/predict.tf_record"
+    vocab_file: "../../../../vocab/google_research_uncased_L-12_H-768_A-12.txt"
     max_sequence_length: 384
     batch_size: 1
 
@@ -43,4 +50,3 @@ runconfig:
     max_steps: 10000
     save_summary_steps: 100
     save_checkpoints_steps: 1000
-    tf_random_seed: 1202

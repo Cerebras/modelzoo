@@ -18,7 +18,7 @@
 train_input:
     data_processor: BertMlmOnlyTfRecordsDynamicMaskProcessor
     data_dir: './input/owt/train_512k_cased_msl512_unmasked'
-    vocab_file: '../../vocab/google_research_cased_L-12_H-768_A-12.txt'
+    vocab_file: "../../vocab/google_research_cased_L-12_H-768_A-12.txt"
     do_lower: False
     max_sequence_length: 512
     max_predictions_per_seq: 80  # maximum number of masked LM predictions per sequence.
@@ -39,7 +39,7 @@ model:
     # Encoder
     num_hidden_layers: 12
     dropout_rate: 0.1
-    layer_norm_epsilon: 1e-5
+    layer_norm_epsilon: 1.0e-5
 
     # Encoder - Attention
     num_heads: 12
@@ -62,7 +62,7 @@ model:
 optimizer:
     optimizer_type: 'adamw' # {'sgd', 'momentum', 'adam', 'adamw'}
     weight_decay_rate: 0.01
-    epsilon: 1e-6
+    epsilon: 1.0e-6
     max_gradient_norm: 1.0
     disable_lr_steps_reset: True
     learning_rate:

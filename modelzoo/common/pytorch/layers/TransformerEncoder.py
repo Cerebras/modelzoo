@@ -49,17 +49,28 @@ class TransformerEncoder(nn.Module):
 
         assert not enable_nested_tensor, "Nested tensors are not supported."
         self.layers = _get_clones(encoder_layer, num_layers)
-        # Re-initialize all layers to get new set of weights for each layer
-        for layer in self.layers:
-            layer._reset_parameters()
         self.num_layers = num_layers
         self.norm = norm
+        # Re-initialize all layers to get new set of weights for each layer
+        self.__reset_parameters()
+
+    def reset_parameters(self):
+        self.__reset_parameters()
+
+    def __reset_parameters(self):
+        for layer in self.layers:
+            layer.reset_parameters()
+        if self.norm:
+            if hasattr(self.norm, 'bias'):
+                self.norm.bias.data.zero_()
+            self.norm.weight.data.fill_(1.0)
 
     def forward(
         self,
         src: Tensor,
         mask: Optional[Tensor] = None,
         src_key_padding_mask: Optional[Tensor] = None,
+        self_attn_position_bias: Optional[Tensor] = None,
     ) -> Tensor:
         r"""Pass the input through the encoder layers in turn.
 
@@ -78,6 +89,7 @@ class TransformerEncoder(nn.Module):
                 output,
                 src_mask=mask,
                 src_key_padding_mask=src_key_padding_mask,
+                self_attn_position_bias=self_attn_position_bias,
             )
 
         if self.norm is not None:

@@ -1,20 +1,20 @@
 #BERT-NER-Base
 
 train_input:
-    data_processor: BertTokenClassifierDataProcessor
-    data_dir: "./bc5cdr-chem-csv/train"
+    data_processor: "BertTokenClassifierDataProcessor"
+    data_dir: "./language/datasets/ner-pt/bc5cdr-chem-csv/train"
     vocab_file: "./vocab/Pubmed_fulltext_vocab.txt"
-    label_vocab_file: "./bc5cdr-chem-csv/train/label2id.json"
+    label_vocab_file: "./vocab/Pubmed_fulltext_vocab.txt"
     max_sequence_length: 128
     batch_size: 8
     shuffle: True
     num_workers: 1
 
 eval_input:
-    data_processor: BertTokenClassifierDataProcessor
-    data_dir: "./bc5cdr-chem-csv/dev"
+    data_processor: "BertTokenClassifierDataProcessor"
+    data_dir: "./language/datasets/ner-pt/bc5cdr-chem-csv/dev"
     vocab_file: "./vocab/Pubmed_fulltext_vocab.txt"
-    label_vocab_file: "./bc5cdr-chem-csv/train/label2id.json"
+    label_vocab_file: "./vocab/Pubmed_fulltext_vocab.txt"
     max_sequence_length: 128
     batch_size: 8
     shuffle: False
@@ -32,10 +32,11 @@ model:
     num_classes: 7
     mixed_precision: True
     compute_eval_metrics: True
+    include_padding_in_loss: True
 
 optimizer:
     optimizer_type: "Adam" # {"SGD", "AdamW", "Adam"}
-    epsilon: 1e-6
+    epsilon: 1.e-6
     max_gradient_norm: 1.0
     disable_lr_steps_reset: True
     learning_rate:
@@ -58,5 +59,4 @@ runconfig:
     show_debug_metrics: False
     save_losses: True
     model_dir: "./model_dir"
-    save_initial_checkpoint: True
     eval_steps: 759

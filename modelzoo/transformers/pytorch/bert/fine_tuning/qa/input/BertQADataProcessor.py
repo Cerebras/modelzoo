@@ -22,6 +22,7 @@ import numpy as np
 import torch
 
 from modelzoo.common.pytorch import cb_model as cm
+from modelzoo.common.pytorch.run_utils import half_dtype_instance
 from modelzoo.transformers.data_processing.utils import convert_str_to_int_list
 from modelzoo.transformers.pytorch.bert.input.utils import (
     get_meta_data,
@@ -110,7 +111,9 @@ class BertQADataProcessor(torch.utils.data.IterableDataset):
 
         # Store params.
         self.mp_type = (
-            torch.float16 if params.get("mixed_precision") else torch.float32
+            half_dtype_instance.half_dtype
+            if params.get("mixed_precision")
+            else torch.float32
         )
         self.data_buffer = []
         self.csv_files_per_task_per_worker = []

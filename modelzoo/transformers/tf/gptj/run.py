@@ -28,6 +28,7 @@ from modelzoo.common.tf.run_utils import (
     get_csrunconfig_dict,
     is_cs,
     save_params,
+    setup_environment,
     update_input_checkpoint_steps,
     update_params_from_args,
 )
@@ -192,7 +193,8 @@ def run(
     use_cs = is_cs(runconfig_params)
     csrunconfig_dict = get_csrunconfig_dict(runconfig_params)
     stack_params = get_custom_stack_params(params)
-
+    # set environment for determinism
+    setup_environment(params)
     # prep cs1 run environment, run config and estimator
     check_env(runconfig_params)
     est_config = CSRunConfig(

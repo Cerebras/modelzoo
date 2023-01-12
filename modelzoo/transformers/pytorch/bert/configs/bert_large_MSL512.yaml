@@ -1,0 +1,93 @@
+# Copyright 2022 Cerebras Systems.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# BERT-Large, MSL:512, with VTS
+
+train_input:
+    data_processor: "BertCSVDynamicMaskDataProcessor"
+    data_dir: "./language/datasets/owt_pretraining_csv/train_512k_uncased_msl512/"
+    vocab_file: "../../vocab/google_research_uncased_L-12_H-768_A-12.txt"
+    max_sequence_length: 512
+    max_predictions_per_seq: 80
+    batch_size: 256 # for GPU(16GB) set batch_size: 4
+                    # 4 * 64 = 256 with grad_accum_steps: 64
+    whole_word_masking: False
+    do_lower: True
+    masked_lm_prob: 0.15
+    shuffle: True
+    shuffle_seed: 1
+    num_workers: 8
+    prefetch_factor: 10
+    persistent_workers: True
+    dynamic_mlm_scale: True
+    buckets: [87, 158, 239, 325, 415]
+
+eval_input:
+    data_processor: "BertCSVDynamicMaskDataProcessor"
+    data_dir: "./language/datasets/owt_pretraining_csv/val_uncased_msl512/"
+    vocab_file: "../../vocab/google_research_uncased_L-12_H-768_A-12.txt"
+    max_sequence_length: 512
+    max_predictions_per_seq: 80
+    batch_size: 256 # for GPU(16GB) set batch_size: 4
+    whole_word_masking: False
+    do_lower: True
+    masked_lm_prob: 0.15
+    shuffle: False
+    shuffle_seed: 1 # also for deterministic masking
+    num_workers: 2
+    prefetch_factor: 10
+    persistent_workers: True
+
+model:
+    vocab_size: 30522
+    hidden_size: 1024
+    num_hidden_layers: 24
+    num_heads: 16
+    filter_size: 4096
+    encoder_nonlinearity: "gelu" # {"gelu", "relu", "silu", "gelu_new"}
+    dropout_rate: 0.1
+    attention_dropout_rate: 0.1
+    max_position_embeddings: 512
+    layer_norm_epsilon: 1.0e-5
+    mlm_loss_weight: 0.019
+    mixed_precision: True
+    enable_vts: True
+
+optimizer:
+    optimizer_type: "AdamW"
+    weight_decay_rate: 0.01
+    disable_lr_steps_reset: True
+    learning_rate:
+       - scheduler: "Linear"
+         initial_learning_rate: 0.0
+         end_learning_rate: 0.0001
+         steps: 10000
+       - scheduler: "Linear"
+         initial_learning_rate: 0.0001
+         end_learning_rate: 0.0
+         steps: 1000000
+    loss_scaling_factor: "dynamic"
+    max_gradient_norm: 1.0
+#    grad_accum_steps: 64 # helps fit in GPU memory
+
+runconfig:
+    max_steps: 900000
+    log_steps: 100
+    checkpoint_steps: 5000
+    seed: 1
+    model_dir: "./model_dir"
+    show_debug_metrics: False
+    save_losses: True
+    save_initial_checkpoint: True
+    eval_steps: 74

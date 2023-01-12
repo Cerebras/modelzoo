@@ -1,18 +1,19 @@
 # BertSummarizationModel config file. Base Bert backbone is used.
 # Parameters tuned with bert-base pre-trained weights used for init.
 
+
 ### Input
 train_input:
-    data_dir: "./input/cnn_dailymail/train/"
-    data_processor: BertSumTfRecordsProcessor
+    data_dir: "./language/datasets/extractive_summarization/cnn_dailymail/train/"
+    data_processor: "BertSumTfRecordsProcessor"
     vocab_file: "../../../../vocab/google_research_uncased_L-12_H-768_A-12.txt"
     max_sequence_length: 512
     max_cls_tokens: 50
     batch_size: 10
 
 eval_input:
-    data_dir: "./input/cnn_dailymail/eval/"
-    data_processor: BertSumTfRecordsProcessor
+    data_dir: "./language/datasets/extractive_summarization/cnn_dailymail/eval/"
+    data_processor: "BertSumTfRecordsProcessor"
     vocab_file: "../../../../vocab/google_research_uncased_L-12_H-768_A-12.txt"
     max_sequence_length: 512
     max_cls_tokens: 50
@@ -32,7 +33,7 @@ model:
 
 ### Optimization
 optimizer:
-    optimizer_type: "adam"
+    optimizer_type: "adam" # {"sgd", "momentum", "adam", "adamw"}
     beta_1: 0.9
     beta_2: 0.999
     learning_rate:
@@ -40,6 +41,7 @@ optimizer:
           scheduler: "Linear"
           initial_learning_rate: 0.0
           end_learning_rate: 0.00004
+    loss_scaling_factor: "dynamic"
     log_summaries: True
 
 ### Cerebras parameters
@@ -49,6 +51,4 @@ runconfig:
     save_checkpoints_steps: 1000
     eval_steps: 0 # eval_steps <= 0 means we use all of the eval data
     keep_checkpoint_max: 3
-    tf_random_seed: 1202
     throttle_secs: 0
-    enable_gpu_optimizations: False

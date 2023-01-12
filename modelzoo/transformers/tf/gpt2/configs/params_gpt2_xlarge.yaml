@@ -1,0 +1,77 @@
+# GPT-2 xlarge model (1558M parameters)
+
+### Input
+train_input:
+    data_processor: "GptTfRecordsProcessor"
+    data_dir: "./language/datasets/owt_pretraining_gpt/train_8M_msl1024/"
+    vocab_size: 50257
+    max_sequence_length: 1024
+    shuffle: False # for reproducibility
+    repeat: True
+    # For high utilization in weight streaming, we estimate batch size >96 seqs
+    batch_size: 96
+    use_multiple_workers: False  # Set to True when using multiple workers on CS-1.
+
+eval_input:
+    data_processor: "GptTfRecordsProcessor"
+    data_dir: "./language/datasets/owt_pretraining_gpt/val_msl1024/"
+    vocab_size: 50257
+    max_sequence_length: 1024
+    batch_size: 96
+
+### Model
+model:
+    # Embedding
+    hidden_size: 1600
+    use_position_embedding: True
+    position_embedding_type: "learned"
+    share_embedding_weights: True
+    # embedding_initializer: "uniform"
+    max_position_embeddings: 1024
+
+    # Encoder
+    num_hidden_layers: 48
+    dropout_rate: 0.0
+    layer_norm_epsilon: 1.0e-5 # change to 1.0e-12 for single precision training
+
+    # Encoder - Attention
+    num_heads: 16
+    attention_type: "scaled_dot_product"
+    attention_dropout_rate: 0.0
+    use_projection_bias_in_attention: True
+    use_ffn_bias_in_attention: True
+
+    # Encoder - ffn
+    filter_size: 6400
+    nonlinearity: "gelu"
+    use_ffn_bias: True
+
+    # Task-specific
+    use_bias_in_output: False
+
+    # Cerebras parameters
+    mixed_precision: True
+    boundary_casting: False
+    tf_summary: False
+    precision_opt_level: 0
+
+### Optimization
+optimizer:
+    # TODO: Adjust opt hparams (actual training config was not released)
+    optimizer_type: "adamw"
+    weight_decay_rate: 0.01
+    max_gradient_norm: 1.0
+    learning_rate: 2.0e-4
+    loss_scaling_factor: "dynamic"  # Change to "tf_dynamic" on GPU
+    log_summaries: True
+
+### Cerebras parameters
+runconfig:
+    max_steps: 200000
+    save_summary_steps: 1
+    tf_random_seed: 0
+    validate_only: False
+    compile_only: False
+    cs_ip: 1.1.1.1
+    mode: "train"
+

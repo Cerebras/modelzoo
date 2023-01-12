@@ -93,12 +93,8 @@ class AdamBase(CSOptimizer):
                     beta1, beta2 = group["betas"]
 
                     # beta1 ^ step, initialized for used on step 1
-                    state["beta1_power"] = torch.tensor(beta1).to(
-                        p.device, copy=True
-                    )
-                    state["beta2_power"] = torch.tensor(beta2).to(
-                        p.device, copy=True
-                    )
+                    state["beta1_power"] = torch.tensor(beta1).to(p.device)
+                    state["beta2_power"] = torch.tensor(beta2).to(p.device)
 
     def step(self, closure=None):
         """

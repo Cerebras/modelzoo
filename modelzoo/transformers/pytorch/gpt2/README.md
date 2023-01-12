@@ -10,7 +10,9 @@ This directory contains the Pytorch ML reference for GPT-2 model.
   - [Steps for running model training](#steps-for-running-model-training)
   - [Key features from CSoft platform used in this reference implementation](#key-features-from-csoft-platform-used-in-this-reference-implementation)
   - [Structure of the code](#structure-of-the-code)
-  - [Prepare the data](#prepare-the-data)
+  - [Download and prepare the dataset](#download-and-prepare-the-dataset)
+    - [Download](#download)
+      - [OpenWebText dataset](#openwebtext-dataset)
       - [GPT-2 DataProcessor output](#gpt-2-dataprocessor-output)
   - [GPT-2 input function](#gpt-2-input-function)
       - [GPT-2 features dictionary](#gpt-2-features-dictionary)
@@ -60,19 +62,39 @@ For more details on Cerebras execution modes, see [this explanation](https://doc
 ## Structure of the code
 
 -   `configs/`: YAML configuration files.
--   `input/`: Input pipeline implementation. 
+-   `input/`: Input pipeline implementation.
 -   `data.py`: The entry point to the data input pipeline code. Defines `train_input_dataloader`.
--   `model.py`: The entry point to the model. Defines `Gpt2Model` which supports GPT-2. 
+-   `model.py`: The entry point to the model. Defines `Gpt2Model` which supports GPT-2.
 -   `run.py`: Training script. Performs training and validation.
 -   `utils.py`: Miscellaneous scripts to parse the `params` dictionary from the YAML files.
 
-## Prepare the data
+# Download and prepare the dataset
 
-You need to download your raw data and create preprocessed dataloader using [`create_hdf5_dataset.py`](input/scripts/create_hdf5_dataset.py). 
+## Download
+
+### OpenWebText dataset
+
+The scripts for downloading and preprocessing OpenWebText dataset: [https://skylion007.github.io/OpenWebTextCorpus/](https://skylion007.github.io/OpenWebTextCorpus/) are located [here](../../data_processing/scripts/owt/).
+
+Start by downloading the OWT dataset by accessing the following link from a browser:
+
+```url
+https://drive.google.com/uc?id=1EA5V0oetDCOke7afsktL_JDQ-ETtNOvx
+```
+
+and manually download the `tar.xz` file from that location to your preferred local directory.
+
+> **NOTE**: Currently a server side issue with the OWT site prevents using the below [extract.sh](../../data_processing/scripts/owt/extract.sh) shell script to download this tar file. We will update the script when this issue resolved.
+
+You need to download your raw data and create preprocessed dataloader using [`create_hdf5_dataset.py`](input/scripts/create_hdf5_dataset.py).
+
+Example:<br />
+`singularity shell /path/to/cbcore_image/cbcore.sif`<br />
+`singularity cbcore.sif:~> python create_hdf5_dataset.py --metadata_files /path/to/meta_file/train_512k.txt --vocab_file /path/to/vocab_file/vocab.bpe --encoder_file /path/to/encode_file/encoder.json --output_dir /path/to/output_dir`
 
 #### GPT-2 DataProcessor output
-  The `GptHDF5DataProcessor` class in [`GptHDF5DataProcessor.py`](input/GptHDF5DataProcessor.py) creates `example_dict` iterative from the `self.features_list` which is returned on the call iteratively. 
- 
+  The `GptHDF5DataProcessor` class in [`GptHDF5DataProcessor.py`](input/GptHDF5DataProcessor.py) creates `example_dict` iterative from the `self.features_list` which is returned on the call iteratively.
+
 ## GPT-2 input function
 
 If you want to use your own data loader with this example code, then this section describes the input data format expected by `Gpt2Model` class defined in [model.py](./model.py). The `Gpt2Model` supports GPT-2.
@@ -128,16 +150,22 @@ python run.py --mode train --params /path/to/yaml --model_dir /path/to/model_dir
 
 In order to train the model, you need to provide a yaml config file. Some popular yaml [configs](configs/) files are listed below for reference. Also, feel free to create your own following these examples:
 
+Configs below are meant to be run on Pipeline mode using Appliance mode and Kubernetes flow. Slurm workflow is available as a legacy support.
 **YAML config file differences**:
 
-- `params_gpt2_small.yaml` have the standard gpt2-base config with `hidden_size=768`, `num_hidden_layers=12`, `num_heads=12`
-- `params_gpt2_medium.yaml` have the standard gpt2-medium config with `hidden_size=1024`, `num_hidden_layers=24`, `num_heads=16`
-- `params_gpt2_large.yaml` have the standard gpt2-large config with `hidden_size=1280`, `num_hidden_layers=36`, `num_heads=20`
-- `params_gpt2_xl_ws_early_access.yaml` have the standard gpt2-extra large config (The GPT2) with `hidden_size=1600`, `num_hidden_layers=48`, `num_heads=16`. Works in Weight Streaming mode.
+- [params_gpt2_small.yaml](./configs/params_gpt2_small.yaml): A 117M parameter 
+model with the standard gpt2-base config with `hidden_size=768`, 
+`num_hidden_layers=12`, `num_heads=12`.
+- [params_gpt2_medium.yaml](./configs/params_gpt2_medium.yaml): A 345M parameter model with the standard gpt2-medium config with `hidden_size=1024`, `num_hidden_layers=24`, `num_heads=16`.
+- [params_gpt2_large.yaml](./configs/params_gpt2_large.yaml): A 774M parameter model with the standard gpt2-large config with `hidden_size=1280`, `num_hidden_layers=36`, `num_heads=20`.
 
-All configs are meant to be run on Pipeline mode using Appliance mode and Kubernetes flow. Slurm workflow is available as a legacy support.
+Following configs are meant for running in Weight Streaming mode with Appliance mode and Kubernetes:
+
+- [params_gpt2_small_ws.yaml](./configs/params_gpt2_small_ws.yaml) have the standard gpt2-base config with `hidden_size=768`, `num_hidden_layers=12`, `num_heads=12`, for Weight Streaming mode.
+- [params_gpt2_large.yaml](./configs/params_gpt2_large.yaml) have the standard gpt2-large config with `hidden_size=1280`, `num_hidden_layers=36`, `num_heads=20`, for Weight Streaming mode.
+- [params_gpt2_xl.yaml](./configs/params_gpt2_xl.yaml) have the standard gpt2-xl config with `hidden_size=1600`, `num_hidden_layers=48`, `num_heads=16`, for Weight Streaming mode.
+
 
 ## References
 
 **Reference**: Radford, A. et al. (2019). [Language Models are Unsupervised Multitask Learners](https://d4mucfpksywv.cloudfront.net/better-language-models/language-models.pdf).
-

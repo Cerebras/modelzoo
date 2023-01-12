@@ -133,6 +133,11 @@ def create_arg_parser(default_model_dir):
         default=None,
         help="Force model to run on a specific device (e.g., --device /gpu:0)",
     )
+    parser.add_argument(
+        "--checkpoint_path",
+        default=None,
+        help="Checkpoint to initialize weights from.",
+    )
 
     return parser
 
@@ -218,6 +223,7 @@ def run(
         est.evaluate(
             input_fn=eval_input_fn,
             steps=runconfig_params["eval_steps"],
+            checkpoint_path=runconfig_params["checkpoint_path"],
             use_cs=use_cs,
         )
     elif runconfig_params["mode"] == "eval_all":

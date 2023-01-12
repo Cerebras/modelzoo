@@ -14,44 +14,57 @@
 
 from modelzoo.common.pytorch.metrics import RougeScoreMetric
 from modelzoo.common.pytorch.PyTorchBaseModel import PyTorchBaseModel
-from modelzoo.transformers.pytorch.bert.utils import check_unused_model_params
-from modelzoo.transformers.pytorch.huggingface_common.modeling_bert import (
-    BertConfig,
-    BertSummarization,
+from modelzoo.transformers.pytorch.bert.bert_finetune_models import (
+    BertForSummarization,
+    BertForSummarizationLoss,
 )
+from modelzoo.transformers.pytorch.bert.utils import check_unused_model_params
 
 
 class BertSummarizationModel(PyTorchBaseModel):
     def __init__(self, params, device=None):
         self.params = params
         model_params = self.params["model"].copy()
-        self.model = BertSummarization(
-            BertConfig(
-                vocab_size=model_params.pop("vocab_size"),
-                hidden_size=model_params.pop("hidden_size"),
-                num_hidden_layers=model_params.pop("num_hidden_layers"),
-                num_attention_heads=model_params.pop("num_heads"),
-                intermediate_size=model_params.pop("filter_size"),
-                hidden_act=model_params.pop("encoder_nonlinearity"),
-                hidden_dropout_prob=model_params.pop("dropout_rate"),
-                attention_probs_dropout_prob=model_params.pop(
-                    "attention_dropout_rate"
-                ),
-                max_position_embeddings=model_params.pop(
-                    "max_position_embeddings"
-                ),
-                layer_norm_eps=float(model_params.pop("layer_norm_epsilon")),
-                num_labels=2,  # binary classification.
-            ),
-            loss_weight=model_params.pop("loss_weight"),
-            use_cls_bias=model_params.pop("use_cls_bias"),
+        dropout_rate = model_params.pop("dropout_rate")
+        embedding_dropout_rate = model_params.pop(
+            "embedding_dropout_rate", dropout_rate
         )
+
+        num_labels = 2
+        loss_weight = model_params.pop("loss_weight")
+        use_cls_bias = model_params.pop("use_cls_bias")
+
+        model_kwargs = {
+            "vocab_size": model_params.pop("vocab_size"),
+            "hidden_size": model_params.pop("hidden_size"),
+            "num_hidden_layers": model_params.pop("num_hidden_layers"),
+            "num_heads": model_params.pop("num_heads"),
+            "filter_size": model_params.pop("filter_size"),
+            "nonlinearity": model_params.pop("encoder_nonlinearity"),
+            "embedding_dropout_rate": embedding_dropout_rate,
+            "dropout_rate": dropout_rate,
+            "attention_dropout_rate": model_params.pop(
+                "attention_dropout_rate"
+            ),
+            "max_position_embeddings": model_params.pop(
+                "max_position_embeddings"
+            ),
+            "layer_norm_epsilon": float(model_params.pop("layer_norm_epsilon")),
+        }
+
+        self.model = BertForSummarization(
+            num_labels=num_labels,
+            loss_weight=loss_weight,
+            use_cls_bias=use_cls_bias,
+            **model_kwargs,
+        )
+        self.loss_fn = BertForSummarizationLoss(num_labels, loss_weight,)
+
         self.compute_eval_metrics = model_params.pop(
             "compute_eval_metrics", False
         )
         self.vocab_file = model_params.pop("vocab_file")
         check_unused_model_params(model_params)
-        self.loss_fn = self.model.loss_fn
         if self.compute_eval_metrics:
             self.rouge1_score = RougeScoreMetric(
                 max_n=1, vocab_file=self.vocab_file, name="eval/rouge1"
@@ -64,17 +77,20 @@ class BertSummarizationModel(PyTorchBaseModel):
         )
 
     def __call__(self, data):
-        output = self.model(
+        logits = self.model(
             input_ids=data["input_ids"],
+            attention_mask=data["attention_mask"],
             token_type_ids=data["token_type_ids"],
             labels=data["labels"],
-            attention_mask=data["attention_mask"],
             cls_tokens_positions=data["cls_indices"],
             cls_label_weights=data["cls_weights"],
         )
+        loss = self.loss_fn(
+            logits, data["labels"], data["cls_weights"].clone().to(logits.dtype)
+        )
         if not self.model.training and self.compute_eval_metrics:
             labels = data["labels"].clone()
-            predictions = output.logits.argmax(-1).int()
+            predictions = logits.argmax(-1).int()
             input_ids = data["input_ids"].clone()
             cls_indices = data["cls_indices"].clone()
             cls_weights = data["cls_weights"].clone()
@@ -85,4 +101,4 @@ class BertSummarizationModel(PyTorchBaseModel):
                 labels, predictions, cls_indices, cls_weights, input_ids
             )
 
-        return output.loss
+        return loss

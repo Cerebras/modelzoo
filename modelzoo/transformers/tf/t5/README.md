@@ -42,8 +42,8 @@ The scripts to run, along with a short description of the functionality within e
 </p>
 
 # Key features from CSoft platform used in this reference implementation
-* T5 supports [Variable Sequence Length (VSL)](https://docs.cerebras.net/en/private/tensorflow-docs/tf-vsl.html) configurations.  At a high-level, this means that we can take advantage of Cerebras hardware's differences from GPU's to perform operations on different sized sequences in parallel, without requiring padding tokens. This reduces the amount of time spent on computations that are never used in the end. For more details, see [\[4\]](https://www.cerebras.net/software/increasing-model-throughput-with-variable-tensor-shape-computations/) and [\[5\]](https://docs.cerebras.net/en/private/tensorflow-docs/tf-vsl.html). To use VSL, simply add `use_vsl: True` to the `model` section of the configuration YAML file.
-* T5 supports `--multireplica` flag can be used to perform data-parallel training across multiple copies of the model at the same time. To read more, please refer to [Multi-Replica Data Parallel Training](https://docs.cerebras.net/en/private/general/multi-replica-data-parallel-training.html) documentation page.
+* T5 supports [Variable Sequence Length (VSL)](https://docs.cerebras.net/en/latest/tensorflow-docs/tf-vsl.html) configurations.  At a high-level, this means that we can take advantage of Cerebras hardware's differences from GPU's to perform operations on different sized sequences in parallel, without requiring padding tokens. This reduces the amount of time spent on computations that are never used in the end. For more details, see [\[4\]](https://www.cerebras.net/software/increasing-model-throughput-with-variable-tensor-shape-computations/) and [\[5\]](https://docs.cerebras.net/en/latest/tensorflow-docs/tf-vsl.html). To use VSL, simply add `use_vsl: True` to the `model` section of the configuration YAML file.
+* T5 supports `--multireplica` flag can be used to perform data-parallel training across multiple copies of the model at the same time. To read more, please refer to [Multi-Replica Data Parallel Training](https://docs.cerebras.net/en/latest/general/multi-replica-data-parallel-training.html) documentation page.
 * T5 currently supports pipeline execution mode, in which the entire model is loaded onto the Wafer-Scale Engine (WSE) and data streams across the layers. See [\[6\]](https://docs.cerebras.net/en/latest/cerebras-basics/cerebras-execution-modes.html#layer-pipelined-mode) for further details. 
 
 
@@ -110,6 +110,8 @@ In the [configs](./configs/) directory we have files:
 
 VSL is enabled in both configs. These configs are just examples, and can be adjusted for any desired training procedure, including different model sizes, different optimizer settings, and different number of training steps.
 
+**NOTE:** When trying out a new dataset by switching it in the provided configs, if you run into errors, we advise to disable VSL as a first step of debugging. 
+
 All configs are meant for running in Pipeline mode with Appliance mode and Kubernetes. Slurm flow is available as a legacy support.
 
 ## Citations
@@ -121,7 +123,7 @@ All configs are meant for running in Pipeline mode with Appliance mode and Kuber
 
 [4] [VTS Conceptual Explanation Blog](https://www.cerebras.net/software/increasing-model-throughput-with-variable-tensor-shape-computations/)
 
-[5] [VSL Software Documentation](https://docs.cerebras.net/en/private/tensorflow-docs/tf-vsl.html)
+[5] [VSL Software Documentation](https://docs.cerebras.net/en/latest/tensorflow-docs/tf-vsl.html)
 
 [6] [Pipeline Execution Mode](https://docs.cerebras.net/en/latest/cerebras-basics/cerebras-execution-modes.html#layer-pipelined-mode)
 

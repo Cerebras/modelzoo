@@ -19,19 +19,22 @@ import json
 import os
 from typing import List
 
+from modelzoo.common.pytorch import CBTORCH_PACKAGE, CbtorchPackage
 from modelzoo.common.pytorch import cb_model as cm
 from modelzoo.common.pytorch import cbtorch
 
-try:
+if CBTORCH_PACKAGE == CbtorchPackage.SRC:
     from cerebras.workflow.python.cs_perf_analyzer import (
         AssessBottlenecks,
         locate_csperf_log,
     )
-except ImportError:
+elif CBTORCH_PACKAGE == CbtorchPackage.WHEEL:
     from cerebras_pytorch.workflow.python.cs_perf_analyzer import (
         AssessBottlenecks,
         locate_csperf_log,
     )
+else:
+    assert False, f"This file should only be imported when running on CS-X."
 
 # XLA counter keys used to track various metrics
 KEY_COMPILE_TIME = "CerebrasCompileTimeMs"
@@ -107,7 +110,7 @@ def _get_optional_counter(name: str, default: int = 0) -> int:
     return counter
 
 
-def _collect_perf_data(tracker: cm.RateTracker):
+def collect_perf_data(tracker: cm.RateTracker):
     """Collect performance data from a run.
 
     Args:
@@ -196,7 +199,7 @@ def save_perf(outdir: str):
     if tracker is None:  # No performance data to save
         return
 
-    perf_this_ordinal = _collect_perf_data(tracker)
+    perf_this_ordinal = collect_perf_data(tracker)
 
     # Sync across ordinals and receive the perf files
     perf_all_ordinals = _rendezvous(
@@ -207,10 +210,11 @@ def save_perf(outdir: str):
     if cm.is_master_ordinal():
         aggregate = _aggregate_perf_data(perf_all_ordinals)
 
-        # Update the "input bottleneck" performance field based on csperf.csv
-        aggregate[
-            "suspected_input_bottleneck (beta)"
-        ] = _assess_input_bottlecks()
+        if not cbtorch.env().appliance:
+            # Update the "input bottleneck" performance field based on csperf.csv
+            aggregate[
+                "suspected_input_bottleneck (beta)"
+            ] = _assess_input_bottlecks()
 
         os.makedirs(outdir, exist_ok=True)
         with open(os.path.join(outdir, "performance.json"), "w") as fp:

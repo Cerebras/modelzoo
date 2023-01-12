@@ -73,3 +73,22 @@ class CSOptimizer(Optimizer, ABC):
                 and returns the loss.
         """
         raise NotImplementedError("step must be implemented in a child class!")
+
+    def to(self, device=None):
+        """Moves optimizer state onto specified device or onto corresponding
+           parameter's device if no device is specified.
+
+        Args:
+            device (optional): Device to move state tensors to. If not specified,
+            the corresponding parameter's device will be used.
+
+        Returns:
+            self
+        """
+        for group in self.param_groups:
+            for p in group["params"]:
+                state = self.state[p]
+                to_device = device if device is not None else p.device
+                for key in state:
+                    state[key] = state[key].to(to_device)
+        return self

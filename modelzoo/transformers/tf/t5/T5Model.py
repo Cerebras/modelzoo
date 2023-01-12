@@ -65,6 +65,10 @@ class T5Model(TFBaseModel):
             "share_encoder_decoder_embedding"
         ]
 
+        # Loss option
+        mlm_loss_scaling = params["model"]["mlm_loss_scaling"]
+        lm_loss_weight = params["model"]["lm_loss_weight"]
+
         num_heads = params["model"]["num_heads"]
         # Size of the intermediate feed forward layer in t5 blocks.
         d_ff = params["model"]["d_ff"]
@@ -269,6 +273,8 @@ class T5Model(TFBaseModel):
         self.d_model = d_model
         self.num_heads = num_heads
         self.encoder_num_hidden_layers = encoder_num_hidden_layers
+        self.mlm_loss_scaling = mlm_loss_scaling
+        self.lm_loss_weight = lm_loss_weight
         self.mixed_precision = mixed_precision
         self.use_relative_attention_bias = use_relative_attention_bias
         self.train_batch_size = train_batch_size
@@ -374,11 +380,20 @@ class T5Model(TFBaseModel):
         loss = self.loss_layer(labels, logits=model_outputs)
 
         decoder_mask = self._get_decoder_mask(features, model_outputs.dtype)
-        decoder_mask *= tf.cast(features["loss_scale"], decoder_mask.dtype)
-
+        if self.mlm_loss_scaling == "precomputed_num_masked":
+            decoder_mask *= tf.cast(features["loss_scale"], decoder_mask.dtype)
         loss = loss * tf.cast(decoder_mask, loss.dtype)
         total_loss = tf.reduce_sum(input_tensor=loss, name="total_loss")
-        total_loss = total_loss / batch_size
+        if self.mlm_loss_scaling == "precomputed_num_masked":
+            total_loss = total_loss / batch_size
+        elif self.mlm_loss_scaling == "batch_size":
+            total_loss = total_loss / batch_size * self.lm_loss_weight
+        elif self.mlm_loss_scaling == "num_masked":
+            total_loss = total_loss / tf.reduce_sum(decoder_mask)
+        else:
+            raise ValueError(
+                f"{self.mlm_loss_scaling} is not supported. Choose between `num_masked`, `precomputed_num_masked`, `batch_size`."
+            )
 
         self._write_summaries(features, total_loss, mode)
         return tf.cast(total_loss, model_outputs.dtype)

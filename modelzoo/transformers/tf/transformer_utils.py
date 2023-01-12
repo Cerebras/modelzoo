@@ -183,6 +183,35 @@ def create_autoregressive_attention_mask(
     return auto_attn_mask
 
 
+def get_bits_per_x_dataset(params):
+    """Get the dataset to get the associated bits_per_byte constant
+
+    Args:
+        params (dict): Parameters for the current model training
+
+    Returns:
+        Parameters dictionary with the correct dataset set
+    """
+    eparams = params.get("eval_input", None)
+    if not eparams:
+        eparams = params.get("train_input", None)
+        assert (
+            eparams
+        ), "Neither eval_input nor train_input are specified. Aborting run!!"
+
+    # get the correct dataset for bits_per_byte metric
+    # defaults to empty data directory
+    dataset = None
+    data_dir = eparams.get("data_dir", "")
+    if "pile" in data_dir:
+        dataset = "pile"
+    elif "owt" in data_dir:
+        dataset = "openwebtext2"
+
+    params["model"]["bits_per_x_dataset"] = dataset
+    return params
+
+
 def create_fixed_sparse_attention_mask(
     max_sequence_length,
     n_heads,
@@ -261,30 +290,59 @@ def create_fixed_sparse_attention_mask(
     return fixed_sparse_attn_mask
 
 
-def get_bits_per_x_dataset(params):
-    """Get the dataset to get the associated bits_per_byte constant
+def print_fixed_sparse_mask(
+    max_sequence_length: int,
+    num_heads: int,
+    batch_size: int,
+    local_attn_ctx: int,
+    num_verts: int,
+    vert_size: int,
+    different_layout_per_head: int,
+):
+    from matplotlib import pyplot as plt
 
-    Args:
-        params (dict): Parameters for the current model training
+    tf.compat.v1.enable_eager_execution()
+    np.set_printoptions(threshold=np.inf)
 
-    Returns:
-        Parameters dictionary with the correct dataset set
-    """
-    eparams = params.get("eval_input", None)
-    if not eparams:
-        eparams = params.get("train_input", None)
-        assert (
-            eparams
-        ), "Neither eval_input nor train_input are specified. Aborting run!!"
+    name = f""
+    name += f"msl_{max_sequence_length}"
+    name += f"_nheads_{num_heads}"
+    name += f"_bs_{batch_size}"
+    name += f"_ctx_{local_attn_ctx}"
+    name += f"_nverts_{num_verts}"
+    name += f"_vsize_{vert_size}"
+    name += f"_layout_{different_layout_per_head}.jpg"
 
-    # get the correct dataset for bits_per_byte metric
-    # defaults to empty data directory
-    dataset = None
-    data_dir = eparams.get("data_dir", "")
-    if "pile" in data_dir:
-        dataset = "pile"
-    elif "owt" in data_dir:
-        dataset = "openwebtext2"
+    mask = create_fixed_sparse_attention_mask(
+        max_sequence_length=max_sequence_length,
+        n_heads=num_heads,
+        batch_size=batch_size,
+        local_attn_ctx=local_attn_ctx,
+        num_verts=num_verts,
+        vert_size=vert_size,
+        different_layout_per_head=different_layout_per_head,
+    )
 
-    params["model"]["bits_per_x_dataset"] = dataset
-    return params
+    if not different_layout_per_head:
+        mask = tf.squeeze(mask)
+        np_mask = mask.numpy()
+        binary = np_mask > 0
+
+        plt.clf()
+        plt.imshow(binary)
+        plt.savefig(name, dpi=300)
+        plt.show()
+
+    else:
+        for i in range(num_heads):
+            mask = tf.squeeze(mask)
+            np_mask = mask.numpy()
+            binary = np_mask > 0
+            f_binary = binary[i, :, :]
+
+            f_name = f"head_{i}_{name}"
+
+            plt.clf()
+            plt.imshow(f_binary)
+            plt.savefig(f_name, dpi=300)
+            plt.show()

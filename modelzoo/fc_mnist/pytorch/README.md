@@ -33,7 +33,7 @@ FC MNIST model configs are supported in the [Layer Pipelined mode](https://docs.
 ## Multi-Replica data parallel training
 When training on the Cerebras System, the `--multireplica` flag can be used to perform data-parallel training
 across multiple copies of the model at the same time. For more details about this feature, please refer
-to [Multi-Replica Data Parallel Training](https://docs.cerebras.net/en/private/general/multi-replica-data-parallel-training.html) documentation page.
+to [Multi-Replica Data Parallel Training](https://docs.cerebras.net/en/latest/general/multi-replica-data-parallel-training.html) documentation page.
 
 # Structure of the code
 * `data.py`: Simple data input pipeline loading the [TorchVision MNIST dataset](https://pytorch.org/vision/stable/datasets.html).
@@ -51,9 +51,7 @@ More information can be found on the
 Each sample in the dataset is a black and white image of size `28x28`, where
 each pixel is an integer from `0 to 255` inclusive.
 
-The first time that the input function is run, it will take some time
-to download the entire dataset.
-The dataset is to downloaded to the `data_dir` provided in [`configs/params.yaml`](./configs/params.yaml).
+Dataset can be downloaded using the [`prepare_data.py`](prepare_data.py) and it should be set to the `data_dir` path provided in [`configs/params.yaml`](./configs/params.yaml). <br />
 
 The input pipeline does minimal processing on this dataset. The dataset returns one batch at a time, of the form:
 ```

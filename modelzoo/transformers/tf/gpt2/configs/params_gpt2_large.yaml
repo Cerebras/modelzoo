@@ -14,12 +14,11 @@
 #
 
 # GPT-2 large model (774M parameters)
-# Works with CS-2.
 
 ### Input
 train_input:
     data_processor: "GptTfRecordsProcessor"
-    data_dir: "./input/owt_pretraining_gpt/train_msl1024/"
+    data_dir: "./language/datasets/owt_pretraining_gpt/train_8M_msl1024"
     vocab_size: 50257
     max_sequence_length: 1024
     shuffle: True
@@ -28,12 +27,12 @@ train_input:
 
 eval_input:
     data_processor: "GptTfRecordsProcessor"
-    data_dir: "./input/owt_pretraining_gpt/val_msl1024/"
+    data_dir: "./language/datasets/owt_pretraining_gpt/val_msl1024/"
     vocab_size: 50257
     max_sequence_length: 1024
     shuffle: True
     repeat: False
-    batch_size: 32
+    batch_size: 80
 
 ### Model
 model:

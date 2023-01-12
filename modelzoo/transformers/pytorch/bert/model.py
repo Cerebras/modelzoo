@@ -17,15 +17,16 @@ import logging
 from torch.nn import CrossEntropyLoss
 
 from modelzoo.common.pytorch.metrics import AccuracyMetric, PerplexityMetric
+from modelzoo.common.pytorch.model_utils.BertPretrainModelLoss import (
+    BertPretrainModelLoss,
+)
 from modelzoo.common.pytorch.PyTorchBaseModel import PyTorchBaseModel
+from modelzoo.transformers.pytorch.bert.bert_pretrain_models import (
+    BertPretrainModel,
+)
 from modelzoo.transformers.pytorch.bert.utils import (
     check_unused_model_params,
     set_custom_stack_params,
-)
-from modelzoo.transformers.pytorch.huggingface_common.modeling_bert import (
-    BertConfig,
-    BertForMaskedLM,
-    BertForPreTraining,
 )
 
 
@@ -37,9 +38,12 @@ class BertForPreTrainingModel(PyTorchBaseModel):
     def __init__(self, params, device=None):
         self.params = params
         model_params = self.params["model"].copy()
-        optimizer_params = self.params["optimizer"]
         self.model = self.build_model(model_params)
-
+        self.loss_fn = BertPretrainModelLoss(
+            disable_nsp=self.disable_nsp,
+            mlm_loss_weight=self.mlm_loss_weight,
+            label_smoothing=self.label_smoothing,
+        )
         super().__init__(params=params, model=self.model, device=device)
 
         self.compute_eval_metrics = model_params.pop(
@@ -62,9 +66,64 @@ class BertForPreTrainingModel(PyTorchBaseModel):
 
     def _post_device_transfer(self):
         self.model.tie_weights()
-        self.model.cls.predictions.decoder.bias = (
-            self.model.cls.predictions.bias
+
+    def build_model(self, model_params):
+        self.disable_nsp = model_params.pop("disable_nsp", False)
+        self.mlm_loss_weight = model_params.pop("mlm_loss_weight", 1.0)
+        self.label_smoothing = model_params.pop("label_smoothing", 0.0)
+        self.vocab_size = model_params.pop("vocab_size")
+
+        model = BertPretrainModel(
+            disable_nsp=self.disable_nsp,
+            mlm_loss_weight=self.mlm_loss_weight,
+            label_smoothing=self.label_smoothing,
+            vocab_size=self.vocab_size,
+            max_position_embeddings=model_params.pop("max_position_embeddings"),
+            position_embedding_type=model_params.pop(
+                "position_embedding_type", "learned"
+            ).lower(),
+            embedding_pad_token_id=model_params.pop("pad_token_id", 0),
+            hidden_size=model_params.pop("hidden_size"),
+            share_embedding_weights=model_params.pop(
+                "share_embedding_weights", True
+            ),
+            num_hidden_layers=model_params.pop("num_hidden_layers"),
+            layer_norm_epsilon=float(model_params.pop("layer_norm_epsilon")),
+            # Encoder Attn
+            num_heads=model_params.pop("num_heads"),
+            attention_type=model_params.pop(
+                "attention_type", "scaled_dot_product"
+            ),
+            dropout_rate=model_params.pop("dropout_rate"),
+            nonlinearity=model_params.pop("encoder_nonlinearity", "gelu"),
+            attention_dropout_rate=model_params.pop("attention_dropout_rate"),
+            use_projection_bias_in_attention=model_params.pop(
+                "use_projection_bias_in_attention", True
+            ),
+            use_ffn_bias_in_attention=model_params.pop(
+                "use_ffn_bias_in_attention", True
+            ),
+            filter_size=model_params.pop("filter_size"),
+            use_ffn_bias=model_params.pop("use_ffn_bias", True),
+            use_ffn_bias_in_mlm=model_params.pop("use_ffn_bias_in_mlm", True),
+            use_output_bias_in_mlm=model_params.pop(
+                "use_output_bias_in_mlm", True
+            ),
+            initializer_range=model_params.pop("initializer_range", 0.02),
+            num_segments=None if self.disable_nsp else 2,
         )
+
+        enable_vts = model_params.pop("enable_vts")
+        if enable_vts:
+            from modelzoo.common.pytorch import cbtorch
+
+            self.vts = cbtorch.nn.StripPadding()
+        else:
+            self.vts = None
+
+        check_unused_model_params(model_params)
+
+        return model
 
     def mlm_xentropy_loss(self, labels, logits, weights=None):
         """
@@ -80,83 +139,13 @@ class BertForPreTrainingModel(PyTorchBaseModel):
         """
         labels = labels.detach()
         logits = logits.detach()
-        loss_fct = CrossEntropyLoss(
-            reduction="none", label_smoothing=self.label_smoothing
-        )
+        loss_fct = CrossEntropyLoss(reduction="none",)
         vocab_size = logits.shape[2]
         loss = loss_fct(logits.view(-1, vocab_size), labels.view(-1).long(),)
         if weights is not None:
             weights = weights.detach()
             loss = loss * weights.view(-1)
         return loss.sum()
-
-    def create_config(self, **kwargs):
-        return BertConfig(**kwargs)
-
-    def build_model(self, model_params):
-        self.disable_nsp = model_params.pop("disable_nsp")
-        self.mlm_loss_weight = model_params.pop("mlm_loss_weight")
-        self.label_smoothing = model_params.pop("label_smoothing", 0.0)
-        model = None
-        kwargs = {
-            "vocab_size": model_params.pop("vocab_size"),
-            "hidden_size": model_params.pop("hidden_size"),
-            "num_hidden_layers": model_params.pop("num_hidden_layers"),
-            "num_attention_heads": model_params.pop("num_heads"),
-            "intermediate_size": model_params.pop("filter_size"),
-            "hidden_act": model_params.pop("encoder_nonlinearity"),
-            "hidden_dropout_prob": model_params.pop("dropout_rate"),
-            "attention_probs_dropout_prob": model_params.pop(
-                "attention_dropout_rate"
-            ),
-            "max_position_embeddings": model_params.pop(
-                "max_position_embeddings"
-            ),
-            "tie_word_embeddings": model_params.pop(
-                "share_embedding_weights", True,
-            ),
-            "layer_norm_eps": float(model_params.pop("layer_norm_epsilon")),
-            "use_projection_bias_in_attention": model_params.pop(
-                "use_projection_bias_in_attention", True
-            ),
-            "use_ffn_bias_in_attention": model_params.pop(
-                "use_ffn_bias_in_attention", True
-            ),
-            "use_ffn_bias": model_params.pop("use_ffn_bias", True),
-            "use_ffn_bias_in_mlm": model_params.pop(
-                "use_ffn_bias_in_mlm", True
-            ),
-        }
-        # Bert uses the same activation for encoder layers and mlm head.
-        kwargs["mlm_nonlinearity"] = model_params.pop(
-            "mlm_nonlinearity", kwargs["hidden_act"]
-        )
-        enable_vts = model_params.pop("enable_vts")
-
-        check_unused_model_params(model_params)
-
-        if self.disable_nsp:
-            model = BertForMaskedLM(
-                self.create_config(**kwargs),
-                mlm_loss_weight=self.mlm_loss_weight,
-                label_smoothing=self.label_smoothing,
-            )
-        else:
-            model = BertForPreTraining(
-                self.create_config(**kwargs),
-                mlm_loss_weight=self.mlm_loss_weight,
-                label_smoothing=self.label_smoothing,
-            )
-
-        self.loss_fn = model.loss_fn
-
-        if enable_vts:
-            from modelzoo.common.pytorch import cbtorch
-
-            self.vts = cbtorch.nn.StripPadding()
-        else:
-            self.vts = None
-        return model
 
     def __call__(self, data):
 
@@ -166,6 +155,7 @@ class BertForPreTrainingModel(PyTorchBaseModel):
                 "VTS is only supported in train mode. Disabling for the "
                 "current run."
             )
+
         if self.vts:
             # always mask the main input
             masks = {
@@ -190,18 +180,23 @@ class BertForPreTrainingModel(PyTorchBaseModel):
 
         # MLM Needs a half precision "weights" tensor; use binary mask for now.
         data["masked_lm_weights"] = data.pop("masked_lm_mask").half()
-
-        output = self.model(**data)
-        loss = output.loss
-
+        mlm_logits, nsp_logits, _, _ = self.model(**data)
+        total_loss = None
+        if data.get("should_calc_loss", True):
+            total_loss = self.loss_fn(
+                mlm_logits,
+                self.vocab_size,
+                data["labels"],
+                nsp_logits,
+                data.get("next_sentence_label", None),
+                data["masked_lm_weights"],
+                data.get("mlm_loss_scale", None),
+            )
         if not self.model.training and self.compute_eval_metrics:
-            if self.disable_nsp:
-                mlm_logits = output.logits
-            else:
-                nsp_label = data["next_sentence_label"].clone()
-                nsp_pred = output.seq_relationship_logits.argmax(-1).int()
-                mlm_logits = output.prediction_logits
+            if not self.disable_nsp:
 
+                nsp_label = data["next_sentence_label"].clone()
+                nsp_pred = nsp_logits.argmax(-1).int()
                 # eval/accuracy_cls
                 self.accuracy_metric_cls(labels=nsp_label, predictions=nsp_pred)
 
@@ -222,4 +217,4 @@ class BertForPreTrainingModel(PyTorchBaseModel):
                 labels=mlm_labels, loss=mlm_xentr, weights=mlm_weights,
             )
 
-        return loss
+        return total_loss

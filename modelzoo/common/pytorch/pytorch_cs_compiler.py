@@ -23,6 +23,7 @@ import torch
 
 from modelzoo.common.pytorch import cb_model as cm
 from modelzoo.common.pytorch import cbtorch
+from modelzoo.common.pytorch.loss_utils import extract_loss
 from modelzoo.common.pytorch.pytorch_base_cs_runner import PyTorchBaseCSRunner
 
 COMPILE_ONLY_MSG = "Compiling the model. This may take a few minutes."
@@ -45,6 +46,8 @@ class PyTorchCSCompiler(PyTorchBaseCSRunner):
     ##################################################################
 
     def on_train_start(self):
+        if self._model.grad_scaler:
+            self._scaler = self._model.grad_scaler
         cm.set_run_config(1, 0, 0)
 
     def on_train_epoch_end(self, early_exit: bool):
@@ -71,6 +74,8 @@ class PyTorchCSCompiler(PyTorchBaseCSRunner):
         outputs = super().eval_forward(data)
 
         # Need to track eval model outputs to compile
+        loss = extract_loss(outputs)
+        cbtorch.state().track_object({"loss": loss})
         cbtorch.state().track_object(outputs)
 
         return outputs
@@ -95,11 +100,15 @@ class PyTorchCSCompiler(PyTorchBaseCSRunner):
     #                   Override Abstract Methods                    #
     ##################################################################
 
-    def train(self, dataloader: torch.utils.data.DataLoader) -> None:
+    def train(
+        self, dataloader: torch.utils.data.DataLoader
+    ):  # pylint: disable=arguments-renamed
         dataloader = cbtorch.dataloader(dataloader)
         super().train(dataloader)
 
-    def evaluate(self, dataloader: cbtorch.data.DataLoader):
+    def evaluate(
+        self, dataloader: cbtorch.data.DataLoader
+    ):  # pylint: disable=arguments-renamed
         dataloader = cbtorch.dataloader(dataloader)
         super().evaluate(dataloader)
 

@@ -113,19 +113,10 @@ GPT-J [[1]](https://github.com/kingoflolz/mesh-transformer-jax) uses the same in
   - Shape: [`batch_size`, `max_sequence_length`]
   - Type:  `tf.float32`
 
-## Run fine-tuning on CS system
+## To compile/validate, run train and eval on Cerebras System
 
-To run on the CS System, the fine-tuning job should be launched inside the Cerebras environment. We use the wrapper script command `csrun_wse` to compile and execute the code on the CS system. For weight streaming mode, `python-ws` Python build is used. 
-
-Following command needs to be launched from [this directory](../../../gptj)  to start the fine-tuning.
-
-```bash
-csrun_wse python-ws run.py --model_dir </path/to/model_dir> --params fine_tuning/abstractive_summarization/configs/params_finetuning.yaml --mode train_and_eval --max_steps <num_train_steps> --cs_ip <x.x.x.x>
-```
-`/path/to/model_dir` is a path to the directory where you would like to store logs and other artifacts of the run.
-
-The above command fine-tunes the GPT-J model for `--max_steps` on the CS system.
- `cs_ip` should be provided either as a commmand line argument or in the `YAML` config file.  
+Please follow the instructions on our Developer Docs at:
+https://docs.cerebras.net/en/latest/getting-started/tensorflow/index.html
 
 ### Run fine-tuning on GPU and CPU
 To run pre-training on GPU/CPU, use the following command:

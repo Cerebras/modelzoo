@@ -125,9 +125,7 @@ class Rprop(CSOptimizer):
                     p.data.device
                 )
                 step_size = torch.clamp(
-                    step_size,
-                    min=step_size_min.to(p.data.device),
-                    max=step_size_max.to(p.data.device),
+                    step_size, min=step_size_min, max=step_size_max,
                 )
 
                 # Zero out the gradient wherever there was a sign change

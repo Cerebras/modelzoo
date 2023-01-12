@@ -33,8 +33,8 @@ In our preprocessing modules we are using some of the most popular algorithms fo
 scratch. 
 
 A tokenizer is in charge of preparing the inputs for a model. 
-Above listed tokenizers are used across the majority of our [transformer-based](https://github.com/Cerebras/modelzoo-internal/tree/master/modelzoo/transformers) models. You can find a different 
-tokenization methods created for [T5](https://arxiv.org/abs/1910.10683) and [Transformer](https://arxiv.org/abs/1706.03762) networks. Please follow their specific documentation: [T5-README](https://github.com/Cerebras/modelzoo-internal/tree/master/modelzoo/transformers/tf/t5/input), [Transformer-README](https://github.com/Cerebras/modelzoo-internal/tree/master/modelzoo/transformers/tf/transformer/input).
+Above listed tokenizers are used across the majority of our [transformer-based](../) models. You can find a different 
+tokenization methods created for [T5](https://arxiv.org/abs/1910.10683) and [Transformer](https://arxiv.org/abs/1706.03762) networks. Please follow their specific documentation: [T5-README](../tf/t5/input), [Transformer-README](../tf/transformer/input).
 If you want to add your own version, feel free to do so with the steps provided in the section [Creating your own Tokenizer](#Creating-your-own-Tokenizer).
 
 ### BPE 
@@ -57,7 +57,7 @@ Here is the example of the BPE algorithm at work:
 In this example we used vocabulary with tokens `["!", "i", "pe", "Ġam", "Ġb", "Ġconverting", "Ġinto", "Ġsentence", "Ġthis", "Ġtokens"]`, and you can see the input is transformed from words into tokens.
 Since this algorithm encodes on the token (or byte) level, during training the token `"Ġ"` was added to identify the word boundary so that the algorithm knows where each word begins.
 
-You can find our own reference implementation at [modelzoo/transformers/data_processing/BPETokenizer.py](https://github.com/Cerebras/modelzoo-internal/blob/master/modelzoo/transformers/data_processing/BPETokenizer.py).
+You can find our own reference implementation at [src/models/transformers/data_processing/BPETokenizer.py](./BPETokenizer.py).
 In order to use it, please provide the next list of params:
 ```
 :param str vocab_file: File containing vocabulary, each token in new line;
@@ -86,7 +86,7 @@ Here is the example of the WordPiece algorithm at work:
 In this example we used vocabulary with tokens `[..., "!", "##e", "##s", "am", "converting", "i", "into", "sentence", "this", "token", "word", ...]`, and you can see the input is transformed from words into tokens.
 As in our previous example with BPE, we can see a specail token `"##"` added to identify the word boundaries.
 
-You can find our own reference implementation at [modelzoo/transformers/data_processing/Tokenization.py#L302](https://github.com/Cerebras/modelzoo-internal/blob/a216e7d34a8cef22f7c319515146bcdb17802ee7/modelzoo/transformers/data_processing/Tokenization.py#L302).
+You can find our own reference implementation at [monolith/src/models/transformers/data_processing/Tokenization.py#L302](./Tokenization.py#L302).
 In order to use it, please provide the next list of params:
 ```
 :param str vocab_file: File containing vocabulary, each token in new line;
@@ -97,22 +97,22 @@ In order to use it, please provide the next list of params:
 In this section, you can see where and how you can add your own tokenizer, following examples from the 
 previous sections in this documentation. 
 
-The easiest way to add a new tokenizer is to add another class in this file [modelzoo/transformers/data_processing/Tokenization.py](https://github.com/Cerebras/modelzoo-internal/blob/a216e7d34a8cef22f7c319515146bcdb17802ee7/modelzoo/transformers/data_processing/Tokenization.py), and inherit it from [`BaseTokenizer`](https://github.com/Cerebras/modelzoo-internal/blob/aa110197151855abc066fc9b5f72eb848209925d/modelzoo/transformers/data_processing/Tokenization.py#L37).
+The easiest way to add a new tokenizer is to add another class in this file [monolith/src/models/transformers/data_processing/Tokenization.py](./Tokenization.py), and inherit it from [`BaseTokenizer`](./Tokenization.py#L37).
 If you want to change the tokenizer class for your models, you need to update which tokenization class you're calling 
-in the dataloader script. For example, for [BERT](https://github.com/Cerebras/modelzoo-internal/tree/master/modelzoo/transformers/tf/bert) these lines would need to be replaced with a call of a different 
-class: [TfRecordsDynamicMaskProcessor.py#L55](https://github.com/Cerebras/modelzoo-internal/blob/d625a3e0795fc0096bc8f9362a3cddb6cd0b1bfd/modelzoo/transformers/tf/bert/input/BertMlmOnlyTfRecordsDynamicMaskProcessor.py#L55).
+in the dataloader script. For example, for [BERT](../tf/bert) these lines would need to be replaced with a call of a different 
+class: [TfRecordsDynamicMaskProcessor.py#L47](../tf/bert/input/BertMlmOnlyTfRecordsDynamicMaskProcessor.py#L47).
 
 `BaseTokenizer` is what we called the stage #1 in the [`FullTokenizer`](#FullTokenizer), where we perform some basic 
 grammar filtering on the raw bulk of text. By inheriting, you don't have to implement this basic text pre-processing from
 scratch. However, there are a few methods that still need to be created: tokenization method, and a method to convert 
 tokens to the indices. 
 
-By default `BaseTokenizer` provides you with the [tokenize](https://github.com/Cerebras/modelzoo-internal/blob/master/modelzoo/transformers/data_processing/Tokenization.py#L207)
+By default `BaseTokenizer` provides you with the [tokenize](./Tokenization.py#L207)
 method that accepts a text as an input, and tokenizes it into tokens. If this method requires any changes for 
 your tokenization algorithm, please overwrite it inside your own tokenizer. 
 
 By default `BaseTokenizer` does not provide any method to convert your input tokens into the indices that can be 
-fed into the model. You need to create you own following an example provided in the `FullTokenizer`: [convert_tokens_to_ids](https://github.com/Cerebras/modelzoo-internal/blob/master/modelzoo/transformers/data_processing/Tokenization.py#L321).
+fed into the model. You need to create you own following an example provided in the `FullTokenizer`: [convert_tokens_to_ids](./Tokenization.py#L321).
 
 Below we are going to create an example of your own tokenizer, given `BaseTokenizer` as a base class: 
 
@@ -184,4 +184,4 @@ Now, let's use this tokenizer:
    # [0, 10, 7, 14, 8, 9, 13, 0, 4, 11, 6, 12, 5, 0, 0, 0, 0, 0, 0, 0, 0]
 ```
 
-As we can see the input text is tokenized, and the results can be later on used into the model training.
+As we can see the input text is tokenized, and the results can be later on used into the model training. 

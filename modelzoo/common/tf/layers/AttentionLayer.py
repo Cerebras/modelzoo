@@ -62,6 +62,8 @@ class AttentionLayer(BaseLayer):
         num_relative_attention_buckets (int): Used to calculate relative position
             bias when use_relative_attention_bias set to True.
         bidirectional_relative_attention (bool): Whether attention is bidirectional.
+        softmax_dtype_fp32 (bool): If ``True``, cast query-key logits to FP32
+            before sending into softmax calculation in FP32.
         boundary_casting (bool): If ``True``, then outputs the values in half
             precision and casts the  input values up to full precision.
         tf_summary (bool): If ``True``, then saves the activations with
@@ -91,6 +93,7 @@ class AttentionLayer(BaseLayer):
         relative_attention_bias=None,
         num_relative_attention_buckets=32,
         bidirectional_relative_attention=False,
+        softmax_dtype_fp32=True,
         boundary_casting=False,
         tf_summary=False,
         **kwargs,
@@ -177,6 +180,7 @@ class AttentionLayer(BaseLayer):
         self.relative_attention_bias_weight_initializer = (
             relative_attention_bias_weight_initializer
         )
+        self.softmax_dtype_fp32 = softmax_dtype_fp32
 
     def build(self, input_shape):
         # If no relative attention bias weights are provided when
@@ -356,11 +360,10 @@ class AttentionLayer(BaseLayer):
             logits += position_bias
 
         # Softmax.
+        if self.compute_dtype != 'float32' and self.softmax_dtype_fp32:
+            logits = tf.cast(logits, tf.float32)
         weights = tf.cast(
-            tf.nn.softmax(
-                tf.cast(logits, tf.float32), name="attention_weights"
-            ),
-            self.compute_dtype,
+            tf.nn.softmax(logits, name="attention_weights"), self.compute_dtype,
         )
 
         # Dropout.

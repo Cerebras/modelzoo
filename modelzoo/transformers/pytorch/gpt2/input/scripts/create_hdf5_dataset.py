@@ -88,11 +88,12 @@ def parse_args():
         "Defaults to ./hdf5_dataset/'.'",
     )
     parser.add_argument(
-        "--num_output_files",
+        "--samples_per_file",
         type=int,
-        default=64,
-        help="number of files on disk to separate HDF5 dataset into. "
-        "Defaults to 64.",
+        default=20000,
+        help="number of samples written to each HDF5 file "
+        "(last file can have less samples if the dataset isn't divisible). "
+        "Defaults to 20000.",
     )
     parser.add_argument(
         "--name",
@@ -112,6 +113,30 @@ def parse_args():
         "Defaults to 8.",
     )
     return parser.parse_args()
+
+
+def write_hdf5_file(
+    file_path, data, n_examples, chunks, dtype="i4", compression="gzip"
+):
+    """Write data to HDF5 file.
+
+    Args:
+        file_path (string): HDF5 file path.
+        data (numpy array): Input features and labels that will be written to HDF5.
+        n_examples (int): Number of examples that will be written in the file.
+        chunks (tuple or bool): Chunk shape, or True to enable auto-chunking.
+        dtype (string): Data type for the HDF5 dataset.
+        compression (string): Compression strategy.
+    """
+    with h5py.File(file_path, mode='w') as h5_file:
+        h5_file.attrs["n_examples"] = n_examples
+        h5_file.create_dataset(
+            "data",
+            data=data,
+            dtype=dtype,
+            chunks=chunks,
+            compression=compression,
+        )
 
 
 def main():
@@ -134,18 +159,6 @@ def main():
 
     random.seed(args.seed)
     random.shuffle(input_files_list)
-
-    num_output_files = max(args.num_output_files, 1)
-    output_files = [
-        os.path.join(output_dir, f"{args.name}-{fidx+1}.h5")
-        for fidx in range(num_output_files)
-    ]
-
-    writers = []
-    for output_file in output_files:
-        writer = h5py.File(output_file, mode='w')
-        writer.attrs["n_examples"] = 0
-        writers.append(writer)
 
     features_list = ["input_ids", "attention_mask", "labels"]
 
@@ -206,8 +219,10 @@ def main():
         processes.append(p)
         p.start()
 
-    writer_index = 0
+    writer_index = 1
     total_written = 0
+    example_index = 0
+    data_buffer = []
 
     with tqdm(total=len(input_files_list)) as pbar:
         while True:
@@ -217,26 +232,44 @@ def main():
                 # to ensure there are no leftover data from the workers
                 # Specifically at the begining, it takes some time for workers
                 # to ramp up and load their buffers and return examples
-                example = examples_queue.get(timeout=30)
-                writers[writer_index].create_dataset(
-                    f"example_{total_written // num_output_files}", data=example
-                )
-                writers[writer_index].attrs["n_examples"] += 1
-                writer_index = (writer_index + 1) % num_output_files
+                data_buffer.append(examples_queue.get(timeout=30))
+                example_index += 1
+                if example_index == args.samples_per_file:
+                    file_samples = np.stack(data_buffer, axis=0)
+                    fp = os.path.join(
+                        output_dir, f"{args.name}-{writer_index}.h5"
+                    )
+                    write_hdf5_file(
+                        file_path=fp,
+                        data=file_samples,
+                        n_examples=example_index,
+                        chunks=(1, 3, args.max_seq_length),
+                    )
+                    example_index = 0
+                    data_buffer = []
+                    writer_index += 1
                 total_written += 1
                 if not total_written % 100:
                     pbar.update(file_counter.value() - pbar.n)
             except queue.Empty:
                 # If queue has been empty for `timeout` seconds,
-                # there is no data left to be processed, so break
-                # the infinite loop and exit
+                # write the last file if there are examples in data_buffer,
+                # then break the infinite loop and exit
+                if example_index > 0:
+                    file_samples = np.stack(data_buffer, axis=0)
+                    fp = os.path.join(
+                        output_dir, f"{args.name}-{writer_index}.h5"
+                    )
+                    write_hdf5_file(
+                        file_path=fp,
+                        data=file_samples,
+                        n_examples=example_index,
+                        chunks=(1, 3, args.max_seq_length),
+                    )
                 break
 
     for p in processes:
         p.join()
-
-    for writer in writers:
-        writer.close()
 
     params = vars(args)
     params["n_examples"] = total_written

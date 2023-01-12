@@ -2,9 +2,9 @@
 
 ### Input
 train_input:
-  data_processor: BertMlmOnlyTfRecordsDynamicMaskProcessor
-  data_dir: "./wikicorpus/train_cased_msl512_mlm_only_unmasked"
-  vocab_file: '../../vocab/google_research_uncased_L-12_H-768_A-12.txt'
+  data_processor: "BertMlmOnlyTfRecordsDynamicMaskProcessor"
+  data_dir: "./language/datasets/wikicorpus/train_cased_msl512_mlm_only_unmasked"
+  vocab_file: "../../vocab/google_research_uncased_L-12_H-768_A-12.txt"
   do_lower: False
   max_sequence_length: 512
   max_predictions_per_seq: 80
@@ -55,13 +55,6 @@ model:
   mlm_loss_scaling: "precomputed_num_masked" # {"num_masked", "batch_size", "precomputed_num_masked"}
   mlm_loss_weight: 1 
 
-  # use_nsp_bias: True   # add learned bias to NSP layer output
-  # nsp_nonlinearity: "tanh"
-  # pooler_type: "first" # specifies reduction type of encoder outputs before before cross-entropy
-  #                      # Possible values: {"mean", "first", "last"}, where
-  #                      #                  "mean" - average along length dimension
-  #                      #                  "first" - use the first position in the sequence
-  #                      #                  "last" - use the last position in the sequence
   dropout_seed: 0
   weight_initialization_seed: 0
   mixed_precision: True

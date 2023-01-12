@@ -43,7 +43,8 @@ class SGD(CSOptimizer):
             )
         if nesterov and (momentum <= 0 or dampening != 0):
             raise ValueError(
-                "Nesterov momentum requires a momentum and zero dampening"
+                f"Nesterov momentum requires a `momentum` and zero `dampening`. "
+                f"`momentum` was {momentum} and `dampening` was {dampening}."
             )
 
         defaults = dict(
@@ -72,10 +73,10 @@ class SGD(CSOptimizer):
     def step(self, closure=None):
         """Performs a single optimization step.
 
-            Args:
-                closure (callable, optional): A closure that reevaluates the model
-                    and returns the loss.
-            """
+        Args:
+            closure (callable, optional): A closure that reevaluates the model
+                and returns the loss.
+        """
         loss = None
         if closure is not None:
             loss = closure()

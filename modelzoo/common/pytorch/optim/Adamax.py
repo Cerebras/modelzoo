@@ -75,9 +75,7 @@ class Adamax(CSOptimizer):
                 beta1, _ = group["betas"]
 
                 # beta1 ^ step, initialized for used on step 1
-                state["beta1_power"] = torch.tensor(beta1).to(
-                    p.device, copy=True
-                )
+                state["beta1_power"] = torch.tensor(beta1).to(p.device)
 
     def step(self, closure=None):
         """

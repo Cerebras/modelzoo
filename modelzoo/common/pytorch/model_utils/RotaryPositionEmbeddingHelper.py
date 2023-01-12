@@ -21,11 +21,16 @@ class RotaryPositionEmbeddingHelper:
         self.max_position_embeddings = max_position_embeddings
         self.rotary_dim = rotary_dim
 
-    def create_fixed_pos_emb(self, device):
+    def create_fixed_pos_emb(self, device, dtype):
+        from modelzoo.common.pytorch import cb_model as cm
+
+        use_cs = cm.use_cs()
         inv_freq = 1.0 / (
             10000
             ** (
-                torch.arange(0, self.rotary_dim, 2, device=device)
+                torch.arange(
+                    0, self.rotary_dim, 2, device="cpu" if use_cs else device
+                )
                 / self.rotary_dim
             )
         )
@@ -34,11 +39,19 @@ class RotaryPositionEmbeddingHelper:
         sinusoid_inp = torch.einsum(
             "i , j -> i j",
             torch.arange(
-                self.max_position_embeddings, dtype=torch.float, device=device
+                self.max_position_embeddings, device="cpu" if use_cs else device
             ),
             inv_freq,
         ).float()
-        return (torch.sin(sinusoid_inp), torch.cos(sinusoid_inp))
+        sin, cos = (
+            torch.sin(sinusoid_inp).to(dtype),
+            torch.cos(sinusoid_inp).to(dtype),
+        )
+        # For cs runs, wrap the sin and cos matrices in xla_literal so that
+        # constant folding is performed.
+        sin_literal = cm.make_constant(sin)
+        cos_literal = cm.make_constant(cos)
+        return sin_literal, cos_literal
 
     def _apply_rotary_pos_emb(self, x, real_seq_length, offset=0):
         def rotate_every_two(x):
@@ -58,11 +71,11 @@ class RotaryPositionEmbeddingHelper:
             m = m.view(dim0, -1)  # reshape into a matrix, interleaving the copy
             return m
 
-        fpe_sin, fpe_cos = self.create_fixed_pos_emb(x.device)
+        fpe_sin, fpe_cos = self.create_fixed_pos_emb(x.device, x.dtype)
 
         sin, cos = map(
             lambda t: duplicate_interleave(t)[
-                None, None, offset : x.shape[2] + offset, :
+                None, offset : x.shape[1] + offset, None, :
             ],
             (fpe_sin[:real_seq_length, :], fpe_cos[:real_seq_length, :]),
         )

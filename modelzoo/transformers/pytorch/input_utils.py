@@ -14,6 +14,7 @@
 
 import math
 import random
+from typing import Iterator, Sized
 
 import numpy as np
 import torch
@@ -122,12 +123,31 @@ def get_data_for_task(
     return files_in_task
 
 
+def is_distributed():
+    """
+    Returns True if DDP is enabled.
+    """
+    return (
+        torch.distributed.is_available() and torch.distributed.is_initialized()
+    )
+
+
 def task_id():
-    return cm.get_streaming_rank() if cm.is_streamer() else 0
+    if cm.is_streamer():
+        return cm.get_streaming_rank()
+    elif is_distributed():
+        return dist.get_rank()
+    else:
+        return 0
 
 
 def num_tasks():
-    return cm.num_streamers() if cm.is_streamer() else 1
+    if cm.is_streamer():
+        return cm.num_streamers()
+    elif is_distributed():
+        return dist.get_world_size()
+    else:
+        return 1
 
 
 class ShardedSampler(torch.utils.data.Sampler):
@@ -256,3 +276,134 @@ def check_sharding_sanity(
             f"will end up not producing any samples. Please spceify a fewer "
             f"number of workers or tasks."
         )
+
+
+def shard_list_contiguous(input_list, worker_id, num_workers):
+    """
+        Shards a list by splitting it into `num_workers` contiguous segments.
+        Only the `worker_id`th shard is returned. If the length of the list is
+        not divisible by the number of workers, the last worker will be assigned
+        all remainder elements.
+
+        Args:
+            input_list (list): list to shard into contiguous segments
+            worker_id (int): index of shard to return 
+            num_workers (int): number of shards to create
+
+        Returns:
+            A sublist of contigous elements (`worker_id`'s shard)
+    """
+
+    assert num_workers <= len(input_list), (
+        f"Number of processes should be less than number of files, "
+        f"Got `num_workers` equal to {num_workers} and `num_files` equal to {len(input_list)}."
+    )
+
+    per_worker_num_files = len(input_list) // num_workers
+    if worker_id < num_workers - 1:
+        output_list = input_list[
+            (worker_id * per_worker_num_files) : (
+                (worker_id + 1) * per_worker_num_files
+            )
+        ]
+    else:
+        output_list = input_list[(worker_id * per_worker_num_files) :]
+    return output_list
+
+
+def shard_list_interleaved(input_list, worker_id, num_workers):
+    """
+        Shards a list by assigning consecutive elements to alternating workers
+        (i.e. interleaving). If the length of the list is not divisible by the
+        number of workers, the remainder elements are spread across a subset
+        of the workers such that each worker in the subset receives 1 extra
+        element.
+
+        Args:
+            input_list (list): list to shard in an interleaved fashion
+            worker_id (int): index of shard to return 
+            num_workers (int): number of shards to create
+
+        Returns:
+            `worker_id`'s shard (a subset of `input_list`).
+    """
+
+    output_for_cur_worker = []
+
+    if num_workers != 0:
+        assert num_workers <= len(input_list), (
+            f"Number of processes should be less than number of files, "
+            f"Got `num_workers` equal to {num_workers} and `num_files` equal to {len(input_list)}."
+        )
+
+        # Gather files for the input worker based in the file index and
+        # number of workers.
+        for index, elm in enumerate(input_list):
+            if index % num_workers == worker_id:
+                output_for_cur_worker.append(elm)
+    else:
+        output_for_cur_worker = input_list
+
+    return output_for_cur_worker
+
+
+def shard_list_of_chunks_contiguous(
+    input_list_of_chunks, worker_id, num_workers
+):
+    """
+        Shards a list of chunks by distributing contiguous segments of each chunk
+        across shards. If the chunk's length is not divisible by the
+        number of workers, the remainder elements are spread across a subset
+        of the workers such that each worker in the subset receives 1 extra
+        element.
+
+        Args:
+            input_list (list of tuples): list of chunks to shard. List should be of format
+                `[... (chunk_i, length_of_chunk_i), ...]`
+            worker_id (int): index of shard to return 
+            num_workers (int): number of shards to create
+
+        Returns:
+            `worker_id`'s shard: a list of the same length as `input_list` of the
+            format: `[... (chunk_i, shard_start_index_i, shard_length_i), ...]`
+    """
+    output_for_cur_worker = []
+    for elm, chunk_length in input_list_of_chunks:
+        # Try to evenly distribute chunk_length between workers
+        chunk_length_per_worker = [(chunk_length // num_workers)] * num_workers
+        for i in range(chunk_length % num_workers):
+            chunk_length_per_worker[i] += 1
+
+        assert sum(chunk_length_per_worker) == chunk_length
+
+        output_for_cur_worker.append(
+            (
+                elm,
+                sum(chunk_length_per_worker[:worker_id])
+                if worker_id > 0
+                else 0,  # Start index
+                chunk_length_per_worker[worker_id],  # Length of data chunk
+            )
+        )
+    return output_for_cur_worker
+
+
+class SubsetSequentialSampler(torch.utils.data.Sampler[int]):
+    r"""Samples elements sequentially, starting from given `start_index`,
+        always in the same order.
+    Args:
+        data_source (Dataset): dataset to sample from
+        start_index (int): index where sampling starts from
+    """
+    data_source: Sized
+    start_index: int
+
+    def __init__(self, data_source: Sized, start_index: int) -> None:
+        self.data_source = data_source
+        self.start_index = start_index
+
+    def __iter__(self) -> Iterator[int]:
+        return iter(range(self.start_index, len(self.data_source)))
+
+    def __len__(self) -> int:
+        return len(self.data_source)

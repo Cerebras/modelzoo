@@ -52,7 +52,7 @@ class Transformer(TFBaseModel):
     """
 
     def __init__(self, params):
-        """ Make a transformer object. """
+        """Make a transformer object."""
         super(Transformer, self).__init__(
             mixed_precision=params["model"]["mixed_precision"]
         )
@@ -312,7 +312,9 @@ class Transformer(TFBaseModel):
         if share_encoder_decoder_embedding:
             if src_vocab_size != tgt_vocab_size:
                 raise ValueError(
-                    f"Cannot share embeddings between encoder and decoder due to different vocab sizes"
+                    f"Cannot share embeddings between encoder and decoder due to "
+                    f"different vocab sizes. `src_vocab_size`={src_vocab_size} and "
+                    f"`tgt_vocab_size`={tgt_vocab_size}."
                 )
 
             decoder_token_embedding = encoder_token_embedding
@@ -337,8 +339,7 @@ class Transformer(TFBaseModel):
         )
 
     def build_model(self, features, mode):
-        """ Forward graph.
-        """
+        """Forward graph."""
         # Inputs.
         encoder_input_ids = SetupInputTensor(features["encoder_input_ids"])
         decoder_input_ids = SetupInputTensor(features["decoder_input_ids"])

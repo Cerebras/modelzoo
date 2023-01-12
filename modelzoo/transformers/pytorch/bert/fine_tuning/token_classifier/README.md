@@ -47,7 +47,7 @@ Token classification fine-tuning model configs are supported in the [Layer Pipel
 
 - `configs/`: YAML configuration files.
 - `input/`: Input pipeline implementation for the above mentioned datasets.
-- `model.py`: Model implementation leveraging [BertForTokenClassification](../../../huggingface_common/modeling_bert.py) class.
+- `model.py`: Model implementation leveraging [BertForTokenClassification](../../bert_model.py) class.
 - `data.py`: The entry point to the data input pipeline code.
 - `run.py`: Training script. Performs training and validation.
 - `utils.py`: Miscellaneous helper functions.

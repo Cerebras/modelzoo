@@ -128,12 +128,22 @@ Note that our model implementation and run scripts are compatible to run on GPU,
 
 ## Configs included for this model
 
-For convenience, we provide different configurations of common model setups designed to give examples of models of different sizes intended for execution in either [weight streaming mode](https://docs.cerebras.net/en/latest/cerebras-basics/cerebras-execution-modes.html).
+For convenience, we provide different configurations of common model setups designed to give examples of models of different sizes intended for execution in either [weight streaming mode](https://docs.cerebras.net/en/latest/cerebras-basics/cerebras-execution-modes.html). 
 
-- [params_gpt3_xl_ws.yaml](./configs/params_gpt3_xl_ws.yaml): A 1.3B parameter GPT-2 model designed to match the configuration of the GPT-3 XL.
-- [params_gpt3_6p7b_ws.yaml](./configs/params_gpt3_6p7b_ws.yaml): A 6.7B parameter GPT-2 model designed to match the configuration of the GPT-3 6.7B model.
-- [params_gpt3_13b_ws.yaml](./configs/params_gpt3_13b_ws_early_access.yaml): A 13B parameter GPT-2 model designed to match the configuration of the GPT-3 13B model. Available as an early limited access.
-- [params_gpt3_20B_ws.yaml](./configs/params_gpt3_20B_ws_early_access.yaml): A 20B parameter GPT-2 model designed to match the configuration of the GPT-NeoX. Available as an early limited access.
+Following are the convergent configs:
+
+- [params_gpt3_xl_ws.yaml](./configs/params_gpt3_xl.yaml): A 1.3B parameter GPT-3 model designed to converge to the state-of-the-art. It uses hyperparameters as suggested in  [Chinchilla](https://arxiv.org/abs/2112.11446) and [Gopher](https://arxiv.org/abs/2112.11446). And, it uses 20 tokens per parameter as per the recommendation in Chinchilla. 
+
+- [params_gpt3_2p7b_ws.yaml](./configs/params_gpt3_2p7b.yaml): A 6.7B parameter GPT-3 model designed to converge to the state-of-the-art. It uses hyperparameters as suggested in  Chinchilla and Gopher. And, it uses 20 tokens per parameter as per the recommendation in Chinchilla.
+- [params_gpt3_6p7b_ws.yaml](./configs/params_gpt3_6p7b.yaml): A 6.7B parameter GPT-3 model designed to converge to the state-of-the-art. It uses hyperparameters as suggested in  Chinchilla and Gopher. And, it uses 20 tokens per parameter as per the recommendation in Chinchilla.
+- [params_gpt3_13b_ws.yaml](./configs/params_gpt3_13b.yaml): A 13B parameter GPT-3 model designed to converge to the state-of-the-art. IIt uses hyperparameters as suggested in  Chinchilla and Gopher. And, it uses 20 tokens per parameter as per the recommendation in Chinchilla.
+- [params_gpt3_20B_ws.yaml](./configs/params_gpt3_20B.yaml): A 20B parameter GPT-3 model designed to converge to the state-of-the-art. It uses hyperparameters as suggested in  Chinchilla and Gopher. And, it uses 20 tokens per parameter as per the recommendation in Chinchilla.
+
+- [params_gpt3_xl.yaml](./configs/params_gpt3_xl.yaml): A 1.3B parameter GPT-2 model designed to match the configuration of the GPT-3 XL.
+- [params_gpt3_xl_grad_accum.yaml](./configs/params_gpt3_xl_grad_accum.yaml): A 1.3B parameter GPT-2 model designed to match the configuration of the GPT-3 XL, with gradient accumulation enabled on CS2 to support larger batch sizes.
+- [params_gpt3_6p7b.yaml](./configs/params_gpt3_6p7b.yaml): A 6.7B parameter GPT-2 model designed to match the configuration of the GPT-3 6.7B model.
+- [params_gpt3_13b.yaml](./configs/params_gpt3_13b.yaml): A 13B parameter GPT-2 model designed to match the configuration of the GPT-3 13B model. Available as an early limited access.
+- [params_gpt3_20b.yaml](./configs/params_gpt3_20b.yaml): A 20B parameter GPT-2 model designed to match the configuration of the GPT-NeoX. Available as an early limited access.
 
 All configs are meant for running in Weight Streaming mode with Appliance mode and Kubernetes.
 
@@ -144,3 +154,8 @@ All configs are meant for running in Weight Streaming mode with Appliance mode a
 **Reference**: Radford, A. et al. (2019). [Language Models are Unsupervised Multitask Learners](https://d4mucfpksywv.cloudfront.net/better-language-models/language-models.pdf).
 
 **Reference**: Brown, T.B. et al. (2020). [Language Models are Few-Shot Learners](https://arxiv.org/abs/2005.14165).
+
+**Reference**: Hoffmann, J. et al. (2022). [Training Compute-Optimal Large Language Models](https://arxiv.org/abs/2203.15556).
+
+**Reference**: Rae, J. W. et al. (2021). [Scaling Language Models: Methods, Analysis & Insights from Training Gopher](https://arxiv.org/abs/2112.11446).
+

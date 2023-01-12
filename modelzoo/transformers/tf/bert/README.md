@@ -67,7 +67,7 @@ In order to take full advantage of the potential speedups from the VSL, it is he
 
 ## Multi-Replica data parallel training  
 When training on the Cerebras System, the `--multireplica` flag can be used to perform data-parallel training
-across multiple copies of the model at the same time. For more details about this feature, please refer to [Multi-Replica Data Parallel Training](https://docs.cerebras.net/en/private/general/multi-replica-data-parallel-training.html) documentation page.
+across multiple copies of the model at the same time. For more details about this feature, please refer to [Multi-Replica Data Parallel Training](https://docs.cerebras.net/en/latest/general/multi-replica-data-parallel-training.html) documentation page.
 
 ## Structure of the code
 
@@ -344,7 +344,20 @@ https://docs.cerebras.net/en/latest/getting-started/tensorflow/index.html
 
 ## To run train and eval on GPU/CPU
 
-If running on a cpu or gpu, activate the environment from [Python GPU Environment setup](../../../../PYTHON-SETUP.md), and simply run:
+If running on a cpu or gpu, activate the environment from [Python GPU Environment setup](../../../../PYTHON-SETUP.md), then make the following changes to the config file:
+
+```
+train_input:
+  ...
+  # buckets: [...] --> comment bucketing out (currently switched on)
+  ...
+model:
+  ...
+  use_vsl: False --> set this to False (currently True)
+  ...
+```
+
+Next, simply run:
 
 ```
 python run.py --mode train --params /path/to/yaml --model_dir /path/to/model_dir

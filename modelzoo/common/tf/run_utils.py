@@ -31,10 +31,81 @@ import numpy as np
 import tensorflow as tf
 import yaml
 
-try:
-    from cerebras.tf.tf_helper import GetWeights
-except ImportError:
-    pass  # non-cbcore run
+
+class GetWeights:
+    """
+    Class to easily load weights from a checkpoint by name or as iterator.
+    """
+
+    def __init__(self, ckpt_path):
+        self.reader = tf.compat.v1.train.NewCheckpointReader(ckpt_path)
+        self._var_names = set(self.reader.get_variable_to_shape_map().keys())
+
+    def __iter__(self):
+        # Dispatch to generator allows multiple independent iterators over class
+        for var_name in self.var_names:
+            yield var_name, self[var_name]
+
+    def __getitem__(self, var_name):
+        return self.reader.get_tensor(var_name)
+
+    def __contains__(self, var_name):
+        return var_name in self.var_names
+
+    @property
+    def var_names(self):
+        """
+        Variable names contained in the checkpoint
+        """
+        return self._var_names
+
+
+def get_weight_dict(ckpt_path):
+    """Reads TensorFlow checkpoint from specified path and returns
+    the corresponding model's parameters as a dictionary of variable
+    names to numpy arrays.
+    Args:
+        ckpt_path: (str)
+            Path to TensorFlow checkpoint (prefix).
+    Returns:
+        : (dict)
+            Dictionary of variable names to numpy arrays with
+            corresponding model parameters.
+    """
+    weight_dict = dict()
+    for var, value in GetWeights(ckpt_path):
+        weight_dict[var] = value
+    return weight_dict
+
+
+def dict_to_checkpoint(state_dict, checkpoint_name):
+    """
+    Saves a dictionary of weight values into a tf Saver style chekcpoint.
+
+    Args:
+        state_dict: (Dict[str, np.ndarray]) Collection of weights.
+        checkpoint_name: (str) Name of the checkpoint file to create.
+
+    Returns:
+        : (str) The path to the saved checkpoint.
+    """
+    tf.compat.v1.disable_eager_execution()
+    tf.compat.v1.reset_default_graph()
+    all_vars = []
+    for name, np_tensor in state_dict.items():
+        var = tf.compat.v1.get_variable(
+            name=name,
+            shape=np_tensor.shape,
+            dtype=np_tensor.dtype if name != "global_step" else np.int64,
+        )
+        all_vars.append(var)
+    saver = tf.compat.v1.train.Saver()
+    with tf.compat.v1.Session() as sess:
+        sess.run(tf.compat.v1.initializers.global_variables())
+        for var in all_vars:
+            var.load(state_dict[var.op.name], sess)
+        save_path = saver.save(sess, checkpoint_name)
+    return save_path
 
 
 #######################################
@@ -87,7 +158,10 @@ def is_cs(params):
 
     :param dict params: runconfig dict to provide parameters for check
     """
-    return params.get("cs_ip") is not None or os.environ.get("K8S_CS_IP", None) is not None
+    return (
+        params.get("cs_ip") is not None
+        or os.environ.get("K8S_CS_IP", None) is not None
+    )
 
 
 def check_env(params):
@@ -271,7 +345,8 @@ def get_predict_directory(model_dir):
     valid_predict_path = os.path.join(model_dir, "predict")
     if not os.path.isdir(valid_predict_path):
         raise ValueError(
-            "Predictions not available. Please first run with --mode predict!"
+            f"Predictions are not found at {valid_predict_path}. "
+            f"Please first run with `--mode predict`!"
         )
 
     return valid_predict_path
@@ -424,3 +499,20 @@ def update_input_checkpoint_steps(params):
 
     params["train_input"]["skip_steps"] = skip_steps
     return params
+
+
+def setup_environment(params):
+    """
+    Set environment to have determinism and reproducible runs if
+    `tf_random_seed` is set.
+
+    Args:
+        params (dict): Parameters for execution
+    """
+    tf_random_seed = params['runconfig'].get('tf_random_seed', None)
+    if tf_random_seed is not None:
+        os.environ['PYTHONHASHSEED'] = str(tf_random_seed)
+        os.environ['TF_CUDNN_DETERMINISTIC'] = '1'
+        os.environ['TF_DETERMINISTIC_OPS'] = '1'
+        if params["runconfig"]["mode"] == "eval":
+            os.environ['TF_CUDNN_USE_AUTOTUNE'] = '0'

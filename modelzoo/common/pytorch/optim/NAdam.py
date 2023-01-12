@@ -94,9 +94,7 @@ class NAdam(CSOptimizer):
         for group in self.param_groups:
             for p in group['params']:
                 self.state[p]['step'] = 0
-                self.state[p]["mu_product"] = torch.tensor(
-                    1.0, device="cpu"
-                ).to(p.device)
+                self.state[p]["mu_product"] = torch.tensor(1.0).to(p.device)
                 self.state[p]["exp_avg"] = torch.zeros_like(p, device="cpu").to(
                     p.device
                 )

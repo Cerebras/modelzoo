@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from modelzoo.common.pytorch.metrics.accuracy import AccuracyMetric
+from modelzoo.common.pytorch.metrics.auc import AUCMetric
 from modelzoo.common.pytorch.metrics.cb_metric import (
     CBMetric,
     DeviceOutputs,
@@ -20,6 +21,12 @@ from modelzoo.common.pytorch.metrics.cb_metric import (
     get_all_metrics,
     reset_all_metrics,
 )
+from modelzoo.common.pytorch.metrics.dice_coefficient import (
+    DiceCoefficientMetric,
+)
 from modelzoo.common.pytorch.metrics.fbeta_score import FBetaScoreMetric
+from modelzoo.common.pytorch.metrics.mean_iou import MeanIOUMetric
 from modelzoo.common.pytorch.metrics.perplexity import PerplexityMetric
+from modelzoo.common.pytorch.metrics.precision_at_k import PrecisionAtKMetric
+from modelzoo.common.pytorch.metrics.recall_at_k import RecallAtKMetric
 from modelzoo.common.pytorch.metrics.rouge_score import RougeScoreMetric

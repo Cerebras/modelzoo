@@ -19,6 +19,7 @@ from typing import Any, Dict, List, Optional
 from torch.utils.tensorboard import SummaryWriter
 
 from modelzoo.common.pytorch import cb_model as cm
+from modelzoo.common.pytorch import cbtorch
 
 
 @dataclass
@@ -66,7 +67,7 @@ class CBSummary(ABC):
         if cm.num_receivers() > 1:
             raise RuntimeError(
                 "Summaries with multiple receiver ordinals are currently "
-                "not supported."
+                f"not supported. `num_receivers` was {cm.num_receivers()}"
             )
 
         # Get the metric name
@@ -83,6 +84,10 @@ class CBSummary(ABC):
 
         # Variable for storing the device outputs after each __call__
         self._last_device_outputs: Optional[DeviceOutputs] = None
+        # Variable for storing the received activations in appliance mode
+        self._last_host_outputs: Optional[DeviceOutputs] = None
+
+        self._is_appliance = cm.is_appliance()
 
     @property
     def name(self):
@@ -153,6 +158,35 @@ class CBSummary(ABC):
             f"but got `{type(self._last_device_outputs)}`."
         )
 
+        if cm.use_cs():
+            state = cbtorch.state()
+            state.track_object(
+                {
+                    "cb_summary": {
+                        self.name: [
+                            self._last_device_outputs.args,
+                            self._last_device_outputs.kwargs,
+                        ]
+                    }
+                }
+            )
+
+        if self._is_appliance:
+
+            def _on_activations_received():
+                cpu_args = list()
+                cpu_kwargs = dict()
+                for tensor in self._last_device_outputs.args:
+                    cpu_args.append(state.get_activation_for_output(tensor))
+                for key, tensor in self._last_device_outputs.kwargs.items():
+                    cpu_kwargs[key] = state.get_activation_for_output(tensor)
+
+                self._last_host_outputs = self.run_on_host(
+                    *cpu_args, **cpu_kwargs
+                )
+
+            state.register_activation_callback(_on_activations_received)
+
     def save(self, *args, **kwargs) -> None:
         """Evaluates the host portion of the summary and saves the results.
 
@@ -163,28 +197,32 @@ class CBSummary(ABC):
         NOTE: This method should not be overriden. Instead, `run_on_host` and
         `save_on_host` should be overriden to provide full functionality.
         """
-        self._run_on_host_closure(
-            self._last_device_outputs.args,
-            self._last_device_outputs.kwargs,
-            *args,
-            **kwargs,
-        )
+        if self._is_appliance:
+            self.save_on_host(self._last_host_outputs, *args, **kwargs)
+            self._last_host_outputs = None
+        else:
 
-    @cm.step_closure
-    def _run_on_host_closure(
-        self,
-        device_args: List[Any],
-        device_kwargs: Dict[str, Any],
-        *args,
-        **kwargs,
-    ):
-        device_args = cm.to_cpu(device_args)
-        device_kwargs = cm.to_cpu(device_kwargs)
-        host_outputs = self.run_on_host(*device_args, **device_kwargs)
-        self.save_on_host(host_outputs, *args, **kwargs)
+            @cm.step_closure
+            def _run_on_host_closure(
+                device_args: List[Any],
+                device_kwargs: Dict[str, Any],
+                *args,
+                **kwargs,
+            ):
+                device_args = cm.to_cpu(device_args)
+                device_kwargs = cm.to_cpu(device_kwargs)
+                host_outputs = self.run_on_host(*device_args, **device_kwargs)
+                self.save_on_host(host_outputs, *args, **kwargs)
+
+            _run_on_host_closure(
+                self._last_device_outputs.args,
+                self._last_device_outputs.kwargs,
+                *args,
+                **kwargs,
+            )
 
 
-# Keeps track of all registered metrics
+# Keeps track of all registered summaries
 _SUMMARIES = dict()
 
 

@@ -41,8 +41,9 @@ class GradientClipper:
             )
         if max_gradient_norm > 0.0 and max_gradient_value > 0.0:
             raise ValueError(
-                "Gradients can be clipped by norm or by value, but not both. "
-                "Do not set both max_gradient_norm and max_gradient_value."
+                f"Gradients can be clipped by norm(={max_gradient_norm}) or by "
+                f"value(={max_gradient_value}), but not both. "
+                f"Do not set both `max_gradient_norm` and `max_gradient_value`."
             )
         elif max_gradient_norm > 0.0:
             self.max_gradient = max_gradient_norm

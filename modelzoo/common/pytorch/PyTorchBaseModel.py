@@ -16,12 +16,13 @@
 Abstract base class for PyTorch models.
 """
 from abc import ABC, abstractmethod
+from contextlib import nullcontext
 
 import torch
 
 from modelzoo.common.pytorch import amp
 from modelzoo.common.pytorch import cb_model as cm
-from modelzoo.common.pytorch import modes
+from modelzoo.common.pytorch import cbtorch, modes
 from modelzoo.common.pytorch.gradient_clipper import GradientClipper
 from modelzoo.common.pytorch.optim import (
     ASGD,
@@ -64,8 +65,6 @@ class PyTorchBaseModel(ABC):
     ):
         self.model = model
         if cm.use_cs():
-            from modelzoo.common.pytorch import cbtorch
-
             self.model = cbtorch.module(self.model, device)
         elif device:
             self.model = self.model.to(device)
@@ -74,12 +73,16 @@ class PyTorchBaseModel(ABC):
 
         self.mode = params["runconfig"]["mode"]
         self.mixed_precision = params["model"]["mixed_precision"]
+        self.is_pretrained_checkpoint = params["runconfig"].get(
+            "is_pretrained_checkpoint", False
+        )
 
         # Whether or not to allow multireplica runs
         # default to false for eval runs.
-        self.allow_multireplica = params["model"].get(
-            "allow_multireplica", True
-        ) and self.mode == "train"
+        self.allow_multireplica = (
+            params["model"].get("allow_multireplica", True)
+            and self.mode == "train"
+        )
 
         seed = params["runconfig"].get("seed", None)
         if seed is not None:
@@ -103,11 +106,15 @@ class PyTorchBaseModel(ABC):
 
         self.optimizer = None
         if self.mode in (modes.TRAIN, modes.TRAIN_AND_EVAL):
-            self.optimizer = self._configure_optimizer(oparams)
+            if cm.is_appliance():
+                ctx = cbtorch.state().init_tracker.entry("configure_optimizer")
+            else:
+                ctx = nullcontext()
+
+            with ctx:
+                self.optimizer = self._configure_optimizer(oparams)
 
             if cm.use_cs():
-                from modelzoo.common.pytorch import cbtorch
-
                 self.optimizer = cbtorch.optimizer(self.optimizer)
 
             self.lr_scheduler = self._configure_lr_scheduler(lr_params)
@@ -198,7 +205,23 @@ class PyTorchBaseModel(ABC):
         """
 
     def trainable_named_parameters(self):
-        return self.model.named_parameters()
+        no_decay_layers = list()
+        norm_modules = (
+            torch.nn.LayerNorm,
+            torch.nn.BatchNorm1d,
+            torch.nn.BatchNorm2d,
+            torch.nn.BatchNorm3d,
+            torch.nn.InstanceNorm1d,
+            torch.nn.InstanceNorm2d,
+            torch.nn.InstanceNorm3d,
+            torch.nn.GroupNorm,
+            torch.nn.SyncBatchNorm,
+        )
+        for name, module in self.model.named_modules():
+            if isinstance(module, norm_modules):
+                no_decay_layers.append(name)
+        no_decay_layers.append("bias")
+        return no_decay_layers, list(self.model.named_parameters())
 
     def _configure_optimizer(self, oparams: dict):
         """
@@ -212,10 +235,24 @@ class PyTorchBaseModel(ABC):
         else:  # Indicates learning rate scheduling which sets the LR in the scheduler
             learning_rate = 0.1
 
-        param_optimizer = list(self.trainable_named_parameters())
+        if cm.use_cs():
+            from modelzoo.common.pytorch import cbtorch
+
+            if not cbtorch.env().weight_streaming_mode:
+                assert optimizer_type in [
+                    "sgd",
+                    "adafactor",
+                    "adam",
+                    "adamw",
+                ], "Only SGD Adafactor, and Adam/AdamW Optimizers are supported in pipeline mode."
+
+        no_decay_layers, param_optimizer = self.trainable_named_parameters()
         param_optimizer_grouped = group_optimizer_params(
-            param_optimizer, oparams
+            param_optimizer,
+            no_decay_layers,
+            oparams.get("weight_decay_rate", 0.0),
         )
+
         if optimizer_type == "sgd":
             return SGD(
                 param_optimizer_grouped,
@@ -230,6 +267,7 @@ class PyTorchBaseModel(ABC):
                 lr=learning_rate,
                 betas=(oparams.get("beta1", 0.9), oparams.get("beta2", 0.999)),
                 eps=oparams.get("eps", 1e-6),
+                weight_decay=oparams.get("weight_decay_rate", 0.0),
                 amsgrad=oparams.get("amsgrad", False),
             )
         elif optimizer_type == "adamw":
@@ -237,8 +275,9 @@ class PyTorchBaseModel(ABC):
                 param_optimizer_grouped,
                 lr=learning_rate,
                 betas=(oparams.get("beta1", 0.9), oparams.get("beta2", 0.999)),
-                correct_bias=oparams.get("correct_bias", False),
                 eps=oparams.get("eps", 1e-6),
+                weight_decay=oparams.get("weight_decay_rate", 0.0),
+                correct_bias=oparams.get("correct_bias", False),
                 amsgrad=oparams.get("amsgrad", False),
             )
         elif optimizer_type == "adamax":
@@ -257,12 +296,14 @@ class PyTorchBaseModel(ABC):
                 rho=oparams.get("rho", 0.9),
                 eps=oparams.get("eps", 1e-6),
                 weight_decay=oparams.get("weight_decay_rate", 0.0),
+                maximize=oparams.get("maximize", False),
             )
         elif optimizer_type == "adafactor":
             eps = (oparams.get("eps1", 1e-30), oparams.get("eps2", 1e-3))
             clip_threshold = oparams.get("clip_threshold", 1.0)
             decay_rate = oparams.get("decay_rate", -0.8)
             beta1 = oparams.get("beta1", None)
+            weight_decay = oparams.get("weight_decay_rate", 0.0)
             scale_parameter = oparams.get("scale_parameter", True)
             relative_step = oparams.get("relative_step", False)
             warmup_init = oparams.get("warmup_init", False)
@@ -273,6 +314,7 @@ class PyTorchBaseModel(ABC):
                 clip_threshold=clip_threshold,
                 decay_rate=decay_rate,
                 beta1=beta1,
+                weight_decay=weight_decay,
                 scale_parameter=scale_parameter,
                 relative_step=relative_step,
                 warmup_init=warmup_init,
@@ -396,10 +438,33 @@ class PyTorchBaseModel(ABC):
             scheduler = schedule_params["scheduler"].lower()
 
             # to handle discrepancy in step parameters
-            if "steps" in scheduler:
-                scheduler["decay_steps"] = scheduler["steps"]
-            elif "decay_steps" in scheduler:
-                scheduler["steps"] = scheduler["decay_steps"]
+            if "steps" in schedule_params:
+                schedule_params["decay_steps"] = schedule_params["steps"]
+            elif "decay_steps" in schedule_params:
+                schedule_params["steps"] = schedule_params["decay_steps"]
+
+            if "learning_rate" in schedule_params:
+                schedule_params["initial_learning_rate"] = schedule_params[
+                    "learning_rate"
+                ]
+                schedule_params["base_lr"] = schedule_params["learning_rate"]
+            elif "initial_learning_rate" in schedule_params:
+                schedule_params["learning_rate"] = schedule_params[
+                    "initial_learning_rate"
+                ]
+                schedule_params["base_lr"] = schedule_params[
+                    "initial_learning_rate"
+                ]
+            elif "base_lr" in schedule_params:
+                schedule_params["learning_rate"] = schedule_params["base_lr"]
+                schedule_params["initial_learning_rate"] = schedule_params[
+                    "base_lr"
+                ]
+
+            if "gamma" in schedule_params:
+                schedule_params["decay_rate"] = schedule_params["gamma"]
+            elif "decay_rate" in schedule_params:
+                schedule_params["gamma"] = schedule_params["decay_rate"]
 
             def check_required_params(required_params):
                 missing = list(set(required_params) - set(schedule_params))
@@ -411,57 +476,70 @@ class PyTorchBaseModel(ABC):
                         f"requires the following parameters: {required_params}"
                     )
 
-            if scheduler == "constant":
+            if scheduler == "constant" or scheduler == "constantlr":
                 check_required_params(["learning_rate"])
-                return lr_scheduler.Constant(
+                return lr_scheduler.ConstantLR(
                     optimizer,
                     val=schedule_params["learning_rate"],
                     decay_steps=schedule_params.get("steps", None),
                     disable_lr_steps_reset=disable_lr_steps_reset,
                 )
-            elif scheduler == "exponential":
-                check_required_params(
-                    ["initial_learning_rate", "decay_steps", "decay_rate"]
-                )
-                return lr_scheduler.Exponential(
+            elif scheduler == "exponential" or scheduler == "exponentiallr":
+                check_required_params(["initial_learning_rate", "decay_rate"])
+                return lr_scheduler.ExponentialLR(
                     optimizer,
-                    learning_rate=float(
+                    initial_learning_rate=float(
                         schedule_params["initial_learning_rate"]
                     ),
-                    decay_steps=schedule_params["decay_steps"],
+                    decay_steps=schedule_params.get("decay_steps", 1),
                     decay_rate=schedule_params["decay_rate"],
                     staircase=schedule_params.get("staircase", False),
                     disable_lr_steps_reset=disable_lr_steps_reset,
                 )
-            elif scheduler == "piecewiseconstant":
+            elif (
+                scheduler == "piecewiseconstant"
+                or scheduler == "piecewiseconstantlr"
+            ):
                 check_required_params(["values", "boundaries"])
-                return lr_scheduler.PiecewiseConstant(
+                return lr_scheduler.PiecewiseConstantLR(
                     optimizer,
                     learning_rates=schedule_params["values"],
                     milestones=schedule_params["boundaries"],
                     disable_lr_steps_reset=disable_lr_steps_reset,
                 )
-            elif scheduler in ("polynomial", "linear"):
+            elif scheduler in (
+                "polynomial",
+                "polynomiallr",
+                "linear",
+                "linearlr",
+            ):
                 check_required_params(
-                    ["initial_learning_rate", "end_learning_rate", "steps"]
+                    [
+                        "initial_learning_rate",
+                        "end_learning_rate",
+                        "decay_steps",
+                    ]
                 )
                 power = (
                     1.0
-                    if scheduler == "linear"
+                    if scheduler == "linear" or scheduler == "linearLR"
                     else schedule_params.get("power", 1.0)
                 )
-                return lr_scheduler.Polynomial(
+                return lr_scheduler.PolynomialLR(
                     optimizer,
-                    learning_rate=float(
+                    initial_learning_rate=float(
                         schedule_params["initial_learning_rate"]
                     ),
                     end_learning_rate=schedule_params["end_learning_rate"],
-                    decay_steps=schedule_params["steps"],
+                    decay_steps=schedule_params["decay_steps"],
                     power=power,
                     cycle=schedule_params.get("cycle", False),
                     disable_lr_steps_reset=disable_lr_steps_reset,
                 )
-            elif scheduler == "inverseexponentialtimedecay":
+            elif (
+                scheduler == "inverseexponentialtimedecay"
+                or scheduler == "inverseexponentialtimedecaylr"
+            ):
                 check_required_params(
                     [
                         "initial_learning_rate",
@@ -470,9 +548,9 @@ class PyTorchBaseModel(ABC):
                         "decay_rate",
                     ]
                 )
-                return lr_scheduler.InverseExponentialTimeDecay(
+                return lr_scheduler.InverseExponentialTimeDecayLR(
                     optimizer,
-                    learning_rate=float(
+                    initial_learning_rate=float(
                         schedule_params["initial_learning_rate"]
                     ),
                     step_exponent=schedule_params["step_exponent"],
@@ -481,7 +559,20 @@ class PyTorchBaseModel(ABC):
                     staircase=schedule_params.get("staircase", False),
                     disable_lr_steps_reset=disable_lr_steps_reset,
                 )
-            elif scheduler == "cosinedecay":
+            elif (
+                scheduler == "inversesquarerootdecay"
+                or scheduler == "inversesquarerootdecaylr"
+            ):
+                return lr_scheduler.InverseSquareRootDecayLR(
+                    optimizer,
+                    initial_learning_rate=float(
+                        schedule_params.get("initial_learning_rate", 1)
+                    ),
+                    scale=schedule_params.get("scale", 1.0),
+                    warmup_steps=schedule_params.get("warmup_steps", 1.0),
+                    disable_lr_steps_reset=disable_lr_steps_reset,
+                )
+            elif scheduler == "cosinedecay" or scheduler == "cosinedecaylr":
                 check_required_params(
                     [
                         "initial_learning_rate",
@@ -490,54 +581,129 @@ class PyTorchBaseModel(ABC):
                     ]
                 )
 
-                return lr_scheduler.CosineDecay(
+                return lr_scheduler.CosineDecayLR(
                     optimizer,
-                    learning_rate=float(
+                    initial_learning_rate=float(
                         schedule_params["initial_learning_rate"]
                     ),
                     end_learning_rate=schedule_params["end_learning_rate"],
                     decay_steps=schedule_params["decay_steps"],
                     disable_lr_steps_reset=disable_lr_steps_reset,
                 )
-            elif scheduler == "cosineannealing":
+            elif (
+                scheduler == "cosineannealing"
+                or scheduler == "cosineannealinglr"
+            ):
                 check_required_params(
-                    ["learning_rate", "t_max",]
+                    ["initial_learning_rate", "t_max",]
                 )
 
-                return lr_scheduler.CosineAnnealing(
+                return lr_scheduler.CosineAnnealingLR(
                     optimizer,
-                    learning_rate=schedule_params["learning_rate"],
+                    initial_learning_rate=schedule_params[
+                        "initial_learning_rate"
+                    ],
                     T_max=schedule_params["t_max"],
                     eta_min=schedule_params.get("eta_min", 0.0),
                     disable_lr_steps_reset=disable_lr_steps_reset,
                 )
-            elif scheduler == "step":
+            elif scheduler == "step" or scheduler == "steplr":
                 check_required_params(
-                    ["learning_rate", "step_size", "gamma",]
+                    ["initial_learning_rate", "step_size", "gamma",]
                 )
-                return lr_scheduler.Step(
+                return lr_scheduler.StepLR(
                     optimizer,
-                    learning_rate=schedule_params["learning_rate"],
+                    initial_learning_rate=schedule_params[
+                        "initial_learning_rate"
+                    ],
                     gamma=schedule_params["gamma"],
                     step_size=schedule_params["step_size"],
                     disable_lr_steps_reset=False,
                 )
-            elif scheduler == "multistep":
+            elif scheduler == "multistep" or scheduler == "multisteplr":
                 check_required_params(
-                    ["learning_rate", "gamma", "milestones",]
+                    ["initial_learning_rate", "gamma", "milestones",]
                 )
-                return lr_scheduler.MultiStep(
+                return lr_scheduler.MultiStepLR(
                     optimizer,
-                    learning_rate=schedule_params["learning_rate"],
+                    initial_learning_rate=schedule_params[
+                        "initial_learning_rate"
+                    ],
                     gamma=schedule_params["gamma"],
                     milestones=schedule_params["milestones"],
                     disable_lr_steps_reset=False,
                 )
-            elif scheduler == "lambda":
-                check_required_params(["learning_rate"])
-                return lr_scheduler.Lambda(
+            elif scheduler == "lambda" or scheduler == "lambdalr":
+                check_required_params(["initial_learning_rate"])
+                return lr_scheduler.LambdaLR(
                     optimizer,
-                    learning_rate=schedule_params["learning_rate"],
+                    initial_learning_rate=schedule_params[
+                        "initial_learning_rate"
+                    ],
+                    disable_lr_steps_reset=False,
+                )
+            elif scheduler == "cosineannealingwarmrestarts":
+                check_required_params(
+                    ["initial_learning_rate", "t_0",]
+                )
+                return lr_scheduler.CosineAnnealingWarmRestarts(
+                    optimizer,
+                    initial_learning_rate=schedule_params[
+                        "initial_learning_rate"
+                    ],
+                    T_0=schedule_params["t_0"],
+                    T_mult=schedule_params.get("t_mult", 1),
+                    eta_min=schedule_params.get("eta_min", 0.0),
+                    disable_lr_steps_reset=disable_lr_steps_reset,
+                )
+            elif (
+                scheduler == "multiplicative" or scheduler == "multiplicativelr"
+            ):
+                check_required_params(
+                    ["initial_learning_rate", "coefficient",]
+                )
+                return lr_scheduler.MultiplicativeLR(
+                    optimizer,
+                    initial_learning_rate=schedule_params[
+                        "initial_learning_rate"
+                    ],
+                    coefficient=schedule_params["coefficient"],
+                    disable_lr_steps_reset=False,
+                )
+            elif scheduler == "cyclic" or scheduler == "cycliclr":
+                check_required_params(
+                    ["base_lr", "max_lr",]
+                )
+                return lr_scheduler.CyclicLR(
+                    optimizer,
+                    base_lr=schedule_params["base_lr"],
+                    max_lr=schedule_params["max_lr"],
+                    step_size_up=schedule_params.get("step_size_up", 2000),
+                    step_size_down=schedule_params.get("step_size_down", None),
+                    mode=schedule_params.get("mode", "triangular"),
+                    gamma=schedule_params.get("gamma", 1.0),
+                    scale_mode=schedule_params.get("scale_mode", "cycle"),
+                    disable_lr_steps_reset=disable_lr_steps_reset,
+                )
+            elif scheduler == "onecycle" or scheduler == "onecyclelr":
+                check_required_params(
+                    ["initial_learning_rate", "max_lr",]
+                )
+                return lr_scheduler.OneCycleLR(
+                    optimizer,
+                    initial_learning_rate=schedule_params[
+                        "initial_learning_rate"
+                    ],
+                    max_lr=schedule_params["max_lr"],
+                    total_steps=schedule_params.get("total_steps", 1000),
+                    pct_start=schedule_params.get("pct_start", 0.3),
+                    final_div_factor=schedule_params.get(
+                        "final_div_factor", 1e4
+                    ),
+                    three_phase=schedule_params.get("three_phase", False),
+                    anneal_strategy=schedule_params.get(
+                        "anneal_strategy", "cos"
+                    ),
                     disable_lr_steps_reset=False,
                 )
             else:
@@ -567,15 +733,20 @@ class PyTorchBaseModel(ABC):
                     _get_scheduler(self.optimizer, scheduler)
                     for scheduler in learning_rate
                 ]
-                milestones = [
-                    scheduler.start_step for scheduler in schedulers[1:]
-                ]
-
-                return lr_scheduler.SequentialLR(
-                    self.optimizer,
-                    schedulers=schedulers,
-                    milestones=milestones,
-                )
+                if (
+                    "main_scheduler" in scheduler
+                    and scheduler["main_scheduler"] == "chained"
+                ):
+                    return lr_scheduler.ChainedScheduler(schedulers=schedulers,)
+                else:
+                    milestones = [
+                        scheduler.start_step for scheduler in schedulers[1:]
+                    ]
+                    return lr_scheduler.SequentialLR(
+                        self.optimizer,
+                        schedulers=schedulers,
+                        milestones=milestones,
+                    )
         else:
             raise ValueError(
                 f"Unsupported LR scheduler type {type(learning_rate)}"
@@ -645,11 +816,7 @@ class PyTorchBaseModel(ABC):
         """
         Sets the state of the model and optimizer
         """
-        is_pretrained_checkpoint = self.params["runconfig"].get(
-            "is_pretrained_checkpoint", False
-        )
-        mode = self.params["runconfig"]["mode"]
-        if is_pretrained_checkpoint and mode != modes.EVAL:
+        if self.is_pretrained_checkpoint and self.mode != modes.EVAL:
             # allow loading weights ignoring the mising and unexpected keys
             # except when doing eval
             strict = False
@@ -657,7 +824,7 @@ class PyTorchBaseModel(ABC):
         if (
             self.optimizer
             and "optimizer" in state
-            and not is_pretrained_checkpoint
+            and not self.is_pretrained_checkpoint
         ):
             # load optimizer state for resuming training
             self.optimizer.load_state_dict(state["optimizer"])
@@ -667,7 +834,7 @@ class PyTorchBaseModel(ABC):
         if (
             self.mixed_precision
             and cm.is_wse_device()
-            and not is_pretrained_checkpoint
+            and not self.is_pretrained_checkpoint
         ):
             amp_state = state.get('amp')
             if amp_state:

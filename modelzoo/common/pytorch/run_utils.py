@@ -20,6 +20,7 @@ from typing import Callable, List, Optional
 import torch
 import yaml
 
+import modelzoo.common.pytorch.half_dtype as half_dtype
 from modelzoo.common.pytorch import cb_model as cm
 from modelzoo.common.pytorch import modes
 from modelzoo.common.pytorch.pytorch_base_runner import PyTorchBaseRunner
@@ -71,7 +72,6 @@ def run(
 
     if "seed" in runconfig_params:
         torch.manual_seed(runconfig_params["seed"])
-
     runner = PyTorchBaseRunner.create(model_fn, params)
 
     # Set up logging level
@@ -107,3 +107,6 @@ def run(
         runner.evaluate(eval_loader)
     else:
         raise ValueError(f"Mode {mode} is not supported.")
+
+
+half_dtype_instance = half_dtype.half_dtype_instance

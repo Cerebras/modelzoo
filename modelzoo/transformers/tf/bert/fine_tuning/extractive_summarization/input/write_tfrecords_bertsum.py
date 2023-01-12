@@ -48,6 +48,6 @@ if __name__ == '__main__':
         convert_to_bert_format_files(params)
     else:
         raise ValueError(
-            "Unknown `mode` passed in command line argument. Please run "
+            f"Unknown `mode` {params.mode} passed in command line argument. Please run "
             "`--help` for a list of available modes."
         )

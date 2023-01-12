@@ -31,13 +31,13 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "../../../../../.."))
 
 
 from modelzoo.common.input.utils import check_and_create_output_dirs
-from modelzoo.transformers.tf.bert.input.scripts.create_tfrecords import (
-    create_tfrecords,
-)
-from modelzoo.transformers.tf.input.scripts.pubmed.preprocess import (
+from modelzoo.transformers.data_processing.scripts.pubmed.preprocess import (
     Downloader,
     TextFormatting,
     TextSharding,
+)
+from modelzoo.transformers.tf.bert.input.scripts.create_tfrecords import (
+    create_tfrecords,
 )
 
 

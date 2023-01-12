@@ -19,7 +19,17 @@
 ### Input
 train_input:
     data_processor: "GptTfRecordsProcessor"
-    data_dir: "./input/pile_pretraining_gpt/train_msl2048/"
+    data_dir: 
+        - "./language/datasets/pile_original/new_tfrecords/gpt2_encoding/train_msl2048/0"
+        - "./language/datasets/pile_original/new_tfrecords/gpt2_encoding/train_msl2048/1"
+        - "./language/datasets/pile_original/new_tfrecords/gpt2_encoding/train_msl2048/2"
+        - "./language/datasets/pile_original/new_tfrecords/gpt2_encoding/train_msl2048/3"
+        - "./language/datasets/pile_original/new_tfrecords/gpt2_encoding/train_msl2048/4"
+        - "./language/datasets/pile_original/new_tfrecords/gpt2_encoding/train_msl2048/5"
+        - "./language/datasets/pile_original/new_tfrecords/gpt2_encoding/train_msl2048/6"
+        - "./language/datasets/pile_original/new_tfrecords/gpt2_encoding/train_msl2048/7"
+        - "./language/datasets/pile_original/new_tfrecords/gpt2_encoding/train_msl2048/8"
+        - "./language/datasets/pile_original/new_tfrecords/gpt2_encoding/train_msl2048/9"
     vocab_size: 50257
     max_sequence_length: 2048
     shuffle: True
@@ -28,12 +38,12 @@ train_input:
 
 eval_input:
     data_processor: "GptTfRecordsProcessor"
-    data_dir: "./input/pile_pretraining_gpt/val_msl2048/"
+    data_dir: "./language/datasets/pile_original/new_tfrecords/gpt2_encoding/val_msl2048"
     vocab_size: 50257
     max_sequence_length: 2048
     shuffle: True
     repeat: False
-    batch_size: 5
+    batch_size: 32
 
 ### Model
 model:
@@ -85,3 +95,4 @@ runconfig:
     save_checkpoints_steps: 10000
     keep_checkpoint_max: 2
     enable_distributed: False
+

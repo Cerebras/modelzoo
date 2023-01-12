@@ -14,19 +14,19 @@
 
 import math
 
-import torch
 import torch.nn as nn
 
-from modelzoo.common.pytorch.layers.EmbeddingLayer import EmbeddingLayer
-from modelzoo.common.pytorch.layers.TransformerDecoder import TransformerDecoder
-from modelzoo.common.pytorch.layers.TransformerDecoderLayer import (
+from modelzoo.common.pytorch.layers import (
+    EmbeddingLayer,
+    TransformerDecoder,
     TransformerDecoderLayer,
 )
-from modelzoo.common.pytorch.model_utils.GPTLMHeadModelLoss import (
-    GPTLMHeadModelLoss,
+from modelzoo.transformers.pytorch.gpt2.sparse_mask import (
+    create_fixed_sparse_attention_mask,
 )
 from modelzoo.transformers.pytorch.transformer_utils import (
-    create_autoregressive_mask,
+    build_broadcastable_attention_mask,
+    make_sparse_mask_broadcastable,
 )
 
 
@@ -53,6 +53,7 @@ class GPT2LMHeadModel(nn.Module):
         use_projection_bias_in_attention=True,
         use_ffn_bias_in_attention=True,
         attention_dropout_rate=0.1,
+        attention_softmax_fp32=True,
         # Encoder - ffn
         filter_size=3072,
         nonlinearity="gelu",
@@ -60,8 +61,12 @@ class GPT2LMHeadModel(nn.Module):
         # Task-specific
         use_bias_in_output=False,
         initializer_range=0.02,
+        embedding_initializer=None,
+        initializer=None,
+        output_layer_initializer=None,
         # Loss
         loss_weight=1.0,
+        fixed_sparse_attention=None,
     ):
         super(GPT2LMHeadModel, self).__init__()
 
@@ -70,19 +75,41 @@ class GPT2LMHeadModel(nn.Module):
         self.num_hidden_layers = num_hidden_layers
         self.share_embedding_weights = share_embedding_weights
         self.max_position_embeddings = max_position_embeddings
+        self.position_embedding_type = position_embedding_type
+
+        assert (
+            self.position_embedding_type != "rotary"
+        ), f"GPT2 models don't support rotary position embedding."
+
+        if initializer is None:
+            attention_initializer = {
+                "name": "normal",
+                "mean": 0.0,
+                "std": self.initializer_range
+                / math.sqrt(2 * self.num_hidden_layers),
+            }
+            ffn_initializer = {
+                "name": "normal",
+                "mean": 0.0,
+                "std": self.initializer_range,
+            }
+        else:
+            attention_initializer = initializer
+            ffn_initializer = initializer
+
+        if embedding_initializer is None:
+            embedding_initializer = {
+                "name": "normal",
+                "mean": 0.0,
+                "std": self.initializer_range,
+            }
 
         self.embedding_layer = EmbeddingLayer(
             vocab_size=vocab_size,
             embedding_size=hidden_size,
-            embeddings_initializer={
-                "name": "normal",
-                "std": self.initializer_range,
-            },
+            embeddings_initializer=embedding_initializer,
             position_embedding_type=position_embedding_type,
-            position_embeddings_initializer={
-                "name": "normal",
-                "std": self.initializer_range,
-            },
+            position_embeddings_initializer=embedding_initializer,
             max_position_embeddings=max_position_embeddings,
         )
 
@@ -99,15 +126,15 @@ class GPT2LMHeadModel(nn.Module):
             add_cross_attention=False,
             attention_type=attention_type,
             attention_dropout_rate=attention_dropout_rate,
+            attention_softmax_fp32=attention_softmax_fp32,
             use_projection_bias_in_attention=use_projection_bias_in_attention,
             use_ffn_bias_in_attention=use_ffn_bias_in_attention,
             use_ffn_bias=use_ffn_bias,
-            attention_initializer={
-                "name": "normal",
-                "std": self.initializer_range
-                / math.sqrt(2 * self.num_hidden_layers),
-            },
-            ffn_initializer={"name": "normal", "std": self.initializer_range,},
+            attention_initializer=attention_initializer,
+            attention_output_layer_initializer=output_layer_initializer,
+            ffn_initializer=ffn_initializer,
+            ffn_output_layer_initializer=output_layer_initializer,
+            use_ff_layer1_dropout=False,
         )
 
         # Final LayerNorm
@@ -117,14 +144,27 @@ class GPT2LMHeadModel(nn.Module):
             decoder_layer, num_layers=num_hidden_layers, norm=self.ln_f,
         )
 
+        if fixed_sparse_attention is not None:
+            self.fixed_sparsity_mask = create_fixed_sparse_attention_mask(
+                max_sequence_length=max_position_embeddings,
+                n_heads=num_heads,
+                **fixed_sparse_attention,
+            )
+        else:
+            self.fixed_sparsity_mask = None
+
         self.lm_head = nn.Linear(
             hidden_size, vocab_size, bias=use_bias_in_output
         )
-        self.loss_fn = GPTLMHeadModelLoss(vocab_size, loss_weight,)
 
-        self._reset_parameters()
+        self.__reset_parameters()
 
-    def _reset_parameters(self):
+    def reset_parameters(self):
+        self.embedding_layer.reset_parameters()
+        self.transformer_decoder.reset_parameters()
+        self.__reset_parameters()
+
+    def __reset_parameters(self):
         # Init final norm layer
         self.ln_f.bias.data.zero_()
         self.ln_f.weight.data.fill_(1.0)
@@ -170,23 +210,30 @@ class GPT2LMHeadModel(nn.Module):
         hidden_states = self.embedding_layer(input_ids)
         hidden_states = self.drop(hidden_states)
 
-        self.auto_regressive_mask = create_autoregressive_mask(
-            max_sequence_length=self.max_position_embeddings,
+        causal_attention_mask = build_broadcastable_attention_mask(
+            attention_mask,
+            build_causal=True,
             device=input_ids.device,
+            dtype=hidden_states.dtype,
         )
 
-        extended_attention_mask = attention_mask[:, None, None, :]
-        causal_attention_mask, _ = torch.broadcast_tensors(
-            self.auto_regressive_mask, extended_attention_mask
-        )
-        causal_attention_mask = causal_attention_mask * -1e4
+        # Fixed sparse attention, used in GPT-3 model
+        sparse_attention_mask = None
+        if self.fixed_sparsity_mask is not None:
+            sparse_attention_mask = make_sparse_mask_broadcastable(
+                self.fixed_sparsity_mask,
+                attention_mask,
+                dtype=hidden_states.dtype,
+                device=hidden_states.device,
+                revert_mask=False,
+            )
 
         hidden_states = self.transformer_decoder(
-            hidden_states, tgt_mask=causal_attention_mask,
+            hidden_states,
+            tgt_mask=causal_attention_mask,
+            sparse_mask=sparse_attention_mask,
         )
 
         lm_logits = self.lm_head(hidden_states)
 
-        loss = self.loss_fn(lm_logits, labels, attention_mask,)
-
-        return loss, lm_logits
+        return lm_logits

@@ -23,13 +23,27 @@ from modelzoo.transformers.pytorch.bert.input.BertCSVDataProcessor import (  # n
 )
 
 
-def train_input_dataloader(params):
+def train_input_dataloader_fn(params):
     return getattr(
         sys.modules[__name__], params["train_input"]["data_processor"]
     )(params["train_input"]).create_dataloader(is_training=True)
 
 
-def eval_input_dataloader(params):
+def eval_input_dataloader_fn(params):
     return getattr(
         sys.modules[__name__], params["eval_input"]["data_processor"]
     )(params["eval_input"]).create_dataloader(is_training=False)
+
+
+def train_input_dataloader(params):
+    enable_distributed = params["runconfig"].get("enable_distributed", False)
+    if enable_distributed:
+        return train_input_dataloader_fn
+    return train_input_dataloader_fn(params)
+
+
+def eval_input_dataloader(params):
+    enable_distributed = params["runconfig"].get("enable_distributed", False)
+    if enable_distributed:
+        return eval_input_dataloader_fn
+    return eval_input_dataloader_fn(params)

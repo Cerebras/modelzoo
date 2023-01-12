@@ -4,7 +4,7 @@
 train_input:
     data_processor: Sst2DataProcessor
     data_dir: './tfds'
-    vocab_file: '../../../../vocab/google_research_uncased_L-12_H-768_A-12.txt'
+    vocab_file: "../../../../vocab/google_research_uncased_L-12_H-768_A-12.txt"
     max_sequence_length: 72
     add_special_tokens: True
     batch_size: 12
@@ -13,7 +13,7 @@ train_input:
 eval_input:
     data_processor: Sst2DataProcessor
     data_dir: './tfds'
-    vocab_file: '../../../../vocab/google_research_uncased_L-12_H-768_A-12.txt'
+    vocab_file: "../../../../vocab/google_research_uncased_L-12_H-768_A-12.txt"
     max_sequence_length: 72
     add_special_tokens: True
     batch_size: 12
@@ -53,5 +53,4 @@ runconfig:
     save_checkpoints_steps: 2000
     eval_steps: 0 # eval_steps <= 0 means we use all of the eval data
     keep_checkpoint_max: 2
-    tf_random_seed: 1202
     throttle_secs: 0

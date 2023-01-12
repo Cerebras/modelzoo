@@ -28,7 +28,7 @@ Once all the CUDA requirements are installed, create a `virtualenv` on your syst
 ```bash
     virtualenv -p python3.7 /path/to/venv_pt 
     source /path/to/venv_pt/bin/activate
-    pip install requirements_pytorch_gpu.txt
+    pip install -r requirements_pytorch_gpu.txt
 ```
 
 To test if PyTorch is able to properly access the GPU, start a Python session through the virtual environment create above and run the following commands:
@@ -58,7 +58,7 @@ Once all the CUDA requirements are installed, create a `virtualenv` on your syst
 ```bash
     virtualenv -p python3.7 /path/to/venv_tf
     source /path/to/venv_tf/bin/activate
-    pip install requirements_tensorflow_gpu.txt
+    pip install -r requirements_tensorflow_gpu.txt
 ```
 
 **Note:** the `virtualenv` may need to set the Python version to `3.7` to be compatible with TensorFlow version `2.2`.

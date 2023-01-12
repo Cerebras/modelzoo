@@ -37,7 +37,7 @@ def get_grad_accum_hooks(
     Initializes a `GradAccumLoggingTensorHook`.
 
     :param Trainer trainer: common.optimizers.Trainer object
-        used for model training with gradient accumulation.  
+        used for model training with gradient accumulation.
     :param dict runconfig_params: Runtime configs dictionary.
     :param dict summary_dict: Dictionary with values containing
         tensors to be written into summaries and keys containing
@@ -101,7 +101,7 @@ class GradAccumSummarySaverHook(SessionRunHook):
         Initializes a `GradAccumSummarySaverHook`.
 
         :param Trainer trainer: common.optimizers.Trainer object
-            used for model training with gradient accumulation.  
+            used for model training with gradient accumulation.
         :param dict tensors: `dict` that maps string-valued tags to
             tensors/tensor names.
         :param int save_steps: Save summaries every N steps. Exactly one of
@@ -114,7 +114,10 @@ class GradAccumSummarySaverHook(SessionRunHook):
         """
 
         if not isinstance(trainer, Trainer):
-            raise ValueError("trainer should be object of class Trainer.")
+            raise ValueError(
+                f"`trainer` should be object of class Trainer. "
+                f"Received {type(trainer)} instead."
+            )
         self._grad_accum_steps = trainer.grad_accum_steps
         self._log_trainer_summaries = trainer.log_summaries
         self._gradient_global_norm = trainer.gradient_global_norm
@@ -259,7 +262,7 @@ class GradAccumStepCounterHook(SessionRunHook):
         Initializes a `GradAccumStepCounterHook`.
 
         :param Trainer trainer: common.optimizers.Trainer object
-            used for model training with gradient accumulation.  
+            used for model training with gradient accumulation.
         :param int every_n_steps:  every N steps. Exactly one of
             `every_n_secs` and `every_n_steps` should be set.
         :param int every_n_secs: Log every N seconds.
@@ -283,7 +286,10 @@ class GradAccumStepCounterHook(SessionRunHook):
             every_secs=every_n_secs, every_steps=every_n_steps
         )
         if not isinstance(trainer, Trainer):
-            raise ValueError("trainer should be object of class Trainer.")
+            raise ValueError(
+                f"`trainer` should be object of class Trainer. "
+                f"Received {type(trainer)} instead."
+            )
         self._grad_accum_steps = trainer.grad_accum_steps
         self._prefix = "grad_accum_step_counter_hook"
 
@@ -344,7 +350,7 @@ class GradAccumLoggingTensorHook(LoggingTensorHook):
 
      Note that if `at_end` is True, `tensors` should not include any tensor
      whose evaluation produces a side effect such as consuming additional inputs.
-     """
+    """
 
     def __init__(
         self,
@@ -359,7 +365,7 @@ class GradAccumLoggingTensorHook(LoggingTensorHook):
         Initializes a `GradAccumLoggingTensorHook`.
 
         :param Trainer trainer: common.optimizers.Trainer object
-            used for model training with gradient accumulation.  
+            used for model training with gradient accumulation.
         :param dict tensors: `dict` that maps string-valued tags to
             tensors/tensor names.
         :param int every_n_steps: Print the values of `tensors` once every N
@@ -377,7 +383,10 @@ class GradAccumLoggingTensorHook(LoggingTensorHook):
             tensors, every_n_steps, every_n_secs, at_end, formatter,
         )
         if not isinstance(trainer, Trainer):
-            raise ValueError("trainer should be object of class Trainer.")
+            raise ValueError(
+                f"`trainer` should be object of class Trainer. "
+                f"Received {type(trainer)} instead."
+            )
         self._grad_accum_steps = trainer.grad_accum_steps
         self._tag_order.append("step")
         self._tag_order.sort()

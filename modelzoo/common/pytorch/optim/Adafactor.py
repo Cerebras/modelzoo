@@ -67,9 +67,14 @@ class Adafactor(Optimizer):
         if warmup_init and not relative_step:
             raise ValueError("`warmup_init=True` is not supported yet")
         if clip_threshold != 1.0:
-            raise ValueError("Only `clip_threshold=1.0` is supported now")
+            raise ValueError(
+                f"Only `clip_threshold=1.0` is supported now. "
+                f"It was set to {clip_threshold}."
+            )
         if beta1 is not None:
-            raise ValueError("Only `beta1=None` is supported now")
+            raise ValueError(
+                f"Only `beta1=None` is supported now. It was set to {beta1}."
+            )
         if relative_step:
             raise ValueError("`relative_step=True` is not supported yet")
 
@@ -131,7 +136,7 @@ class Adafactor(Optimizer):
                         p.device
                     )
                 if not hasattr(self, "global_step"):
-                    state["step"] = torch.tensor(0, device="cpu").to(p.device)
+                    state["step"] = torch.tensor(0).to(p.device)
 
     @staticmethod
     def _get_lr(param_group, rms):

@@ -2,7 +2,7 @@
 
 train_input:
     data_processor: "BertQADataProcessor"
-    data_dir: "./squad_csv/train/"
+    data_dir: "./language/datasets/squad_csv/train/"
     vocab_file: "../../../../vocab/google_research_uncased_L-12_H-768_A-12.txt"
     max_sequence_length: 384
     batch_size: 32
@@ -14,13 +14,25 @@ train_input:
 
 eval_input:
     data_processor: "BertQADataProcessor"
-    data_dir: "./squad_csv/dev/"
+    data_dir: "./language/datasets/squad_csv/dev/"
     vocab_file: "../../../../vocab/google_research_uncased_L-12_H-768_A-12.txt"
     max_sequence_length: 384
     batch_size: 32
     shuffle: True
     shuffle_seed: 1
     num_workers: 2
+    prefetch_factor: 10
+    persistent_workers: True
+
+predict_input:
+    data_processor: "BertQADataProcessor"
+    data_dir: "./language/datasets/squad_csv/dev/"
+    vocab_file: "../../../../vocab/google_research_uncased_L-12_H-768_A-12.txt"
+    max_sequence_length: 384
+    batch_size: 1
+    shuffle: True
+    shuffle_seed: 1
+    num_workers: 1
     prefetch_factor: 10
     persistent_workers: True
 

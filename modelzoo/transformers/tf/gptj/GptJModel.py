@@ -80,6 +80,7 @@ class GptJModel(TFBaseModel):
         rotary_dim = params["model"]["rotary_dim"]
         attention_dropout_rate = params["model"]["attention_dropout_rate"]
         residual_dropout_rate = params["model"]["residual_dropout_rate"]
+        attention_softmax_fp32 = params["model"]["attention_softmax_fp32"]
         use_cache = params["model"]["use_cache"]
         use_bias_in_output = params["model"]["use_bias_in_output"]
 
@@ -166,6 +167,7 @@ class GptJModel(TFBaseModel):
             dropout_seed=dropout_seed,
             nonlinearity=nonlinearity,
             layer_norm_epsilon=layer_norm_epsilon,
+            attention_softmax_fp32=attention_softmax_fp32,
             boundary_casting=boundary_casting,
             tf_summary=tf_summary,
             dtype=self.policy,

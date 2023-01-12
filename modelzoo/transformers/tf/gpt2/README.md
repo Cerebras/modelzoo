@@ -142,13 +142,16 @@ For convenience, we provide different configurations of common model setups desi
 
 Following configs are meant for running in Pipeline mode with Appliance mode and Kubernetes:
 
-- [params_gpt2_small.yaml](./configs/params_gpt2_small.yaml): A 117M parameter GPT-2 small model tailored for pipeline mode.
+- [params_gpt2_small.yaml](./configs/params_gpt2_small.yaml): A 117M parameter GPT-2 small model tailored for pipeline mode. 
 - [params_gpt2_medium.yaml](./configs/params_gpt2_medium.yaml): A 345M parameter GPT-2 medium model tailored for pipeline mode.
 - [params_gpt2_large.yaml](./configs/params_gpt2_large.yaml): A 774M parameter GPT-2 large model tailored for pipeline mode.
+- [params_gpt2_large.yaml](./configs/params_gpt2_xlarge.yaml): A 1558M parameter GPT-2 large model tailored for pipeline mode.
+
 
 Following configs are meant for running in Weight Streaming mode with Appliance mode and Kubernetes:
 
 - [params_gpt2_small_ws.yaml](./configs/params_gpt2_small_ws.yaml): A 117M parameter GPT-2 small model designed for weight streaming mode.
+- [params_gpt2_xlarge.yaml](./configs/params_gpt2_xlarge.yaml) have the standard gpt2-xl config with `hidden_size=1600`, `num_hidden_layers=48`, `num_heads=16`, for Weight Streaming mode.
 
 ## Appendix
 

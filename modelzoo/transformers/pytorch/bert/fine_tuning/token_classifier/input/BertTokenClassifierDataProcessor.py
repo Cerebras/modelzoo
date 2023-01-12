@@ -23,6 +23,7 @@ import numpy as np
 import torch
 
 from modelzoo.common.pytorch import cb_model as cm
+from modelzoo.common.pytorch.run_utils import half_dtype_instance
 from modelzoo.transformers.pytorch.bert.input.utils import (
     build_vocab,
     get_meta_data,
@@ -182,7 +183,9 @@ class BertTokenClassifierDataProcessor(torch.utils.data.IterableDataset):
 
         # Store params.
         self.mp_type = (
-            torch.float16 if params.get("mixed_precision") else torch.float32
+            half_dtype_instance.half_dtype
+            if params.get("mixed_precision")
+            else torch.float32
         )
         self.data_buffer = []
         self.csv_files_per_task_per_worker = []

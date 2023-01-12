@@ -167,18 +167,18 @@ def validate_args(args):
     """
     if not os.path.isdir(args.input_dir):
         raise ValueError(
-            "Input directory does not exist, cannot run verification."
+            f"Input directory {args.input_dir} does not exist, cannot run verification."
         )
 
     if not os.path.isdir(args.output_dir):
         raise ValueError(
-            "Output directory does not exist, cannot run verification."
+            f"Output directory {args.output_dir} does not exist, cannot run verification."
         )
 
     pt_ckpt_path = os.path.join(args.input_dir, "pytorch_model.bin")
     if not os.path.isfile(pt_ckpt_path):
         raise ValueError(
-            "Expected file for checkpoint, pass in correct path for PyTorch"
+            f"Expected file for checkpoint at {pt_ckpt_path}, pass in correct path for PyTorch"
             " checkpoint to load and verify."
         )
 
@@ -189,7 +189,7 @@ def validate_args(args):
 
     if not contains_filetype:
         raise ValueError(
-            "Expected file for checkpoint, pass in correct path for TensorFlow"
+            "Expected `*tf_model.ckpt*` file for checkpoint, pass in correct path for TensorFlow"
             " checkpoint to load and verify."
         )
 

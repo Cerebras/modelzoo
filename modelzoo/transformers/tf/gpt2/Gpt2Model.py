@@ -87,6 +87,7 @@ class Gpt2Model(TFBaseModel):
         nonlinearity = params["model"]["nonlinearity"]
         dropout_rate = params["model"]["dropout_rate"]
         dropout_seed = params["model"]["dropout_seed"]
+        attention_softmax_fp32 = params["model"]["attention_softmax_fp32"]
 
         fixed_sparse_attention = params["model"].get(
             "fixed_sparse_attention", None
@@ -95,6 +96,7 @@ class Gpt2Model(TFBaseModel):
         use_projection_bias_in_attention = params["model"][
             "use_projection_bias_in_attention"
         ]
+        use_ffn_bias_in_attention = params["model"]["use_ffn_bias_in_attention"]
         use_ffn_bias = params["model"]["use_ffn_bias"]
         use_pre_normalization = params["model"]["use_pre_normalization"]
         layer_norm_epsilon = params["model"]["layer_norm_epsilon"]
@@ -206,7 +208,7 @@ class Gpt2Model(TFBaseModel):
             num_hidden_layers,
             filter_size,
             use_projection_bias_in_attention=use_projection_bias_in_attention,
-            use_ffn_bias_in_attention=True,
+            use_ffn_bias_in_attention=use_ffn_bias_in_attention,
             use_ffn_bias=use_ffn_bias,
             attention_initializer=initializer,
             ffn_initializer=initializer,
@@ -217,6 +219,7 @@ class Gpt2Model(TFBaseModel):
             dropout_seed=dropout_seed,
             layer_norm_epsilon=layer_norm_epsilon,
             use_pre_normalization=use_pre_normalization,
+            attention_softmax_fp32=attention_softmax_fp32,
             boundary_casting=boundary_casting,
             tf_summary=tf_summary,
             dtype=self.policy,

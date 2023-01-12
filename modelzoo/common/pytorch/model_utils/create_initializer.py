@@ -90,14 +90,18 @@ def create_initializer(spec):
             tensor,
             a=_get_spec_value(spec, "a", 0.0),
             mode=_get_spec_value(spec, "mode", "fan_in"),
-            nonlinearity=_get_spec_value(spec, "nonlinearity", "leaky_relu"),
+            nonlinearity=_get_spec_value(
+                spec, "nonlinearity", "leaky_relu", override_gain_calc=True
+            ),
         )
     elif name == "kaiming_uniform":
         return lambda tensor: INIT2FN[name](
             tensor,
             a=_get_spec_value(spec, "a", 0.0),
             mode=_get_spec_value(spec, "mode", "fan_in"),
-            nonlinearity=_get_spec_value(spec, "nonlinearity", "leaky_relu"),
+            nonlinearity=_get_spec_value(
+                spec, "nonlinearity", "leaky_relu", override_gain_calc=True
+            ),
         )
     elif name == "truncated_normal":
         return lambda tensor: INIT2FN[name](
@@ -120,7 +124,7 @@ def create_initializer(spec):
         raise ValueError(f"Invalid or unsupported initializer, '{name}'. ")
 
 
-def _get_spec_value(spec, key, default_value):
+def _get_spec_value(spec, key, default_value, override_gain_calc=False):
     """
     Returns value of spec[key].
     If key is not present, gives a warning and returns default_value.
@@ -149,6 +153,8 @@ def _get_spec_value(spec, key, default_value):
             f"Using {default_value}."
         )
         value = default_value
+    elif override_gain_calc:
+        pass
     elif is_nonlinearity(value):
         value = nn.init.calculate_gain(value)
     return value

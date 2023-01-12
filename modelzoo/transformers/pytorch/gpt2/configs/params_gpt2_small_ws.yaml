@@ -1,0 +1,110 @@
+# Copyright 2022 Cerebras Systems.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# GPT-2 small model (117M parameters)
+# Works with Weight Streaming mode on CS system
+
+train_input:
+    data_processor: "GptHDF5DataProcessor"
+    data_dir: "./language/datasets/owt_pretraining_gpt_hdf5/train_8M_msl2048"
+    max_sequence_length: 2048
+    batch_size: 112
+    shuffle: True  # Set this to False to make run deterministic
+    shuffle_seed: 256
+    num_workers: 8
+    prefetch_factor: 10
+    persistent_workers: True # Important to avoid seeding at each epoch
+
+eval_input:
+    data_processor: "GptHDF5DataProcessor"
+    data_dir: "./language/datasets/owt_pretraining_gpt_hdf5/val_msl2048"
+    max_sequence_length: 2048
+    batch_size: 112 # 8, if run on 4 GPUs
+    shuffle: False
+    num_workers: 8
+
+
+### Model
+model:
+    # Embedding
+    hidden_size: 768
+    vocab_size: 50257
+    use_position_embedding: True
+    position_embedding_type: "learned"
+    share_embedding_weights: True
+    max_position_embeddings: 2048
+
+    # Encoder
+    num_hidden_layers: 12
+    dropout_rate: 0.1
+    layer_norm_epsilon: 1.0e-5 
+    loss_weight: 0.00048828125
+
+    # Encoder - Attention
+    num_heads: 12
+    attention_type: "scaled_dot_product"
+    attention_dropout_rate: 0.1
+    use_projection_bias_in_attention: True
+    use_ffn_bias_in_attention: True
+
+    # Encoder - ffn
+    filter_size: 3072
+    nonlinearity: "gelu"
+    use_ffn_bias: True
+
+    # Task-specific
+    use_bias_in_output: False
+
+    # Cerebras parameters
+    mixed_precision: True
+
+
+### Optimization
+optimizer:
+    optimizer_type: "adamw"
+    beta1: 0.9
+    beta2: 0.95
+    epsilon: 1.0e-8
+    max_gradient_norm: 1.0
+    learning_rate:
+      ## GPT-3 schedule warms up over 375M tokens
+      - scheduler: "Linear"
+        initial_learning_rate: 0.0
+        end_learning_rate: 0.0006
+        steps: 1600
+      ## GPT-3 schedule decays over 300B tokens, but we shorten
+      ## to 34B (150k steps at BS=112)
+      - scheduler: "Linear" # Cosine not supported
+        initial_learning_rate: 0.0006
+        end_learning_rate: 0.0
+        alpha: 0.1 # Decay by 10x
+        decay_steps: 150000
+        steps: 150000
+    weight_decay_rate: 0.01
+    use_bias_correction: True
+    initial_loss_scale: 2147483648.0
+    max_loss_scale: 2147483648.0
+
+### Cerebras parameters
+runconfig:
+    max_steps: 151600
+    log_steps: 100
+    checkpoint_steps: 10000
+    save_initial_checkpoint: True
+    seed: 1
+    model_dir: "./model_dir"
+    show_debug_metrics: False
+    save_losses: True
+    eval_steps: 32
+

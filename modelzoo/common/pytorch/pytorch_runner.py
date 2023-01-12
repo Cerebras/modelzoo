@@ -40,11 +40,16 @@ class PyTorchRunner(PyTorchBaseRunner):
             "steps_per_increase", 2000
         )
 
-        if params["model"]["mixed_precision"] and device.type != "cuda":
+        if (
+            params["model"]["mixed_precision"]
+            and device is not None
+            and device.type != "cuda"
+        ):
             warnings.warn(
                 "Mixed-Precision training is only supported on GPU... "
                 "Autocast has no effect!"
             )
+        self.use_bfloat16 = params["model"].get("use_bfloat16", False)
 
         super().__init__(model=model, params=params)
 
@@ -77,35 +82,21 @@ class PyTorchRunner(PyTorchBaseRunner):
         return self._to_device(data)
 
     def train_forward(self, data):
-        with autocast(enabled=self._mixed_precision):
+
+        with autocast(
+            dtype=torch.bfloat16 if self.use_bfloat16 else torch.float16,
+            enabled=self._mixed_precision,
+        ):
             # Normalize loss to account for gradient accumulation
-            return super().train_forward(data) / float(self._grad_accum_steps)
+            return super().train_forward(data) / self._grad_accum_steps
 
     def eval_forward(self, data):
-        with autocast(enabled=self._mixed_precision):
+
+        with autocast(
+            dtype=torch.bfloat16 if self.use_bfloat16 else torch.float16,
+            enabled=self._mixed_precision,
+        ):
             return super().eval_forward(data)
-
-    def backward(self, loss):
-        if self._scaler:
-            self._scaler.scale(loss).backward()
-        else:
-            loss.backward()
-
-    def optimizer_step(self):
-        if self._scaler:
-            # Unscales the gradients of optimizer's
-            # assigned params in-place
-            self._scaler.unscale_(self._optimizer)
-            # gradient clipping
-            if hasattr(self._optimizer, "gradient_clipper"):
-                self._optimizer.gradient_clipper(self._model.model.parameters())
-            self._scaler.step(self._optimizer)
-            self._scaler.update()
-        else:
-            # gradient clipping
-            if hasattr(self._optimizer, "gradient_clipper"):
-                self._optimizer.gradient_clipper(self._model.model.parameters())
-            self._optimizer.step()
 
     ##################################################################
     #                        Evaluation Hooks                        #
@@ -178,7 +169,7 @@ class PyTorchRunner(PyTorchBaseRunner):
             )
         else:
             raise RuntimeError(
-                "data should be either a List or Dict of tensors."
+                f"Data should be either a List or Dict of tensors. It was {type(data)} instead."
             )
 
         return device_data

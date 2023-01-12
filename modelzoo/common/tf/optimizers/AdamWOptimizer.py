@@ -44,6 +44,18 @@ class AdamWOptimizer(tf.compat.v1.train.Optimizer):
         self.beta2 = beta2
         self.epsilon = epsilon
         self.exclude_from_weight_decay = exclude_from_weight_decay
+        if exclude_from_weight_decay and (
+            not (
+                isinstance(exclude_from_weight_decay, list)
+                or isinstance(exclude_from_weight_decay, tuple)
+            )
+            or not all(isinstance(i, str) for i in exclude_from_weight_decay)
+        ):
+            raise ValueError(
+                "If specified, exclude_from_weight_decay must be a list, or a "
+                f"tuple. Got '{exclude_from_weight_decay}' of type "
+                f"{type(exclude_from_weight_decay)}"
+            )
         # Whether to use Adam's bias correction given differences in
         # the decay of momentum and velocity terms
         self.use_bias_correction = use_bias_correction

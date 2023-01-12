@@ -12,18 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 from modelzoo.common.pytorch.metrics import AccuracyMetric
 from modelzoo.common.pytorch.PyTorchBaseModel import PyTorchBaseModel
+from modelzoo.common.pytorch.run_utils import half_dtype_instance
 
 
 class MNIST(nn.Module):
     def __init__(self, model_params):
         super().__init__()
-        self.loss_fn = nn.NLLLoss()
         self.fc_layers = []
         input_size = 784
         # Set the default or None
@@ -58,7 +60,7 @@ class MNIST(nn.Module):
             else:
                 raise ValueError(f"Unknown metric: {name}")
 
-    def forward(self, inputs, labels):
+    def forward(self, inputs):
         x = torch.flatten(inputs, 1)
         for fc_layer in self.fc_layers:
             x = fc_layer(x)
@@ -66,15 +68,7 @@ class MNIST(nn.Module):
             x = self.dropout(x)
 
         pred_logits = self.last_layer(x)
-
-        if self.accuracy_metric:
-            labels = labels.clone()
-            predictions = pred_logits.argmax(-1).int()
-            self.accuracy_metric(labels=labels, predictions=predictions)
-
-        outputs = F.log_softmax(pred_logits, dim=1)
-        loss = self.loss_fn(outputs, labels)
-        return loss
+        return pred_logits
 
     def _get_nonlinear(self, model_params):
         if model_params["activation_fn"] == "relu":
@@ -85,25 +79,37 @@ class MNIST(nn.Module):
 
 class MNISTModel(PyTorchBaseModel):
     def __init__(self, params, device=None):
-        self.params = params
-        model_params = params["model"].copy()
-        self.model = self.build_model(model_params)
+        params = copy.deepcopy(params)
 
+        # Disable eval metrics in non-eval modes
+        if params["runconfig"]["mode"] != "eval" and params["model"].get(
+            "compute_eval_metrics", []
+        ):
+            params["model"]["compute_eval_metrics"] = []
+
+        model_params = copy.deepcopy(params["model"])
+
+        self.model = self.build_model(model_params)
+        self.loss_fn = nn.NLLLoss()
         super().__init__(params=params, model=self.model, device=device)
 
     def build_model(self, model_params):
-        dtype = torch.float16 if model_params["to_float16"] else torch.float32
-        if dtype != torch.float32:
-            raise ValueError(
-                "Model casting to float16 is not supported, "
-                "please set to_float16 to False."
-            )
-
+        dtype = (
+            half_dtype_instance.half_dtype
+            if model_params["to_float16"]
+            else torch.float32
+        )
         model = MNIST(model_params)
         model.to(dtype)
         return model
 
     def __call__(self, data):
         inputs, labels = data
-        loss = self.model(inputs, labels)
+        pred_logits = self.model(inputs)
+        if self.model.accuracy_metric:
+            labels = labels.clone()
+            predictions = pred_logits.argmax(-1).int()
+            self.model.accuracy_metric(labels=labels, predictions=predictions)
+        outputs = F.log_softmax(pred_logits, dim=1)
+        loss = self.loss_fn(outputs, labels)
         return loss

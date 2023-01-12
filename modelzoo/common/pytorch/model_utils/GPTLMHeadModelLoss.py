@@ -32,9 +32,11 @@ class GPTLMHeadModelLoss(nn.Module):
         loss_fct = nn.CrossEntropyLoss(reduction='none')
         lm_loss = loss_fct(
             lm_logits.view(-1, self.vocab_size), labels.view(-1).long(),
-        ) * attention_mask.to(dtype=lm_logits.dtype).view(-1)
+        )
+
+        lm_loss *= attention_mask.to(dtype=lm_logits.dtype).view(-1)
 
         lm_loss = (torch.sum(lm_loss) / labels.shape[0]) * self.loss_weight
 
-        loss = lm_loss.half()
+        loss = lm_loss.to(lm_logits.dtype)
         return loss

@@ -37,6 +37,9 @@ class PipelineAccuracyMetric(CBMetric):
     def init_state(self):
         self.reset_state()
 
+    def update_on_device(self, labels, predictions, weights=None, dtype=None):
+        return DeviceOutputs(args=[labels, predictions, weights])
+
     def update_on_host(self, labels, predictions, weights=None):
         labels = labels.detach().flatten()
         predictions = predictions.detach().flatten()
@@ -64,8 +67,7 @@ class WSAccuracyMetric(CBMetric):
     def init_state(self):
         self.reset_state()
 
-    def update_on_device(self, labels, predictions, weights=None):
-        self.set_metric_state(self.state_dict)
+    def update_on_device(self, labels, predictions, weights=None, dtype=None):
         correct_predictions = (labels == predictions).float()
         num_correct_predictions = correct_predictions.sum()
         if weights is None:
@@ -77,10 +79,18 @@ class WSAccuracyMetric(CBMetric):
         else:
             correct_predictions = correct_predictions * weights
             num_tokens = (weights > 0).float().sum()
-        self.total_correct_predictions.add_(correct_predictions.sum())
+        self.total_correct_predictions.add_(num_correct_predictions)
         self.total_num_tokens.add_(num_tokens)
         result = self.total_correct_predictions / self.total_num_tokens
-        return DeviceOutputs(args=[result.to(torch.float16)])
+        # TODO(SW-82959): We need to remove the whole half dtype everywhere in metrics once we do for BERT model
+        if dtype is None:
+            from modelzoo.common.pytorch.run_utils import half_dtype_instance
+
+            return DeviceOutputs(
+                args=[result.to(half_dtype_instance.half_dtype)]
+            )
+        else:
+            return DeviceOutputs(args=[result.to(dtype)])
 
     def update_on_host(self, result):
         self.result = result
@@ -90,12 +100,14 @@ class WSAccuracyMetric(CBMetric):
 
     def reset_state(self):
         self.total_correct_predictions = torch.tensor(
-            0, dtype=torch.float32, device=cm.device()
+            0, dtype=torch.float32
+        ).to(cm.device())
+        self.total_num_tokens = torch.tensor(0, dtype=torch.float32).to(
+            cm.device()
         )
-        self.total_num_tokens = torch.tensor(
-            0, dtype=torch.float32, device=cm.device()
-        )
-        self.state_dict = {
+
+    def on_device_state_dict(self):
+        return {
             "total_correct_predictions": self.total_correct_predictions,
             "total_num_tokens": self.total_num_tokens,
         }

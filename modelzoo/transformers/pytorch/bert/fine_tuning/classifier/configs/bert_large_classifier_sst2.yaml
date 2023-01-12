@@ -2,7 +2,7 @@
 
 train_input:
     data_processor: "SST2DataProcessor"
-    data_dir: "./glue_data/SST-2"
+    data_dir: "./language/datasets/glue_data/SST-2"
     vocab_file: "../../../../vocab/google_research_uncased_L-12_H-768_A-12.txt"
     max_sequence_length: 72
     do_lower: True
@@ -13,7 +13,7 @@ train_input:
 
 eval_input:
     data_processor: "SST2DataProcessor"
-    data_dir: "./glue_data/SST-2"
+    data_dir: "./language/datasets/glue_data/SST-2"
     vocab_file: "../../../../vocab/google_research_uncased_L-12_H-768_A-12.txt"
     max_sequence_length: 72
     do_lower: True
@@ -63,3 +63,4 @@ runconfig:
     save_losses: True
     model_dir: "./model_dir"
     save_initial_checkpoint: True
+    eval_steps: 71

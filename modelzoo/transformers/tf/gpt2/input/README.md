@@ -60,7 +60,7 @@ The following plain text files need to be prepared before generating the TFRecor
 
 ## Generate TFRecords
 
-This script `create_tf_records.py` generates TFRecords for pre-training a GPT-2/3 model.
+This script `create_owt_tfrecords.py` generates TFRecords for pre-training a GPT-2/3 model.
 
 ### Description
 
@@ -81,21 +81,21 @@ Feature name | Data type | Sequence length | Description
 `input_mask` | `tf.int64` | `max_seq_length` | Mask for padded positions (has values `0` on the padded positions, and `1` elsewhere).
 `labels` | `tf.int64` | `max_seq_length` | Labels for Language Modeling (LM) pre-training task.
 
-The TFRecords generated from this script are used during pre-training by the `GptTfRecordsProcessor` class in [GptTfRecordsProcessor.py](./GptTfRecordsProcessor.py). For more details, refer to [create_tfrecords.py](./create_tfrecords.py).
+The TFRecords generated from this script are used during pre-training by the `GptTfRecordsProcessor` class in [GptTfRecordsProcessor.py](./GptTfRecordsProcessor.py). For more details, refer to [create_owt_tfrecords.py](./create_owt_tfrecords.py).
 
 
 ### Running the generation
 
-Run `create_tfrecords.py` with this command:
+Run `create_owt_tfrecords.py` with this command:
 
 ```bash
-python create_tfrecords.py --metadata_files ../../data_processing/scripts/owt/metadata/train_512k.txt --vocab_file bpe/vocab.bpe --encoder_file bpe/encoder.json --max_seq_length 128 --output_dir train_512k_msl128
+python create_owt_tfrecords.py --metadata_files ../../../data_processing/scripts/owt/metadata/train_512k.txt --vocab_file bpe/vocab.bpe --encoder_file bpe/encoder.json --max_seq_length 128 --output_dir train_512k_msl128
 ```
 
 Full usage:
 
 ```bash
-usage: create_tfrecords.py [-h] --metadata_files METADATA_FILES --vocab_file
+usage: create_owt_tfrecords.py [-h] --metadata_files METADATA_FILES --vocab_file
                            VOCAB_FILE --encoder_file ENCODER_FILE
                            [--max_seq_length MAX_SEQ_LENGTH]
                            [--short_seq_prob SHORT_SEQ_PROB]

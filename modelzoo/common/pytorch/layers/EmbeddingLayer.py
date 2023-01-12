@@ -20,6 +20,11 @@ import torch.nn as nn
 from modelzoo.common.pytorch.model_utils.create_initializer import (
     create_initializer,
 )
+from modelzoo.common.pytorch.model_utils.RotaryPositionEmbeddingHelper import (
+    RotaryPositionEmbeddingHelper,
+)
+
+from .RelativePositionEmbeddingLayer import RelativePositionEmbeddingLayer
 
 
 class EmbeddingLayer(nn.Module):
@@ -39,8 +44,8 @@ class EmbeddingLayer(nn.Module):
         initializer. Defaults to 'uniform'.
     :param int max_position_embeddings: Maximum sequence length to train
         using model.
-    :param str position_embedding_type: 'learned' or 'fixed'. Defaults to "learned",
-        in which case position embeddings are not created.
+    :param str position_embedding_type: 'learned', 'fixed' or 'rotary'. Defaults to "learned",
+        for 'rotary' embeddings, embeddings are not created at bottom but computed with key&query embeddings by RotaryPositionEmbeddingHelper
     :param Optional[int] min_timescale: The scale of the shortest sinusoid. Default to 1.0. (only need to be specified when position_embedding_type is fixed).
     :param Optional[int] max_timescale: The scale of the longest sinusoid. Default to 1.0e4. (only need to be specified when position_embedding_type is fixed).
     :param Optional[str,Callable] position_embeddings_initializer: Position
@@ -57,6 +62,7 @@ class EmbeddingLayer(nn.Module):
         vocab_size,
         embedding_size,
         pad_token_id=None,
+        positional_embedding_size=None,
         segment_embedding_size=None,
         embeddings_initializer='uniform',
         max_position_embeddings=None,
@@ -73,13 +79,14 @@ class EmbeddingLayer(nn.Module):
         if segment_embedding_size is None:
             segment_embedding_size = embedding_size
 
-        self.embeddings_initializer = create_initializer(embeddings_initializer)
-        self.position_embeddings_initializer = create_initializer(
-            position_embeddings_initializer
-        )
-        self.segment_embeddings_initializer = create_initializer(
-            segment_embeddings_initializer
-        )
+        if positional_embedding_size is None:
+            positional_embedding_size = embedding_size
+
+        self.embeddings_initializer = embeddings_initializer
+        self.position_embeddings_initializer = position_embeddings_initializer
+        self.segment_embeddings_initializer = segment_embeddings_initializer
+
+        self.max_position_embeddings = max_position_embeddings
         self.position_embedding_type = position_embedding_type
         self.pad_token_id = pad_token_id
         self.word_embeddings = nn.Embedding(
@@ -95,16 +102,21 @@ class EmbeddingLayer(nn.Module):
 
             if position_embedding_type == "learned":
                 self.position_embeddings = nn.Embedding(
-                    max_position_embeddings, embedding_size, device=device,
+                    max_position_embeddings,
+                    positional_embedding_size,
+                    device=device,
                 )
             elif position_embedding_type == "fixed":
                 self.position_embeddings = self.create_fix_pos_embedding(
                     max_position_embeddings,
-                    embedding_size,
+                    positional_embedding_size,
                     min_timescale,
                     max_timescale,
                 )
-            elif position_embedding_type == "rotary":
+            elif (
+                position_embedding_type == "relative"
+                or position_embedding_type == "rotary"
+            ):
                 self.position_embeddings = None
             else:
                 raise ValueError(
@@ -121,7 +133,7 @@ class EmbeddingLayer(nn.Module):
             self.segment_embeddings = None
 
         # Initialize weights
-        self._reset_parameters()
+        self.__reset_parameters()
 
     def create_fix_pos_embedding(
         self, seq_len, embed_len, min_timescale, max_timescale
@@ -149,19 +161,59 @@ class EmbeddingLayer(nn.Module):
         signal = torch.reshape(signal, (seq_len, 2, num_timescales))
         signal = torch.transpose(signal, 1, 2)
         signal = torch.reshape(signal, (seq_len, 2 * num_timescales))
-        signal = torch.nn.functional.pad(signal, (0, 0, 0, embed_len % 2),)
+        signal = torch.nn.functional.pad(signal, (0, embed_len % 2, 0, 0),)
 
-        return signal
+        return torch.nn.Parameter(signal, requires_grad=False)
 
-    def _reset_parameters(self):
-        self.embeddings_initializer(self.word_embeddings.weight.data)
+    def position_embedding_helper(
+        self,
+        # relative
+        num_heads=None,
+        relative_attention_bias=None,
+        num_relative_attention_buckets=32,
+        bidirectional=False,
+        initializer="xavier_uniform",
+        # rotary
+        rotary_dim=None,
+    ):
+        embedding_helper = None
+        if self.position_embedding_type == "rotary":
+            assert (
+                rotary_dim is not None
+            ), "RotaryPositionEmbeddingHelper requires rotary_dim"
+
+            embedding_helper = RotaryPositionEmbeddingHelper(
+                self.max_position_embeddings, rotary_dim
+            )
+        elif self.position_embedding_type == "relative":
+            assert (
+                num_heads is not None
+            ), "RelativePositionEmbeddingLayer requires num_heads"
+
+            embedding_helper = RelativePositionEmbeddingLayer(
+                num_heads,
+                relative_attention_bias=relative_attention_bias,
+                num_relative_attention_buckets=num_relative_attention_buckets,
+                bidirectional_relative_attention=bidirectional,
+                relative_attn_bias_initializer=initializer,
+            )
+
+        return embedding_helper
+
+    def reset_parameters(self):
+        self.__reset_parameters()
+
+    def __reset_parameters(self):
+        create_initializer(self.embeddings_initializer)(
+            self.word_embeddings.weight.data
+        )
 
         if self.position_embedding_type == "learned":
-            self.position_embeddings_initializer(
+            create_initializer(self.position_embeddings_initializer)(
                 self.position_embeddings.weight.data
             )
         if self.segment_embeddings:
-            self.segment_embeddings_initializer(
+            create_initializer(self.segment_embeddings_initializer)(
                 self.segment_embeddings.weight.data
             )
 
@@ -189,25 +241,46 @@ class EmbeddingLayer(nn.Module):
     def forward(
         self, input_ids, segment_ids=None, past_length=0,
     ):
+        embeddings = self.compute_token_embeddings(input_ids)
+        if self.position_embeddings is not None:
+            embeddings += self.compute_positional_embeddings(
+                input_ids, past_length, embeddings.dtype
+            )
+        if segment_ids is not None and self.segment_embeddings is not None:
+            embeddings += self.compute_segment_embeddings(segment_ids)
+        return embeddings
+
+    def compute_token_embeddings(self, input_ids):
+        input_shape = input_ids.size()
+        input_ids = input_ids.view(-1, input_shape[-1])
+        embeddings = self.word_embeddings(input_ids)
+        return embeddings
+
+    def compute_positional_embeddings(
+        self, input_ids, past_length=0, dtype=None
+    ):
         input_shape = input_ids.size()
         batch_size = input_ids.shape[0]
-        input_ids = input_ids.view(-1, input_shape[-1])
         device = input_ids.device
+        embed_dtype = (
+            self.word_embeddings.weight.dtype if dtype is None else dtype
+        )
 
-        embeddings = self.word_embeddings(input_ids)
-        if self.position_embeddings is not None:
-            if self.position_embedding_type == "learned":
-                position_ids = torch.arange(
-                    past_length, input_shape[-1] + past_length, device=device,
-                ).expand((batch_size, -1))
-                position_embeddings = self.position_embeddings(position_ids)
-            elif self.position_embedding_type == "fixed":
-                position_embeddings = self.position_embeddings.to(
-                    embeddings.device
-                )
-            embeddings += position_embeddings
+        position_embeddings = None
+        if self.position_embedding_type == "learned":
+            position_ids = torch.arange(
+                past_length, input_shape[-1] + past_length, device=device,
+            ).expand((batch_size, -1))
+            position_embeddings = self.position_embeddings(position_ids)
+        elif self.position_embedding_type == "fixed":
+            position_embeddings = self.position_embeddings.to(dtype=embed_dtype)
+            length = input_shape[-1]
+            if length != position_embeddings.size(dim=0):
+                position_embeddings = position_embeddings[:length]
+        return position_embeddings
+
+    def compute_segment_embeddings(self, segment_ids):
+        segment_embeddings = None
         if segment_ids is not None and self.segment_embeddings is not None:
-            segment_embeddings = self.segment_embeddings(segment_ids.long())
-            embeddings += segment_embeddings
-
-        return embeddings
+            segment_embeddings = self.segment_embeddings(segment_ids.int())
+        return segment_embeddings

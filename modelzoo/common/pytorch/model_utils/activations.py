@@ -136,7 +136,6 @@ ACT2FN = {
     "linear": linear_act,
     "sigmoid": torch.sigmoid,
     "relu6": nn.functional.relu6,
-    "swish": nn.functional.relu6,
     None: linear_act,
 }
 

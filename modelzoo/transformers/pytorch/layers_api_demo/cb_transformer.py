@@ -16,9 +16,9 @@ import math
 
 from torch import Tensor, nn
 
-from modelzoo.common.pytorch.layers.EmbeddingLayer import EmbeddingLayer
-from modelzoo.common.pytorch.layers.TransformerEncoder import TransformerEncoder
-from modelzoo.common.pytorch.layers.TransformerEncoderLayer import (
+from modelzoo.common.pytorch.layers import (
+    EmbeddingLayer,
+    TransformerEncoder,
     TransformerEncoderLayer,
 )
 

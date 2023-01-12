@@ -42,7 +42,8 @@ class PyTorchDistRunner(PyTorchRunner):
         if not dist.is_available():
             raise RuntimeError(f"torch.distributed package is not available")
 
-        master_addr, master_port = params["runconfig"]["dist_addr"].split(":")
+        dist_addr = params["runconfig"].get("dist_addr", "localhost:8888")
+        master_addr, master_port = dist_addr.split(":")
         os.environ['MASTER_ADDR'] = master_addr
         os.environ['MASTER_PORT'] = master_port
 
@@ -68,7 +69,8 @@ class PyTorchDistRunner(PyTorchRunner):
         return self._to_device(data, non_blocking=True)
 
     def on_train_epoch_start(self):
-        self._train_sampler.set_epoch(self._epoch)
+        if hasattr(self._train_sampler, "set_epoch"):
+            self._train_sampler.set_epoch(self._epoch)
 
     def on_train_epoch_end(self, early_exit: bool):
         # change _epoch for shuffling in dataloader sampler
@@ -179,6 +181,9 @@ class PyTorchDistRunner(PyTorchRunner):
         rank = dist.get_rank()
         self._device = torch.device(rank)
         self._model.model.to(self._device)
+        self._optimizer = self._model.get_optimizer()
+        self._optimizer.to(self._device)
+        self._lr_scheduler = self._model.get_lr_scheduler()
         if self._should_sync_batchnorm:
             self._model.model = torch.nn.SyncBatchNorm.convert_sync_batchnorm(
                 self._model.model

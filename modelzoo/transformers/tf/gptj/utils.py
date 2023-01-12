@@ -110,6 +110,9 @@ def set_defaults(params):
     mparams["backbone_only"] = mparams.get("backbone_only", False)
     mparams["use_bias_in_output"] = mparams.get("use_bias_in_output", True)
     mparams["use_cache"] = mparams.get("use_cache", False)
+    mparams["attention_softmax_fp32"] = mparams.get(
+        "attention_softmax_fp32", True
+    )
 
     # Optimizer parameters
     oparams = params["optimizer"]
@@ -145,6 +148,7 @@ def set_defaults(params):
     rparams["disable_standard_logs"] = rparams.get(
         "disable_standard_logs", oparams["grad_accum_steps"] > 1
     )
+
     # set default weight_servers
     params["runconfig"]["num_wgt_servers"] = params["runconfig"].get(
         "num_wgt_servers", 12

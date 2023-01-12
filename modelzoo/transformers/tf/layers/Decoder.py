@@ -60,6 +60,7 @@ class Decoder(BaseLayer):
         dropout_seed=None,
         layer_norm_epsilon=1e-8,
         use_pre_normalization=False,
+        attention_softmax_fp32=True,
         boundary_casting=False,
         tf_summary=False,
         **kwargs,
@@ -96,6 +97,8 @@ class Decoder(BaseLayer):
             "residual split -> layer norm -> transform -> dropout -> residual add".
             Here transform is either a self-attention, cross-attention, or ffn sub-block.
             Defaults to False.
+        :param bool attention_softmax_fp32: Perform softmax in attention
+            layers in FP32. Defaults to True.
         """
         super(Decoder, self).__init__(boundary_casting, tf_summary, **kwargs)
 
@@ -169,6 +172,7 @@ class Decoder(BaseLayer):
                 attention_type=attention_type,
                 dropout_rate=attention_dropout_rate,
                 dropout_seed=dropout_seed,
+                softmax_dtype_fp32=attention_softmax_fp32,
                 boundary_casting=self.boundary_casting,
                 tf_summary=self.tf_summary,
                 dtype=self.dtype_policy,

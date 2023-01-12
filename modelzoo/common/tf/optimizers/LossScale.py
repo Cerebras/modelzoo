@@ -108,7 +108,9 @@ class CSDynamicLossScale(DynamicLossScale):
         # drop-in replacement situation via direct reference or setattr
         self.min_loss_scale = min_loss_scale
         if self.min_loss_scale < 2.0 ** -14:
-            raise ValueError("min_loss_scale too small")
+            raise ValueError(
+                f"`min_loss_scale` of {self.min_loss_scale} is too small"
+            )
 
         self.max_loss_scale = max_loss_scale
         if self.max_loss_scale > tf.float32.max:

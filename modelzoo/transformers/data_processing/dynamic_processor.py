@@ -85,6 +85,7 @@ def data_generator(
     seed=None,
     spacy_model="en_core_web_sm",
     input_files_prefix="",
+    sop_labels=False,
 ):
     """
     Generator function used to create input dataset
@@ -147,7 +148,10 @@ def data_generator(
     :param int seed: Random seed.
     :param spacy_model: spaCy model to load, i.e. shortcut 
         link, package name or path. Used to segment text into sentences.
-    :param str input_file_prefix: Prefix to be added to paths of the input files. 
+    :param str input_file_prefix: Prefix to be added to paths of the input files.
+    :param bool sop_labels: If true, negative examples of the dataset will be two
+        consecutive sentences in reversed order. Otherwise, uses regular (NSP)
+        labels (where negative examples are from different documents).
     
     :returns: yields training examples (feature, label)
     where label refers to the next_sentence_prediction label
@@ -224,6 +228,7 @@ def data_generator(
                         max_predictions_per_seq,
                         masked_lm_prob,
                         rng,
+                        sop_labels,
                     )
                 )
         rng.shuffle(instances)
@@ -243,6 +248,7 @@ def _create_sentence_instances_from_document(
     max_predictions_per_seq,
     masked_lm_prob,
     rng,
+    sop_labels=False,
 ):
     """
     Create instances from documents.
@@ -250,6 +256,9 @@ def _create_sentence_instances_from_document(
     senteneces from each document
     :param int document_index: Index of document to process currently
     :param list vocab_words: List of all words present in the vocabulary
+    :param bool sop_labels: If true, negative examples of the dataset will be two
+        consecutive sentences in reversed order. Otherwise, uses regular (NSP)
+        labels (where negative examples are from different documents).
     :returns: List of SentencePairInstance objects
     """
 
@@ -313,7 +322,9 @@ def _create_sentence_instances_from_document(
                 tokens_b = []
                 # Random next
                 is_random_next = False
-                if len(current_chunk) == 1 or rng.random() < 0.5:
+                if len(current_chunk) == 1 or (
+                    not sop_labels and rng.random() < 0.5
+                ):
                     is_random_next = True
                     target_b_length = target_seq_len - len(tokens_a)
 
@@ -341,6 +352,12 @@ def _create_sentence_instances_from_document(
                     # later computations
                     num_unused_segments = len(current_chunk) - a_end
                     i -= num_unused_segments
+                elif sop_labels and rng.random() < 0.5:
+                    # From https://github.com/google-research/albert/blob/a36e095d3066934a30c7e2a816b2eeb3480e9b87/create_pretraining_data.py#L338
+                    is_random_next = True
+                    for j in range(a_end, len(current_chunk)):
+                        tokens_b.extend(current_chunk[j])
+                    tokens_a, tokens_b = tokens_b, tokens_a
                 else:
                     # Actual next
                     is_random_next = False

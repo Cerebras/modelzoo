@@ -16,20 +16,26 @@
 Processor for PyTorch BERT training.
 """
 import csv
+import random
 
 import numpy as np
 import torch
 
 from modelzoo.common.pytorch import cb_model as cm
 from modelzoo.common.pytorch.input_utils import bucketed_batch
+from modelzoo.common.pytorch.run_utils import half_dtype_instance
 from modelzoo.transformers.pytorch.bert.input.utils import (
     build_vocab,
     create_masked_lm_predictions,
     get_meta_data,
     parse_text,
-    shard_and_shuffle_data,
 )
-from modelzoo.transformers.pytorch.input_utils import get_data_for_task, task_id
+from modelzoo.transformers.pytorch.input_utils import (
+    get_data_for_task,
+    num_tasks,
+    shard_list_interleaved,
+    task_id,
+)
 
 
 class BertCSVDynamicMaskDataProcessor(torch.utils.data.IterableDataset):
@@ -86,7 +92,9 @@ class BertCSVDynamicMaskDataProcessor(torch.utils.data.IterableDataset):
         assert (
             self.num_batches > 0
         ), "Dataset does not contain enough samples for one batch. Please choose a smaller batch size"
-        self.num_tasks = cm.num_streamers() if cm.is_streamer() else 1
+
+        self.num_tasks = num_tasks()
+        self.task_id = task_id()
         self.num_batch_per_task = self.num_batches // self.num_tasks
 
         assert (
@@ -95,7 +103,7 @@ class BertCSVDynamicMaskDataProcessor(torch.utils.data.IterableDataset):
 
         self.num_examples_per_task = self.num_batch_per_task * self.batch_size
         self.files_in_task = get_data_for_task(
-            task_id(),
+            self.task_id,
             self.meta_data_values_cum_sum,
             self.num_examples_per_task,
             self.meta_data_values,
@@ -179,28 +187,13 @@ class BertCSVDynamicMaskDataProcessor(torch.utils.data.IterableDataset):
 
         # Store params.
         self.mp_type = (
-            torch.float16 if params.get("mixed_precision") else torch.float32
+            half_dtype_instance.half_dtype
+            if params.get("mixed_precision")
+            else torch.float32
         )
         self.data_buffer = []
         self.csv_files_per_task_per_worker = []
         self.processed_buffers = 0
-
-    def create_dataloader(self, is_training=True):
-        """
-        Classmethod to create the dataloader object.
-        """
-        if self.num_workers:
-            dataloader = torch.utils.data.DataLoader(
-                self,
-                batch_size=None,
-                num_workers=self.num_workers,
-                prefetch_factor=self.prefetch_factor,
-                persistent_workers=self.persistent_workers,
-            )
-        else:
-            dataloader = torch.utils.data.DataLoader(self, batch_size=None)
-
-        return dataloader
 
     def load_buffer(self):
         """
@@ -209,7 +202,7 @@ class BertCSVDynamicMaskDataProcessor(torch.utils.data.IterableDataset):
         :returns: Yields the data stored in the `data_buffer`.
 
         """
-
+        self.processed_buffers = 0
         self.data_buffer = []
 
         while self.processed_buffers < len(self.csv_files_per_task_per_worker):
@@ -279,17 +272,6 @@ class BertCSVDynamicMaskDataProcessor(torch.utils.data.IterableDataset):
                Shape: (`max_predictions`)
                `0` indicates the non masked token, and `1` indicates the masked token.
         """
-        # Shard the data across multiple processes.
-
-        (
-            self.processed_buffers,
-            self.csv_files_per_task_per_worker,
-            self.shuffle_seed,
-            self.rng,
-        ) = shard_and_shuffle_data(
-            self.files_in_task, self.shuffle, self.shuffle_seed,
-        )
-
         # Iterate over the data rows to create input features.
         for data_row in self.load_buffer():
             # `data_row` is a dict with keys:
@@ -384,3 +366,45 @@ class BertCSVDynamicMaskDataProcessor(torch.utils.data.IterableDataset):
                     self.mp_type
                 )
             yield batch
+
+    def _worker_init_fn(self, worker_id):
+        worker_info = torch.utils.data.get_worker_info()
+
+        if worker_info is not None:
+            worker_id = worker_info.id
+            num_workers = worker_info.num_workers
+        else:
+            # Single-process
+            worker_id = 0
+            num_workers = 1
+
+        self.processed_buffers = 0
+        if self.shuffle_seed is not None:
+            self.shuffle_seed += worker_id + 1
+        self.rng = random.Random(self.shuffle_seed)
+
+        # Shard the data across multiple processes.
+        self.csv_files_per_task_per_worker = shard_list_interleaved(
+            self.files_in_task, worker_id, num_workers
+        )
+        if self.shuffle:
+            self.rng.shuffle(self.csv_files_per_task_per_worker)
+
+    def create_dataloader(self, is_training=True):
+        """
+        Classmethod to create the dataloader object.
+        """
+        if self.num_workers:
+            dataloader = torch.utils.data.DataLoader(
+                self,
+                batch_size=None,
+                num_workers=self.num_workers,
+                prefetch_factor=self.prefetch_factor,
+                persistent_workers=self.persistent_workers,
+                worker_init_fn=self._worker_init_fn,
+            )
+        else:
+            dataloader = torch.utils.data.DataLoader(self, batch_size=None)
+            self._worker_init_fn(0)
+
+        return dataloader

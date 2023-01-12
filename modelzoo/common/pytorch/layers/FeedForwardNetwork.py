@@ -104,16 +104,14 @@ class FeedForwardNetwork(nn.Module):
         self.layers_dropout_rates = layers_dropout_rates
 
         self.use_bias = use_bias
-        self.kernel_initializer = create_initializer(kernel_initializer)
-        self.bias_initializer = create_initializer(bias_initializer)
+        self.kernel_initializer = kernel_initializer
+        self.bias_initializer = bias_initializer
         self.device = device
 
         if output_layer_initializer is None:
             self.output_layer_initializer = self.kernel_initializer
         else:
-            self.output_layer_initializer = create_initializer(
-                output_layer_initializer
-            )
+            self.output_layer_initializer = output_layer_initializer
 
         assert (
             self.num_dense_layers > 0
@@ -124,10 +122,15 @@ class FeedForwardNetwork(nn.Module):
                 "len(layers_activation) should equal the number"
                 " of dense layers."
             )
+        else:
+            self.layers_activation = [None] * self.num_dense_layers
+
         if self.layers_dropout_rates:
             assert len(self.layers_dropout_rates) == self.num_dense_layers, (
                 "len(layers_dropout) should equal the number" "of dense layers."
             )
+        else:
+            self.layers_dropout_rates = [None] * self.num_dense_layers
 
         # This sets the namespace of the layer.
         # Using `nn.ModuleList` to have clear namespace such as
@@ -155,18 +158,23 @@ class FeedForwardNetwork(nn.Module):
         )
 
         # Initialize weights in Linear layers.
-        self._reset_parameters()
+        self.__reset_parameters()
 
-    def _reset_parameters(self):
+    def reset_parameters(self):
+        self.__reset_parameters()
+
+    def __reset_parameters(self):
         # Initialize weights for Linear layers
         for layer_num, linear_layer_module in enumerate(self.ffn):
-            weight_initializer = self.kernel_initializer
+            weight_initializer = create_initializer(self.kernel_initializer)
             if layer_num == self.num_dense_layers - 1:
-                weight_initializer = self.output_layer_initializer
+                weight_initializer = create_initializer(
+                    self.output_layer_initializer
+                )
 
             weight_initializer(linear_layer_module.linear_layer.weight.data)
             if self.use_bias:
-                self.bias_initializer(
+                create_initializer(self.bias_initializer)(
                     linear_layer_module.linear_layer.bias.data
                 )
 

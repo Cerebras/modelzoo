@@ -17,6 +17,7 @@ Processor for PyTorch T5 training.
 """
 import csv
 import os
+import random
 import sys
 from functools import partial
 
@@ -25,11 +26,13 @@ import torch
 
 from modelzoo.common.pytorch import cb_model as cm
 from modelzoo.common.pytorch.input_utils import bucketed_batch
-from modelzoo.transformers.pytorch.bert.input.utils import (
-    build_vocab,
-    shard_and_shuffle_data,
+from modelzoo.transformers.pytorch.bert.input.utils import build_vocab
+from modelzoo.transformers.pytorch.input_utils import (
+    get_data_for_task,
+    num_tasks,
+    shard_list_interleaved,
+    task_id,
 )
-from modelzoo.transformers.pytorch.input_utils import get_data_for_task, task_id
 from modelzoo.transformers.pytorch.t5.input.utils import (
     concatenate_documents,
     construct_denoising_objective,
@@ -117,7 +120,9 @@ class T5DynamicDataProcessor(torch.utils.data.IterableDataset):
         assert (
             self.num_batches > 0
         ), "Dataset does not contain enough samples for one batch. Please choose a smaller batch size"
-        self.num_tasks = cm.num_streamers() if cm.is_streamer() else 1
+
+        self.num_tasks = num_tasks()
+        self.task_id = task_id()
         self.num_batch_per_task = self.num_batches // self.num_tasks
 
         assert (
@@ -126,7 +131,7 @@ class T5DynamicDataProcessor(torch.utils.data.IterableDataset):
 
         self.num_examples_per_task = self.num_batch_per_task * self.batch_size
         self.files_in_task = get_data_for_task(
-            task_id(),
+            self.task_id,
             self.meta_data_values_cum_sum,
             self.num_examples_per_task,
             self.meta_data_values,
@@ -146,7 +151,7 @@ class T5DynamicDataProcessor(torch.utils.data.IterableDataset):
         ), f"buckets may be None or a non-empty list of boundaries. Got {self.buckets}"
         # Compute a loss weight for every batch to use in the averaging of
         # per-token loss across the batch.
-        self.dynamic_loss_weight = params.get("dynamic_loss_weight", False)
+        self.dynamic_loss_weight = params.get("dynamic_loss_weight")
         self.pack_sequences = params.get("pack_sequences", False)
         self.num_documents_to_concatenate = params.get(
             "num_documents_to_concatenate", 128
@@ -215,9 +220,6 @@ class T5DynamicDataProcessor(torch.utils.data.IterableDataset):
         self.tgt_max_sequence_length = params["tgt_max_sequence_length"]
 
         # Store params.
-        self.mp_type = (
-            torch.float16 if params.get("mixed_precision") else torch.float32
-        )
         self.data_buffer = []
         self.text_files_per_task_per_worker = []
         self.processed_buffers = 0
@@ -245,22 +247,6 @@ class T5DynamicDataProcessor(torch.utils.data.IterableDataset):
                     meta_data[os.path.join(file_name, line[0])] = int(line[1])
         return meta_data
 
-    def create_dataloader(self, is_training=True):
-        """
-        Classmethod to create the dataloader object.
-        """
-        if not self.num_workers:
-            self.prefetch_factor = 2
-            self.persistent_workers = False
-        dataloader = torch.utils.data.DataLoader(
-            self,
-            batch_size=None,
-            num_workers=self.num_workers,
-            prefetch_factor=self.prefetch_factor,
-            persistent_workers=self.persistent_workers,
-        )
-        return dataloader
-
     def load_buffer(self):
         """
         Generator to read samples of data.
@@ -268,6 +254,7 @@ class T5DynamicDataProcessor(torch.utils.data.IterableDataset):
         :returns: Yields data samples, one at a time.
 
         """
+        self.processed_buffers = 0
         # The csv file might contain very huge fields, therefore increase the `field_size_limit`.
         csv.field_size_limit(sys.maxsize)
         while self.processed_buffers < len(self.text_files_per_task_per_worker):
@@ -309,14 +296,6 @@ class T5DynamicDataProcessor(torch.utils.data.IterableDataset):
                Shape: (`tgt_max_sequence_length`).
         """
         # Shard the data across multiple processes.
-        (
-            self.processed_buffers,
-            self.text_files_per_task_per_worker,
-            self.shuffle_seed,
-            self.rng,
-        ) = shard_and_shuffle_data(
-            self.files_in_task, self.shuffle, self.shuffle_seed,
-        )
 
         max_raw_sequence_len, max_target_len = get_raw_sequence_lengths(
             self.src_max_sequence_length
@@ -405,5 +384,49 @@ class T5DynamicDataProcessor(torch.utils.data.IterableDataset):
                 scale = self.batch_size / torch.sum(
                     batch["decoder_attention_mask"]
                 )
-                batch["loss_weight"] = scale.expand(self.batch_size, 1).half()
+                batch["loss_weight"] = scale.expand(self.batch_size, 1)
             yield batch
+
+    def _worker_init_fn(self, worker_id):
+        worker_info = torch.utils.data.get_worker_info()
+
+        if worker_info is not None:
+            worker_id = worker_info.id
+            num_workers = worker_info.num_workers
+        else:
+            # Single-process
+            worker_id = 0
+            num_workers = 1
+
+        self.processed_buffers = 0
+        if self.shuffle_seed is not None:
+            self.shuffle_seed += worker_id + 1
+        self.rng = random.Random(self.shuffle_seed)
+
+        # Shard the data across multiple processes.
+        self.text_files_per_task_per_worker = shard_list_interleaved(
+            self.files_in_task, worker_id, num_workers
+        )
+        if self.shuffle:
+            self.rng.shuffle(self.text_files_per_task_per_worker)
+
+    def create_dataloader(self, is_training=True):
+        """
+        Classmethod to create the dataloader object.
+        """
+        if not self.num_workers:
+            self.prefetch_factor = 2
+            self.persistent_workers = False
+        dataloader = torch.utils.data.DataLoader(
+            self,
+            batch_size=None,
+            num_workers=self.num_workers,
+            prefetch_factor=self.prefetch_factor,
+            persistent_workers=self.persistent_workers,
+            worker_init_fn=self._worker_init_fn,
+        )
+
+        if self.num_workers == 0:
+            self._worker_init_fn(0)
+
+        return dataloader

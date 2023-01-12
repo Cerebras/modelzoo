@@ -26,7 +26,9 @@ def _host_call_to_eval_metric_ops(host_call):
             for index, value in enumerate(eval_metric_ops)
         }
     else:
-        raise ValueError("Invalid eval_metric_ops")
+        raise ValueError(
+            f"Invalid `eval_metric_ops` of type {type(eval_metric_ops)}"
+        )
 
     new_eval_metric_ops = {}
     for key, value in metric_ops_dict.items():
@@ -45,16 +47,28 @@ def _validate_host_call(host_call):
         return ()
 
     if not isinstance(host_call, (list, tuple)) or len(host_call) not in [2, 3]:
-        raise ValueError("host_call must be an iterable with length 2 or 3.")
+        raise ValueError(
+            f"`host_call` must be an iterable with length 2 or 3. "
+            f"Instead received {host_call}"
+        )
 
     if not callable(host_call[0]):
-        raise ValueError("Expected first item of host_call to be a callable.")
+        raise ValueError(
+            f"Expected first item of `host_call` to be a callable. "
+            f"Instead received {type(host_call[0])}."
+        )
 
     if not isinstance(host_call[1], (list, tuple)):
-        raise ValueError("Expected second item of host_call to be an iterable.")
+        raise ValueError(
+            f"Expected second item of `host_call` to be an iterable. "
+            f" Instead received {type(host_call[1])}."
+        )
 
     if len(host_call) > 2 and not isinstance(host_call[2], (list, tuple)):
-        raise ValueError("Expected third item of host_call to be an iterable.")
+        raise ValueError(
+            f"Expected third item of host_call to be an iterable. "
+            f"Instead received {type(host_call[2])}."
+        )
 
     return host_call
 

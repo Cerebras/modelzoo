@@ -23,3 +23,16 @@ def set_custom_stack_params(params):
         state.full_config.matching.kernel.inc_pwt_estimate = True
         state.full_config.matching.kernel.enable_pipelined_mlm_loss = True
         state.full_config.matching.autogen_policy = AP_DISABLED
+
+
+def set_defaults(params):
+    """
+    Update any missing parameters in the params dictionary with default values
+
+    Args:
+        params: The dictionary containing the params
+    """
+    params["model"]["use_bfloat16"] = params["model"].get("use_bfloat16", True)
+    params["optimizer"]["loss_scaling_factor"] = params["optimizer"].get(
+        "loss_scaling_factor", 1.0
+    )

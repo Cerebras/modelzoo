@@ -33,7 +33,7 @@ FC MNIST model configs are supported in the [Layer Pipelined mode](https://docs.
 ## Multi-Replica data parallel training
 When training on the Cerebras System, the `--multireplica` flag can be used to perform data-parallel training
 across multiple copies of the model at the same time. For more details about this feature, please refer
-to [Multi-Replica Data Parallel Training](https://docs.cerebras.net/en/private/general/multi-replica-data-parallel-training.html) documentation page.
+to [Multi-Replica Data Parallel Training](https://docs.cerebras.net/en/latest/general/multi-replica-data-parallel-training.html) documentation page.
 
 # Structure of the code
 * `data.py`: Simple data input pipeline loading the dataset from [TFDS](https://www.tensorflow.org/datasets/catalog/mnist).
@@ -59,7 +59,9 @@ although the `data_dir` can be customized (see the [TF documentation](
 https://www.tensorflow.org/datasets/api_docs/python/tfds/load)
 for more information).
 
-Before running on CPU, `tfds` data should be downloaded using [`prepare_data.py`](prepare_data.py).
+Before running, `tfds` data should be downloaded using [`prepare_data.py`](prepare_data.py).
+
+To be able to download the data, the correct tfds package should be installed thourgh ```pip install tensorflow-datasets==4.3.0```.
 
 The input pipeline does minimal processing on this dataset. The dataset
 returns one batch at a time, of the form:
@@ -70,7 +72,7 @@ inputs = (
 )
 ```
 Where here, `floatX = float32` if we are running in full precision and
-`float16` if we are running in mixed precision mode. You can simply set the mixed precision mode by passing `model.mixed_precision False` as part of the arguments. 
+`float16` if we are running in mixed precision mode. You can simply set the mixed precision mode by passing `model.mixed_precision False` as part of the arguments.
 
 # How to run:
 Here we provide how to

@@ -21,17 +21,19 @@ import copy
 import logging
 import math
 import os
+import re
 import warnings
 from collections import defaultdict
-from contextlib import contextmanager
-from typing import Callable, Optional, Tuple
+from contextlib import ExitStack, contextmanager
+from typing import Callable, Optional, Tuple, Union
 
 import numpy as np
 import torch
 from torch.utils.tensorboard import SummaryWriter
 
 from modelzoo.common.pytorch import cb_model as cm
-from modelzoo.common.pytorch import modes
+from modelzoo.common.pytorch import cbtorch, modes
+from modelzoo.common.pytorch.half_dtype import half_dtype_instance
 from modelzoo.common.pytorch.loss_utils import LossSaver, extract_loss
 from modelzoo.common.pytorch.metrics import (
     compute_all_metrics,
@@ -40,7 +42,7 @@ from modelzoo.common.pytorch.metrics import (
 from modelzoo.common.pytorch.PyTorchBaseModel import PyTorchBaseModel
 from modelzoo.common.pytorch.summaries import save_all_summaries
 from modelzoo.common.pytorch.summary_collection import SummaryCollection
-from modelzoo.common.pytorch.utils import visit_structure
+from modelzoo.common.pytorch.utils import ExecutionStrategy, visit_structure
 
 
 class PyTorchBaseRunner(metaclass=abc.ABCMeta):
@@ -54,11 +56,10 @@ class PyTorchBaseRunner(metaclass=abc.ABCMeta):
             param: A dict of params that specify the behavior of the model.
         """
         self._model = model
-        self._params = params
+        self._params = copy.deepcopy(params)
         self._optimizer = None
         self._lr_scheduler = None
-
-        self._runconfig = copy.deepcopy(params["runconfig"])
+        self._scaler = None
 
         mode = self._runconfig["mode"]
         if mode in (modes.TRAIN, modes.TRAIN_AND_EVAL):
@@ -69,17 +70,25 @@ class PyTorchBaseRunner(metaclass=abc.ABCMeta):
         self._active_mode = mode
 
         # Mandatory config options
-        self._mixed_precision = params["model"]["mixed_precision"]
+        self._mixed_precision = self._params["model"]["mixed_precision"]
 
         # Optional config options
-        self._grad_accum_steps = params["optimizer"].get("grad_accum_steps", 1)
+        self._grad_accum_steps = self._params["optimizer"].get(
+            "grad_accum_steps", 1
+        )
         self._show_debug_metrics = self._runconfig.get(
             "show_debug_metrics", False
         )
-        self._save_losses = self._runconfig.get("save_losses", False)
+        self._save_losses = self._runconfig.get("save_losses", True)
         self._check_loss_values = self._runconfig.get("check_loss_values", True)
-        self._checkpoint_path = self._runconfig.get("checkpoint_path")
         self._model_dir = self._runconfig.get("model_dir", "./")
+
+        self._checkpoint_path = self._runconfig.get("checkpoint_path")
+        if not self._checkpoint_path and self._runconfig.get(
+            "autoload_last_checkpoint", True
+        ):
+            self._checkpoint_path = self._get_last_checkpoint()
+
         self._is_pretrained_checkpoint = self._runconfig.get(
             "is_pretrained_checkpoint", False,
         )
@@ -92,8 +101,12 @@ class PyTorchBaseRunner(metaclass=abc.ABCMeta):
             "fabric_config_file", None
         )
 
-        # summary writer object
+        # Summary writer object
         self._writers = {}
+
+        # A cleanup stack that subclasses can hook into during a run to do any
+        # necessary cleanups in case of failures
+        self.__cleanup_stack: Union[ExitStack, None] = None
 
         # These are set up at the start of execution loop
         self._global_step = None
@@ -116,6 +129,10 @@ class PyTorchBaseRunner(metaclass=abc.ABCMeta):
         return self._writers.get(self._active_mode)
 
     @property
+    def _runconfig(self):
+        return self._params["runconfig"]
+
+    @property
     def _run_step(self) -> int:
         """Returns the current execution step.
 
@@ -132,6 +149,14 @@ class PyTorchBaseRunner(metaclass=abc.ABCMeta):
         loss_dir = os.path.join(self._model_dir, "losses")
         os.makedirs(loss_dir, exist_ok=True)
         return loss_dir
+
+    @property
+    def _cleanup_stack(self) -> ExitStack:
+        """Returns an ExitStack only available during execution."""
+        assert (
+            self.__cleanup_stack
+        ), "Cleanup stack is only available during execution."
+        return self.__cleanup_stack
 
     def _validate_config(self):
         """Check that the provided config is valid.
@@ -254,7 +279,7 @@ class PyTorchBaseRunner(metaclass=abc.ABCMeta):
         elif mode == modes.TRAIN_AND_EVAL:
             train_dataloader, eval_dataloader = dataloader
 
-        train_steps_per_epoch = eval_steps_per_epoch = 0
+        train_steps_per_epoch = 0
 
         if mode in (modes.TRAIN, modes.TRAIN_AND_EVAL):
             try:
@@ -295,23 +320,26 @@ class PyTorchBaseRunner(metaclass=abc.ABCMeta):
                 assert (
                     eval_steps_per_epoch > 0
                 ), "Eval Dataloader does not generate any batches."
+
                 if self._eval_steps_per_epoch is not None:
+                    # Do a sanity check that we can generate requested batches
                     assert self._eval_steps_per_epoch <= eval_steps_per_epoch, (
-                        f"The requested steps per epoch of {self._eval_steps_per_epoch} "
-                        f"exceeds total steps in an epoch, which is "
-                        f"{eval_steps_per_epoch}."
+                        f"The requested steps per epoch of "
+                        f"{self._eval_steps_per_epoch} exceeds total steps in "
+                        f"an epoch, which is {eval_steps_per_epoch}."
                     )
-                    eval_steps_per_epoch = self._eval_steps_per_epoch
+                else:
+                    # If not explicitly specified, run the whole eval epoch
+                    self._eval_steps_per_epoch = eval_steps_per_epoch
             except TypeError:
-                # Dataset length is not known
+                # Dataset length is not known, so eval steps must be specified.
+                # We assume the dataloader generates as many steps as the user
+                # specified. Otherwise, we may get a stall. There's no way for
+                # us to validate this since we can't query the dataset length.
                 assert self._eval_steps_per_epoch is not None, (
                     "`eval_steps` must be specified for datasets with unknown "
                     "length."
                 )
-                # We assume the dataloader generates as many steps as the user
-                # specified. Otherwise, we may get a stall. There's no way for
-                # us to validate this since we can't query the dataset length.
-                eval_steps_per_epoch = self._eval_steps_per_epoch
 
         if mode in (modes.TRAIN, modes.TRAIN_AND_EVAL):
             steps_per_epoch = train_steps_per_epoch
@@ -344,7 +372,7 @@ class PyTorchBaseRunner(metaclass=abc.ABCMeta):
                 self._checkpoint_steps, self._total_steps
             )
         elif mode == modes.EVAL:
-            self._total_steps = eval_steps_per_epoch
+            self._total_steps = self._eval_steps_per_epoch
 
         self._fetch_steps = min(self._log_steps, self._total_steps)
         if self._fetch_steps == 0:  # Always fetch the outputs of the last step
@@ -438,13 +466,14 @@ class PyTorchBaseRunner(metaclass=abc.ABCMeta):
         # the size of the dataloader
         self._configure_run_steps(dataloader, mode)
 
-        try:
-            yield
-        finally:
-            if self.is_master_ordinal():
-                for writer in self._writers.values():
-                    writer.flush()
-                    writer.close()
+        with ExitStack() as self.__cleanup_stack:
+            try:
+                yield
+            finally:
+                if self.is_master_ordinal():
+                    for writer in self._writers.values():
+                        writer.flush()
+                        writer.close()
 
     def on_train_start(self):
         """Function to execute before training starts"""
@@ -501,7 +530,7 @@ class PyTorchBaseRunner(metaclass=abc.ABCMeta):
         Runs the train forward pass.
 
         Override this method to provide any additional functionality around
-        the eval forward pass call.
+        the train forward pass call.
         """
         return self._model(data)
 
@@ -521,7 +550,10 @@ class PyTorchBaseRunner(metaclass=abc.ABCMeta):
         Override this method to provide any additional functionality around
         the backward call.
         """
-        loss.backward()
+        if self._scaler:
+            self._scaler.scale(loss).backward()
+        else:
+            loss.backward()
 
     def optimizer_zero_grad(self):
         """Zeroes out the gradients in the optimizer"""
@@ -529,7 +561,31 @@ class PyTorchBaseRunner(metaclass=abc.ABCMeta):
 
     def optimizer_step(self):
         """Performs the optimizer step"""
-        self._optimizer.step()
+        if self._scaler:
+            # Unscales the gradients of optimizer's
+            # assigned params in-place
+            self._scaler.unscale_(self._optimizer)
+            # gradient clipping
+            if (
+                hasattr(self._optimizer, "gradient_clipper")
+                and self._optimizer.gradient_clipper is not None
+            ):
+                self._optimizer.gradient_clipper(self._model.model.parameters())
+            self._scaler.step(self._optimizer)
+            self._scaler.update()
+        else:
+            # gradient clipping
+            if (
+                hasattr(self._optimizer, "gradient_clipper")
+                and self._optimizer.gradient_clipper is not None
+            ):
+                self._optimizer.gradient_clipper(self._model.model.parameters())
+            self._optimizer.step()
+
+    def lr_scheduler_step(self):
+        """Performs the lr_scheduler step"""
+        if self._lr_scheduler:
+            self._lr_scheduler.step()
 
     def train(self, train_dataloader: torch.utils.data.DataLoader):
         """Train the model with data generated by the given dataloader.
@@ -594,8 +650,7 @@ class PyTorchBaseRunner(metaclass=abc.ABCMeta):
             if grad_accum_step % self._grad_accum_steps == 0:
                 self.optimizer_step()
 
-                if self._lr_scheduler:
-                    self._lr_scheduler.step()
+                self.lr_scheduler_step()
 
                 self._increment_global_step()
 
@@ -806,9 +861,7 @@ class PyTorchBaseRunner(metaclass=abc.ABCMeta):
             The loaded state dict. If checkpoint path was None, returns None.
         """
         if checkpoint_path:
-            state_dict = torch.load(
-                checkpoint_path, map_location=torch.device('cpu'),
-            )
+            state_dict = cbtorch.load(checkpoint_path)
             self._model.set_state(state_dict)
         else:
             state_dict = None
@@ -826,6 +879,21 @@ class PyTorchBaseRunner(metaclass=abc.ABCMeta):
 
         return state_dict
 
+    # Returns path to last checkpoint or None if no checkpoints exist
+    def _get_last_checkpoint(self):
+        # Used when running on interuptable instances in order to reload from
+        # the last checkpoint.
+        if not os.path.exists(self._model_dir):
+            return None
+        last_ckpt = (None, None)  # (step of last ckpt, path of last ckpt)
+        for name in os.listdir(self._model_dir):
+            match = re.fullmatch(rf'checkpoint_(\d+)\.mdl', name)
+            if match:
+                step = int(match.group(1))
+                if last_ckpt[0] is None or step > last_ckpt[0]:
+                    last_ckpt = (step, os.path.join(self._model_dir, name))
+        return last_ckpt[1]
+
     def _maybe_check_loss_value(self, loss, step_offset=0):
         if self._check_loss_values and self._is_fetch_step(step_offset):
             self._check_loss_value(loss)
@@ -841,7 +909,11 @@ class PyTorchBaseRunner(metaclass=abc.ABCMeta):
         """
         loss = cm.to_cpu(loss.detach())
         if torch.isnan(loss).any().item():
-            raise ValueError("NaN loss detected.")
+            raise ValueError(
+                "NaN loss detected. "
+                "Please try different hyperparameters "
+                "such as the learning rate, batch size, etc."
+            )
         if torch.isinf(loss).any().item():
             raise ValueError("inf loss detected.")
 
@@ -923,13 +995,13 @@ class PyTorchBaseRunner(metaclass=abc.ABCMeta):
         validate_only = runconfig_params["validate_only"]
         compile_only = runconfig_params["compile_only"] or validate_only
         appliance = runconfig_params.get("appliance", False)
+        use_appliance_data = runconfig_params.get("use_appliance_data", True)
         use_cs = bool(cs_ip or compile_only or appliance)
 
         # Providing a CS ip or providing the compile_only flag indicates that
         # a CS workflow is being run. Thus, the cbtorch backend must be initialized
         # in order for the run to be configured correctly
         if use_cs:
-            from modelzoo.common.pytorch import cbtorch
 
             use_cbfloat16 = params.get("csconfig", {}).get(
                 "use_cbfloat16", False
@@ -950,8 +1022,59 @@ class PyTorchBaseRunner(metaclass=abc.ABCMeta):
                 cs_ip=cs_ip,
                 compile_only=compile_only,
                 appliance=appliance,
+                use_appliance_data=use_appliance_data,
                 use_cbfloat16=use_cbfloat16,
             )
+
+            if appliance:
+                execution_strategy = (
+                    runconfig_params.get("execution_strategy")
+                    or ExecutionStrategy.weight_streaming
+                )
+                if (
+                    runconfig_params["num_csx"] > 1
+                    and execution_strategy != ExecutionStrategy.weight_streaming
+                ):
+                    raise ValueError(
+                        f"Using multiple CS-X systems is only supported in "
+                        f"appliance mode with "
+                        f"{ExecutionStrategy.weight_streaming} execution "
+                        f"strategy."
+                    )
+                cbtorch.env().weight_streaming_mode = (
+                    execution_strategy == ExecutionStrategy.weight_streaming
+                )
+                logging.debug(
+                    f"Running with {execution_strategy} execution strategy"
+                )
+
+            # override model params if needed, before creating the model
+            use_bfloat16 = params["model"].get("use_bfloat16", False)
+
+            if not cbtorch.env().weight_streaming_mode:
+                if use_bfloat16:
+                    logging.info(
+                        "bfloat16 is not supported in Pipeline mode. Setting"
+                        "`use_bfloat16` to `False`."
+                    )
+                params["model"]["use_bfloat16"] = False
+                use_bfloat16 = False
+
+            half_dtype_instance.use_bfloat16 = use_bfloat16
+            if use_bfloat16 and cm.use_cs():
+                from modelzoo.common.pytorch import amp
+
+                amp.use_bfloat16(use_bfloat16)
+
+            loss_scaling_factor = params["optimizer"].get(
+                "loss_scaling_factor", 1.0
+            )
+            if loss_scaling_factor == "dynamic" and use_bfloat16:
+                params["optimizer"]["loss_scaling_factor"] = 1.0
+                logging.info(
+                    "No need to use DLS for loss when `use_bfloat16` is set to"
+                    " `True`. Setting `loss_scaling_factor ` to `1.0`."
+                )
 
             # Initialize the model and runner
             model: PyTorchBaseModel = model_fn(params)
@@ -988,12 +1111,24 @@ class PyTorchBaseRunner(metaclass=abc.ABCMeta):
                 return PyTorchRunner(device, model, params)
             else:  # use gpu
                 world_size = torch.cuda.device_count()
-                if world_size == 1:  # single gpu
+                enable_distributed = params["runconfig"].get(
+                    "enable_distributed", False
+                )
+                if not enable_distributed:  # single gpu
+                    if world_size > 1:
+                        warnings.warn(
+                            "Distributed training was not enabled even though "
+                            "more than 1 GPU is available."
+                        )
                     device = torch.device("cuda")
                     model: PyTorchBaseModel = model_fn(params, device)
                     return PyTorchRunner(device, model, params)
                 else:  # multi gpu
-
+                    if world_size == 1:
+                        warnings.warn(
+                            "Distributed training was enabled, but only "
+                            "1 GPU was detected."
+                        )
                     # model with no device, used to create optimizer and scheduler
                     # actual models will be created in on_process_start()
                     model: PyTorchBaseModel = model_fn(params, None)

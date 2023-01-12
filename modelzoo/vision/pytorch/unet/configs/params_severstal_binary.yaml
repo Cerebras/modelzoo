@@ -1,0 +1,58 @@
+# Params for UNet model on Severstal Binary labels dataset.
+
+train_input: &train_input
+    data_processor: SeverstalBinaryClassDataProcessor
+    data_dir: "./computer_vision/datasets/severstal_kaggle"
+    image_shape: [256, 256, 1] # [H, W, C]
+    normalize_data_method: "zero_centered"
+    augment_data: True
+    shuffle: True
+    train_test_split: 0.85
+    batch_size: 64
+    num_classes: 2
+    num_workers: 8
+    class_id: 3
+    prefetch_factor: 10
+    persistent_workers: True
+    use_fast_dataloader: False 
+
+eval_input:
+    <<: *train_input
+    augment_data: False
+    shuffle: False
+    batch_size: 64
+    num_workers: 2
+
+model:
+    nonlinearity: "ReLU"
+    skip_connect: True
+    enable_bias: True
+    downscale_method: "max_pool"
+    convs_per_block: ["3x3_conv", "3x3_conv"]
+    encoder_filters: [32, 64, 128, 256]
+    decoder_filters: [128, 64, 32]
+    residual_blocks: False
+    initializer: 
+        "name": "glorot_uniform"
+        "gain": 1.0
+    bias_initializer: "zeros"
+    # bce -> Binary Cross Entropy With Logits
+    loss: "bce"
+    mixed_precision: True
+    norm_layer: "batchnorm2d"
+
+optimizer:
+    optimizer_type: "AdamW"
+    weight_decay_rate: 0.01
+    learning_rate: 5.0e-4
+    loss_scaling_factor: "dynamic"
+
+runconfig:
+    max_steps: 8000
+    log_steps: 100
+    checkpoint_steps: 500
+    seed: 1
+    show_debug_metrics: False
+    save_losses: True
+    save_initial_checkpoint: True
+    num_wgt_servers: 1

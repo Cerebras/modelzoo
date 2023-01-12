@@ -1,9 +1,22 @@
+# Copyright 2022 Cerebras Systems.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 # GPT-2 large model (774M parameters)
 
 train_input:
     data_processor: "GptHDF5DataProcessor"
-    data_dir: "./gpt2_hdf5_512k_msl1024/"
-    vocab_size: 50257
+    data_dir: "./language/datasets/owt_pretraining_gpt_hdf5/train_8M_msl1024/"
     max_sequence_length: 1024
     batch_size: 32
     shuffle: True
@@ -14,8 +27,7 @@ train_input:
 
 eval_input:
     data_processor: "GptHDF5DataProcessor"
-    data_dir: "./gpt2_hdf5_val_msl1024/"
-    vocab_size: 50257
+    data_dir: "./language/datasets/owt_pretraining_gpt_hdf5/val_msl1024/"
     max_sequence_length: 1024
     batch_size: 32
     shuffle: False
@@ -53,6 +65,8 @@ model:
 
     # Cerebras parameters
     mixed_precision: True
+    allow_multireplica: False
+
 
 optimizer:
     optimizer_type: "AdamW"
@@ -60,7 +74,6 @@ optimizer:
     disable_lr_steps_reset: False
     weight_decay_rate: 0.01
     learning_rate: 0.0002
-    loss_scaling_factor: "dynamic"
 
 runconfig:
     max_steps: 200000

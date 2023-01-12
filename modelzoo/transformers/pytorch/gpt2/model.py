@@ -16,7 +16,10 @@ import logging
 
 import torch
 
-from modelzoo.common.pytorch.metrics import AccuracyMetric
+from modelzoo.common.pytorch.metrics import AccuracyMetric, PerplexityMetric
+from modelzoo.common.pytorch.model_utils.GPTLMHeadModelLoss import (
+    GPTLMHeadModelLoss,
+)
 from modelzoo.common.pytorch.PyTorchBaseModel import PyTorchBaseModel
 from modelzoo.transformers.pytorch.gpt2.gpt2_model import GPT2LMHeadModel
 from modelzoo.transformers.pytorch.gpt2.utils import set_custom_stack_params
@@ -32,12 +35,14 @@ class Gpt2Model(PyTorchBaseModel):
         model_params = self.params["model"].copy()
         self.model = self.build_model(model_params)
 
+        self.loss_fn = GPTLMHeadModelLoss(
+            params["model"]["vocab_size"], self.loss_weight,
+        )
         self.compute_eval_metrics = model_params.pop(
             "compute_eval_metrics", True
         )
         if self.compute_eval_metrics:
-            # Disable perplexity metric until it's supported on wafer
-            # self.perplexity_metric = PerplexityMetric(name="eval/lm_perplexity")
+            self.perplexity_metric = PerplexityMetric(name="eval/lm_perplexity")
             self.accuracy_metric = AccuracyMetric(name="eval/accuracy")
 
         super(Gpt2Model, self).__init__(
@@ -91,6 +96,9 @@ class Gpt2Model(PyTorchBaseModel):
                 "use_ffn_bias_in_attention", True
             ),
             attention_dropout_rate=model_params.pop("attention_dropout_rate"),
+            attention_softmax_fp32=model_params.pop(
+                "attention_softmax_fp32", True
+            ),
             # Encoder - ffn
             filter_size=model_params.pop("filter_size"),
             nonlinearity=model_params.pop("nonlinearity", "gelu"),
@@ -98,22 +106,41 @@ class Gpt2Model(PyTorchBaseModel):
             # Task-specific
             use_bias_in_output=model_params.pop("use_bias_in_output", False),
             loss_weight=self.loss_weight,
+            fixed_sparse_attention=model_params.pop(
+                "fixed_sparse_attention", None
+            ),
+            # Initializers
+            embedding_initializer=model_params.pop(
+                "embedding_initializer", None
+            ),
+            initializer=model_params.pop("initializer", None),
+            output_layer_initializer=model_params.pop(
+                "output_layer_initializer", None
+            ),
         )
-        self.loss_fn = model.loss_fn
 
-        if model_params:
+        # `use_bfloat16` is accessed later, so we remove it from the list of unused params
+        unused_params = [
+            key for key in model_params.keys() if key != "use_bfloat16"
+        ]
+        if unused_params:
             logging.warning(
                 "The following model params are unused: "
-                + ", ".join(model_params.keys())
+                + ", ".join(unused_params)
             )
 
         return model
 
     def __call__(self, data):
-        loss, lm_logits = self.model(
+        lm_logits = self.model(
             input_ids=data["input_ids"],
             attention_mask=data["attention_mask"],
             labels=data["labels"],
+        )
+        loss = self.loss_fn(
+            lm_logits,
+            labels=data["labels"],
+            attention_mask=data["attention_mask"],
         )
 
         # Calculate eval metrics if not training
@@ -130,9 +157,8 @@ class Gpt2Model(PyTorchBaseModel):
                 lm_labels.shape[0] / self.loss_weight, dtype=torch.float32
             )
 
-            # Disable perplexity metric until it's supported on wafer
-            # self.perplexity_metric(
-            #    labels=lm_labels, loss=unscaled_loss, weights=lm_weights,
-            # )
+            self.perplexity_metric(
+                labels=lm_labels, loss=unscaled_loss, weights=lm_weights,
+            )
 
         return loss

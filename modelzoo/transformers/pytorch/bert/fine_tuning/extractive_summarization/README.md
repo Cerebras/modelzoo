@@ -63,7 +63,7 @@ BERT for extractive summarization is pipeline mode enabled, in this mode, during
 
 * `configs/`: YAML configuration files.
 * `input/`: Input pipeline implementation based on the [DeepMind Q&A Dataset](https://cs.nyu.edu/~kcho/DMQA/).
-* `model.py`: Model implementation leveraging [BertSummarization](../../../huggingface_common/modeling_bert.py) class.
+* `model.py`: Model implementation leveraging [BertSummarization](../../bert_model.py) class.
 * `data.py`: The entry point to the data input pipeline code.
 * `run.py`: Training script. Performs training and validation.
 * `utils.py`: Miscellaneous helper functions.

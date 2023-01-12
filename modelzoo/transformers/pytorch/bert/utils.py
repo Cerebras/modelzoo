@@ -28,7 +28,6 @@ def set_defaults(params):
     model_params = params["model"]
     params["model"]["disable_nsp"] = model_params.get("disable_nsp", False)
     params["model"]["enable_vts"] = model_params.get("enable_vts", False)
-
     # Pass settings into data loader.
     for model_key in (
         "disable_nsp",
@@ -43,6 +42,7 @@ def set_defaults(params):
         "max_position_embeddings", params["train_input"]["max_sequence_length"],
     )
     params["model"]["to_float16"] = model_params.get("to_float16", False)
+    params["model"]["use_bfloat16"] = model_params.get("use_bfloat16", False)
     params["optimizer"]["disable_lr_steps_reset"] = params["optimizer"].get(
         "disable_lr_steps_reset", True
     )
@@ -70,7 +70,9 @@ def set_custom_stack_params(params):
             reshape_filter = (
                 "reshape*,core/in_splits[-1]:!1,core/out_splits[-1]:!1;"
             )
-            state.full_config.placement.place.custom_split_filter = reshape_filter
+            state.full_config.placement.place.custom_split_filter = (
+                reshape_filter
+            )
 
 
 def check_unused_model_params(model_params):
@@ -85,3 +87,4 @@ def check_unused_model_params(model_params):
             "The following model params are unused: "
             + ", ".join(model_params.keys())
         )
+    logging.root.setLevel(logging.INFO)

@@ -17,11 +17,11 @@ import logging
 import torch.nn as nn
 
 from modelzoo.common.pytorch.metrics import AccuracyMetric, PerplexityMetric
-from modelzoo.common.pytorch.PyTorchBaseModel import PyTorchBaseModel
-from modelzoo.transformers.pytorch.huggingface_common.modeling_t5 import (
-    T5Config,
-    T5ForConditionalGeneration,
+from modelzoo.common.pytorch.model_utils.T5ForConditionalGenerationLoss import (
+    T5ForConditionalGenerationLoss,
 )
+from modelzoo.common.pytorch.PyTorchBaseModel import PyTorchBaseModel
+from modelzoo.transformers.pytorch.t5.t5_model import T5ForConditionalGeneration
 from modelzoo.transformers.pytorch.t5.utils import set_custom_stack_params
 
 
@@ -34,6 +34,13 @@ class T5ForConditionalGenerationModel(PyTorchBaseModel):
         self.params = params
         model_params = self.params["model"].copy()
         self.model = self.build_model(model_params)
+        self.loss_fn = T5ForConditionalGenerationLoss(
+            self.params["model"].get("lm_loss_weight", 1.0),
+            mlm_loss_scaling=self.params["model"].get(
+                "mlm_loss_scaling", "batch_size"
+            ),
+            label_smoothing=self.params["model"].get("label_smoothing", 0.0),
+        )
 
         super(T5ForConditionalGenerationModel, self).__init__(
             params=params, model=self.model, device=device
@@ -57,6 +64,9 @@ class T5ForConditionalGenerationModel(PyTorchBaseModel):
         kwargs = {
             "src_vocab_size": model_params.pop("src_vocab_size"),
             "tgt_vocab_size": model_params.pop("tgt_vocab_size", None),
+            "mlm_loss_scaling": model_params.pop(
+                "mlm_loss_scaling", "batch_size"
+            ),
             "label_smoothing": model_params.pop("label_smoothing", 0.0),
             "extra_ids": model_params.pop("extra_ids", 0),
             "d_model": model_params.pop("d_model"),
@@ -140,8 +150,8 @@ class T5ForConditionalGenerationModel(PyTorchBaseModel):
         model_params.pop("to_float16", None)
         model_params.pop("mixed_precision", None)
 
-        model = T5ForConditionalGeneration(T5Config(**kwargs))
-        self.loss_fn = model.loss_fn
+        model = T5ForConditionalGeneration(**kwargs)
+
         self.enable_vts = model_params.pop("enable_vts", False)
         if self.enable_vts:
             from modelzoo.common.pytorch import cbtorch
@@ -204,24 +214,39 @@ class T5ForConditionalGenerationModel(PyTorchBaseModel):
             "labels": data["labels"],
             "loss_weight": data.get("loss_weight", None),
         }
-        output = self.model(**kwargs)
-        loss = output.loss
+        logits = self.model(**kwargs)
+        loss = None
+        if data["labels"] is not None:
+            loss = self.loss_fn(
+                logits,
+                data["labels"],
+                data["decoder_attention_mask"],
+                data.get("loss_weight", None),
+            ).to(logits.dtype)
 
         # Calculate eval metrics if not training
         if not self.model.training and self.compute_eval_metrics:
             labels = data["labels"].clone()
-            decoder_mask = data["decoder_attention_mask"].clone().half()
-            predictions = output.logits.argmax(-1).int()
+            decoder_mask = (
+                data["decoder_attention_mask"].clone().to(logits.dtype)
+            )
+            predictions = logits.argmax(-1).int()
 
             self.accuracy_metric(
-                labels=labels, predictions=predictions, weights=decoder_mask,
+                labels=labels,
+                predictions=predictions,
+                weights=decoder_mask,
+                dtype=logits.dtype,
             )
 
             # eval/perplexity_lm
             cross_entropy_loss = self._xentropy_loss(
-                labels, output.logits, decoder_mask
+                labels, logits, decoder_mask
             )
             self.perplexity_metric(
-                labels=labels, loss=cross_entropy_loss, weights=decoder_mask,
+                labels=labels,
+                loss=cross_entropy_loss,
+                weights=decoder_mask,
+                dtype=logits.dtype,
             )
         return loss

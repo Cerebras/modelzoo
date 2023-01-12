@@ -38,6 +38,9 @@ class PyTorchCSRunner(PyTorchBaseCSRunner):
     ##################################################################
 
     def on_train_start(self):
+        if self._model.grad_scaler:
+            self._scaler = self._model.grad_scaler
+
         cm.write_to_summary(
             self._writer,
             0,
@@ -53,7 +56,7 @@ class PyTorchCSRunner(PyTorchBaseCSRunner):
         if self._show_debug_metrics:
             cm.print_metrics_report()
 
-        logging.info("Training Completed Successfully!")
+        super().on_train_end(early_exit)
 
     def on_train_epoch_end(self, early_exit: bool):
         if early_exit:
@@ -85,7 +88,7 @@ class PyTorchCSRunner(PyTorchBaseCSRunner):
         if self._show_debug_metrics:
             cm.print_metrics_report()
 
-        logging.info("Evaluation Completed Successfully!")
+        super().on_eval_end(early_exit)
 
     def on_eval_epoch_end(self, early_exit: bool):
         if early_exit:

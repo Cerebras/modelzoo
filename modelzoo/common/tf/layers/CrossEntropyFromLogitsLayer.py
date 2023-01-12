@@ -47,7 +47,8 @@ class CrossEntropyFromLogitsLayer(BaseLayer):
             logits = boundary_cast(logits)
         if logits.shape[-1] == 1:
             raise ValueError(
-                "last dimension of logits in CrossEntropyFromLogitsLayer should be > 1"
+                f"Last dimension of `logits` in `CrossEntropyFromLogitsLayer` "
+                f"should be > 1. It was {logits.shape[-1]} instead."
             )
         crossent = tf.cast(
             tf.nn.sparse_softmax_cross_entropy_with_logits(

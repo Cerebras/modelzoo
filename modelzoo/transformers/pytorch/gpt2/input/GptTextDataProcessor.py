@@ -16,10 +16,14 @@ import random
 
 import torch
 
-from modelzoo.common.pytorch import cb_model as cm
 from modelzoo.common.pytorch.utils import BufferedShuffleDataset
 from modelzoo.transformers.pytorch.gpt2.input.data_processor_utils import (
     training_data_generator,
+)
+from modelzoo.transformers.pytorch.input_utils import (
+    num_tasks,
+    shard_list_contiguous,
+    task_id,
 )
 
 
@@ -85,6 +89,9 @@ class GptTextDataProcessor(torch.utils.data.IterableDataset):
         self.prefetch_factor = params.get("prefetch_factor", 10)
         self.persistent_workers = params.get("persistent_workers", True)
 
+        self.num_tasks = num_tasks()
+        self.task_id = task_id()
+
         self.add_special_tokens = params.get("add_special_tokens", True)
         self.eos_token = params.get("eos_tokens", "<|endoftext|>")
         self.pad_token = params.get("pad_tokens", "<|endoftext|>")
@@ -105,26 +112,9 @@ class GptTextDataProcessor(torch.utils.data.IterableDataset):
         random.seed(self.shuffle_seed)
         random.shuffle(input_files_list)
 
-        self.num_tasks = cm.num_streamers() if cm.is_streamer() else 1
-        self.task_id = cm.get_streaming_rank() if cm.is_streamer() else 0
-
-        self.input_files_in_this_task = self._shard_list(
-            input_list=input_files_list,
-            worker_id=self.task_id,
-            num_workers=self.num_tasks,
+        self.input_files_in_this_task = shard_list_contiguous(
+            input_files_list, self.task_id, self.num_tasks
         )
-
-    def _shard_list(self, input_list, worker_id, num_workers):
-        per_worker_num_files = len(input_list) // num_workers
-        if worker_id < num_workers - 1:
-            output_list = input_list[
-                (worker_id * per_worker_num_files) : (
-                    (worker_id + 1) * per_worker_num_files
-                )
-            ]
-        else:
-            output_list = input_list[(worker_id * per_worker_num_files) :]
-        return output_list
 
     def __iter__(self):
         """
@@ -163,10 +153,8 @@ class GptTextDataProcessor(torch.utils.data.IterableDataset):
             random.seed(self.shuffle_seed + worker_id)
 
         # Shard the data files between workers
-        self.input_files_in_this_worker = self._shard_list(
-            input_list=self.input_files_in_this_task,
-            worker_id=worker_id,
-            num_workers=num_workers,
+        self.input_files_in_this_worker = shard_list_contiguous(
+            input_files_in_this_task, worker_id, num_workers
         )
 
     def create_dataloader(self, is_training=True):

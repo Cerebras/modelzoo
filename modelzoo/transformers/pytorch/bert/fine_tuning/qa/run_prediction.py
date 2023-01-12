@@ -233,10 +233,9 @@ def main():
             enumerate(data_loader), total=num_total_examples
         ):
             loss = model(features)
-            outputs = model.outputs
             unique_id = features["unique_ids"]
-            start_logits = outputs.start_logits.squeeze().tolist()
-            end_logits = outputs.end_logits.squeeze().tolist()
+            start_logits = model.outputs["start_logits"].squeeze().tolist()
+            end_logits = model.outputs["end_logits"].squeeze().tolist()
             unique_id = int(unique_id)
             all_results.append(
                 RawResult(

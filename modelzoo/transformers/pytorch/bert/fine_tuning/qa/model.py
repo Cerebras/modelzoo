@@ -13,47 +13,59 @@
 # limitations under the License.
 
 from modelzoo.common.pytorch.PyTorchBaseModel import PyTorchBaseModel
-from modelzoo.transformers.pytorch.bert.utils import check_unused_model_params
-from modelzoo.transformers.pytorch.huggingface_common.modeling_bert import (
-    BertConfig,
+from modelzoo.transformers.pytorch.bert.bert_finetune_models import (
     BertForQuestionAnswering,
+    BertForQuestionAnsweringLoss,
 )
+from modelzoo.transformers.pytorch.bert.utils import check_unused_model_params
 
 
 class BertForQuestionAnsweringModel(PyTorchBaseModel):
     def __init__(self, params, device=None):
         self.params = params
         model_params = self.params["model"].copy()
-        kwargs = {
+        dropout_rate = model_params.pop("dropout_rate")
+        embedding_dropout_rate = model_params.pop(
+            "embedding_dropout_rate", dropout_rate
+        )
+
+        model_kwargs = {
             "vocab_size": model_params.pop("vocab_size"),
             "hidden_size": model_params.pop("hidden_size"),
             "num_hidden_layers": model_params.pop("num_hidden_layers"),
-            "num_attention_heads": model_params.pop("num_heads"),
-            "intermediate_size": model_params.pop("filter_size"),
-            "hidden_act": model_params.pop("encoder_nonlinearity"),
-            "hidden_dropout_prob": model_params.pop("dropout_rate"),
-            "attention_probs_dropout_prob": model_params.pop(
+            "num_heads": model_params.pop("num_heads"),
+            "filter_size": model_params.pop("filter_size"),
+            "nonlinearity": model_params.pop("encoder_nonlinearity"),
+            "embedding_dropout_rate": embedding_dropout_rate,
+            "dropout_rate": dropout_rate,
+            "attention_dropout_rate": model_params.pop(
                 "attention_dropout_rate"
             ),
             "max_position_embeddings": model_params.pop(
                 "max_position_embeddings"
             ),
-            "layer_norm_eps": float(model_params.pop("layer_norm_epsilon")),
+            "layer_norm_epsilon": float(model_params.pop("layer_norm_epsilon")),
         }
-        self.model = BertForQuestionAnswering(BertConfig(**kwargs),)
+
+        self.model = BertForQuestionAnswering(**model_kwargs)
+        self.loss_fn = BertForQuestionAnsweringLoss()
+
         check_unused_model_params(model_params)
-        self.loss_fn = self.model.loss_fn
         super(BertForQuestionAnsweringModel, self).__init__(
             params=params, model=self.model, device=device,
         )
 
     def __call__(self, data):
-        output = self.model(
+        logits, start_logits, end_logits = self.model(
             input_ids=data["input_ids"],
-            attention_mask=data["attention_mask"],
             token_type_ids=data["token_type_ids"],
+            attention_mask=data["attention_mask"],
             labels=data["labels"],
             label_weights=data["label_weights"],
         )
-        self.outputs = output
-        return output.loss
+        loss = self.loss_fn(logits, data["labels"], data["label_weights"])
+
+        # for prediction inference
+        self.outputs = {"start_logits": start_logits, "end_logits": end_logits}
+
+        return loss

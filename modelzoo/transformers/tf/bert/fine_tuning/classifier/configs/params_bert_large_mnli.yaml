@@ -2,18 +2,18 @@
 
 ### Input
 train_input:
-    data_processor: MnliDataProcessor
-    data_dir: './tfds'
-    vocab_file: '../../../../vocab/google_research_uncased_L-12_H-768_A-12.txt'
+    data_processor: "MnliDataProcessor"
+    data_dir: "./tfds"
+    vocab_file: "../../../../vocab/google_research_uncased_L-12_H-768_A-12.txt"
     max_sequence_length: 448
     add_special_tokens: True
     batch_size: 12
     shuffle: True
 
 eval_input:
-    data_processor: MnliDataProcessor
-    data_dir: './tfds'
-    vocab_file: '../../../../vocab/google_research_uncased_L-12_H-768_A-12.txt'
+    data_processor: "MnliDataProcessor"
+    data_dir: "./tfds"
+    vocab_file: "../../../../vocab/google_research_uncased_L-12_H-768_A-12.txt"
     max_sequence_length: 448
     add_special_tokens: True
     batch_size: 12
@@ -23,9 +23,9 @@ predict_input:
     batch_size: 1
 
 model:
-    pretrain_params_path: "../../configs/params_bert_large_msl512.yaml"
+    pretrain_params_path: "../../configs/params_bert_large_msl128.yaml"
     cls_dropout_rate: 0.1
-    num_cls_classes: 2
+    num_cls_classes: 3
     mixed_precision: True
     boundary_casting: False
     tf_summary: False
@@ -53,5 +53,4 @@ runconfig:
     save_checkpoints_steps: 10000
     eval_steps: 0 # eval_steps <= 0 means we use all of the eval data
     keep_checkpoint_max: 2
-    tf_random_seed: 1202
     throttle_secs: 0

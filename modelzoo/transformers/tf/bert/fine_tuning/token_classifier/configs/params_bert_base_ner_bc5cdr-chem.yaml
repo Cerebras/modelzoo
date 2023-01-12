@@ -1,19 +1,19 @@
 ### Input
 train_input:
-    data_processor: NerDataProcessor
-    data_dir: "./input/bc5cdr-chem/train"
-    vocab_file: "../../../../vocab/uncased_pubmed_abstracts_and_fulltext_vocab.txt"
-    label_vocab_file: "./input/bc5cdr-chem/train/label2id.json"
+    data_processor: "NerDataProcessor"
+    data_dir: "./language/datasets/blurb/ner/bc5cdr-chem-pubmed_fulltext_uncased_vocab/bc5cdr-chem/train"
+    vocab_file: "./vocab/Pubmed_fulltext_vocab.txt"
+    label_vocab_file: "./vocab/Pubmed_fulltext_vocab.txt"
     max_sequence_length: 128
     max_predictions_per_seq: 20
     batch_size: 8
     shuffle: True
 
 eval_input:
-    data_processor: NerDataProcessor
-    data_dir: "./input/bc5cdr-chem/dev"
-    vocab_file: "../../../../vocab/uncased_pubmed_abstracts_and_fulltext_vocab.txt"
-    label_vocab_file: "./input/bc5cdr-chem/bc5cdr-chem/dev/label2id.json"
+    data_processor: "NerDataProcessor"
+    data_dir: "./language/datasets/blurb/ner/bc5cdr-chem-pubmed_fulltext_uncased_vocab/bc5cdr-chem/dev"
+    vocab_file: "./vocab/Pubmed_fulltext_vocab.txt"
+    label_vocab_file: "./vocab/Pubmed_fulltext_vocab.txt"
     max_sequence_length: 128
     max_predictions_per_seq: 20
     batch_size: 8
@@ -23,10 +23,10 @@ predict_input:
     # remaining params copied from eval_input
     # validation set needs to be a multiple of predict batch_size
     # or else data points will be dropped.
-    data_processor: NerDataProcessor
-    data_dir: "./input/bc5cdr-chem/test"
-    vocab_file: "../../../../vocab/uncased_pubmed_abstracts_and_fulltext_vocab.txt"
-    label_vocab_file: "./input/bc5cdr-chem/test/label2id.json"
+    data_processor: "NerDataProcessor"
+    data_dir: "./language/datasets/blurb/ner/bc5cdr-chem-pubmed_fulltext_uncased_vocab/bc5cdr-chem/test"
+    vocab_file: "./vocab/Pubmed_fulltext_vocab.txt"
+    label_vocab_file: "./vocab/Pubmed_fulltext_vocab.txt"
     batch_size: 1
 
 model:
@@ -36,11 +36,12 @@ model:
     mixed_precision: True
     boundary_casting: False
     tf_summary: False
+    include_padding_in_loss: True
 
 ### Optimization
 optimizer:
     optimizer_type: "adam" # {"sgd", "momentum", "adam", "adamw"}
-    epsilon: 1e-6
+    epsilon: 1.e-6
     max_gradient_norm: 1.0
     disable_lr_steps_reset: True
     learning_rate:

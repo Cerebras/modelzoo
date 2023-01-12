@@ -28,16 +28,22 @@ except ImportError:
     pass  # non-cbcore run
 
 
-def get_params(params_file, mode=None):
+def get_params(
+    params_file, mode=None,
+):
 
     # Load yaml into params
     with open(params_file, "r") as stream:
         params = yaml.safe_load(stream)
-    set_defaults(params, mode=mode)
+    set_defaults(
+        params, mode=mode,
+    )
     return params
 
 
-def set_defaults(params, mode=None):
+def set_defaults(
+    params, mode=None,
+):
 
     # Embeddings
     params["model"]["use_segment_embedding"] = params["model"].get(
@@ -71,18 +77,42 @@ def set_defaults(params, mode=None):
     params["model"]["use_pre_normalization"] = params["model"].get(
         "use_pre_normalization", False
     )
+    params["model"]["use_projection_bias_in_attention"] = params["model"].get(
+        "use_projection_bias_in_attention", True
+    )
+    params["model"]["use_ffn_bias_in_attention"] = params["model"].get(
+        "use_ffn_bias_in_attention", True
+    )
+    # Possible values for `attention_type`:
+    # {"dot_product", "scaled_dot_product"}
+    params["model"]["attention_type"] = params["model"].get(
+        "attention_type", "scaled_dot_product"
+    )
     params["model"]["dropout_seed"] = params["model"].get("dropout_seed", None)
     params["model"]["attention_dropout_rate"] = params["model"].get(
         "attention_dropout_rate", 0.0
     )
 
     # Task-specific
+    params["model"]["use_ffn_bias_in_mlm"] = params["model"].get(
+        "use_ffn_bias_in_mlm", True
+    )
+    params["model"]["use_output_bias_in_mlm"] = params["model"].get(
+        "use_output_bias_in_mlm", True
+    )
+    params["model"]["mlm_nonlinearity"] = params["model"].get(
+        "mlm_nonlinearity", "gelu"
+    )
     params["model"]["mlm_loss_weight"] = params["model"].get(
         "mlm_loss_weight", 1.0
     )
     params["model"]["disable_nsp"] = params["model"].get("disable_nsp", False)
     params["model"]["num_cls_classes"] = params["model"].get(
         "num_cls_classes", 2
+    )
+    params["model"]["use_nsp_bias"] = params["model"].get("use_nsp_bias", True)
+    params["model"]["nsp_nonlinearity"] = params["model"].get(
+        "nsp_nonlinearity", "tanh"
     )
     params["model"]["layer_norm_epsilon"] = float(
         params["model"].get("layer_norm_epsilon", 1e-8)
@@ -127,12 +157,32 @@ def set_defaults(params, mode=None):
         "mixed_precision", False
     )
 
-    params["train_input"]["scale_mlm_weights"] = params["train_input"].get(
-        "scale_mlm_weights", True
+    params["model"]["mlm_loss_scaling"] = (
+        params["model"]
+        .get("mlm_loss_scaling", "precomputed_num_masked")
+        .lower()
     )
-    params["eval_input"]["scale_mlm_weights"] = params["eval_input"].get(
-        "scale_mlm_weights", True
-    )
+
+    if params["model"]["mlm_loss_scaling"] == "precomputed_num_masked":
+        # If using `precomputed_num_masked` loss scaling, tell the data processor
+        # to scale the mlm weights by `batch_size / num_valid_in_batch` and tell
+        # the model to scale the loss by `1 / batch_size`. The factorized scale is
+        # used to prevent FP16 related issues for large batch sizes.
+        params["train_input"]["scale_mlm_weights"] = True
+        params["eval_input"]["scale_mlm_weights"] = True
+
+    elif params["model"]["mlm_loss_scaling"] in {"batch_size", "num_masked"}:
+        # If using `batch_size` or `num_masked` loss scaling, the data processor
+        # does not have to scale mlm weights.
+        params["train_input"]["scale_mlm_weights"] = False
+        params["eval_input"]["scale_mlm_weights"] = False
+
+    else:
+        raise ValueError(
+            f"`mlm_loss_scaling` param has an invalid value. "
+            f"Supported values: `batch_size`, `num_masked` or `precomputed_num_masked`. "
+            f"Got: {params['model']['mlm_loss_scaling']}."
+        )
 
     # Set defaults for VSL padding parameters
     if params["model"].get("use_vsl") and mode != "train":
@@ -255,7 +305,7 @@ def get_custom_stack_params(params):
         if (
             "pooler_type" in model_params
             and model_params["pooler_type"] != "first"
-        ):
+        ) or params["model"].get("include_padding_in_loss"):
             stack_params["ir_mode"] = "mlir-xla"
 
     if (

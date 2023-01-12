@@ -1,7 +1,7 @@
 # BertSum config file. Bert Large backbone.
 
 train_input:
-    data_dir: "./extractive_summarization_csv/train/"
+    data_dir: "./language/datasets/extractive_summarization_csv/train/"
     data_processor: "BertSumCSVDataProcessor"
     vocab_file: "../../../../vocab/google_research_uncased_L-12_H-768_A-12.txt"
     max_sequence_length: 512
@@ -12,7 +12,7 @@ train_input:
     shuffle: True
 
 eval_input:
-    data_dir: "./extractive_summarization_csv/valid/"
+    data_dir: "./language/datasets/extractive_summarization_csv/valid/"
     data_processor: "BertSumCSVDataProcessor"
     vocab_file: "../../../../vocab/google_research_uncased_L-12_H-768_A-12.txt"
     max_sequence_length: 512
@@ -81,4 +81,4 @@ runconfig:
     seed: 1
     model_dir: "./model_dir"
     save_initial_checkpoint: True
-    eval_steps: 400 # For GPU, multiply the eval_steps by grad_accum_steps
+    eval_steps: 416 # For GPU, multiply the eval_steps by grad_accum_steps

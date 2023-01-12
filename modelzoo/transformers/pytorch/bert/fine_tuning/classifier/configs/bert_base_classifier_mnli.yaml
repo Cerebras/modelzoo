@@ -2,7 +2,7 @@
 
 train_input:
     data_processor: "MNLIDataProcessor"
-    data_dir: "./glue_data/MNLI"
+    data_dir: "./language/datasets/glue_data/MNLI"
     vocab_file: "../../../../vocab/google_research_uncased_L-12_H-768_A-12.txt"
     max_sequence_length: 448
     batch_size: 16
@@ -13,7 +13,7 @@ train_input:
 
 eval_input:
     data_processor: "MNLIDataProcessor"
-    data_dir: "./glue_data/MNLI"
+    data_dir: "./language/datasets/glue_data/MNLI"
     vocab_file: "../../../../vocab/google_research_uncased_L-12_H-768_A-12.txt"
     max_sequence_length: 448
     batch_size: 16
@@ -63,4 +63,4 @@ runconfig:
     save_losses: True
     model_dir: "./model_dir"
     save_initial_checkpoint: True
-    
+    eval_steps: 1226

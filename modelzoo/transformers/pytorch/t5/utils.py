@@ -30,6 +30,16 @@ def set_defaults(params):
         "tgt_max_position_embeddings",
         params["train_input"]["tgt_max_sequence_length"],
     )
+    # Enable bf16 by default and set loss scaling factor to 1.0 when sw-82646 is resolved.
+    params["model"]["use_bfloat16"] = params["model"].get("use_bfloat16", False)
+    params["optimizer"]["loss_scaling_factor"] = params["optimizer"].get(
+        "loss_scaling_factor", "dynamic"
+    )
+
+    params["train_input"]["dynamic_loss_weight"] = (
+        params["model"].get("mlm_loss_scaling", "batch_size")
+        == "precomputed_num_masked"
+    )
 
 
 def set_custom_stack_params(params):

@@ -140,6 +140,12 @@ def set_defaults(params, mode=None):
     params["model"]["attention_type"] = params["model"].get(
         "attention_type", "dot_product"
     )
+    params["model"]["mlm_loss_scaling"] = params["model"].get(
+        "mlm_loss_scaling", "precomputed_num_masked"
+    )
+    params["model"]["lm_loss_weight"] = params["model"].get(
+        "lm_loss_weight", 0.015
+    )
     params["model"]["use_ffn_bias"] = params["model"].get("use_ffn_bias", True)
     params["model"]["mixed_precision"] = params["model"].get(
         "mixed_precision", True

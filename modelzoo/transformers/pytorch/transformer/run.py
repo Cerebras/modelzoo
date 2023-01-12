@@ -17,14 +17,14 @@ import sys
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "../../../.."))
 from modelzoo.common.pytorch.run_utils import run
-from modelzoo.transformers.pytorch.t5.data import (
-    eval_input_dataloader,
-    train_input_dataloader,
-)
 from modelzoo.transformers.pytorch.t5.model import (
     T5ForConditionalGenerationModel,
 )
-from modelzoo.transformers.pytorch.t5.utils import set_defaults
+from modelzoo.transformers.pytorch.transformer.data import (
+    eval_input_dataloader,
+    train_input_dataloader,
+)
+from modelzoo.transformers.pytorch.transformer.utils import set_defaults
 
 
 def main():

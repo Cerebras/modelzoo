@@ -18,11 +18,11 @@
 train_input:
     data_processor: 'BertTfRecordsProcessor'
     data_dir: [
-        './input/pubmed/pubmed_baseline/tfrecord/uncased_msl128_mp20_wwm_dupe5/train',
-        './input/pubmed/pubmed_daily_update/tfrecord/uncased_msl128_mp20_wwm_dupe5/train',
-        './input/pubmed/pubmed_fulltext/tfrecord/uncased_msl128_mp20_wwm_dupe5/train'
+        './language/datasets/pubmed_abstracts_baseline_fulltext_vocab/tfrecord/uncased_msl128_mp20_wwm_dupe5/train',
+        './language/datasets/pubmed_abstracts_update_files_fulltext_vocab/tfrecord/uncased_msl128_mp20_wwm_dupe5/train',
+        './language/datasets/pubmed_fulltext_commercial_fulltext_vocab/tfrecord/uncased_msl128_mp20_wwm_dupe5/train'
     ]
-    vocab_file: '../../vocab/uncased_pubmed_abstracts_and_fulltext_vocab.txt'
+    vocab_file: "../../vocab/google_research_uncased_L-12_H-768_A-12.txt"
     max_sequence_length: 128
     max_predictions_per_seq: 20  # maximum number of masked LM predictions per sequence.
     batch_size: 1024
@@ -30,11 +30,11 @@ train_input:
 eval_input:
     data_processor: 'BertTfRecordsProcessor'
     data_dir: [
-        './input/pubmed/pubmed_baseline/tfrecord/uncased_msl128_mp20_wwm_dupe5/test',
-        './input/pubmed/pubmed_daily_update/tfrecord/uncased_msl128_mp20_wwm_dupe5/test',
-        './input/pubmed/pubmed_fulltext/tfrecord/uncased_msl128_mp20_wwm_dupe5/test'
+        './language/datasets/pubmed_abstracts_baseline_fulltext_vocab/tfrecord/uncased_msl128_mp20_wwm_dupe5/test',
+        './language/datasets/pubmed_abstracts_update_files_fulltext_vocab/tfrecord/uncased_msl128_mp20_wwm_dupe5/test',
+        './language/datasets/pubmed_fulltext_commercial_fulltext_vocab/tfrecord/uncased_msl128_mp20_wwm_dupe5/test'
     ]
-    vocab_file: '../../vocab/uncased_pubmed_abstracts_and_fulltext_vocab.txt'
+    vocab_file: "../../vocab/google_research_uncased_L-12_H-768_A-12.txt"
     max_sequence_length: 128
     max_predictions_per_seq: 20  # maximum number of masked LM predictions per sequence.
     batch_size: 64
@@ -51,7 +51,7 @@ model:
     # Encoder
     num_hidden_layers: 24
     dropout_rate: 0.1
-    layer_norm_epsilon: 1e-5
+    layer_norm_epsilon: 1.0e-5
 
     # Encoder - Attention
     num_heads: 16
@@ -72,7 +72,7 @@ model:
 ### Optimization
 optimizer:
     optimizer_type: 'adam' # {'sgd', 'momentum', 'adam', 'adamw'}
-    epsilon: 1e-6
+    epsilon: 1.0e-6
     max_gradient_norm: 1.0
     disable_lr_steps_reset: True
     learning_rate:

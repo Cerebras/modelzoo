@@ -1,32 +1,48 @@
+# Copyright 2022 Cerebras Systems.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 # Transformer Base - according to Table 3.
+# Based on transformer_base_v1() :
+# https://github.com/tensorflow/tensor2tensor/blob/5623deb79cfcd28f8f8c5463b58b5bd76a81fd0d/tensor2tensor/models/transformer.py#L1771
 
 ### Input.
 train_input:
-    data_processor: TransformerDynamicDataProcessor
-    src_data_dir: "./wmt16_en_de/train.tok.clean.bpe.32000.en"
-    tgt_data_dir: "./wmt16_en_de/train.tok.clean.bpe.32000.de"
-    src_vocab_file: "./wmt16_en_de/vocab.bpe.32000.en"
-    tgt_vocab_file: "./wmt16_en_de/vocab.bpe.32000.de"
+    data_processor: "TransformerDynamicDataProcessor"
+    src_data_dir: "./transformer/wmt16_en_de/train.tok.clean.bpe.32000.en"
+    tgt_data_dir: "./transformer/wmt16_en_de/train.tok.clean.bpe.32000.de"
+    src_vocab_file: "./transformer/wmt16_en_de/vocab.bpe.32000.en"
+    tgt_vocab_file: "./transformer/wmt16_en_de/vocab.bpe.32000.de"
     src_max_sequence_length: 256
     tgt_max_sequence_length: 256
     batch_size: 4096
-    num_buckets: 1
+    buckets: 1
     repeat: True
     shuffle: True
     shuffle_buffer: 50000
     shuffle_seed: 12345
-    use_multiple_workers: True
+    use_multiple_workers: True # Set to False when running on GPU.
 
 eval_input:
-    data_processor: TransformerDynamicDataProcessor
-    src_data_dir: "./wmt16_en_de/newstest2014.tok.clean.bpe.32000.en"
-    tgt_data_dir: "./wmt16_en_de/newstest2014.tok.clean.bpe.32000.de"
-    src_vocab_file: "./wmt16_en_de/vocab.bpe.32000.en"
-    tgt_vocab_file: "./wmt16_en_de/vocab.bpe.32000.de"
+    data_processor: "TransformerDynamicDataProcessor"
+    src_data_dir: "./transformer/wmt16_en_de/newstest2014.tok.clean.bpe.32000.en"
+    tgt_data_dir: "./transformer/wmt16_en_de/newstest2014.tok.clean.bpe.32000.de"
+    src_vocab_file: "./transformer/wmt16_en_de/vocab.bpe.32000.en"
+    tgt_vocab_file: "./transformer/wmt16_en_de/vocab.bpe.32000.de"
     src_max_sequence_length: 256
     tgt_max_sequence_length: 256
     batch_size: 16
-    num_buckets: 1
+    buckets: 1
 
 model:
     # Embedding.
@@ -38,7 +54,7 @@ model:
     encoder_num_hidden_layers: 6
     decoder_num_hidden_layers: 6
     dropout_rate: 0.1
-    layer_norm_epsilon: 1e-5
+    layer_norm_epsilon: 1.0e-5
 
     # Encoder/Decoder Attention.
     num_heads: 8

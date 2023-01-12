@@ -13,7 +13,7 @@
 We will demo how to convert your PyTorch model implemented with modules like torch and torch.nn to a model that is ready to compile and run on CS Systems. We utilize our new layers API
  for transformers to make the conversion. Our layers API is created to minic the PyTorch implementation of transformer components. It currently contains modules that resemble torch.nn modules with customized implementation for Cerebras Architecture.
 
-For more information of layers API please visit our [developer docs page](https://docs.cerebras.net/en/latest/pytorch-docs/pytorch-ops.html).
+For more information of layers API please visit our [developer docs page](https://docs.cerebras.net/en/latest/pytorch-docs/pytorch-ops/index.html).
 
 This demo includes but not limited to the following torch.nn modules:
 
@@ -90,9 +90,11 @@ from torch.nn import (
 ``` 
 to
 ```
-from modelzoo.common.pytorch.layers.EmbeddingLayer import EmbeddingLayer
-from modelzoo.common.pytorch.layers.TransformerEncoder import TransformerEncoder
-from modelzoo.common.pytorch.layers.TransformerEncoderLayer import TransformerEncoderLayer
+from modelzoo.common.pytorch.layers import (
+    EmbeddingLayer,
+    TransformerEncoder,
+    TransformerEncoderLayer,
+)
 ```
 
 2. Replace Embedding layer and PositionalEncoding with the `EmbeddingLayer` imported from layers API:

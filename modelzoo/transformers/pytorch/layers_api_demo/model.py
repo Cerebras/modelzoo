@@ -57,9 +57,7 @@ class TransformerBaseModel(PyTorchBaseModel):
             self.seq_len,
         )
 
-        self.loss_fn = GPTLMHeadModelLoss(
-            self.ntokens, float(1 / self.ntokens),
-        )
+        self.loss_fn = GPTLMHeadModelLoss(self.ntokens, 1.0 / self.ntokens,)
         return model
 
     def __call__(self, data):
@@ -72,7 +70,9 @@ class TransformerBaseModel(PyTorchBaseModel):
         )
 
         """ alternatively, you can use helper functions to create the masks from transformers/pytorch/transformer_utils.py
-        # src_mask = create_autoregressive_mask(
+        # from modelzoo.transformers.pytorch.transformer_utils import (create_2D_autoregressive_mask,)
+        # src_mask = create_2D_autoregressive_mask(
+        #     self.seq_len,
         #     self.seq_len,
         #     device=input_ids.device,
         # ) * -1.0e4

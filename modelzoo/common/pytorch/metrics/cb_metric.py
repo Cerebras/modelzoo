@@ -16,7 +16,10 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
+import torch
+
 from modelzoo.common.pytorch import cb_model as cm
+from modelzoo.common.pytorch import cbtorch
 
 
 @dataclass
@@ -50,7 +53,7 @@ class CBMetric(ABC):
         """Constructs a `CBMetric` instance.
 
         This also registers the metric in the global pool of metrics. Therefore,
-        it is import for subclasses to call `super().__init__()`. Otherwise,
+        it is important for subclasses to call `super().__init__()`. Otherwise,
         the metrics will not run.
 
         Args:
@@ -68,18 +71,17 @@ class CBMetric(ABC):
         assert self._name not in _METRICS
         _METRICS[self._name] = self
 
-        self.appliance_enabled = False
+        self._is_appliance = False
+        self._ws_enabled = False
         if cm.use_cs():
-            from modelzoo.common.pytorch import cbtorch
-
-            self.appliance_enabled = cbtorch.env().appliance
+            self._is_appliance = cm.is_appliance()
 
             state = cbtorch.state()
             if state.is_inside_execution_loop:
                 raise RuntimeError(
                     "Metrics must be created outside the exeuction loop."
                 )
-            state.register_metric(self)
+            self._ws_enabled = cbtorch.env().weight_streaming_mode
 
         # Stores the state tensors on the device
         self.init_state()
@@ -93,6 +95,18 @@ class CBMetric(ABC):
     def name(self):
         """Returns the name of the metric."""
         return self._name
+
+    def on_device_state_dict(self) -> Dict[str, torch.Tensor]:
+        """A hook for subclasses to inject metric state variables (WS only).
+
+        In constrast to pipeline execution strategy where metrics are executed
+        on the host, in weight streaming, metrics are part of the graph and are
+        executed on device. As such any metric state variables that are updated
+        need to be tracked to create a correct graph. This hook provides a
+        mechanism for metric implementations to specify their state variables
+        which will come up as outputs in the compile.
+        """
+        return dict()
 
     def init_state(self):
         """Sets the initial state of the metric.
@@ -161,22 +175,48 @@ class CBMetric(ABC):
 
         The arugments to this method are passed directly to `update_on_device`.
         """
+        self._track_state()
         device_outputs = self.update_on_device(*args, **kwargs)
         assert isinstance(device_outputs, DeviceOutputs), (
             f"Expected device outputs to be of type `DeviceOutputs`, "
             f"but got `{type(device_outputs)}`."
         )
 
-        self._update_on_host_closure(device_outputs.args, device_outputs.kwargs)
+        if self._is_appliance:
 
-    @cm.step_closure
-    def _update_on_host_closure(self, args, kwargs):
-        if not self.appliance_enabled:
-            args = cm.to_cpu(args)
-            kwargs = cm.to_cpu(kwargs)
-        self.update_on_host(*args, **kwargs)
+            def _on_activations_received():
+                cpu_args = list()
+                cpu_kwargs = dict()
+                for tensor in device_outputs.args:
+                    cpu_args.append(state.get_activation_for_output(tensor))
+                for key, tensor in device_outputs.kwargs.items():
+                    cpu_kwargs[key] = state.get_activation_for_output(tensor)
 
-        self._num_updates += 1
+                self.update_on_host(*cpu_args, **cpu_kwargs)
+                self._num_updates += 1
+
+            state = cbtorch.state()
+            state.track_object(
+                {
+                    "cb_metric": {
+                        self.name: [device_outputs.args, device_outputs.kwargs]
+                    }
+                }
+            )
+
+            state.register_activation_callback(_on_activations_received)
+
+        else:
+
+            @cm.step_closure
+            def _update_on_host_closure(args, kwargs):
+                args = cm.to_cpu(args)
+                kwargs = cm.to_cpu(kwargs)
+                self.update_on_host(*args, **kwargs)
+
+                self._num_updates += 1
+
+            _update_on_host_closure(device_outputs.args, device_outputs.kwargs)
 
     def _get_unique_name(self, name: Optional[str] = None):
         """Returns a unique name for this metric.
@@ -195,15 +235,18 @@ class CBMetric(ABC):
                 unique_name = f"{prefix}_{idx}"
         return unique_name
 
-    def set_metric_state(self, state_dict):
-        assert (
-            cm.use_cs()
-        ), "set_metric_state should only be called for CSX runs"
-        from modelzoo.common.pytorch import cbtorch
-
-        state = cbtorch.state()
-        state.track_object(state_dict)
-        cm.set_metric_state_names(state_dict, self.name)
+    def _track_state(self):
+        """Tracks and names the metric state."""
+        state_dict = self.on_device_state_dict()
+        if state_dict:
+            if not self._ws_enabled:
+                raise RuntimeError(
+                    "On device metric state variables aren't supported for "
+                    "Pipeline mode."
+                )
+            state = cbtorch.state()
+            state.track_object(state_dict)
+            cm.set_metric_state_names(state_dict, self.name)
 
 
 # Keeps track of all registered metrics

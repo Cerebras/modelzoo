@@ -1,6 +1,6 @@
-# Running GPT-J
+# Running GPT-J (Neox)
 
-- [Running GPT-J](#running-gpt-j)
+- [Running GPT-J (Neox)](#running-gpt-j)
   - [Introduction](#introduction)
   - [Sequence of the steps to perform](#sequence-of-the-steps-to-perform)
   - [Key features used from CSoft platform](#key-features-used-from-csoft-platform)
@@ -41,7 +41,11 @@ for simplicity, as sparse attention would not have significantly improved throug
 
 For details about fine-tuning please refer to the [fine-tuning documentation](fine_tuning/abstractive_summarization/).
 
-
+#### GPT-Neox:
+GPT-Neox [[8]](https://github.com/EleutherAI/gpt-neox) follows the same architecture as GPT-J with minor changes including:
+* Untied layernorm: in the transformer block, 2 independent Layer Norms instead of a tied layer norm is used. Based on Eleuther's ablation study, this change doesn't make a difference in performance.
+* Tokenizers: EleutherAI retrained the tokenizers on the [Pile](https://arxiv.org/abs/2101.00027) dataset which has more diverse text sources compared to gpt2. They also made the tokenizer more performant on dealing with whitespaces 
+by adding token embeddings on repeated space tokens and applied consistent non-space-delimited token at the start of string. Changes on its tokenizer make GPT-Neox more capable at handling dataset with programming code. Details can be found in section 3.2 of the [paper](https://arxiv.org/pdf/2204.06745.pdf).
 
 ## Sequence of the steps to perform
 Following block diagram illutrates the sequence of steps you would perform to run pre-training.
@@ -69,7 +73,7 @@ CS system supports [weight streaming execution mode](#weight-streaming-execution
 ## Prepare the [Pile](https://arxiv.org/abs/2101.00027) dataset
 Pile is a dataset of diverse text for language modeling. It is constructed from `22` diverse high-quality subsets, both existing and newly constructed, many of which derive from academic or professional sources.
 
-In order to launch pre-training, you need to preprocess Pile to generate TFRecords. Follow [these instructions](../input/scripts/pile)  to download the raw data, extract it and generate TFRecords to be used by the dataloader. 
+In order to launch pre-training, you need to preprocess Pile to generate TFRecords. Follow [these instructions](../../data_processing/scripts/pile)  to download the raw data, extract it and generate TFRecords to be used by the dataloader. 
 
 ## Input function
 GPT-J [[1]](https://github.com/kingoflolz/mesh-transformer-jax) uses the same input dataloader class as GPT-2 [[6]](https://d4mucfpksywv.cloudfront.net/better-language-models/language_models_are_unsupervised_multitask_learners.pdf) which is [`GptTfRecordsProcessor`](../gpt2/input/GptTfRecordsProcessor.py). It consumes the processed data as described in the previous section and generates features dictionary and a label tensor for the pre-training. The feature dictionary for GPT-J pre-training is as follows:
@@ -106,10 +110,13 @@ Note that our model implementation and run scripts are compatible to run on GPU,
 
 ## Configuration files included for this model
 
- We provide the following config file for pre-training the `6B` GPT-J [[1]](https://github.com/kingoflolz/mesh-transformer-jax)  model, located under the [configs](configs) directory. 
-* [configs/paras_gptj.yaml](configs/paras_gpt_j_6B.yaml): GPT-J model with `hidden_size=4096`, `num_hidden_layers=28`, `num_heads=16`.
+We provide the following config file for pre-training the `6B` GPT-J [[1]](https://github.com/kingoflolz/mesh-transformer-jax) model and the `20B` GPT-Neox [[8]] model, located under the [configs](configs) directory. 
+* [params_gptj_6B.yaml](configs/params_gptj_6B.yaml): GPT-J model with `hidden_size=4096`, `num_hidden_layers=28`, `num_heads=16` and the gpt2 tokenizer.
+* [params_gpt_neox_20B.yaml](configs/params_gpt_neox_20B.yaml): GPT-Neox model with GPT-Neox model with `hidden_size=6144`, `num_hidden_layers=44`, `num_heads=64` and the neox tokenizer.
 
 All configs are meant for running in Weight Streaming mode with Appliance mode and Kubernetes.
+
+To enable gradient accumulation on a single CS2 system runs, please check the `gpt3_xl_grad_accum` config [here](../gpt3/configs/) as an example.
 
 ## Citations
 [1] [Mesh-Transformer-JAX: Model-Parallel Implementation of Transformer Language Model with JAX](https://github.com/kingoflolz/mesh-transformer-jax), May 2021.
@@ -125,3 +132,5 @@ All configs are meant for running in Weight Streaming mode with Appliance mode a
 [6] [Language Models are Unsupervised Multitask Learners](https://d4mucfpksywv.cloudfront.net/better-language-models/language_models_are_unsupervised_multitask_learners.pdf), 2019
 
 [7] [Rotary Embeddings: A Relative Revolution](https://blog.eleuther.ai/rotary-embeddings/)
+
+[8] [GPT-NeoX-20B: An Open-Source Autoregressive Language Model](https://arxiv.org/pdf/2204.06745)

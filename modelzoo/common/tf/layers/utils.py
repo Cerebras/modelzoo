@@ -28,11 +28,18 @@ def _boundary_cast(x, name=None, back_cast=True):
 
 
 try:
-    from cerebras.tf.tf_helper import (
-        boundary_cast,
-        summarize_tensor,
-        summary_layer,
-    )
+    try:
+        from cerebras.tf.tf_helper import (
+            boundary_cast,
+            summarize_tensor,
+            summary_layer,
+        )
+    except:
+        from cerebras_tensorflow.summary import (
+            boundary_cast,
+            summarize_tensor,
+            summary_layer,
+        )
 except:
     summarize_tensor = _summarize_tensor
     summary_layer = _summary_layer
