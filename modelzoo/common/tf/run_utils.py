@@ -31,6 +31,8 @@ import numpy as np
 import tensorflow as tf
 import yaml
 
+from modelzoo import CSOFT_PACKAGE, CSoftPackage
+
 
 class GetWeights:
     """
@@ -414,14 +416,17 @@ def get_csconfig(params):
     """
     Returns CSConfig proto.
     """
-    try:
+    if CSOFT_PACKAGE == CSoftPackage.SRC:
         from cerebras.pb.tf.csconfig_pb2 import CSConfig
 
-        cs_config = CSConfig(**params)
-    except ImportError:
-        cs_config = None
-
-    return cs_config
+        return CSConfig(**params)
+    elif CSOFT_PACKAGE == CSoftPackage.WHEEL:
+        # CSConfig is not yet a user-defined proto in appliance mode
+        return None
+    elif CSOFT_PACKAGE == CSoftPackage.NONE:
+        return None
+    else:
+        assert False, f"Invalid value for `CSOFT_PACKAGE`: {CSOFT_PACKAGE}"
 
 
 def get_input_checkpoint_steps(model_dir):

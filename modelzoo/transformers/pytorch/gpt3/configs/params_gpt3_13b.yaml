@@ -82,7 +82,7 @@ model:
     # Task-specific
     use_bias_in_output: False
     loss_scaling: "batch_size"
-    loss_weight: 0.00048828125 # 1/MSL=>1/2048
+    loss_weight: 0.00048828125 # = 1/max_sequence_length
 
     # Cerebras parameters
     mixed_precision: True
@@ -131,3 +131,4 @@ runconfig:
   save_initial_checkpoint: True
   seed: 0
   enable_distributed: False # Change to True on GPU
+  num_wgt_servers: 24

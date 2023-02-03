@@ -23,7 +23,7 @@ from typing import Optional, Tuple
 
 import torch
 
-from modelzoo.common.pytorch import CBTORCH_PACKAGE, CbtorchPackage
+from modelzoo import CSOFT_PACKAGE, CSoftPackage
 from modelzoo.common.pytorch import cb_model as cm
 from modelzoo.common.pytorch import cbtorch, modes
 from modelzoo.common.pytorch.loss_utils import extract_loss
@@ -312,11 +312,11 @@ class PyTorchCSAppliance(PyTorchBaseCSRunner):
             self._initial_step = 0
             return
 
-        if CBTORCH_PACKAGE == CbtorchPackage.SRC:
+        if CSOFT_PACKAGE == CSoftPackage.SRC:
             from cerebras.framework.torch.saver.pt_h5_saver import (
                 PyTorchH5Saver,
             )
-        elif CBTORCH_PACKAGE == CbtorchPackage.WHEEL:
+        elif CSOFT_PACKAGE == CSoftPackage.WHEEL:
             from cerebras_pytorch.saver.pt_h5_saver import PyTorchH5Saver
         else:
             raise ImportError("Cerebras PyTorch package not installed")
@@ -378,11 +378,11 @@ class PyTorchCSAppliance(PyTorchBaseCSRunner):
         if initial_metric_state:
             state_dict[cm.METRIC_NAME_PREFIX] = initial_metric_state
 
-        if CBTORCH_PACKAGE == CbtorchPackage.SRC:
+        if CSOFT_PACKAGE == CSoftPackage.SRC:
             from cerebras.framework.torch.saver.pt_h5_saver import (
                 PyTorchH5Saver,
             )
-        elif CBTORCH_PACKAGE == CbtorchPackage.WHEEL:
+        elif CSOFT_PACKAGE == CSoftPackage.WHEEL:
             from cerebras_pytorch.saver.pt_h5_saver import PyTorchH5Saver
         else:
             raise ImportError("Cerebras PyTorch package not installed")
@@ -402,12 +402,12 @@ class PyTorchCSAppliance(PyTorchBaseCSRunner):
                 self._model_dir, f"checkpoint_{step}_{time.time()}.mdl"
             )
 
-        if CBTORCH_PACKAGE == CbtorchPackage.SRC:
+        if CSOFT_PACKAGE == CSoftPackage.SRC:
             from cerebras.framework.torch.saver.pt_h5_saver import (
                 CerebrasStateDict,
                 PyTorchH5Saver,
             )
-        elif CBTORCH_PACKAGE == CbtorchPackage.WHEEL:
+        elif CSOFT_PACKAGE == CSoftPackage.WHEEL:
             from cerebras_pytorch.saver.pt_h5_saver import (
                 CerebrasStateDict,
                 PyTorchH5Saver,

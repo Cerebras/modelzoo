@@ -62,7 +62,8 @@ model:
     # Task-specific
     # loss_scaling defaults to num_tokens
     use_bias_in_output: False
-    loss_scaling: "num_tokens"
+    loss_scaling: "batch_size"
+    loss_weight: 0.00048828125 # = 1/max_sequence_length
 
     # Cerebras parameters
     mixed_precision: True

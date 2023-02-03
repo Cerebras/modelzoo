@@ -23,8 +23,6 @@ from modelzoo.vision.pytorch.unet.layers.UNetBlock import UNetBlock
 
 class Decoder(nn.Module):
     """
-    PyTorch port of the Decoder TF reference.
-    https://github.com/Cerebras/monolith/blob/master/src/models/vision/tf/unet/layers/Decoder.py
 
     Args:
         in_channels (int): The input channel dimension before passing through the decoder.

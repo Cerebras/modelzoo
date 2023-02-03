@@ -125,5 +125,5 @@ runconfig:
     log_step_count_steps: 10
     save_checkpoints_steps: 10000
     tf_random_seed: 0
-    num_wgt_servers: 10
+    num_wgt_servers: 24
 

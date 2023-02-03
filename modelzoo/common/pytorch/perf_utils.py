@@ -19,16 +19,16 @@ import json
 import os
 from typing import List
 
-from modelzoo.common.pytorch import CBTORCH_PACKAGE, CbtorchPackage
+from modelzoo import CSOFT_PACKAGE, CSoftPackage
 from modelzoo.common.pytorch import cb_model as cm
 from modelzoo.common.pytorch import cbtorch
 
-if CBTORCH_PACKAGE == CbtorchPackage.SRC:
+if CSOFT_PACKAGE == CSoftPackage.SRC:
     from cerebras.workflow.python.cs_perf_analyzer import (
         AssessBottlenecks,
         locate_csperf_log,
     )
-elif CBTORCH_PACKAGE == CbtorchPackage.WHEEL:
+elif CSOFT_PACKAGE == CSoftPackage.WHEEL:
     from cerebras_pytorch.workflow.python.cs_perf_analyzer import (
         AssessBottlenecks,
         locate_csperf_log,

@@ -16,8 +16,8 @@
 
 ### Input
 train_input:
-    data_processor: BertMlmOnlyTfRecordsDynamicMaskProcessor
-    data_dir: './input/owt/train_512k_cased_msl512_unmasked'
+    data_processor: "BertMlmOnlyTfRecordsDynamicMaskProcessor"
+    data_dir: "./input/owt/train_512k_cased_msl512_unmasked"
     vocab_file: "../../vocab/google_research_cased_L-12_H-768_A-12.txt"
     do_lower: False
     max_sequence_length: 512

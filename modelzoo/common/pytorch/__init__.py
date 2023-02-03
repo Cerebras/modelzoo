@@ -13,46 +13,18 @@
 # limitations under the License.
 
 import contextlib
-import importlib
 import warnings
-from enum import Enum
 
 import torch
 
+from modelzoo import CSOFT_PACKAGE, CSoftPackage
 
-class CbtorchPackage(Enum):
-    """Location where cbtorch package can be found."""
-
-    SRC = 1
-    WHEEL = 2
-    NONE = 3
-
-
-def _find_spec(name):
-    # Note: Importing a package directly runs the `__init__.py` file, which
-    # we don't want, since the imports in that file may have issues themselves
-    # and we want to catch them as opposed to falling back to `NONE`.
-    try:
-        return importlib.util.find_spec(name)
-    except ImportError:
-        return None
-
-
-# Find out where cbtorch package resides and set `CBTORCH_PACKAGE` accordingly.
-if _find_spec("cerebras.framework") is not None:
-    CBTORCH_PACKAGE = CbtorchPackage.SRC
-elif _find_spec("cerebras_pytorch") is not None:
-    CBTORCH_PACKAGE = CbtorchPackage.WHEEL
-else:
-    CBTORCH_PACKAGE = CbtorchPackage.NONE
-
-
-if CBTORCH_PACKAGE == CbtorchPackage.SRC:
+if CSOFT_PACKAGE == CSoftPackage.SRC:
     import cerebras.framework.torch as cbtorch
     from cerebras.framework.torch import amp
     from cerebras.framework.torch.core import cb_model, modes, name_scope
     from cerebras.pb.stack.autogen_pb2 import AP_DISABLED
-elif CBTORCH_PACKAGE == CbtorchPackage.WHEEL:
+elif CSOFT_PACKAGE == CSoftPackage.WHEEL:
     import cerebras_pytorch as cbtorch
     from cerebras_pytorch import amp
     from cerebras_pytorch.core import cb_model, modes, name_scope
@@ -66,7 +38,7 @@ elif CBTORCH_PACKAGE == CbtorchPackage.WHEEL:
         import torchvision
         import torchvision.io.image
 
-elif CBTORCH_PACKAGE == CbtorchPackage.NONE:
+elif CSOFT_PACKAGE == CSoftPackage.NONE:
     from types import SimpleNamespace
 
     from modelzoo.common.pytorch.utils import to_cpu
@@ -118,4 +90,4 @@ elif CBTORCH_PACKAGE == CbtorchPackage.NONE:
 
 else:
     # We should never get here
-    assert False, f"Invalid value for `CBTORCH_PACKAGE`: {CBTORCH_PACKAGE}"
+    assert False, f"Invalid value for `CSOFT_PACKAGE {CSOFT_PACKAGE}"

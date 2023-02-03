@@ -16,14 +16,19 @@ import math
 
 import yaml
 
+from modelzoo import CSOFT_PACKAGE, CSoftPackage
 from modelzoo.common.model_utils.count_lines import count_lines
 from modelzoo.common.tf.run_utils import is_cs
 from modelzoo.transformers.tf.transformer_utils import get_bits_per_x_dataset
 
-try:
+if CSOFT_PACKAGE == CSoftPackage.SRC:
     from cerebras.pb.stack.full_pb2 import FullConfig
-except ImportError:
-    pass  # non-cbcore run
+elif CSOFT_PACKAGE == CSoftPackage.WHEEL:
+    from cerebras_appliance.pb.stack.full_pb2 import FullConfig
+elif CSOFT_PACKAGE == CSoftPackage.NONE:
+    pass
+else:
+    assert False, f"Invalid value for `CSOFT_PACKAGE`: {CSOFT_PACKAGE}"
 
 
 def get_params(params_file):
@@ -165,7 +170,7 @@ def get_custom_stack_params(params):
         or runconfig_params["compile_only"]
     ):
         stack_params["config"] = set_custom_config(FullConfig(), params)
-        return stack_params
+    return stack_params
 
 
 def set_custom_config(config, params):

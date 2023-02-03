@@ -34,16 +34,17 @@ def get_params(params_file):
     with open(params_file, "r") as stream:
         params = yaml.safe_load(stream)
 
-    if "pretrain_params_path" in params["model"]:
-        load_pretrain_model_params(
-            params, os.path.dirname(os.path.abspath(__file__))
-        )
     set_defaults(params)
 
     return params
 
 
 def set_defaults(params):
+    if "pretrain_params_path" in params["model"]:
+        load_pretrain_model_params(
+            params, os.path.dirname(os.path.abspath(__file__))
+        )
+
     set_bert_defaults(params)
 
     # encoder_output dropout layer params

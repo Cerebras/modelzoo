@@ -117,13 +117,15 @@ class PyTorchRunner(PyTorchBaseRunner):
 
     def _write_log(self, loss, step):
         update_data = [
-            self._active_mode.title(),
             'Device={}'.format(self._device.type),
             'Step={}'.format(step),
             'Loss={:.5f}'.format(loss),
             'Time={}'.format(datetime.now().strftime('%H:%M:%S')),
         ]
-        logging.info(f"| {' '.join(item for item in update_data if item)}")
+        logging.info(
+            f"| {self._active_mode.title()} "
+            f"{', '.join(item for item in update_data if item)}"
+        )
 
         if self._scaler:
             self._writer.add_scalar(

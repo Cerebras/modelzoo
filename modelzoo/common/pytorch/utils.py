@@ -336,6 +336,11 @@ def get_parser(
         default=None,
         help="Number of processes to use when transferring weights.",
     )
+    parser.add_argument(
+        "--job_labels",
+        nargs="+",
+        help="a list of equal-sign-separated key value pairs served as job labels",
+    )
     return parser
 
 
@@ -372,9 +377,15 @@ def get_input_dtype(to_float16: bool):
 
         half_dtype = half_dtype_instance.half_dtype
 
-    if to_float16 and not cm.use_cs() and not torch.cuda.is_available():
+    if (
+        to_float16
+        and not cm.use_cs()
+        and not cm.is_appliance()
+        and not torch.cuda.is_available()
+    ):
         print(
-            f"to_float16 == True for input dtype not supported with vanilla PyTorch CPU workflow, setting to_float16 to False"
+            f"to_float16 == True for input dtype is not supported with vanilla "
+            f"PyTorch CPU workflow. Setting to_float16 to False."
         )
         to_float16 = False
     dtype = half_dtype if to_float16 else torch.float32

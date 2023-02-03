@@ -37,6 +37,10 @@ from cerebras_appliance.pb.workflow.appliance.common.common_config_pb2 import (
     ExecutionStrategy as ApplianceExecutionStrategy,
 )
 from cerebras_appliance.run_utils import get_debug_args as parse_debug_args
+from modelzoo.common.tf.estimator.utils import (
+    cs_disable_summaries,
+    cs_enable_summaries,
+)
 from modelzoo.common.tf.run_utils import (
     get_csrunconfig_dict,
     get_params,
@@ -109,10 +113,9 @@ def get_debug_mgr_args(debug_ini_fp, debug_args):
 
 def get_debug_args(debug_args_path, debug_ini_path):
     """Appliance mode DebugArgs."""
+    debug_args = DebugArgs()
     if debug_args_path:
         debug_args = parse_debug_args(debug_args_path)
-    else:
-        debug_args = DebugArgs()
 
     debug_ini_fp = os.path.join(debug_ini_path, "debug.ini")
     if os.path.exists(debug_ini_fp):
@@ -255,6 +258,12 @@ def create_arg_parser(run_dir: str) -> argparse.ArgumentParser:
         default=None,
         help="Specifies the logging level. Defaults to INFO.",
     )
+    parser.add_argument(
+        "--job_labels",
+        nargs="+",
+        help="A list of equal-sign-separated key value pairs served as "
+        "job labels.",
+    )
 
     return parser
 
@@ -285,7 +294,7 @@ def parse_args_and_params(
 
 
 def update_debug_args_from_stack_params(
-    debug_args: DebugArgs, stack_params_fn: Callable, params: dict
+    debug_args: DebugArgs, stack_params_fn: Callable[[dict], dict], params: dict
 ) -> None:
     """Gets stack params and encodes them in the give debug args.
 
@@ -301,9 +310,9 @@ def update_debug_args_from_stack_params(
 
     # FullConfig is only set for CS-X runs, so here we set a dummy cs-ip and
     # revert later
-    params["cs_ip"] = "localhost:1234"
-    stack_params = stack_params_fn(params)
-    params.pop("cs_ip")
+    params["runconfig"]["cs_ip"] = "localhost:1234"
+    stack_params = stack_params_fn(params) or {}
+    params["runconfig"].pop("cs_ip")
 
     ir_mode = stack_params.get("ir_mode", "mlir-cirh")
     if ir_mode != "mlir-cirh":
@@ -360,6 +369,7 @@ def run_appliance(
     supported_strategies: List[str],
     default_params_fn: Optional[Callable] = None,
     stack_params_fn: Optional[Callable] = None,
+    enable_cs_summaries: bool = False,
 ):
     """Helper method for running models on Appliance.
 
@@ -374,6 +384,7 @@ def run_appliance(
             defaults for missing params.
         stack_params_fn: A callable that takes in the parsed params and sets
             Cerebras-specific config for stack compilation.
+        enable_summaries: Enable summaries when running on CS-X hardware.
     """
     # Set run directory to the directory location of the file from which this
     # method was called.
@@ -402,12 +413,11 @@ def run_appliance(
 
     # Create debug args
     debug_args = get_debug_args(runconfig_params["debug_args_path"], run_dir)
-    if runconfig_params["execution_strategy"] == ExecutionStrategy.pipeline:
+    if (
+        runconfig_params["execution_strategy"] == ExecutionStrategy.pipeline
+        and stack_params_fn is not None
+    ):
         update_debug_args_from_stack_params(debug_args, stack_params_fn, params)
-
-    # Log some settings to console
-    logging.info(f"Credentials path: {runconfig_params['credentials_path']}")
-    logging.info(f"Debug args: {debug_args}")
 
     # Figure out the input_fn to use
     if runconfig_params["mode"] == "train":
@@ -435,38 +445,53 @@ def run_appliance(
             execution_strategy=ExecutionStrategy.as_appliance_key(
                 runconfig_params["execution_strategy"]
             ),
+            job_labels=runconfig_params["job_labels"],
         ),
         **csrunconfig_dict,
     )
 
-    # Create estimator
-    cs_estimator = CerebrasAppEstimator(
-        model_fn,
-        params=params,
-        config=cs_run_config,
-        model_dir=runconfig_params["model_dir"],
-        compile_dir=runconfig_params["compile_dir"],
-        warm_start_from=runconfig_params["checkpoint_path"],
+    # Create context for capturing summaries on CS-X. Note that summaries in
+    # multi-replica training are not supported.
+    summary_ctx = (
+        cs_enable_summaries()
+        if enable_cs_summaries and not runconfig_params["multireplica"]
+        else cs_disable_summaries()
     )
 
-    # Run the requested mode
-    if runconfig_params["validate_only"] or runconfig_params["compile_only"]:
-        cs_estimator.compile(
-            input_fn, validate_only=runconfig_params["validate_only"], mode=mode
+    with summary_ctx:
+        # Create estimator
+        cs_estimator = CerebrasAppEstimator(
+            model_fn,
+            params=params,
+            config=cs_run_config,
+            model_dir=runconfig_params["model_dir"],
+            compile_dir=runconfig_params["compile_dir"],
+            warm_start_from=runconfig_params["checkpoint_path"],
         )
-    elif runconfig_params["mode"] == 'eval':
-        cs_estimator.evaluate(
-            input_fn,
-            steps=runconfig_params["eval_steps"],
-            checkpoint_path=runconfig_params["checkpoint_path"],
-            use_cs=True,
-        )
-    elif runconfig_params["mode"] == "train":
-        cs_estimator.train(
-            input_fn,
-            steps=runconfig_params["steps"],
-            max_steps=runconfig_params["max_steps"],
-            use_cs=True,
-        )
-    else:
-        raise ValueError(f'Mode not supported: {runconfig_params["mode"]}')
+
+        # Run the requested mode
+        if (
+            runconfig_params["validate_only"]
+            or runconfig_params["compile_only"]
+        ):
+            cs_estimator.compile(
+                input_fn,
+                validate_only=runconfig_params["validate_only"],
+                mode=mode,
+            )
+        elif runconfig_params["mode"] == 'eval':
+            cs_estimator.evaluate(
+                input_fn,
+                steps=runconfig_params["eval_steps"],
+                checkpoint_path=runconfig_params["checkpoint_path"],
+                use_cs=True,
+            )
+        elif runconfig_params["mode"] == "train":
+            cs_estimator.train(
+                input_fn,
+                steps=runconfig_params["steps"],
+                max_steps=runconfig_params["max_steps"],
+                use_cs=True,
+            )
+        else:
+            raise ValueError(f'Mode not supported: {runconfig_params["mode"]}')

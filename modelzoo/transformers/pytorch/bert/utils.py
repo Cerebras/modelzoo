@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import logging
+import os
 
 from modelzoo.common.pytorch import cb_model as cm
 from modelzoo.common.pytorch import modes
@@ -25,6 +26,11 @@ def set_defaults(params):
     Args:
         params: The dictionary containing the params
     """
+    for section in ["train_input", "eval_input"]:
+        for key in ["vocab_file"]:
+            if params.get(section, {}).get(key):
+                params[section][key] = os.path.abspath(params[section][key])
+
     model_params = params["model"]
     params["model"]["disable_nsp"] = model_params.get("disable_nsp", False)
     params["model"]["enable_vts"] = model_params.get("enable_vts", False)

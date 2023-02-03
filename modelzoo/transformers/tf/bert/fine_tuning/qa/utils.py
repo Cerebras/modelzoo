@@ -34,16 +34,17 @@ def get_params(params_file):
     with open(params_file, "r") as stream:
         params = yaml.safe_load(stream)
 
-    if "pretrain_params_path" in params["model"]:
-        load_pretrain_model_params(
-            params, os.path.dirname(os.path.abspath(__file__))
-        )
     set_defaults(params)
 
     return params
 
 
 def set_defaults(params):
+    if "pretrain_params_path" in params["model"]:
+        load_pretrain_model_params(
+            params, os.path.dirname(os.path.abspath(__file__))
+        )
+
     set_bert_defaults(params)
 
     # use eval_input params as defaults for predict_input
@@ -51,6 +52,3 @@ def set_defaults(params):
     if "predict_input" in params:
         predict_input_params.update(params["predict_input"])
     params["predict_input"] = predict_input_params
-
-    if "ir_mode" not in params["runconfig"]:
-        params["runconfig"]["ir_mode"] = "mlir-xla"

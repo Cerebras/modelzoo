@@ -59,6 +59,8 @@ model:
 
     # Task-specific
     use_bias_in_output: False
+    loss_scaling: "batch_size"
+    loss_weight: 0.00048828125 # = 1/max_sequence_length
 
     # Cerebras parameters
     mixed_precision: True
@@ -85,4 +87,8 @@ optimizer:
 runconfig:
     # GPT-3 models trained for 300B tokens
     max_steps: 1200000
+    log_steps: 100
+    save_checkpoint_steps: 12000
+    save_summary_steps: 100
+    eval_steps: 50
 

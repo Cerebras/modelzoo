@@ -12,10 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-try:
+from modelzoo import CSOFT_PACKAGE, CSoftPackage
+
+if CSOFT_PACKAGE == CSoftPackage.SRC:
     from cerebras.tf.cs_estimator_spec import CSEstimatorSpec as EstimatorSpec
-except ImportError:
+elif CSOFT_PACKAGE == CSoftPackage.WHEEL:
+    from cerebras_tensorflow.cs_estimator_spec import (
+        CSEstimatorSpec as EstimatorSpec,
+    )
+elif CSOFT_PACKAGE == CSoftPackage.NONE:
     from tensorflow_estimator.python.estimator.model_fn import EstimatorSpec
+else:
+    assert False, f"Invalid value for `CSOFT_PACKAGE`: {CSOFT_PACKAGE}"
 
 
 class CSEstimatorSpec(EstimatorSpec):

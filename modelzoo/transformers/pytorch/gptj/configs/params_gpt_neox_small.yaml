@@ -62,6 +62,9 @@ model:
     use_bias_in_output: False
     initializer_range: 0.02
 
+    loss_scaling: "batch_size"
+    loss_weight: 0.00048828125 # = 1/max_sequence_length
+
     # We use truncated_normal instead of normal ("ref: https://github.com/EleutherAI/gpt-neox/blob/main/configs/small.yml") with the same std and mean for better performance
     # Neox small config uses normal init with std=0.02, we chose to align with Neox 20B
     embedding_initializer:

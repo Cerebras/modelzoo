@@ -36,7 +36,8 @@ model:
     mixed_precision: True
     boundary_casting: False
     tf_summary: False
-    include_padding_in_loss: True
+    include_padding_in_loss: False
+    loss_weight: 0.04322062437752126  # 1/avg_num_tokens_in_sequence
 
 ### Optimization
 optimizer:

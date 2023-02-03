@@ -19,6 +19,17 @@ import os
 
 import yaml
 
+from modelzoo import CSOFT_PACKAGE, CSoftPackage
+
+if CSOFT_PACKAGE == CSoftPackage.SRC:
+    from cerebras.pb.stack.full_pb2 import FullConfig
+elif CSOFT_PACKAGE == CSoftPackage.WHEEL:
+    from cerebras_appliance.pb.stack.full_pb2 import FullConfig
+elif CSOFT_PACKAGE == CSoftPackage.NONE:
+    pass
+else:
+    assert False, f"Invalid value for `CSOFT_PACKAGE`: {CSOFT_PACKAGE}"
+
 _curdir = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_YAML_PATH = os.path.join(_curdir, "configs/params.yaml")
 
@@ -32,8 +43,6 @@ def get_params(params_file=DEFAULT_YAML_PATH):
 def get_custom_stack_params(params):
     stack_params = {}
     if params["runconfig"]["multireplica"]:
-        from cerebras.pb.stack.full_pb2 import FullConfig
-
         config = FullConfig()
         config.target_num_replicas = -1
         stack_params["config"] = config

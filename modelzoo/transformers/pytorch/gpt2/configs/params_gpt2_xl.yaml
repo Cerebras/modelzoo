@@ -55,6 +55,7 @@ model:
     nonlinearity: "gelu"
     use_ffn_bias: True
     use_bias_in_output: False # As used in https://amaarora.github.io/2020/02/18/annotatedGPT2.html
+    loss_weight: 0.0009765625 # = 1/max_sequence_length
 
     embedding_initializer:
         name: "truncated_normal"

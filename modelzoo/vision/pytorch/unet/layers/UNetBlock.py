@@ -21,8 +21,6 @@ from modelzoo.vision.pytorch.layers.ConvNormActBlock import ConvNormActBlock
 
 class UNetBlock(nn.Module):
     """
-    PyTorch port of the UNetBlock TF reference.
-    https://github.com/Cerebras/monolith/blob/master/src/models/vision/tf/unet/layers/UNetBlock.py
 
     Args:
         in_channels (int): The input channel dimension before passing through the block.

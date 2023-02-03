@@ -17,15 +17,25 @@ from copy import deepcopy
 
 import yaml
 
+from modelzoo import CSOFT_PACKAGE, CSoftPackage
 from modelzoo.common.tf.model_utils.vocab_utils import get_vocab_size
 from modelzoo.common.tf.run_utils import is_cs
 
-try:
+if CSOFT_PACKAGE == CSoftPackage.SRC:
     from cerebras.pb.common.tri_state_pb2 import TS_DISABLED, TS_ENABLED
     from cerebras.pb.stack.autogen_pb2 import AP_ENABLED
     from cerebras.pb.stack.full_pb2 import FullConfig
-except ImportError:
-    pass  # non-cbcore run
+elif CSOFT_PACKAGE == CSoftPackage.WHEEL:
+    from cerebras_appliance.pb.common.tri_state_pb2 import (
+        TS_DISABLED,
+        TS_ENABLED,
+    )
+    from cerebras_appliance.pb.stack.autogen_pb2 import AP_ENABLED
+    from cerebras_appliance.pb.stack.full_pb2 import FullConfig
+elif CSOFT_PACKAGE == CSoftPackage.NONE:
+    pass
+else:
+    assert False, f"Invalid value for `CSOFT_PACKAGE`: {CSOFT_PACKAGE}"
 
 
 def get_params(
@@ -44,6 +54,10 @@ def get_params(
 def set_defaults(
     params, mode=None,
 ):
+    for section in ["train_input", "eval_input"]:
+        for key in ["vocab_file"]:
+            if params.get(section, {}).get(key):
+                params[section][key] = os.path.abspath(params[section][key])
 
     # Embeddings
     params["model"]["use_segment_embedding"] = params["model"].get(

@@ -12,7 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from contextlib import nullcontext
+
 import tensorflow as tf
+
+from modelzoo import CSOFT_PACKAGE, CSoftPackage
 
 
 def _host_call_to_eval_metric_ops(host_call):
@@ -73,7 +77,7 @@ def _validate_host_call(host_call):
     return host_call
 
 
-try:
+if CSOFT_PACKAGE == CSoftPackage.SRC:
     from cerebras.tf.host_call import (
         host_call_to_eval_metric_ops,
         validate_host_call,
@@ -82,14 +86,26 @@ try:
         cs1_disable_summaries as cs_disable_summaries,
     )
     from cerebras.tf.summary import cs1_enable_summaries as cs_enable_summaries
-except:
-    from contextlib import nullcontext
+elif CSOFT_PACKAGE == CSoftPackage.WHEEL:
+    from cerebras_tensorflow.graph_extraction import (
+        cs1_disable_summaries as cs_disable_summaries,
+    )
+    from cerebras_tensorflow.graph_extraction import (
+        cs1_enable_summaries as cs_enable_summaries,
+    )
 
+    # Note: These methods are unused in appliance mode, but to keep backwards
+    # compatibility and consistency across package types, we return them.
+    host_call_to_eval_metric_ops = _host_call_to_eval_metric_ops
+    validate_host_call = _validate_host_call
+elif CSOFT_PACKAGE == CSoftPackage.NONE:
     cs_enable_summaries = nullcontext
     cs_disable_summaries = nullcontext
 
     host_call_to_eval_metric_ops = _host_call_to_eval_metric_ops
     validate_host_call = _validate_host_call
+else:
+    assert False, f"Invalid value for `CSOFT_PACKAGE`: {CSOFT_PACKAGE}"
 
 
 __all__ = [

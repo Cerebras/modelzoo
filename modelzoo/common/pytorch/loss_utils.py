@@ -19,7 +19,7 @@ from typing import Optional
 import torch
 from torch.utils.tensorboard import SummaryWriter
 
-from modelzoo.common.pytorch import CBTORCH_PACKAGE, CbtorchPackage
+from modelzoo import CSOFT_PACKAGE, CSoftPackage
 from modelzoo.common.pytorch import cb_model as cm
 
 
@@ -106,13 +106,13 @@ class LossSaver:
         return sum(vals) / len(vals)
 
 
-if CBTORCH_PACKAGE == CbtorchPackage.SRC:
+if CSOFT_PACKAGE == CSoftPackage.SRC:
     # pylint: disable=unused-import
     from cerebras.framework.torch.utils import extract_loss
-elif CBTORCH_PACKAGE == CbtorchPackage.WHEEL:
+elif CSOFT_PACKAGE == CSoftPackage.WHEEL:
     # pylint: disable=unused-import
     from cerebras_pytorch.utils import extract_loss
-elif CBTORCH_PACKAGE == CbtorchPackage.NONE:
+elif CSOFT_PACKAGE == CSoftPackage.NONE:
 
     def extract_loss(model_outputs):
         """Extracts the loss from the model outputs"""
@@ -128,4 +128,4 @@ elif CBTORCH_PACKAGE == CbtorchPackage.NONE:
 
 
 else:
-    assert False, f"Invalid value for `CBTORCH_PACKAGE`: {CBTORCH_PACKAGE}"
+    assert False, f"Invalid value for `CSOFT_PACKAGE`: {CSOFT_PACKAGE}"

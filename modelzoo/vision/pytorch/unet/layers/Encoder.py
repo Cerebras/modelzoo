@@ -22,8 +22,6 @@ from modelzoo.vision.pytorch.unet.layers.UNetBlock import UNetBlock
 
 class Encoder(nn.Module):
     """
-    PyTorch port of the Encoder TF reference.
-    https://github.com/Cerebras/monolith/blob/master/src/models/vision/tf/unet/layers/Encoder.py
 
     Args:
         in_channels (int): The input channel dimension before passing through the encoder.

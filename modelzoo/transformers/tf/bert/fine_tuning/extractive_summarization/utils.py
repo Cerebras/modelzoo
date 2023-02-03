@@ -37,16 +37,17 @@ def get_params(params_file):
     with open(params_file, "r") as stream:
         params = yaml.safe_load(stream)
 
-    if "pretrain_params_path" in params["model"]:
-        load_pretrain_model_params(
-            params, os.path.dirname(os.path.abspath(__file__))
-        )
     set_defaults(params)
 
     return params
 
 
 def set_defaults(params):
+    if "pretrain_params_path" in params["model"]:
+        load_pretrain_model_params(
+            params, os.path.dirname(os.path.abspath(__file__))
+        )
+
     set_bert_defaults(params)
 
     params["model_type"] = "BertSummarizationModel"
@@ -81,7 +82,7 @@ def extract_text_words_given_cls_indices_per_seq_in_batch(x, tokenizer):
         :param tokenizer: Tokenizer object which contains functions to
             convert words to token and vice versa.
         :param max_sequence_length: int, maximum length of the sequence.
-        :returns: words_padded: Numpy array with computed words padded 
+        :returns: words_padded: Numpy array with computed words padded
             to max seq length.
         """
         extracted_text_tokens = tokenizer.convert_ids_to_tokens(input_ids)

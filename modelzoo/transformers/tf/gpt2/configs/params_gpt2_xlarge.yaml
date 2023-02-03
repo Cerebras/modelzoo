@@ -70,8 +70,5 @@ runconfig:
     max_steps: 200000
     save_summary_steps: 1
     tf_random_seed: 0
-    validate_only: False
-    compile_only: False
-    cs_ip: 1.1.1.1
     mode: "train"
 

@@ -2,6 +2,34 @@
 
 The following are the release notes for the Model Zoo repository.
 
+## Version 1.7.1
+
+### New features and enhancements
+
+#### Unified workflow on the Wafer-Scale Cluster
+
+- User workflow on the Wafer-Scale Cluster is now the same for Pipelined and Weight Streaming execution. The same launching scripts and the same environment can now be used to run larger models with Weight Streaming execution and smaller models with Pipelined execution. Use additional command line argument with `run.py` for PyTorch and with `run_appliance.py` for Tensorflow: set ``--execution_strategy`` argument to ``pipeline`` or ``weight_streaming`` to specify execution mode.
+  - Note that Pipelined execution only supports using one CS-2 for each run. It is only valid to specify ``--num_csx=1`` in the run command for Pipelined execution. Weight Streaming does not have such requirement.
+  
+### Known issues
+
+#### Specifying number of workers
+
+- ``--num_workers_per_csx`` denotes the maximum number of Kubernetes worker pods per CS-X. Note that these are distributed across physical worker nodes attached to each CS-X on the Wafer-Scale Cluster.
+- For this release, please specify ``--num_workers_per_csx=8`` as a command line argument in the run command for Pipelined execution. Weight Streaming execution does not need to specify this argument.
+
+#### Specifying path in the configuration file
+
+- Please specify absolute paths for any configuration parameters that are used by dataloaders in PyTorch or the input_fn in TensorFlow. More specifically, this applies to all variables in the ``train_input`` and/or ``eval_input`` sections of the configuration yamls.
+
+#### Padding token in loss calculation
+
+- TensorFlow BERT fine-tuning token classification model does not support padding tokens in loss on the Wafer-Scale Cluster for both Pipelined and Weight Streaming execution. Please set ``include_padding_in_loss: False`` in the configuration yaml. We believe it makes the most sense to exclude padding tokens in the loss calculation. Such setting differs from the original public implementation where token padding is included in the loss, which is most likely used for performance optimization on GPUs, leading to our eval accuracy being potentially different from published numbers. This does not apply to the PyTorch version or the Original Cerebras Installation.
+
+#### TensorFlow BERT SQuAD Unsupported
+
+- TensorFlow BERT fine-tuning model for SQuAD is not supported in appliance (neither Pipelined nor Weight Streaming). If you would like to fine-tune BERT with SQuAD, please use the PyTorch version.
+
 ## Version 1.7.0
 
 ### New features and enhancements

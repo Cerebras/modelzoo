@@ -16,15 +16,25 @@ from copy import deepcopy
 
 import yaml
 
-from cerebras.pb.common.tri_state_pb2 import TS_DISABLED, TS_ENABLED
+from modelzoo import CSOFT_PACKAGE, CSoftPackage
 from modelzoo.common.tf.model_utils.vocab_utils import get_vocab_size
 from modelzoo.common.tf.run_utils import is_cs
 
-try:
+if CSOFT_PACKAGE == CSoftPackage.SRC:
     import cerebras.pb.common.cerebras_type_pb2 as cb_types
+    from cerebras.pb.common.tri_state_pb2 import TS_DISABLED, TS_ENABLED
     from cerebras.pb.stack.full_pb2 import FullConfig
-except ImportError:
-    pass  # non-cbcore run
+elif CSOFT_PACKAGE == CSoftPackage.WHEEL:
+    import cerebras_appliance.pb.common.cerebras_type_pb2 as cb_types
+    from cerebras_appliance.pb.common.tri_state_pb2 import (
+        TS_DISABLED,
+        TS_ENABLED,
+    )
+    from cerebras_appliance.pb.stack.full_pb2 import FullConfig
+elif CSOFT_PACKAGE == CSoftPackage.NONE:
+    pass
+else:
+    assert False, f"Invalid value for `CSOFT_PACKAGE`: {CSOFT_PACKAGE}"
 
 
 def get_params(params_file):
@@ -332,7 +342,7 @@ def get_custom_stack_params(params):
         or runconfig_params["compile_only"]
     ):
         stack_params["config"] = set_custom_config(FullConfig(), params)
-        return stack_params
+    return stack_params
 
 
 def set_custom_config(config, params):

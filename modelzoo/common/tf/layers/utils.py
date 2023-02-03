@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from modelzoo import CSOFT_PACKAGE, CSoftPackage
+
 
 def _summarize_tensor(x, is_gradient_tensor=False, op_name_if_grad=None):
     """Outside of Cerebras Package. NoOp for compatibility"""
@@ -27,23 +29,24 @@ def _boundary_cast(x, name=None, back_cast=True):
     return x
 
 
-try:
-    try:
-        from cerebras.tf.tf_helper import (
-            boundary_cast,
-            summarize_tensor,
-            summary_layer,
-        )
-    except:
-        from cerebras_tensorflow.summary import (
-            boundary_cast,
-            summarize_tensor,
-            summary_layer,
-        )
-except:
+if CSOFT_PACKAGE == CSoftPackage.SRC:
+    from cerebras.tf.tf_helper import (
+        boundary_cast,
+        summarize_tensor,
+        summary_layer,
+    )
+elif CSOFT_PACKAGE == CSoftPackage.WHEEL:
+    from cerebras_tensorflow.summary import (
+        boundary_cast,
+        summarize_tensor,
+        summary_layer,
+    )
+elif CSOFT_PACKAGE == CSoftPackage.NONE:
     summarize_tensor = _summarize_tensor
     summary_layer = _summary_layer
     boundary_cast = _boundary_cast
+else:
+    assert False, f"Invalid value for `CSOFT_PACKAGE`: {CSOFT_PACKAGE}"
 
 __all__ = [
     'summarize_tensor',

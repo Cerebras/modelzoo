@@ -12,8 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
+
 
 def set_defaults(params, mode=None):
+    for section in ["train_input", "eval_input"]:
+        for key in ["vocab_file"]:
+            if params.get(section, {}).get(key):
+                params[section][key] = os.path.abspath(params[section][key])
+
     params["model"]["layer_norm_epsilon"] = params["model"].get(
         "layer_norm_epsilon", 1.0e-5
     )

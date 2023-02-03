@@ -18,6 +18,7 @@
 Run script for running on cerebras appliance cluster
 """
 
+import os
 import sys
 
 import tensorflow as tf
@@ -25,12 +26,18 @@ import tensorflow as tf
 # Disable eager execution
 tf.compat.v1.disable_eager_execution()
 
-sys.path.append(os.path.join(os.path.dirname(__file__), "../../.."))
+sys.path.append(os.path.join(os.path.dirname(__file__), "../../../.."))
 
 from modelzoo.common.tf.appliance_utils import ExecutionStrategy, run_appliance
-from modelzoo.fc_mnist.tf.data import eval_input_fn, train_input_fn
-from modelzoo.fc_mnist.tf.model import model_fn
-from modelzoo.fc_mnist.tf.utils import get_custom_stack_params, set_defaults
+from modelzoo.transformers.tf.transformer.data import (
+    eval_input_fn,
+    train_input_fn,
+)
+from modelzoo.transformers.tf.transformer.model import model_fn
+from modelzoo.transformers.tf.transformer.utils import (
+    get_custom_stack_params,
+    set_defaults,
+)
 
 
 def main():
@@ -38,10 +45,7 @@ def main():
         model_fn,
         train_input_fn,
         eval_input_fn,
-        supported_strategies=[
-            ExecutionStrategy.weight_streaming,
-            ExecutionStrategy.pipeline,
-        ],
+        supported_strategies=[ExecutionStrategy.pipeline],
         default_params_fn=set_defaults,
         stack_params_fn=get_custom_stack_params,
     )

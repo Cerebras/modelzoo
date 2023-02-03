@@ -388,8 +388,8 @@ class Transformer(TFBaseModel):
             decoder_input = self.pre_decoder_layer_norm(decoder_input)
 
         attn_autoregressive_mask = create_autoregressive_attention_mask(
-            batch_size=tf.shape(decoder_input)[0],
-            max_sequence_length=tf.shape(decoder_input)[1],
+            batch_size=decoder_input.shape[0],
+            max_sequence_length=decoder_input.shape[1],
             dtype=decoder_input.dtype,
         )
 

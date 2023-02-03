@@ -62,10 +62,7 @@ class GptjModel(PyTorchBaseModel):
             "position_embedding_type", "rotary"
         ).lower()
 
-        # set loss scale to be num_tokens since GPTJ can't fit into
-        # pipeline mode
-        self.loss_scaling = "num_tokens"
-        self.loss_weight = 1.0
+        self.loss_weight = model_params.pop("loss_weight", 1.0)
 
         model = GPTJModel(
             hidden_size=model_params.pop("hidden_size"),

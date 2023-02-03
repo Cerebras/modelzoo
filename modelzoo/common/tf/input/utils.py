@@ -16,6 +16,8 @@
 Function for performing standard transformations on datasets.
 """
 
+from typing import Any, Callable, Dict, List, Tuple, Union
+
 import numpy as np
 import tensorflow as tf
 
@@ -198,3 +200,194 @@ def bucketed_batch(
             key_func=key_func, reduce_func=reduce_func, window_size=batch_size,
         )
     )
+
+
+def generate_input_fn(
+    feature_shape: Union[
+        Dict[str, Union[List[int], Tuple[int, ...]]],
+        List[int],
+        Tuple[int, ...],
+    ],
+    label_shape: Union[List[int], Tuple[int, ...]],
+    batch_size: int,
+    total_samples: int,
+    feature_high: Union[float, Dict[str, float]] = 1,
+    feature_low: Union[float, Dict[str, float]] = 0,
+    label_high: float = 1,
+    label_low: float = 0,
+    random_seed: int = 1202,
+    feature_type: Union[np.dtype, Dict[str, np.dtype]] = np.float32,
+    label_type: np.dtype = np.float32,
+    feature_function=lambda x: x,
+) -> Tuple[Callable[[Dict[str, Any]], tf.data.Dataset], Dict[str, Any]]:
+    """Creates a callable for generating a TF dataset from random numpy data.
+
+    Args:
+        feature_shape: If tuple or list, then shape of a feature. If dictionary,
+            then feature will be a dictionary with the same keys. Values in this
+            input param dictionary must be tuples or list, and determine the
+            size of the corresponding value in the feature dict.
+        label_shape: Shape of a label as tuple or list.
+        batch_size: Batch size of data.
+        total_samples: Total number of samples of data.
+        feature_high: Upper bound value for features. If `feature_shape` is a
+            dict, then it can be a dict with the same keys.
+        feature_low: Lower bound value for features. If `feature_shape` is a
+            dict, then it can be a dict with the same keys.
+        label_high: Upper bound value for labels.
+        label_low: Lower bound value for labels.
+        random_seed: RNG seed to be used.
+        feature_type: Data type of features. Supported types are np.float16,
+            np.float32, np.int32. If `feature_shape` is a dict then can be a
+            dict with the same keys.
+        label_type: Data type of labels. Supported types are np.float16,
+            np.float32, np.int32.
+        feature_function: Function to apply on top of generated features.
+    Returns:
+        An input_fn callable and params (dict) to be passed into the input_fn.
+    """
+    data_params = {
+        "feature_shape": feature_shape,
+        "feature_type": feature_type,
+        "feature_high": feature_high,
+        "feature_low": feature_low,
+        "label_shape": label_shape,
+        "label_type": label_type,
+        "label_high": label_high,
+        "label_low": label_low,
+        "batch_size": batch_size,
+        "total_samples": total_samples,
+        "random_seed": random_seed,
+        "feature_function": feature_function,
+    }
+
+    return _dynamic_input_fn, data_params
+
+
+def _dynamic_input_fn(params: Dict[str, Any]) -> tf.data.Dataset:
+    """Callback function for dynamically-generated input dataset.
+
+    This method is defined in root scope in order to allow pickling (e.g. spawn
+    fork, such as on Windows).
+
+    Args:
+        params: Params, with adjustments by generate_input_fn() above.
+    Returns:
+        A TF dataset.
+    """
+    feature_shape = params["feature_shape"]
+    feature_type = params["feature_type"]
+    feature_high = params["feature_high"]
+    feature_low = params["feature_low"]
+
+    if isinstance(feature_shape, dict) and not isinstance(
+        params["feature_function"], dict
+    ):
+        feature_function = {}
+        for key in feature_shape.keys():
+            feature_function[key] = lambda x: x
+    else:
+        feature_function = params["feature_function"]
+
+    if (
+        isinstance(feature_type, dict)
+        or isinstance(feature_high, dict)
+        or isinstance(feature_low, dict)
+    ):
+        assert isinstance(
+            feature_shape, dict
+        ), "Can only be dicts if feature_shape is dict"
+
+    batch_size = params["batch_size"]
+    total_samples = params["total_samples"]
+
+    random_seed = params["random_seed"]
+    np.random.seed(random_seed)
+
+    _supported_types = [
+        np.float16,
+        np.float32,
+        np.int32,
+        "int32",
+        "float32",
+        "float16",
+    ]
+
+    def _generate_data(shape, dtype, low, high):
+        assert (
+            dtype in _supported_types
+        ), f"supported dtypes: {_supported_types}"
+        shape = [total_samples] + list(shape)
+        if dtype == np.int32:
+            return np.random.randint(
+                low=low, high=high, size=shape, dtype=np.int32
+            )
+        else:
+            return np.random.uniform(low=low, high=high, size=shape).astype(
+                dtype
+            )
+
+    if isinstance(feature_shape, dict):
+        features = {}
+        for key in feature_shape:
+            key_shape = feature_shape[key]
+            key_type = (
+                feature_type[key]
+                if isinstance(feature_type, dict)
+                else feature_type
+            )
+            key_high = (
+                feature_high[key]
+                if isinstance(feature_high, dict)
+                else feature_high
+            )
+            key_low = (
+                feature_low[key]
+                if isinstance(feature_low, dict)
+                else feature_low
+            )
+
+            features[key] = _generate_data(
+                key_shape, key_type, key_low, key_high
+            )
+
+            features[key] = feature_function[key](features[key])
+    else:
+        features = _generate_data(
+            feature_shape, feature_type, feature_low, feature_high
+        )
+        features = feature_function(features)
+
+    label_shape = params["label_shape"]
+    label_type = params["label_type"]
+    label_high = params["label_high"]
+    label_low = params["label_low"]
+
+    if isinstance(label_shape, dict):
+        labels = {}
+        for key in label_shape:
+            key_shape = label_shape[key]
+            key_type = (
+                label_type[key] if isinstance(label_type, dict) else label_type
+            )
+            key_high = (
+                label_high[key] if isinstance(label_high, dict) else label_high
+            )
+            key_low = (
+                label_low[key] if isinstance(label_low, dict) else label_low
+            )
+            labels[key] = _generate_data(
+                key_shape, key_type, key_low, key_high,
+            )
+
+    elif label_shape is not None:
+        labels = _generate_data(label_shape, label_type, label_low, label_high)
+
+    ds = (
+        tf.data.Dataset.from_tensor_slices((features, labels))
+        if label_shape is not None
+        else tf.data.Dataset.from_tensor_slices(features)
+    )
+    ds = ds.prefetch(tf.data.experimental.AUTOTUNE)
+    ds = ds.batch(batch_size, drop_remainder=True)
+    return ds.repeat()

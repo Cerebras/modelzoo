@@ -61,6 +61,9 @@ model:
     use_bias_in_output: False
     initializer_range: 0.02
 
+    loss_scaling: "batch_size"
+    loss_weight: 0.00048828125 # = 1/max_sequence_length
+
     embedding_initializer:
         name: "variance_scaling"
         scale: 0.4
@@ -106,4 +109,5 @@ runconfig:
     log_steps: 100
     checkpoint_steps: 5000
     seed: 1
+    num_wgt_servers: 24
 

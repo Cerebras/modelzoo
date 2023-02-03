@@ -100,3 +100,4 @@ runconfig:
   save_checkpoints_steps: 5000
   keep_checkpoint_max: 0
   enable_distributed: False
+  num_wgt_servers: 24

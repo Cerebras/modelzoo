@@ -107,15 +107,24 @@ class BertForSequenceClassificationModel(PyTorchBaseModel):
                 self.f1_metric(labels=labels, predictions=predictions)
 
             if self.is_mnli_dataset:
+                # is_matched and is_mismatched are input tensors from
+                # dataloader. When they are used in the metrics below, they are
+                # set as outputs of the fabric graph. In order for them to not
+                # be pruned out we add a dummy multiplication just so they have
+                # a consumer.
+                is_matched = data["is_matched"].clone()
+                is_matched *= 1
+
+                is_mismatched = data["is_mismatched"].clone()
+                is_mismatched *= 1
+
                 self.matched_accuracy_metric(
-                    labels=labels,
-                    predictions=predictions,
-                    weights=data["is_matched"],
+                    labels=labels, predictions=predictions, weights=is_matched,
                 )
                 self.mismatched_accuracy_metric(
                     labels=labels,
                     predictions=predictions,
-                    weights=data["is_mismatched"],
+                    weights=is_mismatched,
                 )
 
         return loss
