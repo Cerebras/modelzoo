@@ -56,6 +56,7 @@ elif CSOFT_PACKAGE == CSoftPackage.NONE:
         is_receiver=lambda: True,
         get_streaming_rank=lambda: 0,
         get_ordinal=lambda: 0,
+        make_constant=lambda t: t,
         num_tasks=lambda: 1,
         num_receivers=lambda: 1,
         num_streamers=lambda: 1,
