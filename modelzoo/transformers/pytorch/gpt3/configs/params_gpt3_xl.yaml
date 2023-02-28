@@ -88,7 +88,6 @@ runconfig:
     # GPT-3 models trained for 300B tokens
     max_steps: 1200000
     log_steps: 100
-    save_checkpoint_steps: 12000
+    checkpoint_steps: 12000
     save_summary_steps: 100
     eval_steps: 50
-
