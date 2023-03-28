@@ -98,6 +98,7 @@ For convenience, we provide different configurations of common model setups desi
 - [params_gpt3_13b.yaml](./configs/params_gpt3_13b.yaml): A 13B parameter GPT-2 model designed to match the configuration of the GPT-3 13B model. Available as an early limited access.
 - [params_gpt3_20b.yaml](./configs/params_gpt3_20b.yaml): A 20B parameter GPT-2 model designed to match the configuration of the GPT-NeoX. Available as an early limited access.
 
+Additionally, the configs under [Cerebras_GPT](./configs/Cerebras_GPT/) are the configurations necessary to reproduce the results in our [Cerebras-GPT Blog](https://www.cerebras.net/cerebras-gpt).
 
 All configs are meant to be run on Weight Streaming mode using Appliance mode and Kubernetes flow.
 
