@@ -150,7 +150,7 @@ def get_execution_mode():
 
 def is_cs(params):
     """
-    Check if the runtime enviroment is that of a Cerebras System.
+    Check if the runtime environment is that of a Cerebras System.
     If yes, return True, else False
 
     For legacy k8s flow, the user does not need to specify cs_ip, since k8s
