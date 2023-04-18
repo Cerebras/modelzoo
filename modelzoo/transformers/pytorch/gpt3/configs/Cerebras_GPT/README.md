@@ -102,7 +102,6 @@ Recent works find significant duplicate data present in the Pile. Eleuther’s P
 
 Our tokenized version of the Pile has 371B tokens. We used byte-pair encoding, a vocabulary size of 50257, and a maximum sequence length of 2048. We include more details about the training dataset preprocessing in Appendix A.1 of our paper.
 
-
 <br><br>
 
 ## Training procedure
