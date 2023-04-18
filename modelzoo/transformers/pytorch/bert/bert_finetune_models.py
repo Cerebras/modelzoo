@@ -37,11 +37,7 @@
 import torch
 import torch.nn as nn
 
-from modelzoo.common.pytorch.run_utils import half_dtype_instance
 from modelzoo.transformers.pytorch.bert.bert_model import BertModel
-from modelzoo.transformers.pytorch.transformer_utils import (
-    make_key_padding_mask_broadcastable,
-)
 
 
 class BertForSequenceClassificationLoss(nn.Module):
@@ -118,7 +114,6 @@ class BertForSequenceClassification(nn.Module):
         labels=None,
     ):
 
-        attention_mask = make_key_padding_mask_broadcastable(attention_mask)
         _, pooled_outputs = self.bert(
             input_ids,
             segment_ids=token_type_ids,
@@ -174,7 +169,6 @@ class BertForQuestionAnswering(nn.Module):
         labels=None,
         label_weights=None,
     ):
-        attention_mask = make_key_padding_mask_broadcastable(attention_mask)
         encoded_outputs, _ = self.bert(
             input_ids,
             segment_ids=token_type_ids,
@@ -207,8 +201,9 @@ class BertForTokenClassificationLoss(nn.Module):
             if attention_mask is not None:
                 # Only keep active parts of the loss
                 loss = loss * attention_mask.to(dtype=logits.dtype).view(-1)
-            loss = torch.sum(loss) / labels.shape[0] * self.loss_weight
-            loss = loss.to(half_dtype_instance.half_dtype)
+            loss = (torch.sum(loss) / labels.shape[0] * self.loss_weight).to(
+                logits.dtype
+            )
         return loss
 
 
@@ -256,7 +251,6 @@ class BertForTokenClassification(nn.Module):
         loss_mask=None,
         labels=None,
     ):
-        attention_mask = make_key_padding_mask_broadcastable(attention_mask)
         encoded_outputs, _ = self.bert(
             input_ids,
             segment_ids=token_type_ids,
@@ -285,9 +279,9 @@ class BertForSummarizationLoss(nn.Module):
                 logits.view(-1, self.num_labels), labels.view(-1).long()
             )
             loss = loss * label_weights.view(-1)
-            loss = loss.sum() / labels.shape[0] * self.loss_weight
-            loss = loss.to(half_dtype_instance.half_dtype)
-
+            loss = (loss.sum() / labels.shape[0] * self.loss_weight).to(
+                logits.dtype
+            )
         return loss
 
 
@@ -326,7 +320,6 @@ class BertForSummarization(nn.Module):
         cls_tokens_positions=None,
         cls_label_weights=None,
     ):
-        attention_mask = make_key_padding_mask_broadcastable(attention_mask)
         encoded_outputs, _ = self.bert(
             input_ids,
             segment_ids=token_type_ids,

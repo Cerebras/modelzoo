@@ -20,6 +20,9 @@ from modelzoo.common.pytorch.layers import (
     TransformerEncoder,
     TransformerEncoderLayer,
 )
+from modelzoo.transformers.pytorch.transformer_utils import (
+    make_key_padding_mask_broadcastable,
+)
 
 
 class BertPooler(nn.Module):
@@ -84,6 +87,8 @@ class BertModel(nn.Module):
         attention_type (:obj:`str`, `optional`, defaults to 'scaled_dot_product'): 
             The attention variant to execute. Currently
             accepts ``dot_product`` and ``scaled_dot_product``.
+        attention_softmax_fp32 (:obj:`bool`, `optional`, defaults to :obj:`True`):
+            If  True, attention softmax uses fp32 precision else fp16/bf16 precision
         dropout_rate (:obj:`float`, `optional`, defaults to 0.1):
             The dropout probability for all fully connected layers in the embeddings, encoder, and pooler.
         nonlinearity: (:obj:`string`, `optional`, defaults to :obj:`gelu`):
@@ -130,8 +135,10 @@ class BertModel(nn.Module):
         attention_module_str="aiayn_attention",
         extra_attention_params={},
         attention_type="scaled_dot_product",
+        attention_softmax_fp32=True,
         dropout_rate=0.1,
         nonlinearity="gelu",
+        pooler_nonlinearity=None,
         attention_dropout_rate=0.1,
         use_projection_bias_in_attention=True,
         use_ffn_bias_in_attention=True,
@@ -146,6 +153,7 @@ class BertModel(nn.Module):
         position_embeddings_initializer=None,
         segment_embeddings_initializer=None,
         add_pooling_layer=True,
+        attention_kernel=None,
         **extra_args,
     ):
         super().__init__()
@@ -196,6 +204,7 @@ class BertModel(nn.Module):
             extra_attention_params=extra_attention_params,
             attention_dropout_rate=attention_dropout_rate,
             attention_type=attention_type,
+            attention_softmax_fp32=attention_softmax_fp32,
             use_projection_bias_in_attention=use_projection_bias_in_attention,
             use_ffn_bias_in_attention=use_ffn_bias_in_attention,
             use_ffn_bias=use_ffn_bias,
@@ -209,11 +218,14 @@ class BertModel(nn.Module):
             encoder_layer, num_layers=num_hidden_layers
         )
 
+        if pooler_nonlinearity is None:
+            pooler_nonlinearity = nonlinearity
+
         self.pooler = (
             BertPooler(
                 hidden_size,
                 use_bias=use_ffn_bias,
-                activation=nonlinearity,
+                activation=pooler_nonlinearity,
                 dropout=None,
                 initializer=default_initializer,
             )
@@ -249,13 +261,16 @@ class BertModel(nn.Module):
                 or 4D of shape ``[batch, num_heads, query_length, seq_length]``.
         """
         src_key_padding_mask = None
-        if len(attention_mask.size()) == 2:
-            src_key_padding_mask = attention_mask
-            attention_mask = None
 
         hidden_states = self.embedding_layer(input_ids, segment_ids=segment_ids)
         hidden_states = self.embed_ln_f(hidden_states)
         hidden_states = self.dropout_embd(hidden_states)
+        attention_mask = make_key_padding_mask_broadcastable(
+            attention_mask, dtype=hidden_states.dtype
+        )
+        if len(attention_mask.size()) == 2:
+            src_key_padding_mask = attention_mask
+            attention_mask = None
         hidden_states = self.transformer_encoder(
             hidden_states,
             mask=attention_mask,

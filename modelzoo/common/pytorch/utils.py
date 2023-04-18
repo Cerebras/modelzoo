@@ -12,31 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import argparse
-import collections
+"""General purpose Pytorch Utilities"""
 import logging
 import os
 import random
+import re
 import sys
+import time
+import traceback
 from typing import Any, Callable, Generator, List, Optional, Tuple, Union
 
 import torch
 import yaml
-
-
-class ExecutionStrategy:
-    pipeline = "pipeline"
-    weight_streaming = "weight_streaming"
-
-    @classmethod
-    def strategies(cls):
-        return [cls.pipeline, cls.weight_streaming]
-
-
-def read_params_file(params_file: str) -> dict:
-    with open(params_file, 'r') as stream:
-        params = yaml.safe_load(stream)
-    return params
+from jsonschema import validate
 
 
 def get_debug_args(debug_args_path, debug_ini_path):
@@ -59,320 +47,16 @@ def get_debug_args(debug_args_path, debug_ini_path):
     return debug_args
 
 
-def get_params(params_file: str, config: Optional[str] = None,) -> dict:
-    """Reads params from file and returns them as a dict.
-
-    Args:
-        params_file: The YAML file holding the params.
-        config: Optional config to load from the params. If None, the default
-            config is returned. Defaults to None.
-    Returns:
-        A dict containing the params.
-    """
-    params = read_params_file(params_file)
-    if config:
-        params = params[config]
-
-    return params
-
-
-def update_defaults(params: dict, default_params: dict) -> dict:
-    """Updates the params dict with global default for a key
-    if a key is not present.
-    Works on nested dictionaries and recursively updates defaults
-    for nested dictionaries.
-    All other types, apart from dict are considered as base type
-    and aren't updated recursively.
-    Args:
-        params: dict holding the params.
-        default_params: dict holding the default params.
-    Returns:
-        A dict containing the params, with the defaults updated
-    """
-    for k, v in default_params.items():
-        if isinstance(v, collections.abc.Mapping):
-            params[k] = update_defaults(params.get(k, {}), v)
-        elif k not in params:
-            params[k] = v
-    return params
-
-
-def update_params_from_args(args: argparse.Namespace, params: dict):
-    """Update params in-place with the arguments from args.
-
-    Args:
-        args: The namespace containing args from the commandline.
-        params: The params to be updated.
-    """
-    if args:
-        for (k, v) in list(vars(args).items()):
-            params[k] = v if v is not None else params.get(k)
-
-    if params.get("is_pretrained_checkpoint") and not params.get(
-        "checkpoint_path"
-    ):
-        raise RuntimeError(
-            "'--is_pretrained_checkpoint' can only be used if a "
-            "'--checkpoint_path' is provided."
-        )
-
-    mode = params.get("mode")
-    if mode != "train" and params.get("multireplica"):
-        logging.warning(
-            f"Multireplica is only supported in `train` mode. Disabling it for "
-            f"{mode} mode."
-        )
-
-    model_dir = params["model_dir"]
-    os.makedirs(model_dir, exist_ok=True)
-    params.setdefault("service_dir", model_dir)
-
-
-def update_params_from_file(params, params_file):
-    if os.path.exists(params_file):
-        default_params = read_params_file(params_file)
-        update_defaults(params, default_params)
-
-
-def parse_cs_ip(cs_ip: str):
-    if cs_ip and len(str(cs_ip).split(":")) == 1:
-        cs_ip = f"{cs_ip}:9000"  # Default port number of CM
-    return cs_ip
-
-
-def get_parser(
-    run_dir: Optional[str] = None,
-    extra_args_parser_fn: Optional[
-        Callable[[], List[argparse.ArgumentParser]]
-    ] = None,
-) -> argparse.ArgumentParser:
-    """Returns an ArgumentParser for parding commandline options.
-
-    Returns:
-        A parser instance.
-    """
-    parents = extra_args_parser_fn() if extra_args_parser_fn else []
-    parser = argparse.ArgumentParser(parents=parents)
-
-    default_model_dir = None
-    # Set default model dir to be inside same directory
-    # as the top level run.py
-    if run_dir:
-        default_model_dir = os.path.join(run_dir, "model_dir")
-
-    if not default_model_dir:
-        raise ValueError("Could not get default model directory")
-
-    parser.add_argument(
-        "-cs",
-        "--cs_ip",
-        type=parse_cs_ip,
-        default=None,
-        help="IP Address of Cerebras System",
-    )
-    parser.add_argument(
-        "-cpu",
-        "--cpu",
-        action="store_true",
-        default=None,
-        help="Use CPU even if GPU is present in non-CS workflow",
-    )
-    parser.add_argument(
-        "-dist_addr",
-        "--dist_addr",
-        default="localhost:8888",
-        help="To init master_addr and master_port of distributed, ex. localhost:8888",
-    )
-    parser.add_argument(
-        "-dist_backend",
-        "--dist_backend",
-        choices=["nccl", "mpi", "gloo"],
-        default="nccl",
-        help="Distributed backend engine",
-    )
-    parser.add_argument(
-        "-init_method",
-        "--init_method",
-        default="env://",
-        help="URL specifying how to initialize the process group",
-    )
-    parser.add_argument(
-        "-p",
-        "--params",
-        required=True,
-        help="Path to .yaml file with model parameters",
-    )
-    parser.add_argument(
-        "--config",
-        default=None,
-        help="Specifies a specific key of the params file to return",
-    )
-    parser.add_argument(
-        "-m",
-        "--mode",
-        required=True,
-        choices=["train", "eval", "train_and_eval"],
-        help="Can train, eval, or train_and_eval.",
-    )
-    parser.add_argument(
-        "--compile_only",
-        action="store_true",
-        default=None,
-        help="Enables compile only workflow",
-    )
-    parser.add_argument(
-        "--multireplica",
-        action="store_true",
-        default=None,
-        help="Enables multireplica mode",
-    )
-    parser.add_argument(
-        "--validate_only",
-        action="store_true",
-        default=None,
-        help="Enables validate only workflow"
-        "validate_only stops the compilation at ws_km stage for weight streaming mode."
-        "for pipeline mode, the compilation is stopped at the optimize_graph stage.",
-    )
-    parser.add_argument(
-        "--appliance",
-        action="store_true",
-        default=None,
-        help="Enables appliance mode training/evaluation",
-    )
-    parser.add_argument(
-        "--execution_strategy",
-        choices=ExecutionStrategy.strategies(),
-        type=str,
-        default=None,
-        help="Execution strategy for running the model. For appliance mode, it "
-        "defaults to weight_streaming. For non-appliance mode it "
-        "defaults to pipeline",
-    )
-    parser.add_argument(
-        "--fabric_config_file",
-        type=str,
-        default=None,
-        help="Path to the fabric config file",
-    )
-    parser.add_argument(
-        "-o",
-        "--model_dir",
-        default=default_model_dir,
-        help="Model directory where checkpoints will be written.",
-    )
-    parser.add_argument(
-        "-c",
-        "--compile_dir",
-        default=None,
-        help="Compile directory where compile artifacts will be written.",
-    )
-    parser.add_argument(
-        "--checkpoint_path",
-        default=None,
-        help="Checkpoint to initialize weights from.",
-    )
-    parser.add_argument(
-        "--is_pretrained_checkpoint",
-        action="store_true",
-        help=(
-            "Flag indicating that the provided checkpoint is from a "
-            "pre-training run. If set, training will begin from step 0 "
-            "after loading the matching weights from the checkpoint and "
-            "ignoring the optimizer state if present in the checkpoint."
-        ),
-    )
-    parser.add_argument(
-        "--logging",
-        default=None,
-        help="Specifies the default logging level. Defaults to INFO.",
-    )
-
-    # Appliance mode specific arguments
-    parser.add_argument(
-        "--credentials_path",
-        default=None,
-        help="credentials for cluster access",
-    )
-    parser.add_argument(
-        "--mgmt_address",
-        default="cluster-server.cerebras.com:443",
-        help="<host>:<port> for cluster management",
-    )
-    parser.add_argument(
-        "--num_csx", default=1, type=int, help="number of CS nodes",
-    )
-    parser.add_argument(
-        "--num_wgt_servers",
-        default=None,
-        type=int,
-        help="Maximum number of weight servers to use in weight streaming "
-        "execution strategy.",
-    )
-    parser.add_argument(
-        "--num_workers_per_csx",
-        default=0,
-        type=int,
-        help="Number of workers to use for streaming inputs per CS node. If "
-        "0, a default value based on the model will be chosen. Defaults "
-        "to 0.",
-    )
-    parser.add_argument(
-        "--debug_args_path", default=None, help="path to debugs args file",
-    )
-    parser.add_argument(
-        "--mount_dirs",
-        nargs="+",
-        help="a list of paths to be mounted to the appliance containers",
-    )
-    parser.add_argument(
-        "--python_paths",
-        nargs="+",
-        help="a list of paths to be exported into PYTHONPATH for worker containers",
-    )
-    parser.add_argument(
-        "--transfer_processes",
-        type=int,
-        default=None,
-        help="Number of processes to use when transferring weights.",
-    )
-    parser.add_argument(
-        "--job_labels",
-        nargs="+",
-        help="a list of equal-sign-separated key value pairs served as job labels",
-    )
-    return parser
-
-
-def get_params_from_args(
-    run_dir: Optional[str] = None,
-    argv: Optional[List] = None,
-    extra_args_parser_fn: Optional[
-        Callable[[], List[argparse.ArgumentParser]]
-    ] = None,
-) -> dict:
-    """
-    Parse the arguments and get the params dict from the resulting args
-
-    Args:
-        run_dir: The path to the `run.py` file
-        argv: The args to be parse. Defaults to sys.argv if not provided
-    """
-    parser = get_parser(run_dir, extra_args_parser_fn)
-    args = parser.parse_args(argv if argv else sys.argv[1:])
-    params = get_params(args.params, args.config)
-    update_params_from_args(args, params["runconfig"])
-    return params
-
-
 def get_input_dtype(to_float16: bool):
+    """Determine input datatype based on environment"""
     from modelzoo.common.pytorch import cb_model as cm
 
     try:
         from modelzoo.common.pytorch import amp
 
+        # pylint: disable=protected-access
         half_dtype = amp._amp_state.half_dtype
-    except:
+    except:  # pylint: disable=bare-except
         from modelzoo.common.pytorch.run_utils import half_dtype_instance
 
         half_dtype = half_dtype_instance.half_dtype
@@ -426,8 +110,11 @@ def visit_structure(
         raise ValueError(f"Unknown data structure: {data_structure}")
 
 
-class BufferedShuffleDataset(torch.utils.data.IterableDataset):
-    r"""Dataset shuffled from the original dataset.
+class BufferedShuffleDataset(
+    torch.utils.data.IterableDataset
+):  # pylint:disable=abstract-method
+    """Dataset shuffled from the original dataset.
+
     This class is useful to shuffle an existing instance of an IterableDataset.
     The buffer with `buffer_size` is filled with the items from the dataset first. Then,
     each item will be yielded from the buffer by reservoir sampling via iterator.
@@ -439,18 +126,22 @@ class BufferedShuffleDataset(torch.utils.data.IterableDataset):
     And, the method to set up a random seed is different based on :attr:`num_workers`.
     For single-process mode (:attr:`num_workers == 0`), the random seed is required to
     be set before the :class:`~torch.utils.data.DataLoader` in the main process.
+
+    Arguments:
+        dataset (IterableDataset): The original IterableDataset.
+        buffer_size (int): The buffer size for shuffling.
+
+    Example:
+        For multi-process mode (:attr:`num_workers > 0`), the random seed is set by a callable
+        function in each worker.
+
         >>> ds = BufferedShuffleDataset(dataset)
         >>> random.seed(...)
         >>> print(list(torch.utils.data.DataLoader(ds, num_workers=0)))
-    For multi-process mode (:attr:`num_workers > 0`), the random seed is set by a callable
-    function in each worker.
         >>> ds = BufferedShuffleDataset(dataset)
         >>> def init_fn(worker_id):
         ...     random.seed(...)
         >>> print(list(torch.utils.data.DataLoader(ds, ..., num_workers=n, worker_init_fn=init_fn)))
-    Arguments:
-        dataset (IterableDataset): The original IterableDataset.
-        buffer_size (int): The buffer size for shuffling.
     """
 
     def __init__(self, dataset, buffer_size):
@@ -477,6 +168,7 @@ class BufferedShuffleDataset(torch.utils.data.IterableDataset):
 
 
 def to_cpu(tensor):
+    """Move tensor from device to cpu"""
     if isinstance(tensor, torch.Tensor):
         return tensor.to("cpu")
     if isinstance(tensor, (list, tuple)):
@@ -513,10 +205,17 @@ def to_tensor(value, device=None):
         return value
 
 
-def setup_logging(chief_logging_level: str, streamer_logging_level: str):
+def setup_logging(
+    chief_logging_level: str,
+    streamer_logging_level: str,
+    logging_dir: Optional[str] = None,
+):
+    """Configure default logging format"""
     from modelzoo.common.pytorch import cb_model as cm
 
     class CustomFormatter(logging.Formatter):
+        """Cerebras Preferred Log Formatting"""
+
         def __init__(self):
             ordinal = cm.get_ordinal()
             num_tasks = cm.num_tasks() - 1
@@ -544,8 +243,17 @@ def setup_logging(chief_logging_level: str, streamer_logging_level: str):
 
             return super().format(record)
 
+    handlers = []
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(CustomFormatter())
+    handlers.append(handler)
+    if logging_dir:
+        os.makedirs(logging_dir, exist_ok=True)
+        time_stamp = time.strftime("%Y%m%d_%H%M%S")
+        logging_file = os.path.join(logging_dir, f"run_{time_stamp}.log")
+        handler = logging.FileHandler(logging_file)
+        handler.setFormatter(CustomFormatter())
+        handlers.append(handler)
 
     def get_level_name(level):
         level = level.upper()
@@ -558,7 +266,7 @@ def setup_logging(chief_logging_level: str, streamer_logging_level: str):
         ), f"Invalid logging level: {level}"
         return logging.getLevelName(level)
 
-    if cm.is_master_ordinal() or cm.is_sync_mode():
+    if cm.is_master_ordinal():
         level = get_level_name(chief_logging_level or "info")
     else:
         level = get_level_name(streamer_logging_level or "error")
@@ -566,12 +274,53 @@ def setup_logging(chief_logging_level: str, streamer_logging_level: str):
     # Remove any handlers that may have been inadvertently set before
     logging.getLogger().handlers.clear()
 
-    logging.basicConfig(level=level, handlers=[handler])
+    logging.basicConfig(level=level, handlers=handlers)
+
+    original_hook = sys.excepthook
+
+    def cerebras_logging_hook(exc_type, exc_value, exc_traceback):
+        """Pipe uncaught exceptions through logger"""
+        msg = "".join(
+            traceback.format_exception(exc_type, exc_value, exc_traceback)
+        )
+        logging.error(f"Uncaught exception:\n{msg}")
+        if (
+            original_hook != sys.__excepthook__
+            and original_hook != cerebras_logging_hook
+        ):
+            original_hook(exc_type, exc_value, exc_traceback)
+
+    sys.excepthook = cerebras_logging_hook
+
+
+def trainable_named_parameters(model):
+    """
+    Returns the traininable named parameters for the model
+    as well as the modules that contain normalization
+    """
+    no_decay_layers = list()
+    norm_modules = (
+        torch.nn.LayerNorm,
+        torch.nn.BatchNorm1d,
+        torch.nn.BatchNorm2d,
+        torch.nn.BatchNorm3d,
+        torch.nn.InstanceNorm1d,
+        torch.nn.InstanceNorm2d,
+        torch.nn.InstanceNorm3d,
+        torch.nn.GroupNorm,
+        torch.nn.SyncBatchNorm,
+    )
+    for name, module in model.named_modules():
+        if isinstance(module, norm_modules):
+            no_decay_layers.append(name)
+    no_decay_layers.append("bias")
+    return no_decay_layers, list(model.named_parameters())
 
 
 def group_optimizer_params(
     trainable_params, no_decay_layers, weight_decay_rate
 ):
+    """Group optimizer with associated parameters"""
     optimizer_grouped_parameters = [
         {
             "params": [
@@ -596,12 +345,12 @@ def group_optimizer_params(
 class SampleGenerator(object):
     """Iterator which returns multiple samples of a given input data.
 
-  Can be used in place of a PyTorch `DataLoader` to generate synthetic data.
+    Can be used in place of a PyTorch `DataLoader` to generate synthetic data.
 
-  Args:
-    data: The data which should be returned at each iterator step.
-    sample_count: The maximum number of `data` samples to be returned.
-  """
+    Args:
+        data: The data which should be returned at each iterator step.
+        sample_count: The maximum number of `data` samples to be returned.
+    """
 
     def __init__(self, data, sample_count):
         self._data = data
@@ -618,7 +367,37 @@ class SampleGenerator(object):
         return self.next()
 
     def next(self):
+        """Generate next data sample"""
         if self._count >= self._sample_count:
             raise StopIteration
         self._count += 1
         return self._data
+
+
+class RunConfigParamsValidator:
+    """Validate Run Configs"""
+
+    def __init__(self):
+        with open(
+            os.path.join(
+                os.path.dirname(__file__), "schema/runconfig_schema.yaml"
+            ),
+            "r",
+        ) as fin:
+            self.runconfig_schema = yaml.safe_load(fin)
+
+    def validate(self, config):
+        """Validate params match existing schema"""
+        validate(instance=config, schema=self.runconfig_schema)
+
+
+def get_checkpoints(model_dir: str) -> List[str]:
+    """Gather checkpoints in a model directory"""
+    matches = []
+    for filename in os.listdir(model_dir):
+        m = re.match(r"checkpoint_(\d+)\.mdl", filename)
+        if m:
+            matches.append(m)
+    matches.sort(key=lambda x: int(x.group(1)))  # Sort by index not lexically
+    checkpoints = [os.path.join(model_dir, match.group()) for match in matches]
+    return checkpoints

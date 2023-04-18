@@ -41,10 +41,11 @@ class SummaryCollection:
         self.disable_collection()
 
     def enable_collection(self):
-        def add_name(module, name):
-            module.name = name
+        def add_name(module):
+            name = getattr(module, "name", "")
             for cname, child in module.named_children():
-                add_name(child, f"{name}.{cname}")
+                child.name = ".".join(filter(len, (name, cname)))
+                add_name(child)
 
         def recurse(top_scope, output):
             for scope, tensor in utils.visit_structure(
@@ -76,7 +77,7 @@ class SummaryCollection:
             for scope, tensor in recurse([name, key], output):
                 self._buffer[scope].append(tensor)
 
-        add_name(self._model, "model")
+        add_name(self._model)
         unnamed_modules = defaultdict(list)
 
         self._module_hooks.extend(

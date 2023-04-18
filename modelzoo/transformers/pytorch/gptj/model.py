@@ -20,21 +20,21 @@ from modelzoo.common.pytorch.metrics import AccuracyMetric, PerplexityMetric
 from modelzoo.common.pytorch.model_utils.GPTLMHeadModelLoss import (
     GPTLMHeadModelLoss,
 )
-from modelzoo.common.pytorch.PyTorchBaseModel import PyTorchBaseModel
 from modelzoo.transformers.pytorch.gptj.gptj_model import GPTJModel
 
 
-class GptjModel(PyTorchBaseModel):
+class GptjModel(torch.nn.Module):
     """
     GPT-2 models
     """
 
-    def __init__(self, params, device=None):
-        self.params = params
-        model_params = self.params["model"].copy()
+    def __init__(self, params):
+        super().__init__()
+
+        model_params = params["model"].copy()
         self.model = self.build_model(model_params)
         self.loss_fn = GPTLMHeadModelLoss(
-            params["model"]["vocab_size"], self.loss_weight,
+            params["model"]["vocab_size"], self.loss_scaling, self.loss_weight,
         )
 
         self.compute_eval_metrics = model_params.pop(
@@ -43,10 +43,6 @@ class GptjModel(PyTorchBaseModel):
         if self.compute_eval_metrics:
             self.perplexity_metric = PerplexityMetric(name="eval/lm_perplexity")
             self.accuracy_metric = AccuracyMetric(name="eval/accuracy")
-
-        super(GptjModel, self).__init__(
-            params=params, model=self.model, device=device
-        )
 
     def _post_device_transfer(self):
         self.model.tie_weights()
@@ -62,7 +58,45 @@ class GptjModel(PyTorchBaseModel):
             "position_embedding_type", "rotary"
         ).lower()
 
+        assert (
+            position_embedding_type != "alibi"
+        ), "alibi position embedding is not yet supported by gptj"
+
+        rotary_dim = None
+        num_relative_attention_buckets = None
+        if position_embedding_type == "rotary":
+            rotary_dim = model_params.pop(
+                "rotary_dim",
+                int(
+                    model_params["hidden_size"]
+                    // model_params["num_heads"]
+                    * 0.25
+                ),
+            )
+            # https://github.com/huggingface/transformers/blob/f0577df6de36e7e7f28e90fa76da0657de038a39/src/transformers/models/gpt_neox/modeling_gpt_neox.py#L84-L85
+            # https://arxiv.org/pdf/2104.09864.pdf Section 3.3
+            assert (
+                rotary_dim
+                <= model_params["hidden_size"] / model_params["num_heads"]
+            ), "Rotary dimensions should be <= hidden size divided by number of attention heads."
+            assert (
+                rotary_dim % 2 == 0
+            ), "Rotary dimension must be an even number."
+        else:
+            # relative PE
+            num_relative_attention_buckets = model_params.pop(
+                "num_relative_attention_buckets", 32
+            )
+
         self.loss_weight = model_params.pop("loss_weight", 1.0)
+        self.loss_scaling = model_params.pop(
+            "loss_scaling", "num_tokens"
+        ).lower()
+        if self.loss_weight != 1.0 and self.loss_scaling == "num_tokens":
+            self.loss_scaling = "batch_size"
+            logging.warning(
+                "loss_weight and loss_scaling don't match, fall back to using 'batch_size' for loss_scaling"
+            )
 
         model = GPTJModel(
             hidden_size=model_params.pop("hidden_size"),
@@ -76,7 +110,8 @@ class GptjModel(PyTorchBaseModel):
                 "share_embedding_weights", True
             ),
             position_embedding_type=position_embedding_type,
-            rotary_dim=model_params.pop("rotary_dim", None),
+            rotary_dim=rotary_dim,
+            num_relative_attention_buckets=num_relative_attention_buckets,
             # Decoder params
             num_hidden_layers=model_params.pop("num_hidden_layers"),
             filter_size=model_params.pop("filter_size"),
@@ -115,12 +150,16 @@ class GptjModel(PyTorchBaseModel):
             output_layer_initializer=model_params.pop(
                 "output_layer_initializer", None
             ),
+            attention_kernel=model_params.pop("attention_kernel", None),
         )
 
         model_params.pop("mixed_precision", None)
-        # `use_bfloat16` is accessed later, so we remove it from the list of unused params
+        # `use_bfloat16` and `precision_opt_level` are accessed later,
+        # so we remove these from the list of unused params
         unused_params = [
-            key for key in model_params.keys() if key != "use_bfloat16"
+            key
+            for key in model_params.keys()
+            if key != "use_bfloat16" and key != "precision_opt_level"
         ]
         if unused_params:
             logging.warning(
@@ -144,9 +183,19 @@ class GptjModel(PyTorchBaseModel):
                 labels=lm_labels, predictions=lm_preds, weights=lm_weights,
             )
 
-            unscaled_loss = loss * torch.sum(
-                data["attention_mask"].clone(), dtype=torch.float32
-            )
+            if self.loss_scaling == "num_tokens":
+                unscaled_loss = loss * torch.sum(
+                    data["attention_mask"].clone(), dtype=torch.float32
+                )
+            elif self.loss_scaling == "batch_size":
+                unscaled_loss = loss * torch.tensor(
+                    lm_labels.shape[0] / self.loss_weight, dtype=torch.float32
+                )
+            else:
+                raise ValueError(
+                    f"Loss scaling can't be set to {self.loss_scaling}. \
+                    Should be either 'num_tokens' or 'batch_size'"
+                )
 
             self.perplexity_metric(
                 labels=lm_labels, loss=unscaled_loss, weights=lm_weights,

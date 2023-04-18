@@ -30,7 +30,7 @@ import tqdm
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "../../../../../.."))
 from modelzoo.common.input.utils import save_params
-from modelzoo.common.pytorch.utils import get_params
+from modelzoo.common.run_utils.cli_parser import get_params
 from modelzoo.transformers.data_processing.qa_utils import (
     convert_examples_to_features_and_write,
     read_squad_examples,

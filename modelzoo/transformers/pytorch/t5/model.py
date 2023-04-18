@@ -20,30 +20,26 @@ from modelzoo.common.pytorch.metrics import AccuracyMetric, PerplexityMetric
 from modelzoo.common.pytorch.model_utils.T5ForConditionalGenerationLoss import (
     T5ForConditionalGenerationLoss,
 )
-from modelzoo.common.pytorch.PyTorchBaseModel import PyTorchBaseModel
 from modelzoo.transformers.pytorch.t5.t5_model import T5ForConditionalGeneration
 from modelzoo.transformers.pytorch.t5.utils import set_custom_stack_params
 
 
-class T5ForConditionalGenerationModel(PyTorchBaseModel):
+class T5ForConditionalGenerationModel(nn.Module):
     """
     T5 models
     """
 
-    def __init__(self, params, device=None):
-        self.params = params
-        model_params = self.params["model"].copy()
+    def __init__(self, params):
+        super().__init__()
+
+        model_params = params["model"].copy()
         self.model = self.build_model(model_params)
         self.loss_fn = T5ForConditionalGenerationLoss(
-            self.params["model"].get("lm_loss_weight", 1.0),
-            mlm_loss_scaling=self.params["model"].get(
+            params["model"].get("lm_loss_weight", 1.0),
+            mlm_loss_scaling=params["model"].get(
                 "mlm_loss_scaling", "batch_size"
             ),
-            label_smoothing=self.params["model"].get("label_smoothing", 0.0),
-        )
-
-        super(T5ForConditionalGenerationModel, self).__init__(
-            params=params, model=self.model, device=device
+            label_smoothing=params["model"].get("label_smoothing", 0.0),
         )
 
         self.compute_eval_metrics = model_params.pop(
@@ -54,7 +50,7 @@ class T5ForConditionalGenerationModel(PyTorchBaseModel):
             self.perplexity_metric = PerplexityMetric(name="eval/perplexity_lm")
 
         # Add custom Cerebras stack flags
-        set_custom_stack_params(params)
+        set_custom_stack_params()
 
     def _post_device_transfer(self):
         self.model.tie_weights()
@@ -119,12 +115,15 @@ class T5ForConditionalGenerationModel(PyTorchBaseModel):
                 "use_pre_encoder_decoder_dropout", False
             ),
             "use_pre_encoder_decoder_layer_norm": model_params.pop(
-                "use_pre_encoder_decoder_layer_norm", False
+                "use_pre_encoder_decoder_layer_norm", True
             ),
             "use_ffn_bias": model_params.pop("use_ffn_bias", False),
             "lm_loss_weight": model_params.pop("lm_loss_weight", 1.0),
             "use_transformer_initialization": model_params.pop(
                 "use_transformer_initialization", False
+            ),
+            "attention_softmax_fp32": model_params.pop(
+                "attention_softmax_fp32", True
             ),
         }
 
@@ -160,10 +159,17 @@ class T5ForConditionalGenerationModel(PyTorchBaseModel):
         else:
             self.vts = None
 
-        if len(model_params) > 0:
+        # `precision_opt_level` is accessed later,
+        # so we remove it from the list of unused params
+        unused_params = [
+            key
+            for key in model_params.keys()
+            if key not in ["precision_opt_level", "use_bfloat16"]
+        ]
+        if unused_params:
             logging.warning(
                 "The following model params are unused: "
-                + ", ".join(model_params.keys())
+                + ", ".join(unused_params)
             )
         return model
 

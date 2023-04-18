@@ -86,16 +86,19 @@ The features dictionary of a GPT-J (Neox) model has the following key/values:
 
 ## Configuration files included for this model
 
-We provide the following config file for pre-training the GPT-J and GPT-Neox models, located under the [configs](configs) directory. 
+We provide the following config file for pre-training the GPT-J and GPT-Neox models, located under the [configs](configs) directory. These configurations use [Weight Streaming execution](https://docs.cerebras.net/en/wsc/latest/cerebras-basics/cerebras-execution-modes.html).
 
 * [params_gptj_6B.yaml](configs/params_gptj_6B.yaml): GPT-J model with `hidden_size=4096`, `num_hidden_layers=28`, `num_heads=16` and the gpt2 tokenizer.
 * [params_gpt_neox_small.yaml](configs/params_gpt_neox_small.yaml): GPT-Neox model with `hidden_size=768`, `num_hidden_layers=12`, `num_heads=12` and the neox tokenizer.
 * [params_gpt_neox_1p3b.yaml](configs/params_gpt_neox_1p3b.yaml): GPT-Neox model with `hidden_size=2048`, `num_hidden_layers=24`, `num_heads=16` and the neox tokenizer.
 * [params_gpt_neox_2p7b.yaml](configs/params_gpt_neox_2p7b.yaml): GPT-Neox model with `hidden_size=2560`, `num_hidden_layers=32`, `num_heads=32` and the neox tokenizer.
+* [params_gpt_neox_6p7b.yaml](configs/params_gpt_neox_6p7b.yaml): GPT-Neox model with `hidden_size=4096`, `num_hidden_layers=32`, `num_heads=32` and the neox tokenizer.
+* [params_gpt_neox_13B.yaml](configs/params_gpt_neox_13B.yaml): GPT-Neox model with `hidden_size=5120`, `num_hidden_layers=40`, `num_heads=40` and the neox tokenizer.
 * [params_gpt_neox_20B.yaml](configs/params_gpt_neox_20B.yaml): GPT-Neox model with `hidden_size=6144`, `num_hidden_layers=44`, `num_heads=64` and the neox tokenizer.
 
 Dimensions of the rotary position embeddings is determined by setting `position_embedding_type` to `"rotary"` and `rotary_dim` to an even number.
-By default, `rotary_dim` of the `small` and `20B` versions are calculated by `hidden_size` // `num_heads` // `4`, `rotary_dim` of the `1.3B` and `2.7B` versions are calculated by `hidden_size` // `num_heads`.
+Different models have different values for `rotary_dim`: `rotary_dim` of the `small` and `20B` versions are calculated by `hidden_size` // `num_heads` // `4`, `rotary_dim` of the `1.3B` and `2.7B` versions are calculated by `hidden_size` // `num_heads`.
+If `rotary_dim` is not specified, it is set to `hidden_size` // `num_heads` // `4` by default.
 `use_untied_layer_norm` controls whether to use untied tied layer norm in the model. This parameter is set to `True` in GPT-J configs and `False` in GPT-Neox configs.
 Other parameters in the config file performs the same as in our GPT-2 [implementation](../gpt2/).
 
@@ -119,15 +122,14 @@ In the following example run commands, we use `/path/to/yaml`, `/path/to/model_d
 
 ### To compile/validate, run train and eval on Cerebras System
 
-Please follow the instructions on our Developer Docs at:
-https://docs.cerebras.net/en/latest/getting-started/pytorch/index.html
+Please follow the instructions on our [quickstart in the Developer Docs](https://docs.cerebras.net/en/latest/wsc/getting-started/cs-appliance.html).
 
 ### To run train and eval on GPU/CPU
 
 If running on a cpu or gpu, activate the environment from [Python GPU Environment setup](../../../../PYTHON-SETUP.md), and simply run:
 
 ```
-python run.py --mode train --params /path/to/yaml --model_dir /path/to/model_dir
+python run.py {CPU,GPU} --mode train --params /path/to/yaml --model_dir /path/to/model_dir
 ```
 
 ## Citations

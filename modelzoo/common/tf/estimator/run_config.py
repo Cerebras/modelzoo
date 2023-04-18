@@ -12,25 +12,29 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-try:
-    from cerebras.tf.run_config import CSRunConfig as RunConfig
-except ImportError:
+""" CSRunConfig
+
+Wrapper for allowing users with different environments to
+create an estimator run config when running in Modelzoo.
+"""
+
+from modelzoo import CSOFT_PACKAGE, CSoftPackage
+
+if CSOFT_PACKAGE == CSoftPackage.WHEEL:
+    from cerebras_appliance.cs_run_config import CSRunConfig as RunConfig
+elif CSOFT_PACKAGE == CSoftPackage.NONE:
     from tensorflow_estimator.python.estimator.run_config import RunConfig
+else:
+    assert False, f"Invalid value for `CSOFT_PACKAGE {CSOFT_PACKAGE}"
 
 
 class CSRunConfig(RunConfig):
+    """ Wrapper class for Run Config objects. """
+
     def __init__(
-        self,
-        cs_ip=None,
-        system_name=None,
-        cs_config=None,
-        stack_params=None,
-        **kwargs,
+        self, cs_config=None, **kwargs,
     ):
-        if RunConfig.__name__ == "CSRunConfig":
-            kwargs["cs_ip"] = cs_ip
-            kwargs["system_name"] = system_name
+        if CSOFT_PACKAGE == CSoftPackage.WHEEL:
             kwargs["cs_config"] = cs_config
-            kwargs["stack_params"] = stack_params
 
         super(CSRunConfig, self).__init__(**kwargs)

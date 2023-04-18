@@ -154,7 +154,7 @@ class GptTextDataProcessor(torch.utils.data.IterableDataset):
 
         # Shard the data files between workers
         self.input_files_in_this_worker = shard_list_contiguous(
-            input_files_in_this_task, worker_id, num_workers
+            self.input_files_in_this_task, worker_id, num_workers
         )
 
     def create_dataloader(self, is_training=True):

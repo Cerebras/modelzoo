@@ -12,10 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import torch
+
 from modelzoo.common.pytorch.model_utils.GPTLMHeadModelLoss import (
     GPTLMHeadModelLoss,
 )
-from modelzoo.common.pytorch.PyTorchBaseModel import PyTorchBaseModel
 from modelzoo.transformers.pytorch.layers_api_demo.cb_transformer import (
     TransformerModel,
 )
@@ -24,16 +25,13 @@ from modelzoo.transformers.pytorch.layers_api_demo.pytorch_transformer import (
 )
 
 
-class TransformerBaseModel(PyTorchBaseModel):
-    def __init__(self, params, device=None):
-        self.params = params
-        model_params = self.params["model"].copy()
+class TransformerBaseModel(torch.nn.Module):
+    def __init__(self, params):
+        super().__init__()
+
+        model_params = params["model"].copy()
 
         self.model = self.build_model(model_params)
-
-        super(TransformerBaseModel, self).__init__(
-            params=params, model=self.model, device=device
-        )
 
     def build_model(self, model_params):
         self.ntokens = model_params.pop("vocab_size")
@@ -70,12 +68,12 @@ class TransformerBaseModel(PyTorchBaseModel):
         )
 
         """ alternatively, you can use helper functions to create the masks from transformers/pytorch/transformer_utils.py
-        # from modelzoo.transformers.pytorch.transformer_utils import (create_2D_autoregressive_mask,)
+        # from modelzoo.transformers.pytorch.transformer_utils import (create_2D_autoregressive_mask, NEGATIVE_INFINITY,)
         # src_mask = create_2D_autoregressive_mask(
         #     self.seq_len,
         #     self.seq_len,
         #     device=input_ids.device,
-        # ) * -1.0e4
+        # ) * NEGATIVE_INFINITY
         """
 
         output = self.model(input_ids, src_mask)

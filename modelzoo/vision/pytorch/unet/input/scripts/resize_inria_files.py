@@ -19,6 +19,8 @@ import sys
 
 from PIL import Image
 
+sys.path.append(os.path.join(os.path.dirname(__file__), "../../../../../.."))
+
 
 def _resize_and_save(
     input_img_path, output_img_path, width, height, is_lbl_transform

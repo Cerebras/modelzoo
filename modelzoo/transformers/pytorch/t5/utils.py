@@ -35,14 +35,25 @@ def set_defaults(params):
     params["optimizer"]["loss_scaling_factor"] = params["optimizer"].get(
         "loss_scaling_factor", "dynamic"
     )
+    params["optimizer"]["log_summaries"] = params["optimizer"].get(
+        "log_summaries", False
+    )
 
     params["train_input"]["dynamic_loss_weight"] = (
         params["model"].get("mlm_loss_scaling", "batch_size")
         == "precomputed_num_masked"
     )
 
+    # Attention softmax is fp32 by default.
+    params["model"]["attention_softmax_fp32"] = True
 
-def set_custom_stack_params(params):
+    # Only WS configs have precision_opt_level setting.
+    # Attention softmax is bf16 for precision_opt_level: 2
+    if params["model"].get("precision_opt_level", 1) == 2:
+        params["model"]["attention_softmax_fp32"] = False
+
+
+def set_custom_stack_params():
     if cm.use_cs():
         from modelzoo.common.pytorch import cbtorch
 

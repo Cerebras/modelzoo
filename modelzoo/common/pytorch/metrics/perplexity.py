@@ -20,19 +20,10 @@ import math
 import torch
 
 from modelzoo.common.pytorch import cb_model as cm
-from modelzoo.common.pytorch import cbtorch
 from modelzoo.common.pytorch.metrics.cb_metric import CBMetric, DeviceOutputs
 
 
-def PerplexityMetric(*args, **kwargs):
-    """Calculates LM perplexity, which is the exp(loss per predicted token)."""
-    if cm.use_cs() and cbtorch.env().weight_streaming_mode:
-        return WSPerplexityMetric(*args, **kwargs)
-    else:
-        return PipelinePerplexityMetric(*args, **kwargs)
-
-
-class PipelinePerplexityMetric(CBMetric):
+class _PipelinePerplexityMetric(CBMetric):
     def init_state(self):
         self.reset()
 
@@ -68,7 +59,7 @@ class PipelinePerplexityMetric(CBMetric):
         self.total_num_tokens = 0.0
 
 
-class WSPerplexityMetric(CBMetric):
+class _WSPerplexityMetric(CBMetric):
     def init_state(self):
         self.reset_state()
 
@@ -112,3 +103,10 @@ class WSPerplexityMetric(CBMetric):
             "total_loss": self.total_loss,
             "total_num_tokens": self.total_num_tokens,
         }
+
+
+# Create a factory for creating a metric depending on execution strategy
+PerplexityMetric = CBMetric.create_metric_impl_factory(
+    pipeline_metric_cls=_PipelinePerplexityMetric,
+    ws_metric_cls=_WSPerplexityMetric,
+)

@@ -18,20 +18,19 @@ from modelzoo.common.pytorch.optim.CSOptimizer import CSOptimizer
 
 
 class Adagrad(CSOptimizer):
-    """
-    Adagrad optimizer implemented to conform to execution within the
+    r"""Adagrad optimizer implemented to conform to execution within the
     constraints of the Cerebras WSE.
 
     Args:
-    params (iterable): iterable of parameters to optimize or dicts defining
-        parameter groups
-    lr (float, optional): learning rate (default: 1e-2)
-    lr_decay (float, optional): learning rate decay (default: 0)
-    weight_decay (float, optional): weight decay (L2 penalty) (default: 0)
-    eps (float, optional): term added to the denominator to improve
-        numerical stability (default: 1e-10)
-    maximize (bool, optional): maximize the params based on the objective, instead of
-        minimizing (default: False)
+        params (iterable): iterable of parameters to optimize or dicts defining
+            parameter groups
+        lr (float, optional): learning rate (default: 1e-2)
+        lr_decay (float, optional): learning rate decay (default: 0)
+        weight_decay (float, optional): weight decay (L2 penalty) (default: 0)
+        eps (float, optional): term added to the denominator to improve
+            numerical stability (default: 1e-10)
+        maximize (bool, optional): maximize the params based on the objective,
+            instead of minimizing (default: False)
 
     Adaptive Subgradient Methods for Online Learning and Stochastic
     Optimization: http://jmlr.org/papers/v12/duchi11a.html
@@ -75,6 +74,9 @@ class Adagrad(CSOptimizer):
         )
         super(Adagrad, self).__init__(params, defaults, enable_global_step=True)
 
+    def state_names_to_sparsify(self):
+        return ["sum"]
+
     def preinitialize(self):
         """
         Allocates tensors for the optimizer state to allow direct compilation
@@ -89,6 +91,7 @@ class Adagrad(CSOptimizer):
                     device="cpu",
                 ).to(p.device)
 
+    @torch.no_grad()
     def step(self, closure=None):
         """Performs a single optimization step.
 
@@ -111,7 +114,7 @@ class Adagrad(CSOptimizer):
                 if p.grad is None:
                     continue
 
-                grad = p.grad.data
+                grad = p.grad
 
                 if grad.is_sparse:
                     raise RuntimeError(
@@ -121,19 +124,17 @@ class Adagrad(CSOptimizer):
                 state = self.state[p]
                 state_sum = state["sum"]
 
-                p_data = p.data
-
                 global_step = self._get_global_step(p)
 
                 grad = grad if not maximize else -grad
 
                 if group["weight_decay"] > 0:
-                    grad = grad.add(p_data, alpha=weight_decay)
+                    grad = grad.add(p, alpha=weight_decay)
 
                 state_sum.addcmul_(grad, grad, value=1.0)
                 std = state_sum.sqrt().add_(eps)
 
                 grad.div_(1.0 + (global_step - 1.0) * lr_decay)
-                p_data.addcdiv_(-lr * grad, std)
+                p.addcdiv_(-lr * grad, std)
 
         return loss

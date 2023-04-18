@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from modelzoo.common.pytorch.PyTorchBaseModel import PyTorchBaseModel
+import torch
+
 from modelzoo.transformers.pytorch.bert.bert_finetune_models import (
     BertForQuestionAnswering,
     BertForQuestionAnsweringLoss,
@@ -20,10 +21,11 @@ from modelzoo.transformers.pytorch.bert.bert_finetune_models import (
 from modelzoo.transformers.pytorch.bert.utils import check_unused_model_params
 
 
-class BertForQuestionAnsweringModel(PyTorchBaseModel):
-    def __init__(self, params, device=None):
-        self.params = params
-        model_params = self.params["model"].copy()
+class BertForQuestionAnsweringModel(torch.nn.Module):
+    def __init__(self, params):
+        super().__init__()
+
+        model_params = params["model"].copy()
         dropout_rate = model_params.pop("dropout_rate")
         embedding_dropout_rate = model_params.pop(
             "embedding_dropout_rate", dropout_rate
@@ -36,6 +38,9 @@ class BertForQuestionAnsweringModel(PyTorchBaseModel):
             "num_heads": model_params.pop("num_heads"),
             "filter_size": model_params.pop("filter_size"),
             "nonlinearity": model_params.pop("encoder_nonlinearity"),
+            "pooler_nonlinearity": model_params.pop(
+                "pooler_nonlinearity", None
+            ),
             "embedding_dropout_rate": embedding_dropout_rate,
             "dropout_rate": dropout_rate,
             "attention_dropout_rate": model_params.pop(
@@ -51,9 +56,6 @@ class BertForQuestionAnsweringModel(PyTorchBaseModel):
         self.loss_fn = BertForQuestionAnsweringLoss()
 
         check_unused_model_params(model_params)
-        super(BertForQuestionAnsweringModel, self).__init__(
-            params=params, model=self.model, device=device,
-        )
 
     def __call__(self, data):
         logits, start_logits, end_logits = self.model(

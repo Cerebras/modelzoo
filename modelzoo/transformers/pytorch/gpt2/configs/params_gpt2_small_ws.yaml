@@ -48,7 +48,8 @@ model:
     # Encoder
     num_hidden_layers: 12
     dropout_rate: 0.1
-    layer_norm_epsilon: 1.0e-5 
+    layer_norm_epsilon: 1.0e-5
+    loss_scaling: "batch_size"
     loss_weight: 0.00048828125
 
     # Encoder - Attention
@@ -89,7 +90,7 @@ optimizer:
         initial_learning_rate: 0.0006
         end_learning_rate: 0.0
         alpha: 0.1 # Decay by 10x
-        decay_steps: 150000
+        steps: 150000
         steps: 150000
     weight_decay_rate: 0.01
     use_bias_correction: True

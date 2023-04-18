@@ -21,56 +21,11 @@ from typing import Optional
 import torch
 
 from modelzoo.common.pytorch import cb_model as cm
-from modelzoo.common.pytorch import cbtorch
 from modelzoo.common.pytorch.metrics.cb_metric import CBMetric, DeviceOutputs
 from modelzoo.common.pytorch.metrics.metric_utils import (
     compute_confusion_matrix,
     divide_no_nan,
 )
-
-
-def MeanIOUMetric(*args, **kwargs):
-    """
-    Mean Intersection-Over-Union is a common evaluation metric for
-    semantic image segmentation, which first computes the IOU for each
-    semantic class and then computes the average over classes.
-    IOU is defined as follows:
-    IOU = true_positive / (true_positive + false_positive + false_negative).
-    The predictions are accumulated in a confusion matrix, weighted by `weights`,
-    and mIOU is then calculated from it.
-
-    For estimation of the metric over a stream of data, the function creates an
-    `update_op` operation that updates these variables and returns the `mean_iou`.
-
-    If `weights` is `None`, weights default to 1. Use weights of 0 to mask values.
-
-    Args:
-        labels: A `Tensor` of ground truth labels of type `int32` or `int64`.
-        predictions: A `Tensor` of prediction results for semantic labels,
-            of type `int32` or `int64`.
-        num_classes: The possible number of labels the prediction task can
-            have. This value must be provided, since a confusion matrix of
-            dimension = [num_classes, num_classes] will be allocated.
-        weights: Optional `Tensor` whose rank is either 0, or the same rank as
-            `labels`, and must be broadcastable to `labels` (i.e., all dimensions must
-            be either `1`, or the same as the corresponding `labels` dimension).
-        name: Optional `string` which indicates name of the metric.
-            If None or empty string, it defaults to the name of the class.
-
-        Returns:
-            mean_iou: Value representing the mean intersection-over-union.
-
-        Raises:
-            ValueError: If `predictions` and `labels` have mismatched shapes, or if
-                `weights` is not `None` and its shape doesn't match `predictions`
-    """
-    ws_enabled = False
-    if cm.use_cs():
-        ws_enabled = cbtorch.env().weight_streaming_mode
-    if ws_enabled:
-        return WSMeanIOUMetric(*args, **kwargs)
-    else:
-        return PipelineMeanIOUMetric(*args, **kwargs)
 
 
 def compute_helper(confusion_matrix):
@@ -108,7 +63,42 @@ def compute_helper(confusion_matrix):
     return mean_iou
 
 
-class PipelineMeanIOUMetric(CBMetric):
+class _PipelineMeanIOUMetric(CBMetric):
+    """
+    Mean Intersection-Over-Union is a common evaluation metric for
+    semantic image segmentation, which first computes the IOU for each
+    semantic class and then computes the average over classes.
+    IOU is defined as follows:
+    IOU = true_positive / (true_positive + false_positive + false_negative).
+    The predictions are accumulated in a confusion matrix, weighted by `weights`,
+    and mIOU is then calculated from it.
+
+    For estimation of the metric over a stream of data, the function creates an
+    `update_op` operation that updates these variables and returns the `mean_iou`.
+
+    If `weights` is `None`, weights default to 1. Use weights of 0 to mask values.
+
+    Args:
+        labels: A `Tensor` of ground truth labels of type `int32` or `int64`.
+        predictions: A `Tensor` of prediction results for semantic labels,
+            of type `int32` or `int64`.
+        num_classes: The possible number of labels the prediction task can
+            have. This value must be provided, since a confusion matrix of
+            dimension = [num_classes, num_classes] will be allocated.
+        weights: Optional `Tensor` whose rank is either 0, or the same rank as
+            `labels`, and must be broadcastable to `labels` (i.e., all dimensions must
+            be either `1`, or the same as the corresponding `labels` dimension).
+        name: Optional `string` which indicates name of the metric.
+            If None or empty string, it defaults to the name of the class.
+
+        Returns:
+            mean_iou: Value representing the mean intersection-over-union.
+
+        Raises:
+            ValueError: If `predictions` and `labels` have mismatched shapes, or if
+                `weights` is not `None` and its shape doesn't match `predictions`
+    """
+
     def __init__(self, num_classes, name: Optional[str] = None):
         self.num_classes = num_classes
         super().__init__(name=name)
@@ -154,7 +144,7 @@ class PipelineMeanIOUMetric(CBMetric):
         return float(compute_helper(self.confusion_matrix))
 
 
-class WSMeanIOUMetric(CBMetric):
+class _WSMeanIOUMetric(CBMetric):
     def __init__(self, num_classes, name: Optional[str] = None):
         self.num_classes = num_classes
         super().__init__(name=name)
@@ -206,3 +196,9 @@ class WSMeanIOUMetric(CBMetric):
         return {
             "confusion_matrix": self.confusion_matrix,
         }
+
+
+# Create a factory for creating a metric depending on execution strategy.
+MeanIOUMetric = CBMetric.create_metric_impl_factory(
+    pipeline_metric_cls=_PipelineMeanIOUMetric, ws_metric_cls=_WSMeanIOUMetric,
+)

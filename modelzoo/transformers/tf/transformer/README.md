@@ -85,12 +85,12 @@ Following block diagram illutrates the sequence of steps you would perform to ru
 ![](./images/TransformerModelExecFlow.png)
 
 ## Key features used from CSoft platform 
-By default, this model is configured to use [Variable Sequence Length (VSL)](https://docs.cerebras.net/en/latest/tensorflow-docs/tf-vsl.html) or more generally [Variable Tensor Shape (VTS)](https://docs.cerebras.net/en/latest/pytorch-docs/pytorch-vts.html)  mode when training on CS system. When running in the VSL mode, the CS system does not perform any computation on padding tokens. This has the potential for substantial training speedups. The VSL mode can be disabled by setting `model.use_vsl: False` in the appropriate config file. In order to take full advantage of the potential speedups from VSL, it is helpful to batch samples such that every sample in a given batch has a similar length. Accordingly, for Transformer [[1]](https://arxiv.org/pdf/1706.03762.pdf) pretraining we bucket samples of similar lengths together before batching. The boundaries between different buckets are defined by `train_input.num_buckets` argument in the config file.
+By default, this model is configured to use [Variable Sequence Length (VSL)](https://docs.cerebras.net/en/latest/wsc/general/sparse-input.html). When running in the VSL mode, the CS system does not perform any computation on padding tokens. This has the potential for substantial training speedups. The VSL mode can be disabled by setting `model.use_vsl: False` in the appropriate config file. In order to take full advantage of the potential speedups from VSL, it is helpful to batch samples such that every sample in a given batch has a similar length. Accordingly, for Transformer [[1]](https://arxiv.org/pdf/1706.03762.pdf) pretraining we bucket samples of similar lengths together before batching. The boundaries between different buckets are defined by `train_input.num_buckets` argument in the config file.
 
-[Pipeline execution mode](https://docs.cerebras.net/en/latest/cerebras-basics/cerebras-execution-modes.html#layer-pipelined-mode) is supported by CS system for the Transformer [[1]](https://arxiv.org/pdf/1706.03762.pdf) model. In this mode all the layers of the network are loaded altogether onto the CS system. This mode is selected for neural network models of a standard size, or even smaller.
-[Multi-replica training](https://docs.cerebras.net/en/latest/general/multi-replica-data-parallel-training.html) is also supported in the pipeline mode to run data parallel training. This is similar to how multiple GPUs are used to accelerate training of a single model. Multiple copies of the model reside on the CS system and different batches of data are streamed to each copy of the model. The losses computed by the individual replicas are combined together and sent to the chief (master copy) as a single loss quantity.
+[Pipeline execution mode](https://docs.cerebras.net/en/latest/wsc/cerebras-basics/cerebras-execution-modes.html#layer-pipelined-mode) is supported by CS system for the Transformer [[1]](https://arxiv.org/pdf/1706.03762.pdf) model. In this mode all the layers of the network are loaded altogether onto the CS system. This mode is selected for neural network models of a standard size, or even smaller.
+[Multi-replica training](https://docs.cerebras.net/en/latest/wsc/general/multi-replica-data-parallel-training.html) is also supported in the pipeline mode to run data parallel training. This is similar to how multiple GPUs are used to accelerate training of a single model. Multiple copies of the model reside on the CS system and different batches of data are streamed to each copy of the model. The losses computed by the individual replicas are combined together and sent to the chief (master copy) as a single loss quantity.
 
-CS system also supports training in [weight streaming execution mode](https://docs.cerebras.net/en/latest/cerebras-basics/cerebras-execution-modes.html#weight-streaming). Following are some of the characteristics of this mode:
+CS system also supports training in [weight streaming execution mode](https://docs.cerebras.net/en/latest/wsc/cerebras-basics/cerebras-execution-modes.html#weight-streaming). Following are some of the characteristics of this mode:
 1. Activations are stored and read on the wafer.
 2. Gradients are stored off the wafer and are streamed in.
 3. Weights reside off the wafer and are updated off the wafer by making use of the streamed gradients, store the weights off the wafer and stream the updated weights back into the wafer.
@@ -187,15 +187,14 @@ Transformer [[1]](https://arxiv.org/pdf/1706.03762.pdf) mdoel is trained using t
 
 ## To compile/validate, run train and eval on Cerebras System
 
-Please follow the instructions on our Developer Docs at:
-https://docs.cerebras.net/en/latest/getting-started/tensorflow/index.html
+Please follow the instructions on our [quickstart in the Developer Docs](https://docs.cerebras.net/en/latest/wsc/getting-started/cs-appliance.html).
 
 ## To run train and eval on GPU/CPU
 
 If running on a cpu or gpu, activate the environment from [Python GPU Environment setup](../../../../PYTHON-SETUP.md), and simply run:
 
 ```bash
-python run.py --mode train --params /path/to/yaml --model_dir /path/to/model_dir
+python run.py {CPU,GPU} --mode train --params /path/to/yaml --model_dir /path/to/model_dir
 ```
 
 #### Distributed data-parallel training on GPU

@@ -68,14 +68,12 @@ optimizer:
           end_learning_rate: 0.000008944361354059921
           steps: 10000
     loss_scaling_factor: "dynamic"
-    log_summaries: True
     # grad_accum_steps: 4 # helps fit in GPU memory, uncomment 
                         # when using GPU and reduced batch_size above
 
 runconfig:
     max_steps: 50000
     log_steps: 100
-    save_summary_steps: 100
     checkpoint_steps: 10000
     show_debug_metrics: False
     save_losses: True

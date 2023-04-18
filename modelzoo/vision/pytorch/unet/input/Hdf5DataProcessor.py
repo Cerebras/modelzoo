@@ -20,8 +20,9 @@ import numpy as np
 import torch
 from torchvision import transforms
 
-from modelzoo.common.pytorch import cb_model as cm
-from modelzoo.common.pytorch.utils import BufferedShuffleDataset
+from modelzoo.vision.pytorch.unet.input.Hdf5BaseDataProcessor import (
+    Hdf5BaseDataProcessor,
+)
 from modelzoo.vision.pytorch.unet.input.preprocessing_utils import (
     adjust_brightness_transform,
     normalize_tensor_transform,
@@ -29,7 +30,7 @@ from modelzoo.vision.pytorch.unet.input.preprocessing_utils import (
 )
 
 
-class Hdf5DataProcessor(torch.utils.data.IterableDataset):
+class Hdf5DataProcessor(Hdf5BaseDataProcessor):
     """
     A HDF5 dataset processor for UNet HDF dataset.
     Performs on-the-fly augmentation of image and labek.
@@ -59,50 +60,7 @@ class Hdf5DataProcessor(torch.utils.data.IterableDataset):
        the worker processes after a dataset has been consumed once.
     """
 
-    def __init__(self, params):
-        super(Hdf5DataProcessor, self).__init__()
-
-        self.data_dir = params["data_dir"]
-        self.num_classes = params["num_classes"]
-        self.normalize_data_method = params.get("normalize_data_method")
-        if self.normalize_data_method:
-            # Normalize
-            self.normalize_transform = transforms.Lambda(
-                self._apply_normalization
-            )
-
-        self.image_shape = params["image_shape"]  # of format (H, W, C)
-        (
-            self.tgt_image_height,
-            self.tgt_image_width,
-            self.channels,
-        ) = self.image_shape
-
-        # TODO: copy loss param from model section in utils.py
-        self.loss_type = params["loss"]
-
-        self.shuffle_seed = params.get("shuffle_seed", None)
-        if self.shuffle_seed:
-            torch.manual_seed(self.shuffle_seed)
-
-        self.augment_data = params.get("augment_data", True)
-        self.batch_size = params["batch_size"]
-        self.shuffle = params.get("shuffle", True)
-
-        self.shuffle_buffer = params.get("shuffle_buffer", 10 * self.batch_size)
-
-        self.num_workers = params.get("num_workers", 0)
-        self.drop_last = params.get("drop_last", True)
-        self.prefetch_factor = params.get("prefetch_factor", 10)
-        self.persistent_workers = params.get("persistent_workers", True)
-
-        # TODO: copy `mixed_precison` param from model section in utils.py
-        self.mixed_precision = params.get("mixed_precision")
-        if self.mixed_precision:
-            self.mp_type = torch.float16
-        else:
-            self.mp_type = torch.float32
-
+    def _shard_files(self, is_training=False):
         # Features in HDF5 record files
         self.features_list = ["image", "label"]
 
@@ -115,12 +73,9 @@ class Hdf5DataProcessor(torch.utils.data.IterableDataset):
         if not files:
             raise RuntimeError('No hdf5 datasets found')
 
-        self.num_tasks = cm.num_streamers() if cm.is_streamer() else 1
-        self.task_id = cm.get_streaming_rank() if cm.is_streamer() else 0
-
         assert (
-            len(files) % self.num_tasks == 0
-        ), f"Number of h5 files {len(files)} should be divisible by the number of Slurm tasks {self.num_tasks}, to correctly shard the dataset between the streamers"
+            len(files) >= self.num_tasks
+        ), f"Number of h5 files {len(files)} should atleast be equal to the number of Slurm tasks {self.num_tasks}, to correctly shard the dataset between the streamers"
 
         # Shard H5 files between the tasks and resolve the paths
         files_in_this_task = [
@@ -137,6 +92,10 @@ class Hdf5DataProcessor(torch.utils.data.IterableDataset):
                     (file_path, num_examples_in_file)
                 )
                 self.num_examples_in_this_task += num_examples_in_file
+
+        assert (
+            self.num_examples_in_this_task >= self.num_workers * self.batch_size
+        ), f"The number of examples on this worker={self.num_examples_in_this_task} is lesser than batch size(={self.batch_size}) * num_workers(={self.num_workers}). Please consider reducing the number of workers (or) increasing the number of samples in files (or) reducing the batch size"
 
         if self.shuffle:
             random.seed(self.shuffle_seed)
@@ -174,6 +133,7 @@ class Hdf5DataProcessor(torch.utils.data.IterableDataset):
                     num_examples_all_workers[worker_id],  # Length of data chunk
                 )
             )
+
         return per_worker_partition
 
     def __iter__(self):
@@ -191,53 +151,6 @@ class Hdf5DataProcessor(torch.utils.data.IterableDataset):
             )
 
             yield image, label
-
-    def __len__(self):
-        """
-        Returns the len of dataset on the task process
-        """
-        return self.num_examples_in_this_task
-
-    def _worker_init_fn(self, worker_id):
-        worker_info = torch.utils.data.get_worker_info()
-
-        if worker_info is not None:
-            worker_id = worker_info.id
-            num_workers = worker_info.num_workers
-        else:
-            # Single-process
-            worker_id = 0
-            num_workers = 1
-
-        if self.shuffle_seed:
-            # Use a unique seed for each worker.
-            random.seed(self.shuffle_seed + worker_id)
-
-        self.data_partitions = self._shard_dataset(worker_id, num_workers)
-
-    def create_dataloader(self, is_training=True):
-        """
-        Classmethod to create the dataloader object.
-        """
-        data_loader = torch.utils.data.DataLoader(
-            BufferedShuffleDataset(
-                dataset=self, buffer_size=self.shuffle_buffer
-            )
-            if self.shuffle
-            else self,
-            batch_size=self.batch_size,
-            drop_last=self.drop_last,
-            num_workers=self.num_workers,
-            prefetch_factor=self.prefetch_factor if self.num_workers > 0 else 2,
-            persistent_workers=self.persistent_workers
-            if self.num_workers > 0
-            else False,
-            worker_init_fn=self._worker_init_fn,
-        )
-        # set self.data_partitions in case self.num_workers == 0
-        if self.num_workers == 0:
-            self._worker_init_fn(0)
-        return data_loader
 
     def transform_image_and_mask(self, image, mask):
         if self.normalize_data_method:
@@ -270,6 +183,27 @@ class Hdf5DataProcessor(torch.utils.data.IterableDataset):
         # and `mixed_precsion`
         if self.loss_type == "bce":
             mask = mask.to(self.mp_type)
+        elif self.loss_type == "multilabel_bce":
+            mask = torch.squeeze(mask, 0)
+            # Only long tensors are accepted by one_hot fcn.
+            mask = mask.to(torch.long)
+
+            # out shape: (H, W, num_classes)
+            mask = torch.nn.functional.one_hot(
+                mask, num_classes=self.num_classes
+            )
+            # out shape: (num_classes, H, W)
+            mask = torch.permute(mask, [2, 0, 1])
+            mask = mask.to(self.mp_type)
+
+        elif self.loss_type == "ssce":
+            # out shape: (H, W) with each value in [0, num_classes)
+            mask = torch.squeeze(mask, 0)
+            # TODO: Add MZ tags here when supported.
+            # SW-82348 workaround: Pass `labels` in `int32``
+            # PT crossentropy loss takes in `int64`,
+            # view and typecast does not change the orginal `labels`.
+            mask = mask.to(torch.int32)
 
         if self.mixed_precision:
             image = image.to(self.mp_type)

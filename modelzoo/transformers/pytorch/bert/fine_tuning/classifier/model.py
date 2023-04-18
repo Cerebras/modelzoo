@@ -12,8 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import torch
+
 from modelzoo.common.pytorch.metrics import AccuracyMetric, FBetaScoreMetric
-from modelzoo.common.pytorch.PyTorchBaseModel import PyTorchBaseModel
 from modelzoo.transformers.pytorch.bert.bert_finetune_models import (
     BertForSequenceClassification,
     BertForSequenceClassificationLoss,
@@ -21,10 +22,11 @@ from modelzoo.transformers.pytorch.bert.bert_finetune_models import (
 from modelzoo.transformers.pytorch.bert.utils import check_unused_model_params
 
 
-class BertForSequenceClassificationModel(PyTorchBaseModel):
-    def __init__(self, params, device=None):
-        self.params = params
-        model_params = self.params["model"].copy()
+class BertForSequenceClassificationModel(torch.nn.Module):
+    def __init__(self, params):
+        super().__init__()
+
+        model_params = params["model"].copy()
         self.num_labels = model_params.pop("num_labels")
         problem_type = model_params.pop("problem_type")
         classifier_dropout = model_params.pop("task_dropout")
@@ -40,6 +42,9 @@ class BertForSequenceClassificationModel(PyTorchBaseModel):
             "num_heads": model_params.pop("num_heads"),
             "filter_size": model_params.pop("filter_size"),
             "nonlinearity": model_params.pop("encoder_nonlinearity"),
+            "pooler_nonlinearity": model_params.pop(
+                "pooler_nonlinearity", None
+            ),
             "embedding_dropout_rate": embedding_dropout_rate,
             "dropout_rate": dropout_rate,
             "attention_dropout_rate": model_params.pop(
@@ -84,10 +89,6 @@ class BertForSequenceClassificationModel(PyTorchBaseModel):
                     name="eval/accuracy_mismatched"
                 )
 
-        super(BertForSequenceClassificationModel, self).__init__(
-            params=params, model=self.model, device=device
-        )
-
     def __call__(self, data):
         logits = self.model(
             input_ids=data["input_ids"],
@@ -101,30 +102,25 @@ class BertForSequenceClassificationModel(PyTorchBaseModel):
 
             predictions = logits.argmax(-1).int()
 
-            self.accuracy_metric(labels=labels, predictions=predictions)
+            self.accuracy_metric(
+                labels=labels, predictions=predictions, dtype=logits.dtype
+            )
 
             if self.num_labels == 2:
                 self.f1_metric(labels=labels, predictions=predictions)
 
             if self.is_mnli_dataset:
-                # is_matched and is_mismatched are input tensors from
-                # dataloader. When they are used in the metrics below, they are
-                # set as outputs of the fabric graph. In order for them to not
-                # be pruned out we add a dummy multiplication just so they have
-                # a consumer.
-                is_matched = data["is_matched"].clone()
-                is_matched *= 1
-
-                is_mismatched = data["is_mismatched"].clone()
-                is_mismatched *= 1
-
                 self.matched_accuracy_metric(
-                    labels=labels, predictions=predictions, weights=is_matched,
+                    labels=labels,
+                    predictions=predictions,
+                    weights=data["is_matched"],
+                    dtype=logits.dtype,
                 )
                 self.mismatched_accuracy_metric(
                     labels=labels,
                     predictions=predictions,
-                    weights=is_mismatched,
+                    weights=data["is_mismatched"],
+                    dtype=logits.dtype,
                 )
 
         return loss

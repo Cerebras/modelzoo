@@ -21,7 +21,7 @@ from modelzoo.common.pytorch.metrics.cb_metric import CBMetric
 from modelzoo.common.pytorch.metrics.metric_utils import divide_no_nan
 
 
-class AUCMetric(CBMetric):
+class _PipelineAUCMetric(CBMetric):
     """
     The AUC (area under the curve) of the ROC (Receiver operating characteristic;
     default) or PR (Precision Recall) curves are quality measures of binary
@@ -139,7 +139,7 @@ class AUCMetric(CBMetric):
             [0.0 - epsilon] + thresholds + [1.0 + epsilon], dtype=torch.float
         ).reshape(-1, 1)
 
-        super(AUCMetric, self).__init__(name=name)
+        super(_PipelineAUCMetric, self).__init__(name=name)
 
     def init_state(self):
         self.reset_state()
@@ -322,3 +322,9 @@ class AUCMetric(CBMetric):
         self.false_negative = torch.zeros(
             self.num_thresholds, dtype=torch.float32
         )
+
+
+# Create a factory for creating a metric depending on execution strategy
+AUCMetric = CBMetric.create_metric_impl_factory(
+    pipeline_metric_cls=_PipelineAUCMetric, ws_metric_cls=None,
+)

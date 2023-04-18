@@ -14,13 +14,13 @@
 
 import logging
 
+import torch
 from torch.nn import CrossEntropyLoss
 
 from modelzoo.common.pytorch.metrics import AccuracyMetric, PerplexityMetric
 from modelzoo.common.pytorch.model_utils.BertPretrainModelLoss import (
     BertPretrainModelLoss,
 )
-from modelzoo.common.pytorch.PyTorchBaseModel import PyTorchBaseModel
 from modelzoo.transformers.pytorch.bert.bert_pretrain_models import (
     BertPretrainModel,
 )
@@ -30,21 +30,21 @@ from modelzoo.transformers.pytorch.bert.utils import (
 )
 
 
-class BertForPreTrainingModel(PyTorchBaseModel):
+class BertForPreTrainingModel(torch.nn.Module):
     """
     BERT-based models
     """
 
-    def __init__(self, params, device=None):
-        self.params = params
-        model_params = self.params["model"].copy()
+    def __init__(self, params):
+        super().__init__()
+
+        model_params = params["model"].copy()
         self.model = self.build_model(model_params)
         self.loss_fn = BertPretrainModelLoss(
             disable_nsp=self.disable_nsp,
             mlm_loss_weight=self.mlm_loss_weight,
             label_smoothing=self.label_smoothing,
         )
-        super().__init__(params=params, model=self.model, device=device)
 
         self.compute_eval_metrics = model_params.pop(
             "compute_eval_metrics", True
@@ -73,15 +73,22 @@ class BertForPreTrainingModel(PyTorchBaseModel):
         self.label_smoothing = model_params.pop("label_smoothing", 0.0)
         self.vocab_size = model_params.pop("vocab_size")
 
+        position_embedding_type = model_params.pop(
+            "position_embedding_type", "learned"
+        ).lower()
+
+        assert (
+            position_embedding_type == "fixed"
+            or position_embedding_type == "learned"
+        ), f"Only fixed or learned position embedding is supported by Bert for now, but got {position_embedding_type}"
+
         model = BertPretrainModel(
             disable_nsp=self.disable_nsp,
             mlm_loss_weight=self.mlm_loss_weight,
             label_smoothing=self.label_smoothing,
             vocab_size=self.vocab_size,
             max_position_embeddings=model_params.pop("max_position_embeddings"),
-            position_embedding_type=model_params.pop(
-                "position_embedding_type", "learned"
-            ).lower(),
+            position_embedding_type=position_embedding_type,
             embedding_pad_token_id=model_params.pop("pad_token_id", 0),
             hidden_size=model_params.pop("hidden_size"),
             share_embedding_weights=model_params.pop(
@@ -96,7 +103,12 @@ class BertForPreTrainingModel(PyTorchBaseModel):
             ),
             dropout_rate=model_params.pop("dropout_rate"),
             nonlinearity=model_params.pop("encoder_nonlinearity", "gelu"),
+            mlm_nonlinearity=model_params.pop("mlm_nonlinearity", None),
+            pooler_nonlinearity=model_params.pop("pooler_nonlinearity", None),
             attention_dropout_rate=model_params.pop("attention_dropout_rate"),
+            attention_softmax_fp32=model_params.pop(
+                "attention_softmax_fp32", True
+            ),
             use_projection_bias_in_attention=model_params.pop(
                 "use_projection_bias_in_attention", True
             ),
@@ -111,6 +123,9 @@ class BertForPreTrainingModel(PyTorchBaseModel):
             ),
             initializer_range=model_params.pop("initializer_range", 0.02),
             num_segments=None if self.disable_nsp else 2,
+            extra_attention_params={
+                "attention_kernel": model_params.pop("attention_kernel", None)
+            },
         )
 
         enable_vts = model_params.pop("enable_vts")
@@ -139,7 +154,7 @@ class BertForPreTrainingModel(PyTorchBaseModel):
         """
         labels = labels.detach()
         logits = logits.detach()
-        loss_fct = CrossEntropyLoss(reduction="none",)
+        loss_fct = CrossEntropyLoss(reduction="none")
         vocab_size = logits.shape[2]
         loss = loss_fct(logits.view(-1, vocab_size), labels.view(-1).long(),)
         if weights is not None:
@@ -179,9 +194,15 @@ class BertForPreTrainingModel(PyTorchBaseModel):
                     data[name] = self.vts(data[name], mask_tensor)
 
         # MLM Needs a half precision "weights" tensor; use binary mask for now.
-        data["masked_lm_weights"] = data.pop("masked_lm_mask").half()
+        data["masked_lm_weights"] = data.pop("masked_lm_mask")
         mlm_logits, nsp_logits, _, _ = self.model(**data)
+        data["masked_lm_weights"] = data["masked_lm_weights"].to(
+            mlm_logits.dtype
+        )
         total_loss = None
+        mlm_loss_scale = data.get("mlm_loss_scale", None)
+        if mlm_loss_scale is not None:
+            mlm_loss_scale = mlm_loss_scale.to(mlm_logits.dtype)
         if data.get("should_calc_loss", True):
             total_loss = self.loss_fn(
                 mlm_logits,
@@ -190,7 +211,7 @@ class BertForPreTrainingModel(PyTorchBaseModel):
                 nsp_logits,
                 data.get("next_sentence_label", None),
                 data["masked_lm_weights"],
-                data.get("mlm_loss_scale", None),
+                mlm_loss_scale,
             )
         if not self.model.training and self.compute_eval_metrics:
             if not self.disable_nsp:
@@ -198,7 +219,11 @@ class BertForPreTrainingModel(PyTorchBaseModel):
                 nsp_label = data["next_sentence_label"].clone()
                 nsp_pred = nsp_logits.argmax(-1).int()
                 # eval/accuracy_cls
-                self.accuracy_metric_cls(labels=nsp_label, predictions=nsp_pred)
+                self.accuracy_metric_cls(
+                    labels=nsp_label,
+                    predictions=nsp_pred,
+                    dtype=mlm_logits.dtype,
+                )
 
             mlm_preds = mlm_logits.argmax(-1).int()
 
@@ -210,11 +235,17 @@ class BertForPreTrainingModel(PyTorchBaseModel):
 
             # eval/accuracy_masked_lm
             self.accuracy_metric_mlm(
-                labels=mlm_labels, predictions=mlm_preds, weights=mlm_weights,
+                labels=mlm_labels,
+                predictions=mlm_preds,
+                weights=mlm_weights,
+                dtype=mlm_logits.dtype,
             )
             # eval/mlm_perplexity
             self.perplexity_metric(
-                labels=mlm_labels, loss=mlm_xentr, weights=mlm_weights,
+                labels=mlm_labels,
+                loss=mlm_xentr,
+                weights=mlm_weights,
+                dtype=mlm_logits.dtype,
             )
 
         return total_loss

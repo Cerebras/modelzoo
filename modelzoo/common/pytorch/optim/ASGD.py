@@ -23,8 +23,7 @@ from modelzoo.common.pytorch.optim.CSOptimizer import CSOptimizer
 
 
 class ASGD(CSOptimizer):
-    """
-    ASGD optimizer implemented to conform to execution within the constraints
+    r"""ASGD optimizer implemented to conform to execution within the constraints
     of the Cerebras WSE, including pre-initializing optimizer state.
 
     For more details, see https://dl.acm.org/citation.cfm?id=131098
@@ -57,6 +56,9 @@ class ASGD(CSOptimizer):
         )
         super(ASGD, self).__init__(params, defaults, enable_global_step=True)
 
+    def state_names_to_sparsify(self):
+        return ["ax"]
+
     def preinitialize(self):
         """
         Allocates tensors for the optimizer state to allow direct compilation
@@ -72,10 +74,11 @@ class ASGD(CSOptimizer):
 
     @torch.no_grad()
     def step(self, closure=None):
-        """Performs a single optimization step.
+        r"""Performs a single optimization step.
+            
             Args:
-            closure (Callable, optional): A closure that reevaluates the model
-                and returns the loss.
+                closure (Callable, optional): A closure that reevaluates the
+                    model and returns the loss.
         """
         loss = None
         if closure is not None:

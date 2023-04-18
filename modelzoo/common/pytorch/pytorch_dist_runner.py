@@ -51,7 +51,7 @@ class PyTorchDistRunner(PyTorchRunner):
         super().__init__(device=None, model=model, params=params)
 
     def is_master_ordinal(self):
-        """ 
+        """
         Checks if distributed if enabled and if so whether
         it's the main process, most reading and writing should
         only happens on main process.
@@ -91,10 +91,7 @@ class PyTorchDistRunner(PyTorchRunner):
             dist.barrier()
 
         if self.is_master_ordinal():
-            self._maybe_write_log(loss)
-            self._maybe_save_loss(loss)
-            self._maybe_save_summaries()
-            self._maybe_save_checkpoint()
+            super().on_train_batch_end(loss, epoch=epoch, step=step)
 
     def on_train_end(self, early_exit: bool):
         if self.is_master_ordinal():
@@ -120,10 +117,7 @@ class PyTorchDistRunner(PyTorchRunner):
         dist.barrier()
 
         if self.is_master_ordinal():
-            self._maybe_write_log(loss, step_offset=step + 1)
-            self._maybe_save_loss(loss, epoch=epoch, step_offset=step + 1)
-            self._maybe_save_summaries(step_offset=step + 1)
-            self._accumulate_loss_value(loss)
+            super().on_eval_batch_end(loss, epoch=epoch, step=step)
 
     def on_eval_end(self, early_exit: bool):
         if self.is_master_ordinal():
@@ -164,7 +158,7 @@ class PyTorchDistRunner(PyTorchRunner):
             avg_eval_loss = self._loss_saver.average_loss
             if self._writer:
                 self._writer.add_scalar(
-                    "avg_eval_loss", avg_eval_loss, self._global_step
+                    "loss", avg_eval_loss, self._global_step
                 )
             logging.info(f"Avg Eval. Loss = {avg_eval_loss}")
 

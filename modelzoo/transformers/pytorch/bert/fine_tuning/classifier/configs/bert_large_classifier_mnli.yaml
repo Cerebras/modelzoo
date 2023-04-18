@@ -53,13 +53,11 @@ optimizer:
         - scheduler: "Constant"
           learning_rate: 0.000005
     loss_scaling_factor: "dynamic"
-    log_summaries: True
     # grad_accum_steps: 2 # helps fit in GPU memory, uncomment 
                           # when using GPU and reduced batch_size above
 
 runconfig:
     max_steps: 100000 # ~3 epochs, 372k samples in an epoch
-    save_summary_steps: 100
     log_steps: 1000
     checkpoint_steps: 20000
     seed: 1

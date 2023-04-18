@@ -19,22 +19,8 @@ import json
 import os
 from typing import List
 
-from modelzoo import CSOFT_PACKAGE, CSoftPackage
 from modelzoo.common.pytorch import cb_model as cm
 from modelzoo.common.pytorch import cbtorch
-
-if CSOFT_PACKAGE == CSoftPackage.SRC:
-    from cerebras.workflow.python.cs_perf_analyzer import (
-        AssessBottlenecks,
-        locate_csperf_log,
-    )
-elif CSOFT_PACKAGE == CSoftPackage.WHEEL:
-    from cerebras_pytorch.workflow.python.cs_perf_analyzer import (
-        AssessBottlenecks,
-        locate_csperf_log,
-    )
-else:
-    assert False, f"This file should only be imported when running on CS-X."
 
 # XLA counter keys used to track various metrics
 KEY_COMPILE_TIME = "CerebrasCompileTimeMs"
@@ -134,23 +120,6 @@ def collect_perf_data(tracker: cm.RateTracker):
     return pd
 
 
-def _assess_input_bottlecks():
-    detected_bottleneck = None
-
-    log_location = "cerebras_logs/job_[!default]*"
-    model_dir = os.path.join(cbtorch.env().service_workdir, log_location)
-
-    perf_file = locate_csperf_log(model_dir)
-    if perf_file is None:
-        detected_bottleneck = "Not Applicable"
-        return detected_bottleneck
-
-    input_assessment = AssessBottlenecks(perf_file)
-    detected_bottleneck = input_assessment.assess_bottleneck_main()
-
-    return detected_bottleneck
-
-
 def _aggregate_perf_data(perf_all_ordinals: List[str]):
     """Aggregate performance data from multiple workers.
 
@@ -209,12 +178,6 @@ def save_perf(outdir: str):
     # Aggregate perf data in master ordinal
     if cm.is_master_ordinal():
         aggregate = _aggregate_perf_data(perf_all_ordinals)
-
-        if not cbtorch.env().appliance:
-            # Update the "input bottleneck" performance field based on csperf.csv
-            aggregate[
-                "suspected_input_bottleneck (beta)"
-            ] = _assess_input_bottlecks()
 
         os.makedirs(outdir, exist_ok=True)
         with open(os.path.join(outdir, "performance.json"), "w") as fp:

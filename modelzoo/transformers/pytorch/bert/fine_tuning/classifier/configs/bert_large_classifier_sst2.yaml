@@ -51,12 +51,10 @@ optimizer:
         - scheduler: "Constant"
           learning_rate: 0.000005
     loss_scaling_factor: "dynamic"
-    log_summaries: True
 
 runconfig:
     max_steps: 20000 # ~3 epochs, 67k samples in an epoch
     log_steps: 1000
-    save_summary_steps: 100
     checkpoint_steps: 5000
     seed: 1
     show_debug_metrics: False

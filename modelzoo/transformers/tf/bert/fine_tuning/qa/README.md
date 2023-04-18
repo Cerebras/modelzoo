@@ -201,54 +201,12 @@ python evaluate-v1.1.py /path/to/dev-v1.1.json /path/to/predictions.json
 
 which will print a dictionary with keys `exact_match` and `f1`, the evaluation metrics for this task, on the terminal.
 
-## How to compile and validate 
+## To compile/validate, run train and eval on Cerebras System
 
-In addition to running on Cerebras System, we also support `--validate_only` and `--compile_only` modes, which users may find useful for more efficient development.
+Please follow the instructions on our [quickstart in the Developer Docs](https://docs.cerebras.net/en/latest/wsc/getting-started/cs-appliance.html).
 
-**validate_only** mode runs a lightweight verification mode. The compiler will run through the first few stages of
-the compilation stack up through kernel matching. This step is very fast and allows users to quickly iterate
-on model code. It only runs on CPU and so can be executed without using time on a Cerebras System. It can be run using the following command:
+> **Note**: To specify a BERT pretrained checkpoint use: `--checkpoint_path` is the path to the saved checkpoint from BERT pre-training,`--is_pretrained_checkpoint` flag is needed for loading the pre-trained BERT model for fine-tuning.
 
-```
-csrun_cpu --mount_dirs=/path1,/path2 python run.py \
-    --params /path/to/yaml \
-    --model_dir /path/to/model_dir \
-    --mode train \
-    --checkpoint_path /path/to/pretrained/checkpoint
-    --validate_only
-```
-
-**compile_only** mode executes a full model compilation on CPU to generate a CS system executable.
-It will not run this executable on CS system in this mode, but when `--compile_only` mode is successful,
-your model is likely to run on CS system. It can be run using the command:
-
-```
-csrun_cpu --mount_dirs=/path1,/path2 python run.py \
-    --params /path/to/yaml \
-    --model_dir /path/to/model_dir \
-    --mode train \
-    --checkpoint_path /path/to/pretrained/checkpoint
-    --compile_only
-```
-
-You can then run the generated executable on Cerebras System by executing a `csrun_wse` command (see above) specifying the
-same `--model_dir` as used for the compile command.
-
-## How to run training on Cerebras System
-To run training in [pipeline mode](https://docs.cerebras.net/en/latest/cerebras-basics/cerebras-execution-modes.html#layer-pipelined-mode) on the Cerebras System, you will need to modify the above training command to run inside of the Cerebras environment. In addition, the `cs_ip` should be provided either as a command line argument `--cs_ip` or in the YAML config file.
-
-Follow [How to train on the CS System](../../../../../#how-to-train-on-the-cs-system) and execute the following from within the Cerebras environment:
-
-```
-csrun_wse python run.py \
-    --params /path/to/yaml \
-    --model_dir /path/to/model_dir \
-    --mode train \
-    --checkpoint_path /path/to/pretrained/checkpoint
-    --cs_ip x.x.x.x
-```
-
-> **Note**: For training on the Cerebras System with an orchestrator like Slurm, also see [Train on the Cerebras System](https://docs.cerebras.net/en/latest/tensorflow-docs/running-a-model/train-eval-predict.html).
 
 # Configs included for this model 
 In order to train the model, you need to provide a yaml config file. Some popular yaml config files are listed below for reference. 

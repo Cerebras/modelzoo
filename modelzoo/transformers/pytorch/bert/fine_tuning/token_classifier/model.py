@@ -12,8 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import torch
+
 from modelzoo.common.pytorch.metrics import FBetaScoreMetric
-from modelzoo.common.pytorch.PyTorchBaseModel import PyTorchBaseModel
 from modelzoo.transformers.data_processing.utils import get_label_id_map
 from modelzoo.transformers.pytorch.bert.bert_finetune_models import (
     BertForTokenClassification,
@@ -22,10 +23,11 @@ from modelzoo.transformers.pytorch.bert.bert_finetune_models import (
 from modelzoo.transformers.pytorch.bert.utils import check_unused_model_params
 
 
-class BertForTokenClassificationModel(PyTorchBaseModel):
-    def __init__(self, params, device=None):
-        self.params = params
-        model_params = self.params["model"].copy()
+class BertForTokenClassificationModel(torch.nn.Module):
+    def __init__(self, params):
+        super().__init__()
+
+        model_params = params["model"].copy()
         num_classes = model_params.pop("num_classes")
         loss_weight = model_params.pop("loss_weight")
         include_padding_in_loss = model_params.pop("include_padding_in_loss")
@@ -43,6 +45,9 @@ class BertForTokenClassificationModel(PyTorchBaseModel):
             "num_heads": model_params.pop("num_heads"),
             "filter_size": model_params.pop("filter_size"),
             "nonlinearity": model_params.pop("encoder_nonlinearity"),
+            "pooler_nonlinearity": model_params.pop(
+                "pooler_nonlinearity", None
+            ),
             "embedding_dropout_rate": embedding_dropout_rate,
             "dropout_rate": dropout_rate,
             "attention_dropout_rate": model_params.pop(
@@ -89,10 +94,6 @@ class BertForTokenClassificationModel(PyTorchBaseModel):
             )
         check_unused_model_params(model_params)
 
-        super(BertForTokenClassificationModel, self).__init__(
-            params=params, model=self.model, device=device
-        )
-
     def __call__(self, data):
         logits = self.model(
             input_ids=data["input_ids"],
@@ -106,6 +107,8 @@ class BertForTokenClassificationModel(PyTorchBaseModel):
             labels = data["labels"].clone()
             predictions = logits.argmax(-1).int()
 
-            self.f1_metric(labels=labels, predictions=predictions)
+            self.f1_metric(
+                labels=labels, predictions=predictions,
+            )
 
         return loss

@@ -15,8 +15,10 @@
 """
 Abstract base class for PyTorch models.
 """
-from abc import ABC, abstractmethod
+import logging
+import warnings
 from contextlib import nullcontext
+from typing import Callable, Union
 
 import torch
 
@@ -24,6 +26,7 @@ from modelzoo.common.pytorch import amp
 from modelzoo.common.pytorch import cb_model as cm
 from modelzoo.common.pytorch import cbtorch, modes
 from modelzoo.common.pytorch.gradient_clipper import GradientClipper
+from modelzoo.common.pytorch.half_dtype import half_dtype_instance
 from modelzoo.common.pytorch.optim import (
     ASGD,
     SGD,
@@ -40,7 +43,10 @@ from modelzoo.common.pytorch.optim import (
     Rprop,
     lr_scheduler,
 )
-from modelzoo.common.pytorch.utils import group_optimizer_params
+from modelzoo.common.pytorch.utils import (
+    group_optimizer_params,
+    trainable_named_parameters,
+)
 
 SUPPORTED_OPTIMIZERS = [
     'Adadelta',
@@ -59,17 +65,51 @@ SUPPORTED_OPTIMIZERS = [
 ]
 
 
-class PyTorchBaseModel(ABC):
-    def __init__(
-        self, params: dict, model: torch.nn.Module, device: torch.device
-    ):
-        self.model = model
-        if cm.use_cs():
-            self.model = cbtorch.module(self.model, device)
-        elif device:
-            self.model = self.model.to(device)
+class Final(type):
+    """Placeholder class for deprecation warning"""
 
-        self._post_device_transfer()
+    def __new__(mcs, name, bases, classdict):
+        for b in bases:
+            if isinstance(b, Final):
+                warnings.warn(
+                    "Inheriting from PyTorchBaseModel is now deprecated and "
+                    "will be removed in a future release. Please change your "
+                    "model to inherit from torch.nn.Module instead."
+                )
+        return type.__new__(mcs, name, bases, dict(classdict))
+
+
+class PyTorchBaseModel(metaclass=Final):
+    """Base Model Definition for Cerebras runners"""
+
+    def __init__(
+        self,
+        params: dict,
+        model_fn: Union[Callable[[dict], torch.nn.Module], torch.nn.Module],
+        device: torch.device = None,
+    ):
+        use_bfloat16 = params["model"].get("use_bfloat16", False)
+        half_dtype_instance.use_bfloat16 = use_bfloat16
+        if use_bfloat16 and cm.use_cs():
+            amp.use_bfloat16(use_bfloat16)
+
+        if isinstance(model_fn, torch.nn.Module):
+            # To keep compatibility with deprecated usage
+            self.torch_model = model_fn
+        else:
+            self.torch_model = model_fn(params)
+
+        if cm.use_cs():
+            self.model = cbtorch.module(self.torch_model, device)
+        elif device:
+            self.model = self.torch_model.to(device)
+        else:
+            self.model = self.torch_model
+
+        self.device = device
+
+        if hasattr(self.model, "_post_device_transfer"):
+            self.model._post_device_transfer()
 
         self.mode = params["runconfig"]["mode"]
         self.mixed_precision = params["model"]["mixed_precision"]
@@ -89,6 +129,14 @@ class PyTorchBaseModel(ABC):
             torch.manual_seed(seed)
 
         oparams = params["optimizer"]
+
+        loss_scaling_factor = oparams.get("loss_scaling_factor", 1.0)
+        if loss_scaling_factor == "dynamic" and use_bfloat16:
+            oparams["loss_scaling_factor"] = 1.0
+            logging.info(
+                "No need to use DLS for loss when `use_bfloat16` is set to"
+                " `True`. Setting `loss_scaling_factor ` to `1.0`."
+            )
 
         # Learning rate params
         self.lr_scheduler = None
@@ -120,12 +168,13 @@ class PyTorchBaseModel(ABC):
             self.lr_scheduler = self._configure_lr_scheduler(lr_params)
 
             if cm.use_cs() and cbtorch.env().weight_streaming_mode:
+                # pylint: disable=no-member
                 self.optimizer.set_main_lr_scheduler(self.lr_scheduler)
 
         if cm.use_cs():  # init grad scaler for mixed precision
             self.grad_scaler = amp.GradScaler(
                 loss_scale=oparams.get("loss_scaling_factor"),
-                initial_loss_scale=oparams.get("initial_loss_scale"),
+                init_scale=oparams.get("initial_loss_scale"),
                 steps_per_increase=oparams.get("steps_per_increase"),
                 min_loss_scale=oparams.get("min_loss_scale"),
                 max_loss_scale=oparams.get("max_loss_scale"),
@@ -142,9 +191,12 @@ class PyTorchBaseModel(ABC):
 
         # set duplicate params for params and buffers in the model
         self._duplicate_params_map = self._named_members(
-            self.model, lambda module: module._parameters.items()
+            # pylint: disable=protected-access
+            self.model,
+            lambda module: module._parameters.items(),
         )
         self._duplicate_params_map.update(
+            # pylint: disable=protected-access
             self._named_members(
                 self.model, lambda module: module._buffers.items()
             )
@@ -155,6 +207,11 @@ class PyTorchBaseModel(ABC):
         Sets the model into training mode, equivalent to .train() called on a torch.nn.Module.
         """
         self.model.train()
+        # Setting up train mode across immediate children following
+        # https://pytorch.org/docs/stable/_modules/torch/nn/modules/module.html#Module.train
+        for module in vars(self).values():
+            if hasattr(module, "train"):
+                module.train()
         self.mode = modes.TRAIN
 
     def eval(self):
@@ -162,6 +219,11 @@ class PyTorchBaseModel(ABC):
         Sets the model into eval mode, equivalent to .eval() called on a torch.nn.Module.
         """
         self.model.eval()
+        # Setting up eval mode across immediate children following
+        # https://pytorch.org/docs/stable/_modules/torch/nn/modules/module.html#Module.eval
+        for module in vars(self).values():
+            if hasattr(module, "eval"):
+                module.eval()
         self.mode = modes.EVAL
 
     @property
@@ -192,36 +254,23 @@ class PyTorchBaseModel(ABC):
         """
         return (modes.TRAIN, modes.EVAL, modes.TRAIN_AND_EVAL)
 
+    @property
+    def supported_modes(self):
+        """Supported modes conditional on hardware backend"""
+        if cm.use_cs():
+            return self.supported_cs_modes
+        return self.supported_non_cs_modes
+
     def supports_mode(self, mode) -> bool:
+        """Check if model supports provided mode"""
         if cm.use_cs():
             return mode in self.supported_cs_modes
         else:
             return mode in self.supported_non_cs_modes
 
-    def _post_device_transfer(self):
-        """
-        Callback after model is copied to device, but before optimizers are
-        configured.
-        """
-
     def trainable_named_parameters(self):
-        no_decay_layers = list()
-        norm_modules = (
-            torch.nn.LayerNorm,
-            torch.nn.BatchNorm1d,
-            torch.nn.BatchNorm2d,
-            torch.nn.BatchNorm3d,
-            torch.nn.InstanceNorm1d,
-            torch.nn.InstanceNorm2d,
-            torch.nn.InstanceNorm3d,
-            torch.nn.GroupNorm,
-            torch.nn.SyncBatchNorm,
-        )
-        for name, module in self.model.named_modules():
-            if isinstance(module, norm_modules):
-                no_decay_layers.append(name)
-        no_decay_layers.append("bias")
-        return no_decay_layers, list(self.model.named_parameters())
+        """Gather trainable named parameters from model"""
+        return trainable_named_parameters(self.model)
 
     def _configure_optimizer(self, oparams: dict):
         """
@@ -236,7 +285,6 @@ class PyTorchBaseModel(ABC):
             learning_rate = 0.1
 
         if cm.use_cs():
-            from modelzoo.common.pytorch import cbtorch
 
             if not cbtorch.env().weight_streaming_mode:
                 assert optimizer_type in [
@@ -264,7 +312,6 @@ class PyTorchBaseModel(ABC):
         elif optimizer_type == "adam":
             return Adam(
                 param_optimizer_grouped,
-                lr=learning_rate,
                 betas=(oparams.get("beta1", 0.9), oparams.get("beta2", 0.999)),
                 eps=oparams.get("eps", 1e-6),
                 weight_decay=oparams.get("weight_decay_rate", 0.0),
@@ -273,7 +320,6 @@ class PyTorchBaseModel(ABC):
         elif optimizer_type == "adamw":
             return AdamW(
                 param_optimizer_grouped,
-                lr=learning_rate,
                 betas=(oparams.get("beta1", 0.9), oparams.get("beta2", 0.999)),
                 eps=oparams.get("eps", 1e-6),
                 weight_decay=oparams.get("weight_decay_rate", 0.0),
@@ -381,11 +427,10 @@ class PyTorchBaseModel(ABC):
         elif optimizer_type == "rmsprop":
             return RMSprop(
                 param_optimizer_grouped,
-                lr=learning_rate,
                 alpha=oparams.get("alpha", 0.99),
                 momentum=oparams.get("momentum", 0),
                 centered=oparams.get("centered", False),
-                eps=oparams.get("eps", 1e-6),
+                eps=oparams.get("eps", 1e-8),
                 weight_decay=oparams.get("weight_decay_rate", 0.0),
             )
         elif optimizer_type == "rprop":
@@ -395,10 +440,7 @@ class PyTorchBaseModel(ABC):
                 oparams.get("step_size_max", 50.0),
             )
             return Rprop(
-                param_optimizer_grouped,
-                lr=learning_rate,
-                etas=etas,
-                step_sizes=step_sizes,
+                param_optimizer_grouped, etas=etas, step_sizes=step_sizes,
             )
         else:
             raise ValueError(
@@ -722,7 +764,6 @@ class PyTorchBaseModel(ABC):
             if len(learning_rate) == 1:
                 return _get_scheduler(self.optimizer, learning_rate[0])
             else:
-
                 for scheduler in learning_rate[:-1]:
                     assert "steps" in scheduler or "decay_steps" in scheduler, (
                         "Non final learning rate schedulers must have either "
@@ -733,9 +774,10 @@ class PyTorchBaseModel(ABC):
                     _get_scheduler(self.optimizer, scheduler)
                     for scheduler in learning_rate
                 ]
+                # pylint: disable=undefined-loop-variable
                 if (
-                    "main_scheduler" in scheduler
-                    and scheduler["main_scheduler"] == "chained"
+                    "main_scheduler" in learning_rate[0]
+                    and learning_rate[0]["main_scheduler"] == "chained"
                 ):
                     return lr_scheduler.ChainedScheduler(schedulers=schedulers,)
                 else:
@@ -761,12 +803,14 @@ class PyTorchBaseModel(ABC):
         """
         return self.lr_scheduler
 
-    def get_state(self):
+    def get_state(self, keep_vars=False):
         """
         Returns the state of the model and optimizer
         """
         state_dict = {
-            "model": self.model.state_dict(),
+            "model": self.model.state_dict(keep_vars=keep_vars),
+            # PyTorchBaseModel state dict format version
+            "state_version": 0.2,
         }
 
         if self.optimizer:
@@ -776,7 +820,7 @@ class PyTorchBaseModel(ABC):
             state_dict["lr_scheduler"] = self.lr_scheduler.state_dict()
 
         if self.mixed_precision and cm.use_cs():
-            state_dict["amp"] = amp.state_dict()
+            state_dict["amp"] = self.grad_scaler.state_dict()
 
         return state_dict
 
@@ -820,7 +864,16 @@ class PyTorchBaseModel(ABC):
             # allow loading weights ignoring the mising and unexpected keys
             # except when doing eval
             strict = False
-        self.model.load_state_dict(state["model"], strict=strict)
+
+        model = self.torch_model
+        if hasattr(model, "model") and state.get("state_version", 0.1) == 0.1:
+            # Required for backwards compatibiliity
+            # older checkpoints of models in the modelzoo
+            # will not contain the `model.` prefix
+            model = model.model
+
+        model.load_state_dict(state["model"], strict=strict)
+
         if (
             self.optimizer
             and "optimizer" in state
@@ -838,14 +891,11 @@ class PyTorchBaseModel(ABC):
         ):
             amp_state = state.get('amp')
             if amp_state:
-                amp.load_state_dict(amp_state)
+                self.grad_scaler.load_state_dict(amp_state)
 
-    @abstractmethod
-    def __call__(self, data):
+    def __call__(self, *args, **kwargs):
         """
         Given one iteration of a dataloader, returns the loss associated with
         one forward pass of that batch.
         """
-        raise NotImplementedError(
-            "__call__ must be implemented in a child class!"
-        )
+        return self.model(*args, **kwargs)

@@ -1,11 +1,38 @@
-# Scripts to Generate TFRecords
+# Introduction
 
-## Dataset preparation
+[OpenWebText dataset](https://skylion007.github.io/OpenWebTextCorpus/) (OWT) is one of the main datasets used by [RoBERTa](https://arxiv.org/abs/1907.11692) and, thus, can be used to train [BERT](https://arxiv.org/abs/1810.04805) as well. We offer two scripts to generate TFRecords for OWT dataset that can be used to train BERT models:
+1. [create_tfrecords.py](./create_tfrecords.py): generates features for both the Masked Language Model (MLM) and Next Sentence Prediction (NSP) pre-training tasks.
+2. [create_tfrecords_mlm_only.py](./create_tfrecords_mlm_only.py): generates features for only the Masked Language Model (MLM) pre-training task.
+
+If you would like to prepare your own dataset without using the two scripts mentioned above, please refer to the section [Create your own TFRecords](#create-your-own-tfrecords) to ensure compatibility with one of our BERT dataloaders.
+
+## Prerequisites
+
+The preprocessing scripts for BERT relies on the [spaCy](https://spacy.io/) package, if not installed:
+
+```bash
+pip install spacy
+python -m spacy download en
+```
+
+## Input data
+
+### Data download and extraction
+
+To download the OWT dataset and extract them, run:
+
+```bash
+bash ../../../../data_processing/scripts/owt/download_and_extract.sh
+```
+
+Note that [download_and_extract.sh](../../../../data_processing/scripts/owt/download_and_extract.sh) may take a while to complete, as it unpacks 40GB of data (8,013,770 documents). Upon completion, the script will produce `openwebtext` directory in the same location. The directory has multiple subdirectories, each containing a collection of `*.txt` files of raw text data (one document per `.txt` file).
+
+### Input files format
 
 The following plain text files need to be prepared before generating the TFRecords:
 - Metadata file
-  - Contains paths to raw data files (one data file per line). The paths are relative to `input_files_prefix`.
-  - Examples of Metadata files can be found in the folder [metadata](../../../../data_processing/scripts/owt/metadata/).
+  - Contains paths to raw data files (one data file per line). The paths are relative to `input_files_prefix` which should be the path to the `openwebtext` directory that was produced in the step [data download and extraction](#data-download-and-extraction).
+  - Examples of Metadata files for OWT can be found in the directory [metadata](../../../../data_processing/scripts/owt/metadata/).
 - Data files
   - If `multiple_docs_in_single_file` is set to `True`, then each data file can contain plain text that comes from multiple documents separated by `multiple_docs_separator` (e.g. `[SEP]`) as follows:
     ``` 
@@ -15,6 +42,7 @@ The following plain text files need to be prepared before generating the TFRecor
     ```
     If `multiple_docs_in_single_file` is set to `False`, then each data file should contain plain text that comes from a single document.
   - If `single_sentence_per_line` is set to `True`, then each data file should contain a single sentence per line. Otherwise, the raw text will be segmented into sentences using the specified `spacy_model`.
+  
     > **Note**: Ensure that the `spacy_model` is compatible with the language of the raw text.
 - Vocab file
   - Contains a single token per line.
@@ -23,53 +51,11 @@ The following plain text files need to be prepared before generating the TFRecor
   - Is case sensitive. If the vocab file has only lowercased letters, then you need to set `do_lower_case` to `True` in order to avoid mapping many input tokens to `[UNK]`.
   - Examples of vocab files can be found in the folder [vocab](../../../../vocab/).
 
-## create_tf_records.py
+## Running the scripts
 
-This script generates TFRecords for both the Masked Language Model (MLM) and Next Sentence Prediction (NSP) pre-training tasks using the BERT model.
+### create_tf_records.py
 
-### Description
-
-A high level overview of the implementation is as follows:
-
-1. Given a list of raw text documents, generate raw examples by concatenating the two parts `tokens-a` and `tokens-b` as follows:
-
-        [CLS] <tokens-a> [SEP] <tokens-b> [SEP]
-
-    where:
-
-    - `tokens-a` is a list of tokens taken from the current document. The list is of random length (less than `max_seq_length`).
-    - `tokens-b` is a list of tokens chosen based on the randomly set `next_sentence_labels`. The list is of length `max_seq_length - len(<tokens-a>) - 3` (to account for `[CLS]` and `[SEP]` tokens).
-
-    If `next_sentence_labels` is equal to `1`, (that is, if set to `1` with `0.5` probability):
-    
-            "tokens-b" is a list of tokens from sentences chosen randomly from different documents.
-            
-    else:
-    
-            "tokens-b" is a list of tokens taken from the same document and is a continuation of "tokens-a" in the document.
-
-    > **Note**: Based on the probability `short_seq_prob`, the token sequence can have a length of `min_short_seq_length` instead of `max_seq_length`.
-
-2. Map sample tokens to its indices in the vocabulary file.
-
-3. Mask the raw examples based on `max_predictions_per_seq` and `mask_whole_word` parameters.
-
-4. Pad the masked example to `max_seq_length` (if less than `max_seq_length`).
-
-5. Create the feature dictionary that will be serialized into TFRecords with the features described in [Table 1](#table-1-data-features-in-the-generated-tfrecords).
-
-#### Table 1: Data features in the generated TFRecords
-Feature name | Data type | Sequence length | Description
---- | --- | --- | ---
-`input_ids` | `tf.int64` | `max_seq_length` | Input token IDs.
-`input_mask` | `tf.int64` | `max_seq_length` | Mask for padded positions (has values `1` on the padded positions, and `0` elsewhere).
-`masked_lm_positions` | `tf.int64` | `max_predictions_per_seq` | Positions of masked tokens in the sequence.
-`masked_lm_ids` | `tf.int64` | `max_predictions_per_seq` | IDs of masked tokens.
-`masked_lm_weights` | `tf.float32` | `max_predictions_per_seq` | Mask for `masked_lm_ids` and `masked_lm_positions` (has values `1.0` on the positions corresponding to masked tokens, and `0.0` elsewhere).
-`segment_ids` | `tf.int64` | `max_seq_length` | Segment IDs (has values `0` on the positions corresponding to the first segment, and `1` on the positions corresponding to the second segment).
-`next_sentence_labels` | `tf.int64` | `1` | NSP label (has value `1` if second segment is next sentence, and `0` otherwise).
-
-The TFRecords generated from this script can be used for pretraining using the dataloader script [BertTfRecordsProcessor.py](../BertTfRecordsProcessor.py). For more details, refer to [sentence_pair_processor.py](../../../../data_processing/sentence_pair_processor.py) and [create_tfrecords.py](./create_tfrecords.py).
+Once the input files are prepared, you can start generating TFRecords with MLM and NSP features using [create_tfrecords.py](./create_tfrecords.py). The arguments for this script are detailed below:
 
 ```bash
 Usage: create_tfrecords.py [-h] --metadata_files METADATA_FILES
@@ -109,8 +95,8 @@ Optional arguments:
                         String which separates multiple documents in a
                         single text file. If newline character,
                         pass `\n`. There can only
-                        be one separator string for all the documents.
-                        (default: `\n`)
+                        be one separator string for all the documents
+                        (default: `\n`).
   --single_sentence_per_line
                         Pass this flag when the document is already
                         split into sentences, with one sentence in
@@ -120,7 +106,8 @@ Optional arguments:
   --input_files_prefix INPUT_FILES_PREFIX
                         Prefix to be added to paths of the input
                         files. For example, can be a directory where
-                        raw data is stored if the paths are relative.
+                        raw data is stored if the paths are relative. 
+                        Defaults to current directory.
   --split_num SPLIT_NUM
                         Number of input files to read at a  given
                         time. It can speed up reading the data files through parallel 
@@ -175,38 +162,9 @@ Optional arguments:
   --seed SEED           Seed for the random number generators (default: 0).    
 ```
 
-## create_tf_records_mlm_only.py
+### create_tf_records_mlm_only.py
 
-This script generates TFRecords for MLM-only pre-training task using the BERT model. The BERT model during pre-training will contain only the MLM head, and not the NSP head.
-
-The script can generate two types of TFRecords based on `disable_masking` setting:
-
-- If `disable_masking=True`, then raw text examples are written to TFRecords and these raw tokens will be masked dynamically during the pre-training process. Specifically, each raw text token is encoded with `UTF-8` into bytes list, and added to the variable length sequence of tokens that is written to the TFRecords.
-- If `disable_masking=False`, the TFRecords will contain static masked examples as described in [Table 1](#table-1-data-features-in-the-generated-tfrecords), except for the last two features `segment_ids` and `next_sentence_labels` are being omitted here. 
-
-
-The dataloaders that can be used for reading the TFRecords generated by this script are:
-1. [BertMlmOnlyTfRecordsDynamicMaskProcessor.py](../BertMlmOnlyTfRecordsDynamicMaskProcessor.py) if `disable_masking=True` was used
-2. [BertMlmOnlyTfRecordsStaticMaskProcessor.py](../BertMlmOnlyTfRecordsStaticMaskProcessor.py) if `disable_masking=False` was used
-
-### Description
-
-A high level overview of the implementation is as follows:
-
-1. Generate raw examples with a list of `tokens` as follows:
-
-        [CLS] <tokens-list> [SEP]
-
-    where:
-
-    - `tokens-list` is a list of tokens taken from the current document. The list is generated using a sliding window approach that includes tokens from the previous example based on the `overlap_size`. The list is of random length (less than `max_seq_length`) or can have the length `min_short_seq_length` based on `short_seq_prob`.
-    
-  > **Note**: If the flag `allow_cross_document_examples` was set `True`, the `tokens-list` can come from multiple documents and the token `document_separator_token` gets added to the list between the tokens of different documents.
-
- If `disable_masking=False`, then proceed to steps `2`-`5` as described [above](#description).
-
-For more details, refer to [mlm_only_processor.py](../../../../data_processing/mlm_only_processor.py) and [create_tfrecords_mlm_only.py](./create_tfrecords_mlm_only.py).
-
+Once the input files are prepared, you can start generating TFRecords with only MLM features using [create_tfrecords_mlm_only.py](./create_tfrecords_mlm_only.py). The arguments for this script are detailed below:
 
 ```bash
 Usage: create_tfrecords_mlm_only.py [-h] --metadata_files METADATA_FILES
@@ -278,6 +236,7 @@ Optional arguments:
                         Prefix to be added to paths of the input
                         files. For example, can be a directory where
                         raw data is stored if the paths are relative.
+                        Defaults to current directory.
   --do_lower_case       Pass this flag to lower case the input text.
                         Must be True for uncased models and False for cased models. Note 
                         that if your vocab file has only lowercased letters, and you did 
@@ -332,15 +291,101 @@ Optional arguments:
 
 ```
 
-# Create your own TFRecords
+## Output data
 
-## Description
+### Output directory structure
 
-The generated TFRecords will be used for pre-training BERT models using the dataloader script [BertTfRecordsProcessor.py](../BertTfRecordsProcessor.py) for MLM+NSP or [BertMlmOnlyTfRecordsStaticMaskProcessor.py](../BertMlmOnlyTfRecordsStaticMaskProcessor.py) for only MLM. Thus, to ensure compatibility when parsing the TFRecords, the five steps described [above](#description) need to be followed when generating your own TFRecords. Also, you need to ensure that all the features described in [Table 1](#table-1-data-features-in-the-generated-tfrecords) are present in the TFRecords you have generated, except when you pre-train for MLM only then you can omit the last two features `segment_ids` and `next_sentence_labels`.
+The output directory will contain TFRecords as shown below:
+```bash
+<path/to/$OUTPUT_DIR>
+├── data_params.json
+├── $NAME-1.tfrecords
+├── $NAME-2.tfrecords
+├── $NAME-3.tfrecords
+└── $NAME-4.tfrecords
+```
+
+### Output file data structure
+
+#### create_tf_records.py
+
+The TFRecords generated from this script can be used for pretraining using the dataloader script [BertTfRecordsProcessor.py](../BertTfRecordsProcessor.py). The TFRecords contain the following features expected by the dataloader:
+
+##### Table 1: Data features in the generated TFRecords
+Feature name | Data type | Sequence length | Description
+--- | --- | --- | ---
+`input_ids` | `tf.int64` | `max_seq_length` | Input token IDs.
+`input_mask` | `tf.int64` | `max_seq_length` | Mask for padded positions (has values `1` on the padded positions, and `0` elsewhere).
+`masked_lm_positions` | `tf.int64` | `max_predictions_per_seq` | Positions of masked tokens in the sequence.
+`masked_lm_ids` | `tf.int64` | `max_predictions_per_seq` | IDs of masked tokens.
+`masked_lm_weights` | `tf.float32` | `max_predictions_per_seq` | Mask for `masked_lm_ids` and `masked_lm_positions` (has values `1.0` on the positions corresponding to masked tokens, and `0.0` elsewhere).
+`segment_ids` | `tf.int64` | `max_seq_length` | Segment IDs (has values `0` on the positions corresponding to the first segment, and `1` on the positions corresponding to the second segment).
+`next_sentence_labels` | `tf.int64` | `1` | NSP label (has value `1` if second segment is next sentence, and `0` otherwise).
+
+We provide the following high level overview of the steps taken to generate the data features:
+
+1. Given a list of raw text documents, generate raw examples by concatenating the two parts `tokens-a` and `tokens-b` as follows:
+
+        [CLS] <tokens-a> [SEP] <tokens-b> [SEP]
+
+    where:
+
+    - `tokens-a` is a list of tokens taken from the current document. The list is of random length (less than `max_seq_length`).
+    - `tokens-b` is a list of tokens chosen based on the randomly set `next_sentence_labels`. The list is of length `max_seq_length - len(<tokens-a>) - 3` (to account for `[CLS]` and `[SEP]` tokens).
+
+    If `next_sentence_labels` is equal to `1`, (that is, if set to `1` with `0.5` probability):
+    
+            "tokens-b" is a list of tokens from sentences chosen randomly from different documents.
+            
+    else:
+    
+            "tokens-b" is a list of tokens taken from the same document and is a continuation of "tokens-a" in the document.
+
+    > **Note**: Based on the probability `short_seq_prob`, the token sequence can have a length of `min_short_seq_length` instead of `max_seq_length`.
+
+2. Map sample tokens to its indices in the vocabulary file.
+
+3. Mask the raw examples based on `max_predictions_per_seq` and `mask_whole_word` parameters.
+
+4. Pad the masked example to `max_seq_length` (if less than `max_seq_length`).
+
+5. Create the feature dictionary that will be serialized into TFRecords with the features described in [Table 1](#table-1-data-features-in-the-generated-tfrecords).
+
+#### create_tf_records_mlm_only.py
+
+The script can generate two types of TFRecords based on `disable_masking` setting:
+
+- If `disable_masking=True`, then raw text examples are written to TFRecords and these raw tokens will be masked dynamically during the pre-training process. Specifically, each raw text token is encoded with `UTF-8` into bytes list, and added to the variable length sequence of tokens that is written to the TFRecords.
+- If `disable_masking=False`, the TFRecords will contain static masked examples as described in [Table 1](#table-1-data-features-in-the-generated-tfrecords), except for the last two features `segment_ids` and `next_sentence_labels` are being omitted here. 
+
+
+The dataloaders that can be used for reading the TFRecords generated by this script are:
+1. [BertMlmOnlyTfRecordsDynamicMaskProcessor.py](../BertMlmOnlyTfRecordsDynamicMaskProcessor.py) if `disable_masking=True` was used
+2. [BertMlmOnlyTfRecordsStaticMaskProcessor.py](../BertMlmOnlyTfRecordsStaticMaskProcessor.py) if `disable_masking=False` was used
+
+We provide the following high level overview of the steps taken to generate the data features:
+
+1. Generate raw examples with a list of `tokens` as follows:
+
+        [CLS] <tokens-list> [SEP]
+
+    where:
+
+    - `tokens-list` is a list of tokens taken from the current document. The list is generated using a sliding window approach that includes tokens from the previous example based on the `overlap_size`. The list is of random length (less than `max_seq_length`) or can have the length `min_short_seq_length` based on `short_seq_prob`.
+    
+  > **Note**: If the flag `allow_cross_document_examples` was set `True`, the `tokens-list` can come from multiple documents and the token `document_separator_token` gets added to the list between the tokens of different documents.
+
+ If `disable_masking=False`, then proceed to steps `2`-`5` as described in the overview below [Table 1](#table-1-data-features-in-the-generated-tfrecords).
+
+## Create your own TFRecords
+
+### Description
+
+The generated TFRecords will be used for pre-training BERT models using the dataloader script [BertTfRecordsProcessor.py](../BertTfRecordsProcessor.py) for MLM+NSP or [BertMlmOnlyTfRecordsStaticMaskProcessor.py](../BertMlmOnlyTfRecordsStaticMaskProcessor.py) for only MLM. Thus, to ensure compatibility when parsing the TFRecords, the five steps described in the overview below [Table 1](#table-1-data-features-in-the-generated-tfrecords) need to be followed when generating your own TFRecords. Also, you need to ensure that all the features described in [Table 1](#table-1-data-features-in-the-generated-tfrecords) are present in the TFRecords you have generated, except when you pre-train for MLM only then you can omit the last two features `segment_ids` and `next_sentence_labels`.
 
 > **Note**: If you need to disable static masking for MLM only pre-training and generate TFRecords that works with the dataloader in [BertMlmOnlyTfRecordsDynamicMaskProcessor.py](../BertMlmOnlyTfRecordsDynamicMaskProcessor.py), then you only need to perform step 1 described [above](#description) and encode the raw text tokens with `UTF-8` into bytes list, then add them to a variable length sequence of tokens and write the sequence into TFRecords.
 
-## create_dummy_tfrecords.py
+### Simplified tfrecords generator
 
 The script [create_dummy_tfrecords.py](./create_dummy_tfrecords.py) shows a simplified version of the steps taken to write a single data sample into TFRecords. It is meant as a guide to show you the necessary steps need to be taken when generating your own TFRecords to be compatible with either one of the three dataloader scripts based on the chosen settings:
 - If `mlm_only=False`, then the generated TFRecords can be parsed by the dataloader at [BertTfRecordsProcessor.py](../BertTfRecordsProcessor.py).
@@ -358,7 +403,7 @@ optional arguments:
                      NSP which are `segment_ids` and `next_sentence_labels`.
                      (default: False)
   --disable_masking  If False, TFRecords will be stored with static masks. If
-                     True, masking will happen dynamically during training.
+                     True, masking will occur dynamically during training.
                      (default: False)
 
-``` 
+```

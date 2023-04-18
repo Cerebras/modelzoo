@@ -12,14 +12,40 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+#!/usr/bin/env python3
+
+"""
+Run script for running on cerebras appliance cluster
+"""
+
 import os
 import sys
 
 import tensorflow as tf
 
-sys.path.append(os.path.join(os.path.dirname(__file__), "../../../.."))
-from modelzoo.transformers.tf.gpt2.run import main
+# Disable eager execution
+tf.compat.v1.disable_eager_execution()
 
-if __name__ == "__main__":
-    tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.INFO)
+sys.path.append(os.path.join(os.path.dirname(__file__), "../../../.."))
+
+from modelzoo.common.tf.appliance_utils import ExecutionStrategy, run_appliance
+from modelzoo.transformers.tf.gpt2.data import eval_input_fn, train_input_fn
+from modelzoo.transformers.tf.gpt2.model import model_fn
+from modelzoo.transformers.tf.gpt2.utils import set_defaults
+
+
+def main():
+    run_appliance(
+        model_fn,
+        train_input_fn,
+        eval_input_fn,
+        supported_strategies=[
+            ExecutionStrategy.weight_streaming,
+            ExecutionStrategy.pipeline,
+        ],
+        default_params_fn=set_defaults,
+    )
+
+
+if __name__ == '__main__':
     main()

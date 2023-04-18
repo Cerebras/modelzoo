@@ -58,7 +58,7 @@ The Cerebras Wafer Scale Engine supports two different execution modes:
 
 This GPT2 implementation supports both pipelined and weight streaming execution modes.
 
-For more details on Cerebras execution modes, see [this explanation](https://docs.cerebras.net/en/latest/cerebras-basics/cerebras-execution-modes.html).
+For more details on Cerebras execution modes, see [this explanation](https://docs.cerebras.net/en/latest/wsc/cerebras-basics/cerebras-execution-modes.html).
 
 ## Structure of the code
 
@@ -103,7 +103,7 @@ The label tensor of shape `(batch_size,)`. Carries the next token labels.
 
 ### Input pipeline with sharding
 
-In addition, the above-created TFRecords are used by the `GptTfRecordsProcessor` class to create a sharded dataset, using the `shard_dataset.py` utility. This allows multiple workers to stream data at once without repeating samples. For a detailed explanation of sharding, see <a href="https://docs.cerebras.net/en/latest/tensorflow-docs/preparing-tf-input/sharding-for-cs.html" class="external-link">Sharding For the Cerebras System</a>.
+In addition, the above-created TFRecords are used by the `GptTfRecordsProcessor` class to create a sharded dataset, using the `shard_dataset.py` utility. This allows multiple workers to stream data at once without repeating samples.
 
 ## How to run
 
@@ -125,22 +125,21 @@ In the following example run commands, we use `/path/to/yaml`, `/path/to/model_d
 
 ## To compile/validate, run train and eval on Cerebras System
 
-Please follow the instructions on our Developer Docs at:
-https://docs.cerebras.net/en/latest/getting-started/tensorflow/index.html
+Please follow the instructions on our [quickstart in the Developer Docs](https://docs.cerebras.net/en/latest/wsc/getting-started/cs-appliance.html).
 
 ## To run train and eval on GPU/CPU
 
 If running on a cpu or gpu, activate the environment from [Python GPU Environment setup](../../../../PYTHON-SETUP.md), and simply run:
 
 ```
-python run.py --mode train --params /path/to/yaml --model_dir /path/to/model_dir
+python run.py {CPU,GPU} --mode train --params /path/to/yaml --model_dir /path/to/model_dir
 ```
 
 ## Configs included for this model
 
-For convenience, we provide different configurations of common model setups designed to give examples of models of different sizes intended for execution in either [pipeline or weight streaming mode](https://docs.cerebras.net/en/latest/cerebras-basics/cerebras-execution-modes.html).
+For convenience, we provide different configurations of common model setups designed to give examples of models of different sizes intended for execution in either [pipeline or weight streaming mode](https://docs.cerebras.net/en/latest/wsc/cerebras-basics/cerebras-execution-modes.html).
 
-Following configs are meant for running in Pipeline mode with Appliance mode and Kubernetes:
+Configs below are meant to be run on [Pipeline mode](https://docs.cerebras.net/en/latest/wsc/cerebras-basics/cerebras-execution-modes.html#layer-pipelined-mode)
 
 - [params_gpt2_small.yaml](./configs/params_gpt2_small.yaml): A 117M parameter GPT-2 small model tailored for pipeline mode. 
 - [params_gpt2_medium.yaml](./configs/params_gpt2_medium.yaml): A 345M parameter GPT-2 medium model tailored for pipeline mode.
@@ -148,10 +147,10 @@ Following configs are meant for running in Pipeline mode with Appliance mode and
 - [params_gpt2_large.yaml](./configs/params_gpt2_xlarge.yaml): A 1558M parameter GPT-2 large model tailored for pipeline mode.
 
 
-Following configs are meant for running in Weight Streaming mode with Appliance mode and Kubernetes:
+Following configs are meant for running in [Weight Streaming mode](https://docs.cerebras.net/en/latest/wsc/cerebras-basics/cerebras-execution-modes.html#weight-streaming-mode):
 
 - [params_gpt2_small_ws.yaml](./configs/params_gpt2_small_ws.yaml): A 117M parameter GPT-2 small model designed for weight streaming mode.
-- [params_gpt2_xlarge.yaml](./configs/params_gpt2_xlarge.yaml) have the standard gpt2-xl config with `hidden_size=1600`, `num_hidden_layers=48`, `num_heads=16`, for Weight Streaming mode.
+
 
 ## Appendix
 

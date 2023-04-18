@@ -12,8 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import torch
+
 from modelzoo.common.pytorch.metrics import RougeScoreMetric
-from modelzoo.common.pytorch.PyTorchBaseModel import PyTorchBaseModel
 from modelzoo.transformers.pytorch.bert.bert_finetune_models import (
     BertForSummarization,
     BertForSummarizationLoss,
@@ -21,10 +22,11 @@ from modelzoo.transformers.pytorch.bert.bert_finetune_models import (
 from modelzoo.transformers.pytorch.bert.utils import check_unused_model_params
 
 
-class BertSummarizationModel(PyTorchBaseModel):
-    def __init__(self, params, device=None):
-        self.params = params
-        model_params = self.params["model"].copy()
+class BertSummarizationModel(torch.nn.Module):
+    def __init__(self, params):
+        super().__init__()
+
+        model_params = params["model"].copy()
         dropout_rate = model_params.pop("dropout_rate")
         embedding_dropout_rate = model_params.pop(
             "embedding_dropout_rate", dropout_rate
@@ -41,6 +43,9 @@ class BertSummarizationModel(PyTorchBaseModel):
             "num_heads": model_params.pop("num_heads"),
             "filter_size": model_params.pop("filter_size"),
             "nonlinearity": model_params.pop("encoder_nonlinearity"),
+            "pooler_nonlinearity": model_params.pop(
+                "pooler_nonlinearity", None
+            ),
             "embedding_dropout_rate": embedding_dropout_rate,
             "dropout_rate": dropout_rate,
             "attention_dropout_rate": model_params.pop(
@@ -72,9 +77,6 @@ class BertSummarizationModel(PyTorchBaseModel):
             self.rouge2_score = RougeScoreMetric(
                 max_n=2, vocab_file=self.vocab_file, name="eval/rouge2"
             )
-        super(BertSummarizationModel, self).__init__(
-            params=params, model=self.model, device=device
-        )
 
     def __call__(self, data):
         logits = self.model(
@@ -95,10 +97,10 @@ class BertSummarizationModel(PyTorchBaseModel):
             cls_indices = data["cls_indices"].clone()
             cls_weights = data["cls_weights"].clone()
             self.rouge1_score(
-                labels, predictions, cls_indices, cls_weights, input_ids
+                labels, predictions, cls_indices, cls_weights, input_ids,
             )
             self.rouge2_score(
-                labels, predictions, cls_indices, cls_weights, input_ids
+                labels, predictions, cls_indices, cls_weights, input_ids,
             )
 
         return loss

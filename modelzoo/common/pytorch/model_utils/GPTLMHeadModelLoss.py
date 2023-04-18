@@ -20,11 +20,22 @@ import torch.nn as nn
 
 class GPTLMHeadModelLoss(nn.Module):
     def __init__(
-        self, vocab_size, loss_weight,
+        self, vocab_size, loss_scaling, loss_weight,
     ):
         super(GPTLMHeadModelLoss, self).__init__()
         self.vocab_size = vocab_size
         self.loss_weight = loss_weight
+        self.loss_scaling = loss_scaling
+        assert (
+            self.loss_scaling == "num_tokens"
+            or self.loss_scaling == "batch_size"
+        ), f"Loss scaling can't be set to {self.loss_scaling}. \
+            Should be either 'num_tokens' or 'batch_size'"
+
+        if self.loss_scaling == "num_tokens":
+            assert (
+                self.loss_weight == 1.0
+            ), f"Loss scaling with 'num_tokens' requires loss_weight == 1.0"
 
     def forward(
         self, lm_logits, labels, attention_mask,
@@ -36,7 +47,12 @@ class GPTLMHeadModelLoss(nn.Module):
 
         lm_loss *= attention_mask.to(dtype=lm_logits.dtype).view(-1)
 
-        lm_loss = (torch.sum(lm_loss) / labels.shape[0]) * self.loss_weight
+        if self.loss_scaling == "num_tokens":
+            lm_loss = torch.sum(lm_loss) / torch.sum(
+                attention_mask.to(dtype=lm_logits.dtype)
+            )
+        else:
+            lm_loss = (torch.sum(lm_loss) / labels.shape[0]) * self.loss_weight
 
         loss = lm_loss.to(lm_logits.dtype)
         return loss

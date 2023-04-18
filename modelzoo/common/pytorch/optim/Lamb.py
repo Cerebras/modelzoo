@@ -24,7 +24,8 @@ from modelzoo.common.pytorch.optim.CSOptimizer import CSOptimizer
 class Lamb(CSOptimizer):
     r"""Implements Lamb algorithm.
     It has been proposed in `Large Batch Optimization for Deep Learning: Training BERT in 76 minutes`_.
-    Arguments:
+    
+    Args:
         params (iterable): iterable of parameters to optimize or dicts defining
             parameter groups
         lr (float, optional): learning rate (default: 1e-3)
@@ -35,8 +36,10 @@ class Lamb(CSOptimizer):
         weight_decay (float, optional): weight decay (L2 penalty) (default: 0)
         adam (bool, optional): always use trust ratio = 1, which turns this into
             Adam. Useful for comparison purposes.
-    .. _Large Batch Optimization for Deep Learning: Training BERT in 76 minutes:
+    
+    .. _Large Batch Optimization for Deep Learning\: Training BERT in 76 minutes:
         https://arxiv.org/abs/1904.00962
+    
     """
 
     def __init__(
@@ -66,6 +69,9 @@ class Lamb(CSOptimizer):
 
         super(Lamb, self).__init__(params, defaults)
 
+    def state_names_to_sparsify(self):
+        return ["exp_avg", "exp_avg_sq"]
+
     def preinitialize(self):
         """
         Allocates tensors for the optimizer state to allow direct compilation
@@ -83,9 +89,11 @@ class Lamb(CSOptimizer):
                     p.device
                 )
 
+    @torch.no_grad()
     def step(self, closure=None):
-        """Performs a single optimization step.
-        Arguments:
+        r"""Performs a single optimization step.
+
+        Args:
             closure (callable, optional): A closure that reevaluates the model
                 and returns the loss.
         """
@@ -97,7 +105,7 @@ class Lamb(CSOptimizer):
             for p in group['params']:
                 if p.grad is None:
                     continue
-                grad = p.grad.data
+                grad = p.grad
                 if grad.is_sparse:
                     raise RuntimeError(
                         'Lamb does not support sparse gradients, consider SparseAdam instad.'
@@ -122,13 +130,11 @@ class Lamb(CSOptimizer):
                     'lr'
                 ]  # * math.sqrt(bias_correction2) / bias_correction1
 
-                weight_norm = (
-                    p.data.pow(2).sum().sqrt().clamp(0, 10).to(torch.float)
-                )
+                weight_norm = p.pow(2).sum().sqrt().clamp(0, 10).to(torch.float)
 
                 adam_step = exp_avg / exp_avg_sq.sqrt().add(group['eps'])
                 if group['weight_decay'] != 0:
-                    adam_step.add_(p.data, alpha=group['weight_decay'])
+                    adam_step.add_(p, alpha=group['weight_decay'])
 
                 adam_norm = adam_step.pow(2).sum().sqrt().to(torch.float)
                 # pytorch version for future reference (we don't support weight_norm == 0 or adam_norm == 0)
@@ -156,6 +162,6 @@ class Lamb(CSOptimizer):
                     trust_ratio = 1
 
                 update_step = adam_step.mul(trust_ratio)
-                p.data = p.data - update_step * step_size
+                p.sub_(update_step * step_size)
 
         return loss

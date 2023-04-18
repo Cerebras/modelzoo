@@ -15,10 +15,14 @@
 import torch
 import torch.nn as nn
 
-from modelzoo.common.pytorch.layers.utils import apply_loss_reduction
+from modelzoo.common.pytorch.layers.utils import (
+    apply_loss_reduction,
+    autogen_loss,
+)
 
 
 # Adapted from https://github.com/pytorch/pytorch/blob/f96d96a7fcaa5bb06829d2c7de1992d6ab6e9235/aten/src/ATen/native/cpu/BinaryOpsKernel.cpp#L608
+@autogen_loss
 class SmoothL1Loss(nn.Module):
     def __init__(self, reduction='mean', beta=1.0):
         super(SmoothL1Loss, self).__init__()

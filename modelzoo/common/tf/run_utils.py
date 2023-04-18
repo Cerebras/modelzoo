@@ -32,6 +32,7 @@ import tensorflow as tf
 import yaml
 
 from modelzoo import CSOFT_PACKAGE, CSoftPackage
+from modelzoo.common import appliance_environ
 
 
 class GetWeights:
@@ -150,7 +151,7 @@ def get_execution_mode():
 
 def is_cs(params):
     """
-    Check if the runtime enviroment is that of a Cerebras System.
+    Check if the runtime environment is that of a Cerebras System.
     If yes, return True, else False
 
     For legacy k8s flow, the user does not need to specify cs_ip, since k8s
@@ -516,8 +517,8 @@ def setup_environment(params):
     """
     tf_random_seed = params['runconfig'].get('tf_random_seed', None)
     if tf_random_seed is not None:
-        os.environ['PYTHONHASHSEED'] = str(tf_random_seed)
-        os.environ['TF_CUDNN_DETERMINISTIC'] = '1'
-        os.environ['TF_DETERMINISTIC_OPS'] = '1'
+        appliance_environ['PYTHONHASHSEED'] = str(tf_random_seed)
+        appliance_environ['TF_CUDNN_DETERMINISTIC'] = '1'
+        appliance_environ['TF_DETERMINISTIC_OPS'] = '1'
         if params["runconfig"]["mode"] == "eval":
-            os.environ['TF_CUDNN_USE_AUTOTUNE'] = '0'
+            appliance_environ['TF_CUDNN_USE_AUTOTUNE'] = '0'

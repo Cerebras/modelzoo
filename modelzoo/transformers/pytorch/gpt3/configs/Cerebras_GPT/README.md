@@ -1,6 +1,37 @@
 # Cerebras-GPT
 
-This directory contains the configuration files necessary to reproduce the results in our [Cerebras-GPT Blog](https://www.cerebras.net/cerebras-gpt) and forthcoming paper using CS-2 systems.
+This directory contains the configuration files necessary to reproduce the results in our [Cerebras-GPT Blog](https://www.cerebras.net/cerebras-gpt) and [arXiv paper](https://arxiv.org/abs/2304.03208) using CS-2 systems.
+
+## Quickstart for Pre-Trained Checkpoints
+
+We host the pre-trained checkpoints in a publicly accessible S3 bucket. You may continue training from these checkpoints as you would any saved Cerebras checkpoint. 
+
+First, download the weights to your desired directory:
+
+```bash
+wget -O my_checkpoint_directory/my_checkpoint_name.mdl <URL>
+```
+
+Next, call `run.py` with the `--checkpoint_path` and `--is_pretrained_checkpoint` flags:
+
+```bash
+python run.py CSX {pipeline,weight_streaming} --checkpoint_path /path/to/checkpoint --is_pretrained_checkpoint ... <remaining arguments>
+```
+
+| Model family | Parameters | Checkpoint URL |
+| --- | --- | --- |
+| Cerebras-GPT     | 111M       | [cerebras-gpt-dense-111m-sp-checkpoint_final.mdl](https://cerebras-public.s3.us-west-2.amazonaws.com/cerebras-gpt-checkpoints/dense/111M/sp/cerebras-gpt-dense-111m-sp-checkpoint_final.mdl)     |
+| Cerebras-GPT     | 256M       | [cerebras-gpt-dense-256m-sp-checkpoint_final.mdl](https://cerebras-public.s3.us-west-2.amazonaws.com/cerebras-gpt-checkpoints/dense/256M/sp/cerebras-gpt-dense-256m-sp-checkpoint_final.mdl)     |
+| Cerebras-GPT     | 590M       | [cerebras-gpt-dense-590m-sp-checkpoint_final.mdl](https://cerebras-public.s3.us-west-2.amazonaws.com/cerebras-gpt-checkpoints/dense/590M/sp/cerebras-gpt-dense-590m-sp-checkpoint_final.mdl)     |
+| Cerebras-GPT     | 1.3B       | [cerebras-gpt-dense-1p3b-sp-checkpoint_final.mdl](https://cerebras-public.s3.us-west-2.amazonaws.com/cerebras-gpt-checkpoints/dense/1.3B/sp/cerebras-gpt-dense-1p3b-sp-checkpoint_final.mdl)     |
+| Cerebras-GPT     | 2.7B       | [cerebras-gpt-dense-2p7b-sp-checkpoint_final.mdl](https://cerebras-public.s3.us-west-2.amazonaws.com/cerebras-gpt-checkpoints/dense/2.7B/sp/cerebras-gpt-dense-2p7b-sp-checkpoint_final.mdl)     |
+| Cerebras-GPT     | 6.7B       | [cerebras-gpt-dense-6p7b-sp-checkpoint_final.mdl](https://cerebras-public.s3.us-west-2.amazonaws.com/cerebras-gpt-checkpoints/dense/6.7B/sp/cerebras-gpt-dense-6p7b-sp-checkpoint_final.mdl)     |
+| Cerebras-GPT     | 13B        | [cerebras-gpt-dense-13b-sp-checkpoint_final.mdl](https://cerebras-public.s3.us-west-2.amazonaws.com/cerebras-gpt-checkpoints/dense/13B/sp/cerebras-gpt-dense-13b-sp-checkpoint_final.mdl)         |
+| Cerebras-GPT muP | 111M muP   | [cerebras-gpt-dense-111m-mup-checkpoint_final.mdl](https://cerebras-public.s3.us-west-2.amazonaws.com/cerebras-gpt-checkpoints/dense/111M/mup/cerebras-gpt-dense-111m-mup-checkpoint_final.mdl) |
+| Cerebras-GPT muP | 256M muP   | [cerebras-gpt-dense-256m-mup-checkpoint_final.mdl](https://cerebras-public.s3.us-west-2.amazonaws.com/cerebras-gpt-checkpoints/dense/256M/mup/cerebras-gpt-dense-256m-mup-checkpoint_final.mdl) |
+| Cerebras-GPT muP | 590M muP   | [cerebras-gpt-dense-590m-mup-checkpoint_final.mdl](https://cerebras-public.s3.us-west-2.amazonaws.com/cerebras-gpt-checkpoints/dense/590M/mup/cerebras-gpt-dense-590m-mup-checkpoint_final.mdl) |
+| Cerebras-GPT muP | 1.3B muP   | [cerebras-gpt-dense-1p3b-mup-checkpoint_final.mdl](https://cerebras-public.s3.us-west-2.amazonaws.com/cerebras-gpt-checkpoints/dense/1.3B/mup/cerebras-gpt-dense-1p3b-mup-checkpoint_final.mdl) |
+| Cerebras-GPT muP | 2.7B muP   | [cerebras-gpt-dense-2p7b-mup-checkpoint_final.mdl](https://cerebras-public.s3.us-west-2.amazonaws.com/cerebras-gpt-checkpoints/dense/2.7B/mup/cerebras-gpt-dense-2p7b-mup-checkpoint_final.mdl) |
 
 
 ## Model Description
@@ -27,11 +58,11 @@ Cerebras systems checkpoints for pre-training and fine tuning are available in t
 * Optimizer: AdamW, (β1, β2) = (0.9, 0.95), adam_eps = 1e−8 (1e−9 for larger models)
 * Positional Encoding: Learned
 * Language: English
-* Learn more: Dense Scaling Laws Paper for training procedure, config files, and details on how to use.
-
-*NOTE:* All models use `batch_size` loss scaling with `loss_weight: 1/2048` which is the MSL of the data. This is different from the actual runs which uses `num_tokens` loss scaling. However, numerically they should produce the same output.
+* Learn more: [Cerebras-GPT Paper](https://arxiv.org/abs/2304.03208) for training procedure, config files, and details on how to use.
 
 **Contact**: To ask questions about Cerebras-GPT models, join the Cerebras Discord, and post them in **#scaling-laws-release.**
+
+*NOTE:* The `muP` configs will be available in the later Model Zoo release.
 
 <br><br>
 
@@ -49,8 +80,6 @@ Cerebras systems checkpoints for pre-training and fine tuning are available in t
 | Cerebras-GPT-muP | 590M    | 18     | 1536    | 12    | 128    | 6144   | 6.00E-03 | 264      | 541K           |
 | Cerebras-GPT-muP | 1.3B    | 24     | 2048    | 16    | 128    | 8192   | 6.00E-03 | 528      | 1.08M          |
 | Cerebras-GPT-muP | 2.7B    | 32     | 2560    | 20    | 128    | 10240  | 6.00E-03 | 528      | 1.08M          |
-
-*NOTE:* The `muP` configs will be available in the later Model Zoo release.
 
 <br><br>
 
@@ -71,7 +100,7 @@ Cerebras-GPT is trained using [the Pile](https://pile.eleuther.ai) dataset from 
 
 Recent works find significant duplicate data present in the Pile. Eleuther’s Pythia applies a deduplication process to reduce replicated data, decreasing the total token count by 33%. Our models are trained on the Pile **without deduplication**, which presents an opportunity for further improvement with the deduplicated data set.
 
-Our tokenized version of the Pile has 371B tokens. We used byte-pair encoding, a vocabulary size of 50257, and a maximum sequence length of 2048. We include more details about the training dataset preprocessing in Appendix B.1 of our paper.
+Our tokenized version of the Pile has 371B tokens. We used byte-pair encoding, a vocabulary size of 50257, and a maximum sequence length of 2048. We include more details about the training dataset preprocessing in Appendix A.1 of our paper.
 
 <br><br>
 

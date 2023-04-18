@@ -52,9 +52,9 @@ The steps to perform are listed in the diagram below. Bold files are scripts to 
 
 ## Key features from CSoft platform
 
-* Transformer models support [Variable Tensor Shape (VTS)](https://docs.cerebras.net/en/latest/pytorch-docs/pytorch-vts.html) configurations.  At a high-level, this means that we can take advantage of Cerebras hardware's differences from GPU's to perform operations on different sized sequences in parallel, without requiring padding tokens. This reduces the amount of time spent on computations that are never used in the end. For more details, see [\[4\]](https://www.cerebras.net/software/increasing-model-throughput-with-variable-tensor-shape-computations/) and [\[5\]](https://docs.cerebras.net/en/latest/pytorch-docs/pytorch-vts.html).
+* Transformer models support [Variable Tensor Shape (VTS)](https://docs.cerebras.net/en/latest/wsc/general/sparse-input.html) configurations.  At a high-level, this means that we can take advantage of Cerebras hardware's differences from GPU's to perform operations on different sized sequences in parallel, without requiring padding tokens. This reduces the amount of time spent on computations that are never used in the end. For more details, see [\[4\]](https://www.cerebras.net/software/increasing-model-throughput-with-variable-tensor-shape-computations/) and [\[5\]](https://docs.cerebras.net/en/latest/wsc/general/sparse-input.html).
 To run either model with VTS, simply add `enable_vts: True` to the `model` section of the configuration YAML file for a training run.  
-* Transformer supports `--multireplica` flag can be used to perform data-parallel training across multiple copies of the model at the same time. To read more, please refer to [Multi-Replica Data Parallel Training](https://docs.cerebras.net/en/latest/general/multi-replica-data-parallel-training.html) documentation page.
+* Transformer supports `--multireplica` flag can be used to perform data-parallel training across multiple copies of the model at the same time. To read more, please refer to [Multi-Replica Data Parallel Training](https://docs.cerebras.net/en/latest/wsc/general/multi-replica-data-parallel-training.html) documentation page.
 
 ## Code structure
 
@@ -120,15 +120,14 @@ For details about the input function pipeline used for the models located in thi
 
 ## To compile/validate, run train and eval on Cerebras System
 
-Please follow the instructions on our Developer Docs at:
-https://docs.cerebras.net/en/latest/getting-started/pytorch/index.html
+Please follow the instructions on our [quickstart in the Developer Docs](https://docs.cerebras.net/en/latest/wsc/getting-started/cs-appliance.html).
 
 ## To run train and eval on GPU/CPU
 
 If running on a cpu or gpu, activate the environment from [Python GPU Environment setup](../../../../PYTHON-SETUP.md), and simply run:
 
 ```
-python run.py --mode train --params path/to/yaml --model_dir /path/to/model_dir
+python run.py {CPU,GPU} --mode train --params path/to/yaml --model_dir /path/to/model_dir
 ```
 
 For each of these commands,
@@ -150,7 +149,7 @@ In the [configs](./configs/) directory we have files for Transformer.
 * [Transformer-base](configs/transformer_base.yaml) have a base reference with `d_kv=64`, `num_heads=8`, `encoder_num_hidden_layers=6`.
 * [Transformer-large](configs/transformer_large.yaml) have a large reference with `d_kv=64`, `num_heads=16`, `encoder_num_hidden_layers=6`.
 
-All configs are meant to be run on Pipeline mode using Appliance mode and Kubernetes flow. Slurm workflow is available as a legacy support.
+All configs are meant to be run on [Pipeline mode](https://docs.cerebras.net/en/latest/wsc/cerebras-basics/cerebras-execution-modes.html#layer-pipelined-mode)
 
 These files are just samples, and can be adjusted for any changes in training procedure that you desire, such as different number of layers or hidden sizes, or different number of steps.
 
@@ -164,9 +163,9 @@ These files are just samples, and can be adjusted for any changes in training pr
 
 [4] [VTS Conceptual Explanation Blog](https://www.cerebras.net/software/increasing-model-throughput-with-variable-tensor-shape-computations/)
 
-[5] [VTS Software Documentation](https://docs.cerebras.net/en/latest/pytorch-docs/pytorch-vts.html)
+[5] [VTS Software Documentation](https://docs.cerebras.net/en/latest/wsc/general/sparse-input.html)
 
-[6] [Pipeline Execution Mode](https://docs.cerebras.net/en/latest/cerebras-basics/cerebras-execution-modes.html#layer-pipelined-mode)
+[6] [Pipeline Execution Mode](https://docs.cerebras.net/en/latest/wsc/cerebras-basics/cerebras-execution-modes.html#layer-pipelined-mode)
 
 [7] [Adam](https://arxiv.org/abs/1412.6980)
 

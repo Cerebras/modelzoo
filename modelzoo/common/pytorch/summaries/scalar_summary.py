@@ -20,13 +20,10 @@ from typing import Optional
 import torch
 from torch.utils.tensorboard import SummaryWriter
 
-from modelzoo.common.pytorch.summaries.cb_summary import (
-    CBSummary,
-    get_all_summaries,
-)
+from modelzoo.common.pytorch.summaries.cb_summary import CBSummary
 
 
-class ScalarSummary(CBSummary):
+class _ScalarSummary(CBSummary):
     """A class for providing scalar summaries on CS/CPU/GPU devices."""
 
     _REDUCTION_FN_MAP = {
@@ -37,7 +34,7 @@ class ScalarSummary(CBSummary):
     }
 
     def __init__(self, name: str, reduction: Optional[str] = None):
-        """Constructs a `ScalarSummary` instances.
+        """Constructs a `ScalarSummary` instance.
 
         Args:
             name: Name of the summary. This is the tag that appears in
@@ -46,8 +43,6 @@ class ScalarSummary(CBSummary):
                 Defaults to no reduction.
         """
         super().__init__(name)
-
-        self._output_idx = None
 
         if reduction is None:
             self._reduction_fn = lambda x: x  # no-op
@@ -59,6 +54,7 @@ class ScalarSummary(CBSummary):
                     f"types are: {list(self._REDUCTION_FN_MAP)}."
                 )
 
+    # pylint: disable=arguments-differ
     def run_on_host(self, tensor: torch.Tensor) -> float:
         """Runs the host portion of the summary computation.
 
@@ -74,9 +70,10 @@ class ScalarSummary(CBSummary):
     ) -> None:
         """Saves the scalar summary to events file.
 
-        host_outputs: The summarized float value to write to events file.
-        writer: A writer for writing summaries to events files.
-        step: The current global step.
+        Args:
+            host_outputs: The summarized float value to write to events file.
+            writer: A writer for writing summaries to events files.
+            step: The current global step.
         """
         writer.add_scalar(self.name, host_outputs, global_step=step)
 
@@ -97,9 +94,6 @@ def scalar_summary(
             no reduction.
     """
     # See if a summary with the given name already exists
-    summary = get_all_summaries().get(name)
-    if summary is None:
-        # Create one if it doesn't exist
-        summary = ScalarSummary(name, reduction=reduction)
+    summary = _ScalarSummary(name, reduction=reduction)
     # Run the summary op
     summary(tensor)

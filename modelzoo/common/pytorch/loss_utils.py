@@ -79,6 +79,7 @@ class LossSaver:
 
     def clear(self):
         """Clears the total_loss value"""
+        self._last_saved_loss = -1
         self._total_loss = 0
         self._total_size = 0
 

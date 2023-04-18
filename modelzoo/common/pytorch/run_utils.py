@@ -12,10 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Utilities for running Cerebras Pytorch Models"""
 import argparse
 import inspect
+import math
 import os
-from typing import Callable, List, Optional
+import subprocess
+import sys
+from typing import Any, Callable, Dict, List, Optional
 
 import torch
 import yaml
@@ -24,14 +28,160 @@ import modelzoo.common.pytorch.half_dtype as half_dtype
 from modelzoo.common.pytorch import cb_model as cm
 from modelzoo.common.pytorch import modes
 from modelzoo.common.pytorch.pytorch_base_runner import PyTorchBaseRunner
-from modelzoo.common.pytorch.PyTorchBaseModel import PyTorchBaseModel
-from modelzoo.common.pytorch.utils import get_params_from_args, setup_logging
+from modelzoo.common.pytorch.utils import (
+    RunConfigParamsValidator,
+    get_checkpoints,
+    setup_logging,
+)
+from modelzoo.common.run_utils.cli_parser import get_params_from_args
+from modelzoo.common.run_utils.utils import DeviceType
 
 DATA_FN_TYPE = Callable[[dict], torch.utils.data.DataLoader]
+half_dtype_instance = half_dtype.half_dtype_instance
+
+
+def arg_filter(arg: str, keyword: str) -> bool:
+    """Checks if a given arg matches the given keyword"""
+    arg = arg.strip()
+    return (
+        arg.startswith(f"--{keyword}=")
+        or arg.startswith(f"-{keyword}=")
+        or arg == f"--{keyword}"
+        or arg == f"-{keyword}"
+    )
+
+
+def update_sideband_mode_arg(
+    arguments: List[str], new_mode_arg: str, old_mode: str
+) -> List[str]:
+    """Updates sideband arguments to a different mode"""
+    # filter out args with the name of the old mode provided they
+    # have "mode" or "m" preceding
+    offset_arguments = [None] + arguments
+    updated_args = [
+        an_arg
+        for an_arg, prev_arg in zip(arguments, offset_arguments)
+        if an_arg != old_mode
+        or not (arg_filter(prev_arg, "mode") or arg_filter(prev_arg, "m"))
+    ]
+
+    # filter and add the new mode
+    updated_args = [
+        new_mode_arg
+        if arg_filter(an_arg, "mode") or arg_filter(an_arg, "m")
+        else an_arg
+        for an_arg in updated_args
+    ]
+
+    return updated_args
+
+
+def sideband_eval_all(
+    filename: str, arguments: List[str], params: Dict[Any, Any]
+):
+    """Temporary support for running eval multiple times via subprocess"""
+    eval_mode = "--mode=eval"
+
+    if any(arg_filter(an_arg, "checkpoint_path") for an_arg in arguments):
+        raise ValueError(
+            "Checkpoint path cannot be provided with eval_all. Checkpoints inferred from model_dir"
+        )
+
+    updated_args = update_sideband_mode_arg(
+        arguments, eval_mode, modes.EVAL_ALL
+    )
+
+    # Gather all checkpoints
+    checkpoint_path = None
+    updated_args.append(checkpoint_path)
+    checkpoints = get_checkpoints(params['runconfig']['model_dir'],)
+    if len(checkpoints) == 0:
+        raise ValueError(
+            f"No checkpoints found at {params['runconfig']['model_dir']}"
+        )
+    for a_chkpt in checkpoints:
+        checkpoint_path = f"--checkpoint_path={a_chkpt}"
+        updated_args[-1] = checkpoint_path
+        # By just calling this from the top each run will be a separate logdir
+        single_run = [sys.executable, filename]
+        single_run.extend(updated_args)
+        subprocess.run(single_run, check=True)
+
+
+def sideband_train_eval_all(
+    filename: str, arguments: List[str], params: Dict[Any, Any]
+):
+    """Temporary support for running train and eval multiple times via subprocess"""
+    train_mode = "--mode=train"
+    eval_mode = "--mode=eval"
+
+    train_args = update_sideband_mode_arg(
+        arguments, train_mode, modes.TRAIN_AND_EVAL
+    )
+    eval_args = update_sideband_mode_arg(
+        arguments, eval_mode, modes.TRAIN_AND_EVAL
+    )
+
+    runconfig = params['runconfig']
+    if runconfig.get('num_steps', None) is not None:
+        if runconfig.get('num_epochs', None) is not None:
+            raise ValueError(
+                "num_steps and num_epochs cannot both be specified "
+                "in the runconfig section of params"
+            )
+        if runconfig.get('steps_per_epoch', None) is not None:
+            raise ValueError(
+                "num_steps and steps_per_epoch cannot both be specified "
+                "in the runconfig section of params"
+            )
+        if runconfig.get('eval_frequency', None) is None:
+            raise ValueError(
+                "if num_steps is specified, eval_frequency is needed "
+                "to dicate how many train steps before each eval"
+            )
+        total_steps = int(runconfig['num_steps'])
+        train_steps = int(runconfig['eval_frequency'])
+        num_iters = math.ceil(total_steps / train_steps)
+
+        last_steps = total_steps % train_steps
+
+        # add num_steps overwrite
+        last_train_args = train_args + [f"--num_steps={last_steps}"]
+        train_args.append(f"--num_steps={train_steps}")
+
+    elif runconfig.get('num_epochs', None) is not None:
+        num_iters = int(runconfig['num_epochs'])
+
+        # add num_epochs overwrite
+        train_args.append("--num_epochs=1")
+        last_steps = 0
+    else:
+        raise ValueError(
+            "For train_and_eval mode, one of `num_steps` or `num_epochs` "
+            " must be specified and not be None."
+        )
+
+    single_run = [sys.executable, filename]
+    train_cmd = single_run + train_args
+    eval_cmd = single_run + eval_args
+    for i in range(num_iters):
+        # TRAIN
+        if i == num_iters - 1 and last_steps > 0:
+            train_cmd = single_run + last_train_args
+        try:
+            subprocess.run(train_cmd, check=True)
+        except Exception as e:
+            raise RuntimeError(f"Training at iteration {i} failed.") from e
+
+        # EVAL
+        try:
+            subprocess.run(eval_cmd, check=True)
+        except Exception as e:
+            raise RuntimeError(f"Evaluate at iteration {i} failed.") from e
 
 
 def run(
-    model_fn: Callable[[dict], PyTorchBaseModel],
+    model_fn: Callable[[dict], torch.nn.Module],
     train_data_fn: Optional[DATA_FN_TYPE] = None,
     eval_data_fn: Optional[DATA_FN_TYPE] = None,
     default_params_fn: Optional[Callable[[dict], dict]] = None,
@@ -39,12 +189,78 @@ def run(
         Callable[[], List[argparse.ArgumentParser]]
     ] = None,
 ):
+    """Entry point to running pytorch models"""
+    parent = inspect.getouterframes(inspect.currentframe())[1]
+    run_dir = os.path.dirname(os.path.abspath(parent.filename))
+
+    def pytorch_specific_args_parser():
+        extra_args = extra_args_parser_fn() if extra_args_parser_fn else {}
+        if isinstance(extra_args, list):
+            for item in extra_args:
+                # pylint: disable=protected-access
+                item._action_groups[
+                    1
+                ].title = "User-Defined and/or Model Specific Arguments"
+        parser = argparse.ArgumentParser(parents=extra_args, add_help=False)
+        # Arguments must be added as part of a group in order to propagate the
+        # correct help message to users.
+        parser_opt = parser.add_argument_group(
+            "Optional Arguments, PyTorch Specific"
+        )
+        parser_opt.add_argument(
+            "--num_epochs",
+            type=int,
+            default=None,
+            help="Specifies the number of epochs to run",
+        )
+        parser_opt.add_argument(
+            "--num_steps",
+            type=int,
+            default=None,
+            help="Specifies the number of steps to run",
+        )
+        return {
+            DeviceType.ANY: [parser],
+        }
+
+    # Parse arguments from the command line and get the params
+    # from the specified config file
+    arguments = sys.argv[1:]
+    params = get_params_from_args(
+        run_dir,
+        argv=arguments,
+        extra_args_parser_fn=pytorch_specific_args_parser,
+    )
+    if default_params_fn:
+        params = default_params_fn(params) or params
+    if params["runconfig"]["mode"] == modes.EVAL_ALL:
+        sideband_eval_all(parent.filename, arguments, params)
+        return None
+        # TODO ambiguity on what to return, possibly just run the final checkpoint in
+        # the main process below
+    # TODO enable existing train_and_eval functionality to work with cs
+    if (
+        params["runconfig"]["mode"] == modes.TRAIN_AND_EVAL
+        and params["runconfig"]["target_device"] == DeviceType.CSX
+    ):
+        sideband_train_eval_all(parent.filename, arguments, params)
+        return None
+
+    return run_with_params(params, model_fn, train_data_fn, eval_data_fn)
+
+
+def run_with_params(
+    params: Dict[str, Any],
+    model_fn: Callable[[dict], torch.nn.Module],
+    train_data_fn: Optional[DATA_FN_TYPE] = None,
+    eval_data_fn: Optional[DATA_FN_TYPE] = None,
+):
     """
     Runs a full end-to-end CS/non-CS workflow for a given model
 
     Args:
         model_fn: A callable that takes in a 'params' argument
-            which it uses to configure and return a PyTorchBaseModel
+            which it uses to configure and return a torch.nn.Module
         train_data_fn: A callable that takes in a 'params' argument
             which it uses to configure and return a PyTorch dataloader
             corresponding to the training dataset
@@ -57,18 +273,29 @@ def run(
         extra_args_parser_fn: An optional callable that adds any
             extra parser args not covered in `get_parser` fn.
     """
-    parent = inspect.getouterframes(inspect.currentframe())[1]
-    run_dir = os.path.dirname(os.path.abspath(parent.filename))
+    validate_only = params["runconfig"]["validate_only"]
+    compile_only = params["runconfig"]["compile_only"]
+    use_cs = params["runconfig"]["target_device"] == DeviceType.CSX
+    use_cs = bool(use_cs or compile_only or validate_only)
 
-    # Parse arguments from the command line and get the params
-    # from the specified config file
-    params = get_params_from_args(
-        run_dir, extra_args_parser_fn=extra_args_parser_fn
-    )
-    if default_params_fn:
-        params = default_params_fn(params) or params
+    if use_cs and params["runconfig"].get("experimental_api", False):
+        # pylint: disable=import-outside-toplevel
+        from modelzoo.common.pytorch.run_cstorch_flow import run_cstorch_flow
 
+        # Use the new experimental API flow
+        return run_cstorch_flow(params, model_fn, train_data_fn, eval_data_fn)
+    else:
+        # Default to the previous PyTorchBaseModel/PyTorchBaseRunner flow
+        return run_base_model_flow(
+            params, model_fn, train_data_fn, eval_data_fn
+        )
+
+
+def run_base_model_flow(params, model_fn, train_data_fn, eval_data_fn):
+    """Runs PytorchBaseModel and Runner flow"""
     runconfig_params = params["runconfig"]
+
+    RunConfigParamsValidator().validate(runconfig_params)
 
     if "seed" in runconfig_params:
         torch.manual_seed(runconfig_params["seed"])
@@ -78,6 +305,7 @@ def run(
     setup_logging(
         runconfig_params.get("logging"),
         runconfig_params.get("streamer_logging"),
+        logging_dir=runconfig_params.get("model_dir"),
     )
 
     # Save params.yaml only in master task
@@ -107,6 +335,3 @@ def run(
         runner.evaluate(eval_loader)
     else:
         raise ValueError(f"Mode {mode} is not supported.")
-
-
-half_dtype_instance = half_dtype.half_dtype_instance

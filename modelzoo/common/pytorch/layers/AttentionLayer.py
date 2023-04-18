@@ -12,9 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Optional
+
 import torch
 import torch.nn as nn
 
+from modelzoo.common.pytorch import cbtorch
 from modelzoo.common.pytorch.model_utils.create_initializer import (
     create_initializer,
 )
@@ -51,6 +54,10 @@ class MultiheadAttention(nn.Module):
             accepts ``dot_product`` and ``scaled_dot_product``. Defaults to
             ``scaled_dot_product``.
         softmax_dtype_fp32 (bool): Use an FP32 softmax implementation.
+        attention_kernel (str | None): Kernel to use. Defaults to None - compiler selects the kernel.
+            See accepted values below.
+                ``default`` - Default implementation.
+                ``optimized_beta`` - Optimized implementation. Beta feature, support is limited.
     """
 
     def __init__(
@@ -72,6 +79,7 @@ class MultiheadAttention(nn.Module):
         bias_initializer="zeros",
         attention_type="scaled_dot_product",
         softmax_dtype_fp32=True,
+        attention_kernel: Optional[str] = None,
         device=None,
     ):
         _SUPPORTED_ATTENTION_TYPES = ["dot_product", "scaled_dot_product"]
@@ -99,7 +107,7 @@ class MultiheadAttention(nn.Module):
 
         self.num_heads = num_heads
         self.scale_dot_product = attention_type == "scaled_dot_product"
-        self.neg_inf = -1e4
+        self.neg_inf = None
 
         self.use_projection_bias = use_projection_bias
         self.use_ffn_bias = use_ffn_bias
@@ -141,6 +149,10 @@ class MultiheadAttention(nn.Module):
         self.output_initializer = output_initializer
         self.bias_initializer = bias_initializer
         self.softmax_dtype_fp32 = softmax_dtype_fp32
+
+        self._scope = None
+        if attention_kernel:
+            self._scope = cbtorch.nn.Scope(attention_kernel.upper())
 
         self.__reset_parameters()
 
@@ -214,15 +226,18 @@ class MultiheadAttention(nn.Module):
             past_kv_self_attn (bool): Specifies whether the past keys & values should be
                 used for self-attention (true) of cross-attention (false). Ignored if
                 past_kv is not provided. Default: True
-            TODO: the following param doesn't seem to be used anywhere. remove it?
-            training (bool): Training the model if ``True``. Needed to call the
-                ``dropout`` (after softmax) in the appropriate mode.
             position_bias (Tensor): Tensor containing position bias to apply in attention.
+            rotary_position_embedding_helper (Optional[RotaryPositionEmbeddingHelper]): 
+                A helper class to apply rotary embedding on the input tensor.
 
         Returns:
             If ``cache_present_kv`` is ``False``, no entry for present keys and values
             is provided.
         """
+        if self._scope:
+            q = self._scope(q)
+            k = self._scope(k)
+            v = self._scope(v)
 
         assert not (
             rotary_position_embedding_helper and position_bias
@@ -237,6 +252,10 @@ class MultiheadAttention(nn.Module):
         # past_key_value[0] is (batch_size, n_heads, q_len - 1, dim_per_head)
         batch_size, seq_length = q.shape[:2]
         real_seq_length = seq_length
+
+        assert (
+            real_seq_length > 1
+        ), "Sequence length 1 is currently unsupported."
 
         # construct query, key and value vector with a linear projection and split into heads
         q = self.construct_query_vector(
@@ -286,6 +305,9 @@ class MultiheadAttention(nn.Module):
 
         attention_scores = self.calculate_attention_scores(logits)
         attention_output = self.calculate_attention_output(attention_scores, v)
+
+        if self._scope:
+            attention_output = self._scope.exit(attention_output)
 
         if cache_present_kv:
             return attention_output, present_kv
@@ -411,7 +433,7 @@ class MultiheadAttention(nn.Module):
 
     def calculate_attention_logits(self, q, k):
         if self.scale_dot_product:
-            depth = self.embed_dim // self.num_heads
+            depth = self.inner_dim // self.num_heads
             q = q * torch.tensor(1 / float(depth) ** 0.5, dtype=q.dtype,)
 
         # calculate dot product attention
@@ -534,12 +556,22 @@ class MultiheadAttention(nn.Module):
                     attn_mask_reshaped, key_padding_mask_reshaped
                 )
             elif attn_mask_is_float:
+                mask_neg_inf = (
+                    self.neg_inf
+                    if self.neg_inf is not None
+                    else torch.finfo(attn_mask_reshaped.dtype).min
+                )
                 attention_bias = attn_mask_reshaped.masked_fill(
-                    key_padding_mask_reshaped, self.neg_inf
+                    key_padding_mask_reshaped, mask_neg_inf
                 )
             elif key_padding_is_float:
+                mask_neg_inf = (
+                    self.neg_inf
+                    if self.neg_inf is not None
+                    else torch.finfo(key_padding_mask_reshaped.dtype).min
+                )
                 attention_bias = key_padding_mask_reshaped.masked_fill(
-                    attn_mask_reshaped, self.neg_inf
+                    attn_mask_reshaped, mask_neg_inf
                 )
             else:
                 attention_bias = attn_mask_reshaped.logical_or(
@@ -558,7 +590,12 @@ class MultiheadAttention(nn.Module):
                 final_attention_bias = torch.zeros_like(
                     attention_bias, dtype=logits.dtype
                 )
-                final_attention_bias.masked_fill_(attention_bias, self.neg_inf)
+                mask_neg_inf = (
+                    self.neg_inf
+                    if self.neg_inf is not None
+                    else torch.finfo(final_attention_bias.dtype).min
+                )
+                final_attention_bias.masked_fill_(attention_bias, mask_neg_inf)
                 attention_bias = final_attention_bias
             logits += attention_bias
         return logits
@@ -566,7 +603,7 @@ class MultiheadAttention(nn.Module):
     def apply_position_bias(self, logits, position_bias):
         # Add relative position bias, if any
         if position_bias is not None:
-            logits += position_bias.unsqueeze(0)
+            logits += position_bias.type_as(logits).unsqueeze(0)
         return logits
 
     def calculate_attention_scores(self, logits):
@@ -592,6 +629,6 @@ class MultiheadAttention(nn.Module):
         return attention_output
 
     def check_extra_params(params):
-        assert (
-            params == {}
-        ), "Overflow extra params for attention module `MultiheadAttention`, should be empty mapping"
+        assert all(
+            k in {"attention_kernel"} for k in params.keys()
+        ), "Overflow extra params for attention module `MultiheadAttention`"

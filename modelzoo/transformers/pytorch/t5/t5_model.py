@@ -31,6 +31,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
+
 import torch
 import torch.nn as nn
 
@@ -124,9 +126,9 @@ class T5ForConditionalGeneration(nn.Module):
         use_pre_encoder_decoder_dropout (:obj:`bool`, `optional`, defaults to :obj: False):
             Whether to use dropout layer after positional embedding layer and encoder/decoder.
             This is set to `False` for T5 and `True` for Transformer.
-        use_pre_encoder_decoder_layer_norm (:obj:`bool`, `optional`, defaults to :obj: False):
+        use_pre_encoder_decoder_layer_norm (:obj:`bool`, `optional`, defaults to :obj: True):
             Whether to use layer norm before passing input tensors into encoder/decoder.
-            This is set to `False` for T5 and `True` for Transformer.
+            This is set to `True` for T5 and `False` for Transformer.
         use_ffn_bias (:obj:`bool`, `optional`, defaults to :obj: False):
             Whether to use bias in the hidden layer with relu activation.
             This is set to `False` for T5, and `True` for Transformer.
@@ -160,6 +162,7 @@ class T5ForConditionalGeneration(nn.Module):
         encoder_nonlinearity="relu",
         decoder_nonlinearity="relu",
         use_projection_bias_in_attention=False,
+        attention_softmax_fp32=True,
         use_cache=False,
         decoder_start_token_id=None,
         pad_token_id=0,
@@ -171,7 +174,7 @@ class T5ForConditionalGeneration(nn.Module):
         tie_word_embeddings=True,
         tie_encoder_decoder=False,
         use_pre_encoder_decoder_dropout=False,
-        use_pre_encoder_decoder_layer_norm=False,
+        use_pre_encoder_decoder_layer_norm=True,
         use_ffn_bias=False,
         lm_loss_weight=1.0,
         label_smoothing=0.0,
@@ -194,6 +197,9 @@ class T5ForConditionalGeneration(nn.Module):
         self.pad_token_id = pad_token_id
         self.position_embedding_type = position_embedding_type
         self.label_smoothing = label_smoothing
+
+        if decoder_num_hidden_layers is None:
+            decoder_num_hidden_layers = encoder_num_hidden_layers
 
         if relu_dropout_rate is None:
             relu_dropout_rate = dropout_rate
@@ -286,21 +292,21 @@ class T5ForConditionalGeneration(nn.Module):
         assert encoder_nonlinearity in [
             "relu",
             "gelu",
-        ], "T5 doesn't support encoder_nonlinearity {}".format(
+        ], "T5/Transformer doesn't support encoder_nonlinearity {}".format(
             encoder_nonlinearity
         )
         assert decoder_nonlinearity in [
             "relu",
             "gelu",
-        ], "T5 doesn't support decoder_nonlinearity {}".format(
+        ], "T5/Transformer doesn't support decoder_nonlinearity {}".format(
             decoder_nonlinearity
         )
 
         if (encoder_nonlinearity == "gelu" and use_ffn_bias) or (
             decoder_nonlinearity == "gelu" and use_ffn_bias
         ):
-            print(
-                "Warning. Overriding use_ffn_bias to false because using gelu"
+            logging.warning(
+                "Overriding use_ffn_bias to false because using gelu"
             )
             use_ffn_bias = False
 
@@ -312,12 +318,13 @@ class T5ForConditionalGeneration(nn.Module):
             activation=encoder_nonlinearity,
             norm_layer=BiaslessLayerNorm if use_t5_layer_norm else nn.LayerNorm,
             layer_norm_eps=layer_norm_epsilon,
-            norm_first=not use_pre_encoder_decoder_layer_norm,
+            norm_first=use_pre_encoder_decoder_layer_norm,
             batch_first=True,
             attention_type="scaled_dot_product"
             if use_transformer_initialization
             else "dot_product",
             attention_inner_dim=self.attention_inner_dim,
+            attention_softmax_fp32=attention_softmax_fp32,
             use_projection_bias_in_attention=use_projection_bias_in_attention,
             use_ffn_bias_in_attention=False,
             use_ffn_bias=use_ffn_bias,
@@ -391,13 +398,14 @@ class T5ForConditionalGeneration(nn.Module):
             activation=encoder_nonlinearity,
             norm_layer=BiaslessLayerNorm if use_t5_layer_norm else nn.LayerNorm,
             layer_norm_eps=layer_norm_epsilon,
-            norm_first=not use_pre_encoder_decoder_layer_norm,
+            norm_first=use_pre_encoder_decoder_layer_norm,
             batch_first=True,
             attention_type="scaled_dot_product"
             if use_transformer_initialization
             else "dot_product",
             attention_inner_dim=self.attention_inner_dim,
             use_projection_bias_in_attention=use_projection_bias_in_attention,
+            attention_softmax_fp32=attention_softmax_fp32,
             use_ffn_bias_in_attention=False,
             use_ffn_bias=use_ffn_bias,
             use_ff_layer1_dropout=True,
@@ -604,7 +612,7 @@ class T5ForConditionalGeneration(nn.Module):
                     device=decoder_inputs_embeds.device,
                     dtype=hidden_states.dtype,
                 )
-                * -1e4
+                * torch.finfo(hidden_states.dtype).min
             )
         else:
             extended_decoder_attention_mask = build_broadcastable_attention_mask(

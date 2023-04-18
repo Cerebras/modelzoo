@@ -1,10 +1,27 @@
 # Software setup
 
-The get more info about software setup and dependencies, please visit our developer doc page [here](https://docs.cerebras.net/en/latest/getting-started/software-dependencies.html).
+The get more info about software setup and dependencies, please visit our developer doc page [here](https://docs.cerebras.net/en/latest/wsc/getting-started/setup-environment.html).
+
+## Cerebras Wafer-Scale Cluster instructions
+
+After installing all the Cerebras packages distributed in the CSoft platform, to support all the functionalities in Model Zoo, please install other external packages to your python environment.
+
+For PyTorch environment, please install the packages by running:
+
+```bash
+pip install -r requirements_cb_pt.txt
+```
+
+For TensorFlow environment, please install the packages by running:
+
+```bash
+pip install --no-deps -r requirements_cb_tf.txt
+# the --no-deps above is intentional due to conflicts in protobuf version between tfds and cerebras_tensorflow
+```
 
 **NOTE:** The rest of this guide concerns to *GPU Python environment only*.
 
-Along with the Cerebras CS System the ModelZoo allows for models to be run on GPUs as well. To run the model code on a GPU, certain packages need to be installed. This is usually best done in a virtual environment using ``virtualenv`` or `conda`. We provide instructions for setting up a ``virtualenv`` in this setup instructions.
+Along with the Cerebras Wafer-Scale Cluster, the Model Zoo allows for models to be run on GPUs as well. To run the model code on a GPU, certain packages need to be installed. This is usually best done in a virtual environment using ``virtualenv`` or `conda`. We provide instructions for setting up a ``virtualenv`` in this setup instructions.
 
 Follow along below for setting up a GPU environment setup.
 
@@ -12,7 +29,7 @@ Follow along below for setting up a GPU environment setup.
 
 ### CUDA requirements
 
-To run on a GPU, the CUDA libraries must be installed on the system. This includes both the CUDA toolkit as well as the cuDNN libraries. To install these packages, please follow the instructions provided on the [CUDA website](https://developer.nvidia.com/cuda-zone). And make sure to also include the [cuDNN library installation](https://developer.nvidia.com/cudnn). The TensorFlow and PyTorch models included in this ModelZoo have different requirements.
+To run on a GPU, the CUDA libraries must be installed on the system. This includes both the CUDA toolkit as well as the cuDNN libraries. To install these packages, please follow the instructions provided on the [CUDA website](https://developer.nvidia.com/cuda-zone). And make sure to also include the [cuDNN library installation](https://developer.nvidia.com/cudnn). The TensorFlow and PyTorch models included in this Model Zoo have different requirements.
 
 Please follow the specific instructions for each framework as described below:
 
@@ -21,7 +38,7 @@ Please follow the specific instructions for each framework as described below:
 
 ### PyTorch GPU setup
 
-Currently, the ModelZoo only supports PyTorch version `1.11` which requires CUDA version `10.1/10.2`.
+Currently, the Model Zoo only supports PyTorch version `1.11` which requires CUDA version `10.1/10.2`.
 
 Once all the CUDA requirements are installed, create a `virtualenv` on your system, with Python version `3.7` or newer, activate the `virtualenv` and install the packages needed for running PyTorch models using the below steps:
 
@@ -51,7 +68,7 @@ To test if PyTorch is able to properly access the GPU, start a Python session th
 
 ### TensorFlow GPU setup
 
-Currently, the ModelZoo only supports TensorFlow version `1.11` which requires CUDA version `10.1/10.2`.
+Currently, the Model Zoo only supports TensorFlow version `1.11` which requires CUDA version `10.1/10.2`.
 
 Once all the CUDA requirements are installed, create a `virtualenv` on your system, with Python version `3.7`, activate the `virtualenv` and install the packages needed for running TensorFlow models using the below steps:
 

@@ -15,10 +15,10 @@ and manually download the `tar.xz` file there to the location you want.
 To extract the manually downloaded files, run:
 
 ```bash
-bash extract.sh
+bash download_and_extract.sh
 ```
 
-Note that `extract.sh` may take a while to complete, as it unpacks 40GB of data (8,013,770 documents). Upon completion, the script will produce `openwebtext` folder in the same location. The folder has multiple subfolders, each containing a collection of `*.txt` files of raw text data (one document per `.txt` file).
+Note that `download_and_extract.sh` may take a while to complete, as it unpacks 40GB of data (8,013,770 documents). Upon completion, the script will produce `openwebtext` folder in the same location. The folder has multiple subfolders, each containing a collection of `*.txt` files of raw text data (one document per `.txt` file).
 
 ## Define train and evaluation datasets
 

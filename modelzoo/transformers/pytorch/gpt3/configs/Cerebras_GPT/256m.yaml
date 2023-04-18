@@ -83,8 +83,7 @@ model:
         b: 0.007559289460184544
 
     # Task-specific
-    loss_scaling: "batch_size"
-    loss_weight: 0.00048828125 # = 1/max_sequence_length
+    # loss_scaling defaults to num_tokens
     use_bias_in_output: False
 
     # Cerebras parameters
@@ -107,7 +106,7 @@ optimizer:
       - scheduler: "Linear"
         initial_learning_rate: 0.0006
         end_learning_rate: 6.0000e-05
-        decay_steps: 8775
+        steps: 8775
     weight_decay_rate: 0.1
     log_summaries: True
     correct_bias: True

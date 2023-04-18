@@ -58,6 +58,9 @@ class SGD(CSOptimizer):
 
         super(SGD, self).__init__(params, defaults)
 
+    def state_names_to_sparsify(self):
+        return ["momentum_buffer"]
+
     def preinitialize(self):
         """
         Allocates tensors for the optimizer state to allow direct compilation
@@ -70,6 +73,7 @@ class SGD(CSOptimizer):
                         p, device="cpu"
                     ).to(p.device)
 
+    @torch.no_grad()
     def step(self, closure=None):
         """Performs a single optimization step.
 
@@ -93,17 +97,15 @@ class SGD(CSOptimizer):
                 if p.grad is None:
                     continue
 
-                grad = p.grad.data
+                grad = p.grad
 
                 if grad.is_sparse:
                     raise RuntimeError("SGD does not support sparse gradients.")
 
-                p_data = p.data
-
                 grad = grad if not maximize else -grad
 
                 if weight_decay != 0:
-                    grad = grad.add(p_data, alpha=weight_decay)
+                    grad = grad.add(p, alpha=weight_decay)
 
                 if momentum != 0:
                     buf = self.state[p]["momentum_buffer"]
@@ -115,6 +117,6 @@ class SGD(CSOptimizer):
                     else:
                         grad = buf
 
-                p_data.add_(-lr * grad)
+                p.add_(-lr * grad)
 
         return loss

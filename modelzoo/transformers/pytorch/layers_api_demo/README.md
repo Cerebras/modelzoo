@@ -2,7 +2,8 @@
 - [List of topics](#list-of-topics)
 - [Overview of the demo](#overview-of-the-demo)
 - [Dummy dataset](#dummy-dataset)
-- [Steps to port the model](#steps-to-port-the-model)
+- [Modifications to the original model](#modifications-to-the-original-model)
+- [Set up workflow and test on cpu or gpu](#set-up-workflow-and-test-on-cpu-or-gpu)
 - [Convert model with layers API](#convert-model-with-layers-api)
 - [Running the model](#running-the-model)
   - [To compile/validate, run train and eval on Cerebras System](#to-compilevalidate-run-train-and-eval-on-cerebras-system)
@@ -11,9 +12,9 @@
 # Overview of the demo
 
 We will demo how to convert your PyTorch model implemented with modules like torch and torch.nn to a model that is ready to compile and run on CS Systems. We utilize our new layers API
- for transformers to make the conversion. Our layers API is created to minic the PyTorch implementation of transformer components. It currently contains modules that resemble torch.nn modules with customized implementation for Cerebras Architecture.
+ for transformers to make the conversion. Our layers API is created to mimic the PyTorch implementation of transformer components. It currently contains modules that resemble torch.nn modules with customized implementation for Cerebras Architecture.
 
-For more information of layers API please visit our [developer docs page](https://docs.cerebras.net/en/latest/pytorch-docs/pytorch-ops/index.html).
+For more information of layers API please visit our [developer docs page](https://docs.cerebras.net/en/latest/wsc/port/define-model/common/common.pytorch.html).
 
 This demo includes but not limited to the following torch.nn modules:
 
@@ -30,9 +31,11 @@ The original python version of the model is pulled and modified from a [PyTorch 
 
 For simplicity of the demo, we first create a dummy dataset with a small vocabulary set of 26, each representing an English letter. The task of the model will be simple, to produce the English letters in the right order. Dataset (`AlphabetDataset`) definition and train/test input dataloader are located in file [data.py](./data.py). We randomly create sequences of a certain length to be used to train the model on autoregressive generation. For example, an example pair of input and target (labels) is `input: [a, b, c, d] -> target: [b, c, d, e]`.
 
-# Steps to port the model
+# Modifications to the original model
 
-The model code from the PyTorch tutorial is put under file [pytorch_transformer.py](./pytorch_transformer.py). From this, only a few minor modifications need to be made as listed below:
+The model code from the PyTorch tutorial is put under file [pytorch_transformer.py](./pytorch_transformer.py).
+
+To make the model compatible with our layers api for later conversion, we need to make a few minor modifications as listed below:
 1. Set `batch_first` argument to be `True`. Currently we only support tensors with `batch_size` as the first dimension.
 2. Modified `PositionalEncoding` class to match `batch_first` by changing
 ```
@@ -50,16 +53,18 @@ to
 ```
 x = x + self.pe[:x.size(1)]
 ```
-3. Modify function `generate_square_subsequent_mask` such that it creates the tensor on the device with `torch.float16` as data type and uses `-1.0e4` as the negative constant instead of `-inf`.
+3. Modify function `generate_square_subsequent_mask` such that it creates the tensor on the device with `torch.float16` as data type and uses `torch.finfo(torch.float16).min` as the negative constant instead of `float('-inf')`.
 
-Now we set up the files `run.py`, `model.py` and `params.yaml` as described in the [workflow documentation](https://docs.cerebras.net/en/latest/pytorch-docs/adapting-pytorch-to-cs.html#porting-pytorch-to-cs).
+# Set up workflow and test on cpu or gpu
+
+Now we set up the files `run.py`, `model.py` and `params.yaml` as described in the [workflow documentation](https://docs.cerebras.net/en/latest/wsc/port/porting-pytorch-to-cs/adapting-pytorch-to-cs.html).
 Under `model.py`, we make modifications to the loss function and mask generator:
 1. Instead of using the default `torch.nn.CrossEntropyLoss`, we use our customized `GPTLMHeadModelLoss` from [model_utils](./../../../common/pytorch/model_utils/GPTLMHeadModelLoss.py).
 2. In `__call__` function of `model.py`, we calculate the loss by calling `self.loss_fn` defined by `GPTLMHeadModelLoss`.
 
-We could then verify that the model setup is correct by running on a cpu with command 
+We could then verify that the model setup is correct by running on a cpu or gpu with command 
 ```
-python run.py --mode train --params configs/params.yaml
+python run.py CPU/GPU --mode train --params configs/params.yaml
 ```
 
 # Convert model with layers API
@@ -141,8 +146,7 @@ After we have finished converting the model, it is ready to be compiled or run o
 
 ## To compile/validate, run train and eval on Cerebras System
 
-Please follow the instructions on our Developer Docs at:
-https://docs.cerebras.net/en/latest/getting-started/pytorch/index.html
+Please follow the instructions on our [quickstart in the Developer Docs](https://docs.cerebras.net/en/latest/wsc/getting-started/cs-appliance.html).
 
 ## To run train and eval on GPU/CPU
 

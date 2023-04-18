@@ -21,9 +21,7 @@ import random
 import numpy as np
 import torch
 
-from modelzoo.common.pytorch import cb_model as cm
 from modelzoo.common.pytorch.input_utils import bucketed_batch
-from modelzoo.common.pytorch.run_utils import half_dtype_instance
 from modelzoo.transformers.pytorch.bert.input.utils import get_meta_data
 from modelzoo.transformers.pytorch.input_utils import (
     get_data_for_task,
@@ -59,7 +57,6 @@ class BertCSVDataProcessor(torch.utils.data.IterableDataset):
     def __init__(self, params):
         super(BertCSVDataProcessor, self).__init__()
 
-        self.use_cs = cm.use_cs()
         # Input params.
         self.meta_data = get_meta_data(params["data_dir"])
 
@@ -108,11 +105,6 @@ class BertCSVDataProcessor(torch.utils.data.IterableDataset):
         self.persistent_workers = params.get("persistent_workers", False)
 
         # Store params.
-        self.mp_type = (
-            half_dtype_instance.half_dtype
-            if params.get("mixed_precision")
-            else torch.float32
-        )
         self.data_buffer = []
         self.csv_files_per_task_per_worker = []
         self.processed_buffers = 0
@@ -237,9 +229,7 @@ class BertCSVDataProcessor(torch.utils.data.IterableDataset):
         for batch in batched_dataset:
             if self.dynamic_mlm_scale:
                 scale = self.batch_size / torch.sum(batch["masked_lm_mask"])
-                batch["mlm_loss_scale"] = scale.expand(self.batch_size, 1).to(
-                    half_dtype_instance.half_dtype
-                )
+                batch["mlm_loss_scale"] = scale.expand(self.batch_size, 1)
             yield batch
 
     def _worker_init_fn(self, worker_id):

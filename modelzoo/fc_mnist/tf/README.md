@@ -28,12 +28,12 @@ See the following diagram:
 ![diagram](../images/tf_mnist.png)
 
 # Key features from CSoft platform used in this reference implementation
-FC MNIST model configs are supported in the [Layer Pipelined mode](https://docs.cerebras.net/en/latest/cerebras-basics/cerebras-execution-modes.html#layer-pipelined-mode).
+FC MNIST model configs are supported in the [Layer Pipelined mode](https://docs.cerebras.net/en/latest/wsc/cerebras-basics/cerebras-execution-modes.html#layer-pipelined-mode).
 
 ## Multi-Replica data parallel training
 When training on the Cerebras System, the `--multireplica` flag can be used to perform data-parallel training
 across multiple copies of the model at the same time. For more details about this feature, please refer
-to [Multi-Replica Data Parallel Training](https://docs.cerebras.net/en/latest/general/multi-replica-data-parallel-training.html) documentation page.
+to [Multi-Replica Data Parallel Training](https://docs.cerebras.net/en/latest/wsc/general/multi-replica-data-parallel-training.html) documentation page.
 
 # Structure of the code
 * `data.py`: Simple data input pipeline loading the dataset from [TFDS](https://www.tensorflow.org/datasets/catalog/mnist).
@@ -83,15 +83,14 @@ We use [`params.yaml`](configs/params.yaml) as an example, if you want to modify
 
 ## To compile/validate, run train and eval on Cerebras System
 
-Please follow the instructions on our Developer Docs at:
-https://docs.cerebras.net/en/latest/getting-started/tensorflow/index.html
+Please follow the instructions on our [quickstart in the Developer Docs](https://docs.cerebras.net/en/latest/wsc/getting-started/cs-appliance.html).
 
 ## To run train and eval on GPU/CPU
 
 If running on a cpu or gpu, activate the environment from [Python GPU Environment setup](../../../PYTHON-SETUP.md), and simply run:
 
 ```bash
-python run.py --mode train --params configs/params.yaml
+python run.py {CPU,GPU} --mode train --params configs/params.yaml
 ```
 
 If run outside of the Cerebras environment with `--mode train`, it will skip validation and compilation steps and proceed straight to the training on your allocated hardware.

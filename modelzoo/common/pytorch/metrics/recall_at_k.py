@@ -22,7 +22,7 @@ import torch
 from modelzoo.common.pytorch.metrics.cb_metric import CBMetric
 
 
-class RecallAtKMetric(CBMetric):
+class _PipelineRecallAtKMetric(CBMetric):
     """
     Recall@K takes the top K predictions and computes the true positive at K
     and false negative at K. For K = 1, it is the same as Recall.
@@ -59,7 +59,7 @@ class RecallAtKMetric(CBMetric):
     def __init__(self, k, name: Optional[str] = None):
         self.k = k
         self.num_classes = None
-        super(RecallAtKMetric, self).__init__(name=name)
+        super(_PipelineRecallAtKMetric, self).__init__(name=name)
 
     def init_state(self):
         self.reset_state()
@@ -106,3 +106,9 @@ class RecallAtKMetric(CBMetric):
     def reset_state(self):
         self.true_positive_at_k = 0.0
         self.false_negative_at_k = 0.0
+
+
+# Create a factory for creating a metric depending on execution strategy
+RecallAtKMetric = CBMetric.create_metric_impl_factory(
+    pipeline_metric_cls=_PipelineRecallAtKMetric, ws_metric_cls=None,
+)

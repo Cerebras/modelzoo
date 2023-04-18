@@ -1,16 +1,18 @@
 # Abstractive Summarization with GPT-J
 
-- [Introduction](#introduction)
-- [Sequence of the steps to perform](#sequence-of-the-steps-to-perform)
-- [Structure of the code](#structure-of-the-code)
-- [Dataset](#dataset)
-  - [Download and extract the dataset](#download-and-extract-the-dataset)
-  - [Create TFRecords](#create-tfrecords)
-  - [Data processing](#data-processing)
-- [Run fine-tuning on CS system](#run-fine-tuning-on-cs-system)
-- [Run fine-tuning on GPU and CPU](#run-fine-tuning-on-gpu-and-cpu)
-- [Configuration files included for this model](#configuration-files-included-for-this-model)
-- [Citations](#citations)
+- [Abstractive Summarization with GPT-J](#abstractive-summarization-with-gpt-j)
+  - [Introduction](#introduction)
+  - [Sequence of the steps to perform](#sequence-of-the-steps-to-perform)
+  - [Structure of the code](#structure-of-the-code)
+  - [Dataset](#dataset)
+    - [Download and extract the dataset](#download-and-extract-the-dataset)
+    - [Create TFRecords](#create-tfrecords)
+    - [Data processing](#data-processing)
+  - [Input function](#input-function)
+  - [To compile/validate, run train and eval on Cerebras System](#to-compilevalidate-run-train-and-eval-on-cerebras-system)
+    - [Run fine-tuning on GPU and CPU](#run-fine-tuning-on-gpu-and-cpu)
+  - [Configuration files included for this model](#configuration-files-included-for-this-model)
+  - [Citations](#citations)
 
 
 ## Introduction
@@ -115,13 +117,12 @@ GPT-J [[1]](https://github.com/kingoflolz/mesh-transformer-jax) uses the same in
 
 ## To compile/validate, run train and eval on Cerebras System
 
-Please follow the instructions on our Developer Docs at:
-https://docs.cerebras.net/en/latest/getting-started/tensorflow/index.html
+Please follow the instructions on our [quickstart in the Developer Docs](https://docs.cerebras.net/en/latest/wsc/getting-started/cs-appliance.html).
 
 ### Run fine-tuning on GPU and CPU
 To run pre-training on GPU/CPU, use the following command:
 ```bash
-python run.py --mode train_and_eval --params fine_tuning/abstractive_summarization/configs/params_finetuning.yaml --model_dir </path/to/model_dir> --max_steps <num_train_steps>
+python run.py {CPU,GPU} --mode train_and_eval --params fine_tuning/abstractive_summarization/configs/params_finetuning.yaml --model_dir </path/to/model_dir> --max_steps <num_train_steps>
 ```
 Note that our model implementation and run scripts are compatible to run on GPU, however handling any GPU cluster related programming is up-to the user.
 

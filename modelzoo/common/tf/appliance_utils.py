@@ -22,43 +22,53 @@ import argparse
 import inspect
 import logging
 import os
+import sys
+import time
+import traceback
 from typing import Callable, List, Optional
 
 import tensorflow as tf
 import yaml
-from cerebras_tensorflow.cs_estimator_app import CerebrasAppEstimator
 
-from cerebras_appliance.cs_run_config import CSRunConfig
-from cerebras_appliance.CSConfig import CSConfig
-from cerebras_appliance.pb.workflow.appliance.common.common_config_pb2 import (
-    DebugArgs,
-)
-from cerebras_appliance.pb.workflow.appliance.common.common_config_pb2 import (
-    ExecutionStrategy as ApplianceExecutionStrategy,
-)
-from cerebras_appliance.run_utils import get_debug_args as parse_debug_args
+from modelzoo import CSOFT_PACKAGE, CSoftPackage
+from modelzoo.common.run_utils.cli_parser import get_params_from_args
+from modelzoo.common.run_utils.utils import DeviceType
+from modelzoo.common.tf.estimator.cs_estimator import CerebrasEstimator
+from modelzoo.common.tf.estimator.run_config import CSRunConfig
 from modelzoo.common.tf.estimator.utils import (
     cs_disable_summaries,
     cs_enable_summaries,
 )
-from modelzoo.common.tf.run_utils import (
-    get_csrunconfig_dict,
-    get_params,
-    save_params,
-    update_params_from_args,
-)
+from modelzoo.common.tf.run_utils import get_csrunconfig_dict, save_params
+
+if CSOFT_PACKAGE == CSoftPackage.WHEEL or CSOFT_PACKAGE == CSoftPackage.SRC:
+    from cerebras_tensorflow.saver.checkpoint_reader import CheckpointReader
+
+    from cerebras_appliance.CSConfig import CSConfig
+    # pylint: disable=import-error
+    from cerebras_appliance.pb.workflow.appliance.common.common_config_pb2 import (
+        DebugArgs,
+    )
+    from cerebras_appliance.pb.workflow.appliance.common.common_config_pb2 import (
+        ExecutionStrategy as ApplianceExecutionStrategy,
+    )
+    from cerebras_appliance.run_utils import get_debug_args as parse_debug_args
 
 
 class ExecutionStrategy:
+    """Represent Cerebras Execution Strategies"""
+
     pipeline = "pipeline"
     weight_streaming = "weight_streaming"
 
     @classmethod
     def strategies(cls):
+        """Returns all available strategies."""
         return [cls.pipeline, cls.weight_streaming]
 
     @classmethod
     def as_appliance_key(cls, key: str):
+        """Transform strategy string key to a typed enum."""
         if key == cls.pipeline:
             return ApplianceExecutionStrategy.ES_PIPELINE
         elif key == cls.weight_streaming:
@@ -99,14 +109,9 @@ def get_debug_mgr_args(debug_ini_fp, debug_args):
                     task_type
                 ].container_image = cbcore_task_spec
         if scheduler_hint_allow_systems or allow_systems:
-            try:
-                debug_args.debug_mgr.scheduler_hints[
-                    "allow-systems"
-                ] = allow_systems
-            except:
-                debug_args.debug_mgr.labels[
-                    "!scheduler-hint-allow-systems"
-                ] = scheduler_hint_allow_systems
+            debug_args.debug_mgr.scheduler_hints[
+                "allow-systems"
+            ] = allow_systems
 
     return debug_args
 
@@ -126,148 +131,6 @@ def get_debug_args(debug_args_path, debug_ini_path):
     return debug_args
 
 
-def create_arg_parser(run_dir: str) -> argparse.ArgumentParser:
-    """Create a commandline argument parser.
-
-    Args:
-        run_dir: The root directory where to create the model_dir in.
-    Returns:
-        An ArgumentParser object.
-    """
-    default_model_dir = os.path.join(run_dir, "model_dir")
-
-    parser = argparse.ArgumentParser()
-    group = parser.add_mutually_exclusive_group()
-    parser.add_argument(
-        "--credentials_path",
-        default=None,
-        help="Credentials for cluster access.",
-    )
-    parser.add_argument(
-        "--mgmt_address",
-        default="cluster-server.cerebras.com:443",
-        help="<host>:<port> for cluster management.",
-    )
-    parser.add_argument(
-        "--mode",
-        required=True,
-        choices=["train", "eval"],
-        help="Whether to train or evaluate the model.",
-    )
-    parser.add_argument(
-        "--params",
-        required=True,
-        help="Path to the model parameters YAML file.",
-    )
-    parser.add_argument(
-        "--num_csx",
-        default=1,
-        type=int,
-        help="Number of CS-X nodes to use in weight streaming mode. Pipeline "
-        "mode only supports execution on one CS-X.",
-    )
-    parser.add_argument(
-        "--steps",
-        default=None,
-        type=int,
-        help="Number of steps to train, regardless of the global step loaded "
-        "from the checkpoint, if any.",
-    )
-    parser.add_argument(
-        "--max_steps",
-        default=None,
-        type=int,
-        help="Maximum global step (possibly loaded from checkpoint) to train "
-        "up to.",
-    )
-    parser.add_argument(
-        "--num_wgt_servers",
-        default=None,
-        type=int,
-        help="Maximum number of weight servers to use in weight streaming "
-        "execution strategy.",
-    )
-    parser.add_argument(
-        "--num_workers_per_csx",
-        default=0,
-        type=int,
-        help="Number of workers to use for streaming inputs per CS node. If "
-        "0, a default value based on the model will be chosen. Defaults "
-        "to 0.",
-    )
-    group.add_argument(
-        "--compile_only",
-        action="store_true",
-        help="Compile model completely, generating compiled executables.",
-    )
-    group.add_argument(
-        "--validate_only",
-        action='store_true',
-        help="Compile model up to kernel matching only.",
-    )
-    parser.add_argument(
-        "--execution_strategy",
-        choices=ExecutionStrategy.strategies(),
-        type=str,
-        default=None,
-        help="Execution strategy for running the model.",
-    )
-    parser.add_argument(
-        "--multireplica",
-        action="store_true",
-        help="Run multiple copies of the model data-parallel on the wafer at "
-        "the same time. This option only takes effect when running in "
-        "pipeline execution strategy.",
-    )
-    parser.add_argument(
-        "--model_dir",
-        default=default_model_dir,
-        help="Model directory where checkpoints will be written to. If "
-        "directory exists, weights are loaded from the checkpoint file.",
-    )
-    parser.add_argument(
-        "--debug_args_path", default=None, help="Path to debug args file.",
-    )
-    parser.add_argument(
-        "--mount_dirs",
-        nargs="+",
-        help="A list of paths to be mounted to the appliance containers.",
-    )
-    parser.add_argument(
-        "--python_paths",
-        nargs="+",
-        help="A list of paths to be exported into PYTHONPATH for worker "
-        "containers.",
-    )
-    parser.add_argument(
-        "--transfer_processes",
-        type=int,
-        default=None,
-        help="Number of processes to use when transferring weights.",
-    )
-    parser.add_argument(
-        "--compile_dir", default=None, help="Compile directory."
-    )
-    parser.add_argument(
-        "--checkpoint_path",
-        default=None,
-        help="Checkpoint to initialize weights from.",
-    )
-    parser.add_argument(
-        "--logging",
-        default=None,
-        help="Specifies the logging level. Defaults to INFO.",
-    )
-    parser.add_argument(
-        "--job_labels",
-        nargs="+",
-        help="A list of equal-sign-separated key value pairs served as "
-        "job labels.",
-    )
-
-    return parser
-
-
 def parse_args_and_params(
     run_dir: str, set_default_params: Optional[Callable] = None,
 ) -> dict:
@@ -280,21 +143,44 @@ def parse_args_and_params(
     Returns:
         Params parsed from cmdline arguments and the params file.
     """
-    parser = create_arg_parser(run_dir)
-    args = parser.parse_args()
 
-    params = get_params(args.params)
+    def tf_specific_args_parser():
+        tf_parser = argparse.ArgumentParser(add_help=False)
+        tf_parser_opt = tf_parser.add_argument_group(
+            "Optional Arguments, Tensorflow Specific"
+        )
+        tf_parser_opt.add_argument(
+            "--steps",
+            type=int,
+            default=None,
+            help="Specifies the number of steps to run",
+        )
+        tf_gpu_parser = argparse.ArgumentParser(add_help=False)
+        tf_parser_gpu_opt = tf_gpu_parser.add_argument_group(
+            "Optional Arguments, Tensorflow GPU Runs"
+        )
+        tf_parser_gpu_opt.add_argument(
+            "--device",
+            default=None,
+            help="Force model to run on a specific device (e.g., --device /gpu:0)",
+        )
+        return {
+            DeviceType.ANY: [tf_parser],
+            DeviceType.GPU: [tf_gpu_parser],
+        }
+
+    params = get_params_from_args(
+        run_dir, extra_args_parser_fn=tf_specific_args_parser
+    )
+
     if set_default_params:
         set_default_params(params)
-
-    runconfig_params = params["runconfig"]
-    update_params_from_args(args, runconfig_params)
 
     return params
 
 
 def update_debug_args_from_stack_params(
-    debug_args: DebugArgs, stack_params_fn: Callable[[dict], dict], params: dict
+    debug_args, stack_params_fn: Callable[[dict], dict], params: dict
 ) -> None:
     """Gets stack params and encodes them in the give debug args.
 
@@ -304,12 +190,13 @@ def update_debug_args_from_stack_params(
             stack params for the model.
         params: The parsed model params.
     """
+    # pylint: disable=import-error
     from google.protobuf import json_format
 
     from cerebras_appliance.pb.stack.full_pb2 import FullConfig
 
-    # FullConfig is only set for CS-X runs, so here we set a dummy cs-ip and
-    # revert later
+    # FullConfig is only set for CS-X runs, so
+    # here we set a dummy cs-ip and revert later
     params["runconfig"]["cs_ip"] = "localhost:1234"
     stack_params = stack_params_fn(params) or {}
     params["runconfig"].pop("cs_ip")
@@ -341,11 +228,12 @@ def update_debug_args_from_stack_params(
         )
 
 
-def setup_logging(level: str):
+def setup_logging(level: str, logging_dir: Optional[str] = None):
     """Sets up the logging verbosity level.
 
     Args:
         level: The logging level string.
+        logging_dir: Where to store logs for archival purposes.
     """
     level = level or "INFO"
     level = level.upper()
@@ -359,7 +247,37 @@ def setup_logging(level: str):
     level = logging.getLevelName(level)
 
     tf.compat.v1.logging.set_verbosity(level)
-    logging.basicConfig(level=level)
+    handlers = []
+    handler = logging.StreamHandler(sys.stdout)
+    handlers.append(handler)
+    if logging_dir:
+        os.makedirs(logging_dir, exist_ok=True)
+        time_stamp = time.strftime("%Y%m%d_%H%M%S")
+        logging_file = os.path.join(logging_dir, f"run_{time_stamp}.log")
+        handler = logging.FileHandler(logging_file)
+        handlers.append(handler)
+        tf_logger = logging.getLogger("tensorflow")
+        tf_logger.addHandler(handler)
+    # Remove any handlers that may have been inadvertently set before
+    logging.getLogger().handlers.clear()
+
+    logging.basicConfig(level=level, handlers=handlers)
+
+    original_hook = sys.excepthook
+
+    def cerebras_logging_hook(exc_type, exc_value, exc_traceback):
+        """Pipe uncaught exceptions through logger"""
+        msg = "".join(
+            traceback.format_exception(exc_type, exc_value, exc_traceback)
+        )
+        logging.error(f"Uncaught exception:\n{msg}")
+        if (
+            original_hook != sys.__excepthook__
+            and original_hook != cerebras_logging_hook
+        ):
+            original_hook(exc_type, exc_value, exc_traceback)
+
+    sys.excepthook = cerebras_logging_hook
 
 
 def run_appliance(
@@ -371,7 +289,7 @@ def run_appliance(
     stack_params_fn: Optional[Callable] = None,
     enable_cs_summaries: bool = False,
 ):
-    """Helper method for running models on Appliance.
+    """Helper method for running models locally or on CS-X Systems.
 
     Args:
         model_fn: A callable for creating the model.
@@ -395,6 +313,12 @@ def run_appliance(
     params = parse_args_and_params(run_dir, default_params_fn)
     runconfig_params = params["runconfig"]
 
+    use_cs = runconfig_params["target_device"] == DeviceType.CSX
+    if not use_cs:
+        assert not runconfig_params[
+            "multireplica"
+        ], "Multi-replica training is only possible on the Cerebras System."
+
     # Figure out the execution strategy
     if not runconfig_params.get("execution_strategy"):
         # If not provided, default to the first one in supported strategies
@@ -404,51 +328,72 @@ def run_appliance(
             f"This model does not support "
             f"{runconfig_params['execution_strategy']} execution strategy."
         )
+    if (
+        runconfig_params["execution_strategy"]
+        == ExecutionStrategy.weight_streaming
+    ):
+        assert not runconfig_params["multireplica"], (
+            f"Multi-replica training is not possible in "
+            f"{runconfig_params['execution_strategy']} execution strategy."
+        )
 
     # Save params to file for reproducibility
     save_params(params, model_dir=runconfig_params["model_dir"])
 
     # Setup logging
-    setup_logging(runconfig_params.get("logging"))
-
-    # Create debug args
-    debug_args = get_debug_args(runconfig_params["debug_args_path"], run_dir)
-    if (
-        runconfig_params["execution_strategy"] == ExecutionStrategy.pipeline
-        and stack_params_fn is not None
-    ):
-        update_debug_args_from_stack_params(debug_args, stack_params_fn, params)
+    setup_logging(
+        runconfig_params.get("logging"), runconfig_params.get("model_dir")
+    )
 
     # Figure out the input_fn to use
     if runconfig_params["mode"] == "train":
         input_fn = train_input_fn
         mode = tf.estimator.ModeKeys.TRAIN
-    elif runconfig_params["mode"] == "eval":
+    elif (
+        runconfig_params["mode"] == "eval"
+        or runconfig_params["mode"] == "eval_all"
+    ):
         input_fn = eval_input_fn
         mode = tf.estimator.ModeKeys.EVAL
     else:
         raise ValueError(f'Mode not supported: {runconfig_params["mode"]}')
 
-    # Create the run config
-    csrunconfig_dict = get_csrunconfig_dict(runconfig_params)
-    cs_run_config = CSRunConfig(
-        cs_config=CSConfig(
-            num_csx=runconfig_params["num_csx"],
+    # Create debug args and CSConfig
+    cs_config = None
+    if CSOFT_PACKAGE is not CSoftPackage.NONE:
+        debug_args = get_debug_args(
+            runconfig_params["debug_args_path"], run_dir
+        )
+        if (
+            runconfig_params["execution_strategy"] == ExecutionStrategy.pipeline
+            and stack_params_fn is not None
+        ):
+            update_debug_args_from_stack_params(
+                debug_args, stack_params_fn, params
+            )
+        cs_config = CSConfig(
+            num_csx=runconfig_params.get("num_csx", 1),
             max_wgt_servers=runconfig_params["num_wgt_servers"],
-            mgmt_address=runconfig_params["mgmt_address"],
-            credentials_path=runconfig_params["credentials_path"],
+            max_act_per_csx=runconfig_params["num_act_servers"],
+            mgmt_address=runconfig_params.get("mgmt_address"),
+            mgmt_namespace=runconfig_params.get("mgmt_namespace"),
+            credentials_path=runconfig_params.get("credentials_path"),
             debug_args=debug_args,
             mount_dirs=runconfig_params["mount_dirs"],
             python_paths=runconfig_params["python_paths"],
-            transfer_processes=runconfig_params["transfer_processes"],
+            transfer_processes=runconfig_params.get("transfer_processes"),
             num_workers_per_csx=runconfig_params["num_workers_per_csx"],
             execution_strategy=ExecutionStrategy.as_appliance_key(
                 runconfig_params["execution_strategy"]
             ),
             job_labels=runconfig_params["job_labels"],
-        ),
-        **csrunconfig_dict,
-    )
+            job_time_sec=runconfig_params["job_time_sec"],
+            disable_version_check=runconfig_params["disable_version_check"],
+        )
+    # Create the run config if running within some sort of Cerebras environment
+    csrunconfig_dict = get_csrunconfig_dict(runconfig_params)
+
+    cs_run_config = CSRunConfig(cs_config=cs_config, **csrunconfig_dict,)
 
     # Create context for capturing summaries on CS-X. Note that summaries in
     # multi-replica training are not supported.
@@ -460,7 +405,7 @@ def run_appliance(
 
     with summary_ctx:
         # Create estimator
-        cs_estimator = CerebrasAppEstimator(
+        cs_estimator = CerebrasEstimator(
             model_fn,
             params=params,
             config=cs_run_config,
@@ -484,14 +429,51 @@ def run_appliance(
                 input_fn,
                 steps=runconfig_params["eval_steps"],
                 checkpoint_path=runconfig_params["checkpoint_path"],
-                use_cs=True,
+                use_cs=use_cs,
             )
+        elif runconfig_params["mode"] == 'eval_all':
+            # Each individual run is a single eval
+            params["runconfig"]['mode'] = "eval"
+
+            model_dir = runconfig_params["model_dir"]
+
+            if CSOFT_PACKAGE is not CSoftPackage.NONE:
+                ckpts = CheckpointReader.all_checkpoints(model_dir)
+            else:
+                ckpts = tf.train.get_checkpoint_state(
+                    model_dir
+                ).all_model_checkpoint_paths
+
+            if not ckpts:
+                raise ValueError(
+                    f"model_dir {model_dir} does not contain any checkpoints. "
+                    f"Please double check your directory and associated "
+                    f"metadata files."
+                )
+
+            for ckpt in ckpts:
+                if CSOFT_PACKAGE is not CSoftPackage.NONE:
+                    if not CheckpointReader.is_a_checkpoint(ckpt):
+                        logging.warning(
+                            f"Checkpoint {ckpt} is in the checkpoint metadata file "
+                            f"in the model dir {model_dir}, but does not exist. "
+                            f"Skipping eval for this checkpoint."
+                        )
+                        continue
+
+                logging.info(f"Running evaluate on checkpoint: {ckpt}")
+                cs_estimator.evaluate(
+                    input_fn,
+                    steps=runconfig_params["eval_steps"],
+                    checkpoint_path=ckpt,
+                    use_cs=use_cs,
+                )
         elif runconfig_params["mode"] == "train":
             cs_estimator.train(
                 input_fn,
                 steps=runconfig_params["steps"],
                 max_steps=runconfig_params["max_steps"],
-                use_cs=True,
+                use_cs=use_cs,
             )
         else:
             raise ValueError(f'Mode not supported: {runconfig_params["mode"]}')

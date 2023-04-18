@@ -15,7 +15,6 @@
 from typing import Optional, Union
 
 from torch import Tensor
-from torch.nn import LayerNorm
 
 from modelzoo.common.pytorch.layers.TransformerDecoderLayer import (
     SelfAndCrossAttnKV,
@@ -37,22 +36,8 @@ class GPTJDecoderLayer(TransformerDecoderLayer):
     ):
         super(GPTJDecoderLayer, self).__init__(d_model, nhead, **kwargs)
         self.use_untied_layer_norm = use_untied_layer_norm
-        layer_norm_eps = kwargs.get("layer_norm_eps", 1.0e-5)
-        self.neox_untied_ln = None
-        if self.use_untied_layer_norm:
-            self.neox_untied_ln = LayerNorm(d_model, eps=layer_norm_eps)
-
-        self.__reset_parameters()
-
-    def reset_parameters(self):
-        super().reset_parameters()
-        self.__reset_parameters()
-
-    def __reset_parameters(self):
-        if self.neox_untied_ln is not None:
-            if hasattr(self.neox_untied_ln, 'bias'):
-                self.neox_untied_ln.bias.data.zero_()
-            self.neox_untied_ln.weight.data.fill_(1.0)
+        if not self.use_untied_layer_norm:
+            self.norm3 = None
 
     def forward(
         self,
@@ -85,8 +70,11 @@ class GPTJDecoderLayer(TransformerDecoderLayer):
             cache_present_kv=cache_present_kv,
             self_attn_position_bias=self_attn_position_bias,
         )
-        if self.neox_untied_ln is not None:
-            hidden_normed = self.neox_untied_ln(x)
+
+        # Apply untied layernorm in neox
+        if self.norm3 is not None:
+            hidden_normed = self.norm3(x)
+
         ffn_output = self.ffn(hidden_normed)
         outputs = residual + ffn_output + attn_output[0]
         return outputs

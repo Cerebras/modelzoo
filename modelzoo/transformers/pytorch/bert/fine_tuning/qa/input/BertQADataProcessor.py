@@ -22,7 +22,6 @@ import numpy as np
 import torch
 
 from modelzoo.common.pytorch import cb_model as cm
-from modelzoo.common.pytorch.run_utils import half_dtype_instance
 from modelzoo.transformers.data_processing.utils import convert_str_to_int_list
 from modelzoo.transformers.pytorch.bert.input.utils import (
     get_meta_data,
@@ -33,7 +32,7 @@ from modelzoo.transformers.pytorch.input_utils import get_data_for_task, task_id
 
 class BertQADataProcessor(torch.utils.data.IterableDataset):
     """
-    Reads csv file containing the input token ids, and label_ids. 
+    Reads csv file containing the input token ids, and label_ids.
     Creates attention_masks and sedment_ids on the fly
 
     Args:
@@ -56,7 +55,6 @@ class BertQADataProcessor(torch.utils.data.IterableDataset):
     def __init__(self, params):
         super(BertQADataProcessor, self).__init__()
 
-        self.use_cs = cm.use_cs()
         # Input params.
         self.meta_data = get_meta_data(params["data_dir"])
 
@@ -110,11 +108,6 @@ class BertQADataProcessor(torch.utils.data.IterableDataset):
             self.num_workers = reduced_workers
 
         # Store params.
-        self.mp_type = (
-            half_dtype_instance.half_dtype
-            if params.get("mixed_precision")
-            else torch.float32
-        )
         self.data_buffer = []
         self.csv_files_per_task_per_worker = []
         self.processed_buffers = 0

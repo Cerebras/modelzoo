@@ -106,7 +106,7 @@ def generate_square_subsequent_mask(sz: int, device=None) -> Tensor:
         torch.triu(
             torch.ones((sz, sz), device=device, dtype=torch.float16), diagonal=1
         )
-        * -1.0e4
+        * torch.finfo(torch.float16).min
     )
 
 

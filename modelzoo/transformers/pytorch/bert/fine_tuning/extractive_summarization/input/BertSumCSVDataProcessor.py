@@ -20,7 +20,6 @@ import csv
 import numpy as np
 import torch
 
-from modelzoo.common.pytorch import cb_model as cm
 from modelzoo.transformers.data_processing.utils import (
     convert_str_to_int_list,
     pad_input_sequence,
@@ -40,7 +39,7 @@ from modelzoo.transformers.pytorch.input_utils import (
 
 class BertSumCSVDataProcessor(torch.utils.data.IterableDataset):
     """
-    Reads csv file containing the `input_token_ids`, and `label_ids`. 
+    Reads csv file containing the `input_token_ids`, and `label_ids`.
     Creates `attention_mask` and `segment_ids` on the fly
     :param <dict> params: dict containing input parameters for creating dataset.
     """
@@ -48,7 +47,6 @@ class BertSumCSVDataProcessor(torch.utils.data.IterableDataset):
     def __init__(self, params):
         super(BertSumCSVDataProcessor, self).__init__()
 
-        self.use_cs = cm.use_cs()
         # Input params.
         self.meta_data = get_meta_data(params["data_dir"])
 

@@ -29,14 +29,82 @@ import re
 from collections import defaultdict
 from typing import Dict, Iterable, List, Tuple
 
+import numpy as np
+
 from cerebras_appliance.appliance_manager import (
     TensorGroup,
     TensorGrouper,
     TensorSendPayload,
 )
-from modelzoo.common.model_utils.sparsity.sparsifiers import SPARSIFIER_MAP
-from modelzoo.common.model_utils.sparsity.utils import extract_mask_from_weight
+from modelzoo.common.pytorch import cb_model as cm
 from modelzoo.common.pytorch.PyTorchBaseModel import PyTorchBaseModel
+
+
+def compute_mask(
+    params: dict, weight: np.ndarray
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Compute a sparsity mask for the given weight according to params
+
+    Args:
+        params: configuration of the sparsity to compute
+        weight: The initial weight values.
+
+    Returns:
+        mask with np.dtype bool of same shape as weight indicating sparsity
+        pattern: True: keep weight. False: prune weight.
+
+        regrow with np.dtype bool indicating positions which _were_ pruned that
+        should instead be regrown as zeros
+    """
+    # Get the numpy sparsifier params.
+    init_method = params["init_method"]
+    sparsity = params["sparsity"]
+
+    # Positions of all NaNs.
+    pruned = ~np.isfinite(weight)
+    num_pruned = np.count_nonzero(pruned)
+
+    rng = np.random.default_rng(params["seed"])
+
+    if init_method == "random":
+        # Score is randomly distributed values in range (0,1)
+        score = rng.random(weight.shape, dtype=weight.dtype)
+
+        # Existing pruned positions should be low magnitude to be chosen only
+        # if we are _decreasing_ sparsity, so negate their score.
+        if num_pruned:
+            score[pruned] *= -1
+    elif init_method == "topk":
+        # score is weight magnitude
+        score = np.abs(weight)
+
+        # The logical magnitude of pruned weights is zero, but their literal
+        # magnitude is NaN. In order to prevent NaNs from disrupting tokp and
+        # to possibly regrow deterministically, use a seeded RNG to put a
+        # random negative score into all pruned positions. Such a negative
+        # score will only be selected by topk if we are _decreasing_ sparsity.
+        if num_pruned:
+            score[pruned] = -rng.random(num_pruned, dtype=weight.dtype)
+
+    score_shape = score.shape
+    score = score.reshape(1, -1)
+
+    # Compute the number of elements to keep, rounding toward sparsity
+    numel = score.shape[-1]
+    keep = numel - int(np.round(sparsity * numel))
+    # Compute the indices of the score to keep
+    keep_index = np.argpartition(score, -keep)[:, -keep:]
+
+    # Put True into the kept positions
+    mask = np.zeros(score.shape, dtype=np.bool)
+    np.put_along_axis(mask, keep_index, True, axis=-1)
+
+    mask = mask.reshape(score_shape)
+
+    # If a weight is kept now but it was pruned before, we're regrowing.
+    regrow = mask & pruned
+    return mask, regrow
 
 
 def appliance_sparsify(
@@ -52,50 +120,25 @@ def appliance_sparsify(
         weight_fw_name: The fw_name of the weight in tensors.
         tensors: tensors in the group, with their tensor member set.
     """
-    # Get the numpy sparsifier params.
-    # Translate from 1.8 style yaml to numpy sparsifier setting.
-    mask_type = params["init_method"]
-    if mask_type == "random":
-        mask_type = "constant"
-    sparsity_level = params["sparsity"]
-    # Every weight needs a unique seed in case random pattern is used.
-    # numpy.random.seed must be 32bit int
-    seed = (params["seed"] + hash(weight_fw_name)) % (1 << 32)
 
-    # Construct numpy sparsifier.
-    sparsifier = SPARSIFIER_MAP[mask_type](
-        n_iter=0,
-        sparsity_level=sparsity_level,
-        sparsity_distribution="uniform",  # Its a single weight anyway.
-        seed=seed,
-    )
-    sparse_val = float("nan")  # hardcoded
-
-    # Build the dense weight dict with only the single weight.
-    # We've already determined we'll sparsify this at a higher level, so just
-    # use "weight" as the name to force it through.
-    WEIGHT = "weight"
-    dense_weights_dict = {}
+    # Compute the mask for these sparsity params and the main tensor
     for tensor in tensors:
         if tensor.fw_name == weight_fw_name:
-            dense_weights_dict[WEIGHT] = tensor.tensor
+            mask, regrow = compute_mask(params, tensor.tensor)
+            break
 
-    # Go compute new sparsity pattern and add NaNs.
-    sparse_weight = sparsifier.get_masked_weights(
-        0, dense_weights_dict, sparse_val
-    )[WEIGHT]
+    if params.get("dump_masks"):
+        np.save(weight_fw_name, mask)
 
-    mask = extract_mask_from_weight(sparse_weight, sparse_val)
-
-    # Modify `tensors` in-place.
+    # Modify `tensors` in-place, poking nans into their pruned positions.
     fw_names = []
     for tensor in tensors:
         fw_names.append(tensor.fw_name)
-        if tensor.fw_name == weight_fw_name:
-            tensor.tensor = sparse_weight
-        else:
-            tensor.tensor *= mask
-    logging.debug(f"Applied {sparsity_level} sparsity to {fw_names}")
+        # Poke NaN into pruned positions.
+        tensor.tensor[~mask] = float('nan')
+        # Regrow unpruned into zero magnitude for both weight and opt state.
+        tensor.tensor[regrow] = 0
+    logging.debug(f"Applied sparsity {params} to {fw_names}")
 
 
 def sparsify_grouper(
@@ -157,46 +200,31 @@ def validate_sparsity_params(params: dict):
     be raised if there are any invalid or unsupported settings.
     """
 
-    # validate type
-    valid_types = (
-        "For 1.7, the only valid setting is `sideband`, but 1.8 will support "
-        "`static`, `gmp`, `set`, or `rigl`."
-    )
-    sparsity_type = params.get("type")
-    if sparsity_type is None:
-        raise ValueError(
-            f"To use sparsity, a `type` field must be present. {valid_types}"
-        )
-    elif sparsity_type != "sideband":
-        raise ValueError(
-            f"Invalid sparsity `type` \"{sparsity_type}\". {valid_types}"
-        )
-
     # validate init_method, sparsity, and seed
     def validate_group(block, context):
-        init_methods = ["random", "topk", "balanced-topk", "checkerboard"]
+        init_methods = ["random", "topk"]
         init_method = block.get("init_method")
-        if init_method not in init_methods:
-            if init_method is None:
-                raise ValueError(
-                    f"{context} is missing required `init_method`. Valid "
-                    f"options are: {init_methods}."
-                )
-            else:
-                raise ValueError(
-                    f"{context} has invalid `init_method`: \"{init_method}\". "
-                    f"Valid options are: {init_methods}."
-                )
+        if init_method is None:
+            raise ValueError(
+                f"{context} is missing required `init_method`. Valid "
+                f"options are: {init_methods}."
+            )
+        elif init_method not in init_methods:
+            raise ValueError(
+                f"{context} has invalid `init_method`: \"{init_method}\". "
+                f"Valid options are: {init_methods}."
+            )
+
         sparsity = block.get("sparsity")
         if sparsity is None:
             raise ValueError(
                 f"{context} is missing required `sparsity` which must be a "
-                f"fraction between 0.0 and 1.0 (inclusive)."
+                f"fraction in the range [0.0, 1.0)."
             )
-        elif not isinstance(sparsity, float) or sparsity < 0 or sparsity > 1:
+        elif not isinstance(sparsity, float) or sparsity < 0 or sparsity >= 1:
             raise ValueError(
                 f"{context} has invalid `sparsity`: {sparsity}, which must be "
-                f"a fraction between 0.0 and 1.0 (inclusive)."
+                f"a fraction in the range [0.0, 1.0)."
             )
 
         seed = block.get("seed")
@@ -290,16 +318,23 @@ def build_sparsify_grouper(
     # enclosed grouper function which is returned.
     sparse_tensor_groups = {}
 
-    sparsify_params = {
-        "sparsity": params.get("sparsity", 0.0),
-        "init_method": params.get("init_method", "topk"),
-        "seed": params.get("seed", 0),
-    }
+    sparsify_params = params.copy()
+
+    # Set up the base seed if no param group overrides it.
+    seed = sparsify_params.get("seed")
+    if seed is None:
+        # Choose a random 32bit number
+        sparsify_params["seed"] = np.random.randint(1 << 32)
 
     def should_sparsify(name, param):
         # By default, sparsify params that are > 1D and not embedding or norm.
         name = name.lower()
-        if len(param.shape) <= 1 or "embedding" in name or "norm" in name:
+        if (
+            len(param.shape) <= 1
+            or "embedding" in name
+            or "norm" in name
+            or "lm_head" in name
+        ):
             return False
         return True
 
@@ -310,7 +345,7 @@ def build_sparsify_grouper(
         return None
 
     # Check if there is a yaml specified param name pattern
-    param_name_patterns = params.get("param_name_patterns", None)
+    param_name_patterns = sparsify_params.pop("param_name_patterns", None)
     if isinstance(param_name_patterns, str):
         # Just a single config changing which params the defaults apply to.
         pattern = re.compile(param_name_patterns)
@@ -350,11 +385,14 @@ def build_sparsify_grouper(
     # For printing a single info level summary log statement.
     summary_info = defaultdict(int)
 
-    for name, param in model.model.named_parameters():
+    for i, (name, param) in enumerate(model.model.named_parameters()):
         weight_sparsify_params = get_sparsify_params(name, param)
         if not weight_sparsify_params:
             # None result means no sparsity at all.
             continue
+        cm.set_attribute(param, "sparse", True)
+        sparsity = weight_sparsify_params["sparsity"]
+        cm.set_attribute(param, "sparsity", sparsity)
 
         # All names the appliance deals with are flattened with "."
         name = "model." + name
@@ -372,13 +410,24 @@ def build_sparsify_grouper(
                     # Found the state_dict key for this related tensor.
                     opt_state_name = f"optimizer.state.{param_id}.{state_name}"
                     opt_state_names.append(opt_state_name)
+                    cm.set_attribute(state_tensor, "sparse", True)
+                    cm.set_attribute(state_tensor, "sparsity", sparsity)
                     break
+
+        # Aggregate summary before setting per weight unique seed.
+        summary_info[tuple(weight_sparsify_params.items())] += 1
+
+        # Copy the per-weight params since we modify it to set a unique seed.
+        weight_sparsify_params = weight_sparsify_params.copy()
+        # Every weight needs a unique seed in case random pattern is used.
+        # Sparsity is applied to tensors independently in parallel
+        # processes and the rng state between weights is not shared.
+        weight_sparsify_params["seed"] += i
 
         logging.debug(
             f"Sparsity for \"{name}\" + {opt_state_names}: "
             f"{weight_sparsify_params}"
         )
-        summary_info[tuple(weight_sparsify_params.items())] += 1
 
         sparse_tensor_groups[name] = (weight_sparsify_params, opt_state_names)
 
@@ -386,5 +435,22 @@ def build_sparsify_grouper(
         logging.info(
             f"Will apply sparsity to {count} weights with {dict(tuple_params)}"
         )
+    if not summary_info:
+        logging.warning("No sparsity applied.")
+        if param_name_patterns:
+            logging.warning(
+                f"Sparsity was configured with custom `param_name_patterns`: "
+                f"{param_name_patterns}, but no parameter names matched "
+                f"those patterns. Check the model.named_parameters()."
+            )
+        else:
+            logging.warning(
+                "Sparsity was configured with the default heuristic of "
+                "applying to multidimensional parameters excluding bias, "
+                "embedding, and normalization layers. But no parameters met "
+                "those conditions. Check the model.named_parameters() and "
+                "specify `param_name_patterns` in the sparsity config block "
+                "to opt-in to sparsify some parameters."
+            )
 
     return functools.partial(sparsify_grouper, sparse_tensor_groups)

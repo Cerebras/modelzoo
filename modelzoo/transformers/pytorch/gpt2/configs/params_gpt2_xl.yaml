@@ -1,4 +1,18 @@
-# GPT-2 X Large 48-layer, 1600-hidden, 16-heads, 1.5B parameters.
+# Copyright 2022 Cerebras Systems.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# GPT-2 X Large 48-layer, 1600-hidden, 16-heads, 1.5B parameters
 # https://huggingface.co/gpt2-xl/blob/main/config.json
 # https://d4mucfpksywv.cloudfront.net/better-language-models/language_models_are_unsupervised_multitask_learners.pdf
 train_input:
@@ -6,7 +20,7 @@ train_input:
     data_dir: "./language/datasets/owt_pretraining_gpt_hdf5/train_8M_msl1024/"
     vocab_size: 50257
     max_sequence_length: 1024
-    # For high utilization in weight streaming, we estimate batch size >96 seqs
+    # For high utilization in weight streaming, we estimate batch size >95 seqs
     batch_size: 95
     shuffle: True
     shuffle_seed: 1337
@@ -41,7 +55,6 @@ model:
     # https://huggingface.co/gpt2-xl/blob/main/config.json#L11 Since OpenAI did not share this setting
     layer_norm_epsilon: 1.0e-5 # change to 1.0e-12 for single precision training
 
-
     # Encoder - Attention
     num_heads: 16  # it was confirmed with authors that in fact it is 16 not 25
     attention_type: "scaled_dot_product"
@@ -55,22 +68,32 @@ model:
     nonlinearity: "gelu"
     use_ffn_bias: True
     use_bias_in_output: False # As used in https://amaarora.github.io/2020/02/18/annotatedGPT2.html
+    loss_scaling: "batch_size"
     loss_weight: 0.0009765625 # = 1/max_sequence_length
 
+    # Following TensorFlow which sets the bounds for truncated normal initialization to [-2*std, 2*std]
+    # https://www.tensorflow.org/api_docs/python/tf/keras/initializers/TruncatedNormal
     embedding_initializer:
         name: "truncated_normal"
         mean: 0.0
         std: 0.02
+        a: -0.04
+        b: 0.04
 
     initializer:
         name: "truncated_normal"
         mean: 0.0
         std: 0.02
+        a: -0.04
+        b: 0.04
 
     output_layer_initializer:
         name: "truncated_normal"
         mean: 0.0
         std: 0.002041241452 # 0.02 / sqrt(2 * num_hidden_layers)
+        a: -0.004082482904
+        b: 0.004082482904
+
 
     # Cerebras parameters
     mixed_precision: True
@@ -83,20 +106,20 @@ optimizer:
     beta1: 0.9
     beta2: 0.999
     learning_rate:
-    # learning rate picked from table 2.1 of GPT-3 paper
+    # https://en.wikipedia.org/wiki/GPT-2
         - scheduler: "Linear"
           initial_learning_rate: 0.0
           steps: 10779 # 2000 * 512/95 (warmup)
           end_learning_rate: 1.0e-4 # sqrt(95 / 512) * 0.00025
         - scheduler: "CosineDecay"
           initial_learning_rate: 1.0e-4 # sqrt(95 / 512) * 0.00025
-          end_learning_rate: 0 # https://en.wikipedia.org/wiki/GPT-2
-          decay_steps: 3073099 # 3083878 - 10779
+          end_learning_rate: 0
+          steps: 3073099 # 3083878 - 10779
     loss_scaling_factor: "dynamic"
     max_gradient_norm: 1.0
 
 runconfig:
-    max_steps: 3083878 # 300000000000 / (1024 * 512) * 512 / 95
+    max_steps: 3083878 # 300000000000/(1024*512) * 512 / 95
     log_steps: 100
     checkpoint_steps: 10000
     seed: 1

@@ -80,6 +80,7 @@ model:
   tf_summary: False
   precision_opt_level: 0
 
+
 optimizer:
   optimizer_type: "adamw"
   epsilon: 1.0e-8

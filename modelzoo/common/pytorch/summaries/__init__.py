@@ -12,5 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .cb_summary import CBSummary, get_all_summaries, save_all_summaries
+"""Package for providing summaries that work on CPU/GPU/CS-X."""
+
+from .cb_summary import (
+    CBSummary,
+    discard_cached_summaries,
+    get_all_summaries,
+    save_all_summaries,
+)
 from .scalar_summary import scalar_summary
+from .tensor_summary import TensorSummaryReader, tensor_summary

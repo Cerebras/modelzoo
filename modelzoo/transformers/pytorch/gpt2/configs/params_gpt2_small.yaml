@@ -61,6 +61,7 @@ model:
 
     # Task-specific
     use_bias_in_output: False
+    loss_scaling: "batch_size"
     loss_weight: 0.0009765625
 
     # Cerebras parameters

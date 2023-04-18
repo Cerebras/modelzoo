@@ -15,7 +15,7 @@ train_input:
         - "./language/datasets/pile_original/hdf5_dataset/train_neox_msl2048/9/"
     vocab_size: 50277
     max_sequence_length: 2048
-    batch_size: 85
+    batch_size: 75
     shuffle: True
     shuffle_seed: 1337
     num_workers: 8
@@ -27,7 +27,7 @@ eval_input:
     data_dir: "./language/datasets/pile_original/hdf5_dataset/val_neox_msl2048/"
     vocab_size: 50277
     max_sequence_length: 2048
-    batch_size: 85
+    batch_size: 75
     shuffle: False
     num_workers: 8
     prefetch_factor: 10
@@ -64,7 +64,7 @@ model:
 
     loss_scaling: "batch_size"
     loss_weight: 0.00048828125 # = 1/max_sequence_length
-    
+
     # We use truncated_normal instead of normal (ref: https://github.com/EleutherAI/gpt-neox) with the same std and mean for better performance.
     # We chose to align with Neox 20B for std
     embedding_initializer:
@@ -94,17 +94,17 @@ optimizer:
     max_gradient_norm: 1.0
     correct_bias: True
     learning_rate:
-        -   steps: 77101 # 1% of max_steps
+        -   steps: 87381 # 1% of max_steps
             scheduler: "Linear"
             initial_learning_rate: 0.0
-            end_learning_rate: 3.6e-5 # sqrt(85 / 2048) * 1.6e-4
+            end_learning_rate: 3.06e-5 # sqrt(75 / 2048) * 1.6e-4
         -   scheduler: "CosineDecay"
-            initial_learning_rate: 3.6e-5
-            decay_steps: 7633016 # 7710117 - 77101
-            end_learning_rate: 3.6e-6 # (1.0 - 0.9) * 3.6e-5
+            initial_learning_rate: 3.06e-5
+            steps: 8650752 # 8738133 - 87381
+            end_learning_rate: 3.06e-6 # (1.0 - 0.9) * 3.06e-5
 
 runconfig:
-    max_steps: 7710117 # 320000 * 2048 / 85
+    max_steps: 8738133 # 320000 * 2048 / 75
     log_steps: 100
     checkpoint_steps: 5000
     seed: 1

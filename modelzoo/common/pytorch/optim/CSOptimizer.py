@@ -28,8 +28,8 @@ class CSOptimizer(Optimizer, ABC):
 
     def __init__(self, params, defaults, enable_global_step=False):
         """
-        Cerebras Base Optimizer class handles preinitialization of 
-        optimizer states for non-CS runs, making the implementation 
+        Cerebras Base Optimizer class handles preinitialization of
+        optimizer states for non-CS runs, making the implementation
         of the optimizer compatible with both CS and non-CS runs.
         It also preinitializes global steps tensor and provides a method
         to retrieve the global steps.
@@ -45,6 +45,40 @@ class CSOptimizer(Optimizer, ABC):
                         0.0, device="cpu", dtype=torch.float32
                     ).to(p.device)
 
+        self.post_load_state_dict()
+
+    def load_state_dict(self, state_dict):
+        super().load_state_dict(state_dict)
+        self.post_load_state_dict()
+
+    def post_load_state_dict(self):
+        """
+        Actions to perform after initializing state and loading the state dict
+        """
+
+        def tensor_cast(value):
+            if isinstance(value, int):
+                value = torch.tensor(value, dtype=torch.int32)
+            elif isinstance(value, float):
+                value = torch.tensor(value, dtype=torch.float32)
+            elif isinstance(value, (list, tuple)):
+                value = type(value)(map(tensor_cast, value))
+            return value
+
+        # Convert all python scalars in the param groups to 32 bit torch tensors
+        for param_group in self.param_groups:
+            keys = list(param_group.keys())
+            for key in keys:
+                if key == "params":
+                    for p in param_group["params"]:
+                        state_names = list(self.state[p].keys())
+                        for name in state_names:
+                            value = self.state[p].pop(name)
+                            self.state[p][name] = tensor_cast(value)
+                else:
+                    value = param_group.pop(key)
+                    param_group[key] = tensor_cast(value)
+
     def _get_global_step(self, p):
         """
         Increases the global steps by 1 and returns the current
@@ -53,6 +87,13 @@ class CSOptimizer(Optimizer, ABC):
         self.state[p]["step"] += 1.0
         global_step = self.state[p]["step"]
         return global_step
+
+    @abstractmethod
+    def state_names_to_sparsify(self):
+        """
+        Return the names of of per-parameter states that need to be sparsified
+        when applying sparsity to the underlying parameters.
+        """
 
     @abstractmethod
     def preinitialize(self):

@@ -23,7 +23,6 @@ import numpy as np
 import torch
 
 from modelzoo.common.pytorch import cb_model as cm
-from modelzoo.common.pytorch.run_utils import half_dtype_instance
 from modelzoo.transformers.pytorch.bert.input.utils import (
     build_vocab,
     get_meta_data,
@@ -60,14 +59,13 @@ class BertTokenClassifierDataProcessor(torch.utils.data.IterableDataset):
                 the worker processes after a dataset has been consumed once.
     :pram model_params (dict): Model parameters for creating the dataset.
         Expects the following to be defined:
-        - "include_padding_in_loss" (bool): If set to true then a loss mask will be 
+        - "include_padding_in_loss" (bool): If set to true then a loss mask will be
             generated such that padding tokens will be included in the loss calculation.
     """
 
     def __init__(self, params, model_params):
         super(BertTokenClassifierDataProcessor, self).__init__()
 
-        self.use_cs = cm.use_cs()
         # Input params.
         self.meta_data = get_meta_data(params["data_dir"])
 
@@ -182,11 +180,6 @@ class BertTokenClassifierDataProcessor(torch.utils.data.IterableDataset):
         )
 
         # Store params.
-        self.mp_type = (
-            half_dtype_instance.half_dtype
-            if params.get("mixed_precision")
-            else torch.float32
-        )
         self.data_buffer = []
         self.csv_files_per_task_per_worker = []
         self.processed_buffers = 0
@@ -343,7 +336,7 @@ def create_ner_features(
                 shape: (`max_sequence_length`), dtype: int32.
             * 'attention_mask': Numpy array with attention mask.
                 shape: (`max_sequence_length`), dtype: int32.
-            * 'loss_mask': Numpy array equal to attention mask if 
+            * 'loss_mask': Numpy array equal to attention mask if
                 `include_padding_in_loss` is False, else all ones.
                 shape: (`max_sequence_length`), dtype: int32.
             * 'token_type_ids': Numpy array with segment ids.

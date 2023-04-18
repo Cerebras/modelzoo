@@ -27,7 +27,7 @@ from modelzoo.common.pytorch.utils import to_tensor
 
 
 class NAdam(CSOptimizer):
-    """Implements NAdam algorithm to execute within the constraints
+    r"""Implements NAdam algorithm to execute within the constraints
     of the Cerebras WSE, including pre-initializing optimizer state.
 
     Args:
@@ -45,7 +45,7 @@ class NAdam(CSOptimizer):
 
     For further details regarding the algorithm refer to 
     Incorporating Nesterov Momentum into Adam:
-        https://openreview.net/forum?id=OM0jvwB8jIp57ZJjtNEZ
+    https://openreview.net/forum?id=OM0jvwB8jIp57ZJjtNEZ
     """
 
     def __init__(
@@ -87,6 +87,9 @@ class NAdam(CSOptimizer):
         )
         super(NAdam, self).__init__(params, defaults, enable_global_step=True)
 
+    def state_names_to_sparsify(self):
+        return ["exp_avg", "exp_avg_sq"]
+
     def preinitialize(self):
         """Allocates tensors for the optimizer state to allow direct compilation
         of the model before the first step.
@@ -102,6 +105,7 @@ class NAdam(CSOptimizer):
                     p, device="cpu"
                 ).to(p.device)
 
+    @torch.no_grad()
     def step(self, closure=None):
         """Performs a single optimization step.
 
@@ -134,17 +138,17 @@ class NAdam(CSOptimizer):
                     global_step = self._get_global_step(p)
 
                     beta2t = torch.pow(
-                        to_tensor(beta2).to(p.data.device), global_step
+                        to_tensor(beta2).to(p.device), global_step
                     )
                     bias_correction2 = 1 - beta2t
 
-                    grad = p.grad.data
+                    grad = p.grad
 
                     if weight_decay > 0.0:
-                        grad.add_(p.data, alpha=weight_decay)
+                        grad.add_(p, alpha=weight_decay)
 
                     # calculate the momentum cache \mu^{t} and \mu^{t+1}
-                    point_nine_six = to_tensor(0.96).to(p.data.device)
+                    point_nine_six = to_tensor(0.96).to(p.device)
                     mu_pow = torch.pow(
                         point_nine_six, (global_step * momentum_decay)
                     )
@@ -175,6 +179,6 @@ class NAdam(CSOptimizer):
                     # multiply with lr
                     update *= -lr
                     # update params
-                    p.data.addcdiv_(update, denom)
+                    p.addcdiv_(update, denom)
 
         return loss

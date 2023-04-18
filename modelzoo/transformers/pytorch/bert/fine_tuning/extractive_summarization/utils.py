@@ -26,3 +26,6 @@ def set_defaults(params, mode=None):
         "layer_norm_epsilon", 1.0e-5
     )
     params["model"]["vocab_file"] = params["eval_input"]["vocab_file"]
+    params["optimizer"]["log_summaries"] = params["optimizer"].get(
+        "log_summaries", False
+    )

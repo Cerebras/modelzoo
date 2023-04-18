@@ -17,7 +17,12 @@ import torch.nn as nn
 from modelzoo.common.pytorch.layers import (
     EmbeddingLayer,
     GPTJDecoderLayer,
+    RelativePositionEmbeddingLayer,
     TransformerDecoder,
+)
+from modelzoo.common.pytorch.layers.utils import apply_position_bias
+from modelzoo.common.pytorch.model_utils.RotaryPositionEmbeddingHelper import (
+    RotaryPositionEmbeddingHelper,
 )
 from modelzoo.transformers.pytorch.transformer_utils import (
     build_broadcastable_attention_mask,
@@ -35,6 +40,7 @@ class GPTJModel(nn.Module):
         share_embedding_weights=True,
         position_embedding_type="rotary",
         rotary_dim=None,
+        num_relative_attention_buckets=32,
         # Decoder params
         num_hidden_layers=12,
         filter_size=3072,
@@ -57,6 +63,7 @@ class GPTJModel(nn.Module):
         embedding_initializer=None,
         attention_initializer=None,
         output_layer_initializer=None,
+        attention_kernel=None,
     ):
         super(GPTJModel, self).__init__()
         self.hidden_size = hidden_size
@@ -99,6 +106,7 @@ class GPTJModel(nn.Module):
             dropout=dropout_rate,
             activation=nonlinearity,
             layer_norm_eps=layer_norm_epsilon,
+            extra_attention_params={},
             add_cross_attention=False,
             attention_type=attention_type,
             attention_dropout_rate=attention_dropout_rate,
@@ -119,16 +127,24 @@ class GPTJModel(nn.Module):
             decoder_layer, num_layers=num_hidden_layers, norm=self.ln_f
         )
 
-        if rotary_dim is None:
-            rotary_dim = hidden_size // num_heads
         embedding_helper = self.embedding_layer.position_embedding_helper(
-            num_heads=num_heads, rotary_dim=rotary_dim,
+            num_heads=num_heads,
+            num_relative_attention_buckets=num_relative_attention_buckets,
+            rotary_dim=rotary_dim,
         )
-        self.rotary_pe_helper = embedding_helper
+
+        self.rotary_pe_helper = None
+        self.relative_pe_helper = None
+        if isinstance(embedding_helper, RotaryPositionEmbeddingHelper):
+            self.rotary_pe_helper = embedding_helper
+        elif isinstance(embedding_helper, (RelativePositionEmbeddingLayer,),):
+            self.relative_pe_helper = embedding_helper
 
         self.lm_head = nn.Linear(
             hidden_size, vocab_size, bias=use_bias_in_output
         )
+
+        self.tie_weights()
 
         self.__reset_parameters()
 
@@ -189,10 +205,17 @@ class GPTJModel(nn.Module):
             dtype=hidden_states.dtype,
         )
 
+        # Helpers on alibi/relative position embeddings
+        length = input_ids.shape[1]
+        self_attn_position_bias = apply_position_bias(
+            self.relative_pe_helper, length, length
+        )
+
         hidden_states = self.transformer_decoder(
             hidden_states,
             tgt_mask=causal_attention_mask,
             rotary_position_embedding_helper=self.rotary_pe_helper,
+            self_attn_position_bias=self_attn_position_bias,
         )
 
         lm_logits = self.lm_head(hidden_states)

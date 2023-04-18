@@ -22,6 +22,7 @@ import torch
 from torch.cuda.amp import GradScaler, autocast
 
 from modelzoo.common.pytorch.pytorch_base_runner import PyTorchBaseRunner
+from modelzoo.common.pytorch.sparsity.finalizer import finalize_cs2_sparsity
 
 
 class PyTorchRunner(PyTorchBaseRunner):
@@ -127,21 +128,16 @@ class PyTorchRunner(PyTorchBaseRunner):
             f"{', '.join(item for item in update_data if item)}"
         )
 
-        if self._scaler:
-            self._writer.add_scalar(
-                "loss_scale", self._scaler.get_scale(), step
-            )
-        if self._lr_scheduler:
-            # self._lr_scheduler.get_last_lr() return a list of LRs for
-            # different param groups of the optimizer. Here, we are assuming
-            # that we only have one param group in the optimizer
-            self._writer.add_scalar(
-                "lr", self._lr_scheduler.get_last_lr()[0], step
-            )
-
     def _maybe_load_checkpoint(self, checkpoint_path: Optional[str], mode: str):
         state_dict = super()._maybe_load_checkpoint(checkpoint_path, mode)
         if state_dict:
+            if self._params.get("sparsity", {}):
+                # CS2 training sideband sparsity represents pruned weights with
+                # NaN. Set those all to zero after loading a checkpoint.
+                logging.warning(
+                    "FINALIZING SPARSITY. ALL FUTURE TRAINING WILL BE DENSE."
+                )
+                finalize_cs2_sparsity(self._model.model, self._model.optimizer)
             scaler_state = state_dict.get("scaler")
             if self._scaler and scaler_state:
                 self._scaler.load_state_dict(scaler_state)
@@ -156,6 +152,8 @@ class PyTorchRunner(PyTorchBaseRunner):
             model_state["scaler"] = self._scaler.state_dict()
 
         torch.save(model_state, file_name)
+
+        self.on_checkpoint_saved(file_name, step)
 
     def _to_device(self, data: Union[dict, list, tuple], non_blocking=False):
         device_data = None

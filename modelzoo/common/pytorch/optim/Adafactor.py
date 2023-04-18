@@ -94,6 +94,11 @@ class Adafactor(Optimizer):
         if not cm.use_cs():
             self.preinitialize()
 
+    def state_names_to_sparsify(self):
+        # Only return state names which can be maskable by sparsity optimizer:
+        # those with the same shape as their corresponding parameter
+        return ["exp_avg", "exp_avg_sq"]
+
     def add_global_step(self, global_step):
         """
         Stores a `global_step` tensor which will be used in computation and
@@ -160,6 +165,7 @@ class Adafactor(Optimizer):
         c_factor = exp_avg_sq_col.rsqrt().unsqueeze(-2)
         return torch.mul(r_factor, c_factor)
 
+    @torch.no_grad()
     def step(self, closure=None):
         """
         Performs a single optimization step.
@@ -176,7 +182,7 @@ class Adafactor(Optimizer):
             for p in group["params"]:
                 if p.grad is None:
                     continue
-                grad = p.grad.data
+                grad = p.grad
 
                 if grad.is_sparse:
                     raise RuntimeError(
@@ -188,15 +194,13 @@ class Adafactor(Optimizer):
                 factored = "exp_avg_sq_row" in state
                 use_first_moment = "exp_avg" in state
 
-                p_data = p.data
-
                 if hasattr(self, "global_step"):
                     global_step_fp32 = self.global_step.add(1).float()
                 else:
                     state["step"] += 1
                     global_step_fp32 = state["step"].float()
 
-                lr = self._get_lr(group, self._rms(p_data))
+                lr = self._get_lr(group, self._rms(p))
 
                 beta2t = 1.0 - torch.pow(
                     global_step_fp32, to_tensor(group["decay_rate"]).item()
@@ -240,8 +244,8 @@ class Adafactor(Optimizer):
                     update = exp_avg
 
                 if group["weight_decay"] > 0.0:
-                    p_data.sub_(p_data.mul(group["weight_decay"] * lr))
+                    p.sub_(p.mul(group["weight_decay"] * lr))
 
-                p_data.sub_(update)
+                p.sub_(update)
 
         return loss

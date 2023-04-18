@@ -15,25 +15,15 @@
 """
 Accuracy metric for PyTorch.
 """
+import warnings
+
 import torch
 
 from modelzoo.common.pytorch import cb_model as cm
-from modelzoo.common.pytorch import cbtorch
 from modelzoo.common.pytorch.metrics.cb_metric import CBMetric, DeviceOutputs
 
 
-def AccuracyMetric(*args, **kwargs):
-    """Calculates accuracy from labels and predictions, the top-1 accuracy."""
-    ws_enabled = False
-    if cm.use_cs():
-        ws_enabled = cbtorch.env().weight_streaming_mode
-    if ws_enabled:
-        return WSAccuracyMetric(*args, **kwargs)
-    else:
-        return PipelineAccuracyMetric(*args, **kwargs)
-
-
-class PipelineAccuracyMetric(CBMetric):
+class _PipelineAccuracyMetric(CBMetric):
     def init_state(self):
         self.reset_state()
 
@@ -63,14 +53,22 @@ class PipelineAccuracyMetric(CBMetric):
         self.total_num_tokens = 0.0
 
 
-class WSAccuracyMetric(CBMetric):
+class _WSAccuracyMetric(CBMetric):
     def init_state(self):
         self.reset_state()
 
     def update_on_device(self, labels, predictions, weights=None, dtype=None):
+        if labels.shape != predictions.shape:
+            warnings.warn(
+                "Shapes mismatch in accuracy metric"
+                f"\n    labels: {labels.shape}"
+                f"\n    predictions {predictions.shape}"
+            )
+            predictions = predictions.reshape(labels.shape)
+
         correct_predictions = (labels == predictions).float()
-        num_correct_predictions = correct_predictions.sum()
         if weights is None:
+            num_correct_predictions = correct_predictions.sum()
             num_tokens = torch.tensor(
                 correct_predictions.numel(),
                 dtype=torch.float32,
@@ -78,6 +76,7 @@ class WSAccuracyMetric(CBMetric):
             )
         else:
             correct_predictions = correct_predictions * weights
+            num_correct_predictions = correct_predictions.sum()
             num_tokens = (weights > 0).float().sum()
         self.total_correct_predictions.add_(num_correct_predictions)
         self.total_num_tokens.add_(num_tokens)
@@ -111,3 +110,10 @@ class WSAccuracyMetric(CBMetric):
             "total_correct_predictions": self.total_correct_predictions,
             "total_num_tokens": self.total_num_tokens,
         }
+
+
+# Create a factory for creating a metric depending on execution strategy
+AccuracyMetric = CBMetric.create_metric_impl_factory(
+    pipeline_metric_cls=_PipelineAccuracyMetric,
+    ws_metric_cls=_WSAccuracyMetric,
+)

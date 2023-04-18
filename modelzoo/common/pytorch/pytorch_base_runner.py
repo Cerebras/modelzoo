@@ -25,6 +25,7 @@ import re
 import warnings
 from collections import defaultdict
 from contextlib import ExitStack, contextmanager
+from inspect import isclass
 from typing import Callable, Optional, Tuple, Union
 
 import numpy as np
@@ -33,16 +34,23 @@ from torch.utils.tensorboard import SummaryWriter
 
 from modelzoo.common.pytorch import cb_model as cm
 from modelzoo.common.pytorch import cbtorch, modes
-from modelzoo.common.pytorch.half_dtype import half_dtype_instance
 from modelzoo.common.pytorch.loss_utils import LossSaver, extract_loss
 from modelzoo.common.pytorch.metrics import (
     compute_all_metrics,
     reset_all_metrics,
 )
 from modelzoo.common.pytorch.PyTorchBaseModel import PyTorchBaseModel
-from modelzoo.common.pytorch.summaries import save_all_summaries
+from modelzoo.common.pytorch.summaries import (
+    discard_cached_summaries,
+    save_all_summaries,
+    scalar_summary,
+)
 from modelzoo.common.pytorch.summary_collection import SummaryCollection
-from modelzoo.common.pytorch.utils import ExecutionStrategy, visit_structure
+from modelzoo.common.pytorch.utils import (
+    RunConfigParamsValidator,
+    visit_structure,
+)
+from modelzoo.common.run_utils.utils import DeviceType, ExecutionStrategy
 
 
 class PyTorchBaseRunner(metaclass=abc.ABCMeta):
@@ -76,6 +84,9 @@ class PyTorchBaseRunner(metaclass=abc.ABCMeta):
         self._grad_accum_steps = self._params["optimizer"].get(
             "grad_accum_steps", 1
         )
+        self._log_summaries = self._params["optimizer"].get(
+            "log_summaries", False
+        )
         self._show_debug_metrics = self._runconfig.get(
             "show_debug_metrics", False
         )
@@ -96,10 +107,6 @@ class PyTorchBaseRunner(metaclass=abc.ABCMeta):
             "save_initial_checkpoint", False
         )
         self._save_stream_size = self._runconfig.get("save_stream_size", 0)
-
-        self._fabric_config_file = self._runconfig.get(
-            "fabric_config_file", None
-        )
 
         # Summary writer object
         self._writers = {}
@@ -123,6 +130,106 @@ class PyTorchBaseRunner(metaclass=abc.ABCMeta):
             )
             summary_ctx.__enter__()
             atexit.register(summary_ctx.__exit__)
+
+    def _log_summaries_params_norm(self, requires_grad=True):
+        """
+        Args:
+            requires_grad (bool): whether to only include params that requires gradient update
+        """
+        # Computes global norm of all params, but calculating
+        # norm of each set of params individually first and then
+        # combining of all norms.
+        if cm.use_cs():
+            device = self._model.model.device
+        else:
+            device = self._model.device
+
+        param_norm = torch.tensor(0.0).to(device)
+        for _, param in self._model.model.named_parameters():
+            if not requires_grad:
+                # simply add if we want to include all params
+                param_norm += torch.pow(torch.norm(param), 2.0)
+            elif param.requires_grad:
+                # only add the param if it requires gradient update
+                param_norm += torch.pow(torch.norm(param), 2.0)
+        param_norm = torch.sqrt(param_norm)
+        scalar_summary("model_wise_params_norm", param_norm)
+
+    def _log_summaries_grad_norm(self, is_clipped=False, is_scaled=False):
+        """
+        Args:
+            is_clipped (bool): whether to log clipped gradient
+            is_scaled (bool): whether to log scaled gradient
+        """
+        # This should be called after unscaling and before grad clipping
+        if cm.use_cs():
+            device = self._model.model.device
+        else:
+            device = self._model.device
+
+        param_grad_norm = torch.tensor(0.0).to(device)
+        for _, param in self._model.model.named_parameters():
+            if param.grad is not None:
+                param_grad_norm += torch.pow(torch.norm(param.grad), 2.0)
+        param_grad_norm = torch.sqrt(param_grad_norm)
+        summary_str = "model_wise_grad_norm"
+        summary_str += "_clipped" if is_clipped else "_unclipped"
+        summary_str += "_scaled" if is_scaled else "_unscaled"
+        scalar_summary(summary_str, param_grad_norm)
+
+    def _log_summaries_grad_norm_per_layer(
+        self, is_clipped=False, is_scaled=False
+    ):
+        """
+        Args:
+            is_clipped (bool): whether to log clipped gradient
+            is_scaled (bool): whether to log scaled gradient
+        """
+        # Computes global norm of all params, but calculating
+        # norm of each set of params individually first and then
+        # combining of all norms.
+
+        param_norm = {}
+        layer_pattern_str = r'.*(layers\.)(\d+)(\.).*'
+        layer_pattern = re.compile(layer_pattern_str)
+        for name, param in self._model.model.named_parameters():
+            if param.grad is None:
+                continue
+            # get a match if module name contains `layers.i.0` where i is layer num
+            match = layer_pattern.match(name)
+            if match:
+                layer_id = match.group(2)
+                if layer_id not in param_norm:
+                    param_norm[layer_id] = torch.tensor(0.0).to(param.device)
+                param_norm[layer_id] += torch.pow(torch.norm(param.grad), 2.0)
+
+        for layer_id in param_norm:
+            param_norm[layer_id] = torch.sqrt(param_norm[layer_id])
+            summary_str = "per_layer_grad_norm"
+            summary_str += "_clipped" if is_clipped else "_unclipped"
+            summary_str += "_scaled" if is_scaled else "_unscaled"
+            summary_str += f"/layer_{layer_id}"
+            scalar_summary(summary_str, param_norm[layer_id])
+
+    def _log_summaries_learing_rate(self):
+        if self._lr_scheduler:
+            # self._lr_scheduler.get_last_lr() return a list of LRs for
+            # different param groups of the optimizer. We create one
+            # learning rate tracker for each param group with identifier `lr_{i}`
+            # where i is the index of the param group
+            last_lrs = self._lr_scheduler.get_last_lr()
+            if not isinstance(last_lrs, list):
+                last_lrs = [last_lrs]
+            for i, last_lr in enumerate(last_lrs):
+                scalar_summary(f"lr_params_group_{i}", last_lr)
+
+    def _log_summaries_loss_scale(self):
+        if self._scaler:
+            scalar_summary("loss_scale", self._scaler.get_scale())
+
+    @property
+    def _should_log_extra_summaries(self):
+        return self._log_summaries
 
     @property
     def _writer(self) -> Optional[SummaryWriter]:
@@ -378,6 +485,22 @@ class PyTorchBaseRunner(metaclass=abc.ABCMeta):
         if self._fetch_steps == 0:  # Always fetch the outputs of the last step
             self._fetch_steps = self._total_steps
 
+    def _is_fetch_step_helper(self, step, step_offset: int = 0):
+        """
+        Checks whether the step provided is a step where values are pre-scheduled to
+        come off of the Cerebras system.
+
+        Primarily for performance reasons.
+
+        Args:
+            step_offset: Used to offset the run step in eval where the global
+                step is not incremented.
+        """
+        step = step + step_offset
+        return step == self._total_steps or (
+            self._fetch_steps > 0 and step % self._fetch_steps == 0
+        )
+
     def _is_fetch_step(self, step_offset: int = 0):
         """
         Checks whether we are on a step where values are pre-scheduled to
@@ -389,10 +512,7 @@ class PyTorchBaseRunner(metaclass=abc.ABCMeta):
             step_offset: Used to offset the run step in eval where the global
                 step is not incremented.
         """
-        step = self._run_step + step_offset
-        return step == self._total_steps or (
-            self._fetch_steps > 0 and step % self._fetch_steps == 0
-        )
+        return self._is_fetch_step_helper(self._run_step, step_offset)
 
     def _is_checkpoint_step(self, step_offset: int = 0):
         """
@@ -442,7 +562,7 @@ class PyTorchBaseRunner(metaclass=abc.ABCMeta):
         if self.is_master_ordinal():
             # Save initial checkpoint
             if self._save_initial_checkpoint:
-                self._save_checkpoint(self.world_global_step)
+                self._save_checkpoint(self._global_step)
 
             # Save dataloader streams for testing
             if self._save_stream_size:
@@ -474,6 +594,9 @@ class PyTorchBaseRunner(metaclass=abc.ABCMeta):
                     for writer in self._writers.values():
                         writer.flush()
                         writer.close()
+
+    def on_checkpoint_saved(self, checkpoint_path: str, step: int):
+        """Function to execute after a checkpoint is saved."""
 
     def on_train_start(self):
         """Function to execute before training starts"""
@@ -510,6 +633,7 @@ class PyTorchBaseRunner(metaclass=abc.ABCMeta):
         self._maybe_check_loss_value(loss)
         self._maybe_save_loss(loss)
         self._maybe_save_summaries()
+        self._maybe_log_throughput()
         self._maybe_save_checkpoint()
 
     def on_eval_batch_start(self, data):
@@ -518,11 +642,12 @@ class PyTorchBaseRunner(metaclass=abc.ABCMeta):
 
     def on_eval_batch_end(self, loss, epoch: int = None, step: int = None):
         """Actions to perform after the eval batch iteration is complete"""
+        eval_step = step + 1
+
         # Add step closures
-        self._maybe_write_log(loss, step_offset=step + 1)
-        self._maybe_check_loss_value(loss, step_offset=step + 1)
-        self._maybe_save_loss(loss, epoch=epoch, step_offset=step + 1)
-        self._maybe_save_summaries(step_offset=step + 1)
+        self._maybe_write_log(loss, step_offset=eval_step, base_step=0)
+        self._maybe_check_loss_value(loss, step_offset=eval_step)
+        self._maybe_save_summaries(step_offset=eval_step, base_step=0)
         self._accumulate_loss_value(loss)
 
     def train_forward(self, data):
@@ -562,24 +687,28 @@ class PyTorchBaseRunner(metaclass=abc.ABCMeta):
     def optimizer_step(self):
         """Performs the optimizer step"""
         if self._scaler:
-            # Unscales the gradients of optimizer's
-            # assigned params in-place
+            # Unscales the gradients of optimizer's assigned params in-place
             self._scaler.unscale_(self._optimizer)
-            # gradient clipping
-            if (
-                hasattr(self._optimizer, "gradient_clipper")
-                and self._optimizer.gradient_clipper is not None
-            ):
-                self._optimizer.gradient_clipper(self._model.model.parameters())
+
+        if self._should_log_extra_summaries:
+            # gather unclipped gradients after unscale and before grad clipping
+            self._log_summaries_grad_norm(is_clipped=False, is_scaled=False)
+            self._log_summaries_grad_norm_per_layer(
+                is_clipped=False, is_scaled=False
+            )
+
+        # gradient clipping
+        if (
+            hasattr(self._optimizer, "gradient_clipper")
+            and self._optimizer.gradient_clipper is not None
+        ):
+            self._optimizer.gradient_clipper(self._model.model.parameters())
+
+        if self._scaler:
             self._scaler.step(self._optimizer)
+            # Compute new loss scale.
             self._scaler.update()
         else:
-            # gradient clipping
-            if (
-                hasattr(self._optimizer, "gradient_clipper")
-                and self._optimizer.gradient_clipper is not None
-            ):
-                self._optimizer.gradient_clipper(self._model.model.parameters())
             self._optimizer.step()
 
     def lr_scheduler_step(self):
@@ -648,7 +777,19 @@ class PyTorchBaseRunner(metaclass=abc.ABCMeta):
             grad_accum_step += 1
 
             if grad_accum_step % self._grad_accum_steps == 0:
+
+                if self._should_log_extra_summaries:
+                    self._log_summaries_params_norm()
+
                 self.optimizer_step()
+
+                # Learning rate must be summarized before it is stepped for CS-X
+                # and non-CS-X runs to match. This is because stepping it on
+                # non-CS-X will eagerly update the value and we'll be printing
+                # the learning rate used in the next step, not the current one.
+                if self._should_log_extra_summaries:
+                    self._log_summaries_learing_rate()
+                    self._log_summaries_loss_scale()
 
                 self.lr_scheduler_step()
 
@@ -695,7 +836,7 @@ class PyTorchBaseRunner(metaclass=abc.ABCMeta):
 
     @torch.no_grad()
     def eval_epoch(self, dataloader, epoch: int = None):
-        """Runs an epoch of training
+        """Runs an epoch of evaluation
 
         Args:
             dataloader: The dataloader to iterate through
@@ -703,9 +844,6 @@ class PyTorchBaseRunner(metaclass=abc.ABCMeta):
         """
         self._active_mode = modes.EVAL
         exit_epoch = False
-
-        # Set the appropriate writers
-        self._loss_saver.writer = self._writer
 
         reset_all_metrics()
 
@@ -715,11 +853,11 @@ class PyTorchBaseRunner(metaclass=abc.ABCMeta):
         self._loss_saver.clear()
 
         self._model.eval()
+        step = 0
         for step, data in enumerate(dataloader):
             data = self.on_eval_batch_start(data)
             outputs = self.eval_forward(data)
             loss = extract_loss(outputs)
-
             self.on_eval_batch_end(loss, epoch, step)
 
             exit_epoch, _ = self._should_stop(step, modes.EVAL)
@@ -729,6 +867,7 @@ class PyTorchBaseRunner(metaclass=abc.ABCMeta):
         self.on_eval_epoch_end(exit_epoch)
 
         self.compute_eval_metrics()
+        self._maybe_log_throughput(step + 1)
 
     def compute_eval_metrics(self):
         """Compute and log the eval metrics"""
@@ -752,9 +891,7 @@ class PyTorchBaseRunner(metaclass=abc.ABCMeta):
         # Normalize total loss
         avg_eval_loss = self._loss_saver.average_loss
         if self._writer:
-            self._writer.add_scalar(
-                "avg_eval_loss", avg_eval_loss, self._global_step
-            )
+            self._writer.add_scalar("loss", avg_eval_loss, self._global_step)
         logging.info(f"Avg Eval. Loss = {avg_eval_loss}")
 
     def train_and_eval(
@@ -793,18 +930,15 @@ class PyTorchBaseRunner(metaclass=abc.ABCMeta):
 
             logging.info("Training and Evaluation Completed Successfully!")
 
-    @property
-    def world_global_step(self):
-        """The global step amongst multiple devices"""
-        return self._global_step
-
     @abc.abstractmethod
     def _increment_global_step(self):
         raise NotImplementedError()
 
-    def _maybe_write_log(self, loss, step_offset=0):
+    def _maybe_write_log(self, loss, step_offset=0, base_step=None):
         if self._is_fetch_step(step_offset):
-            self._write_log(loss, self._global_step + step_offset)
+            if base_step is None:
+                base_step = self._global_step
+            self._write_log(loss, base_step + step_offset)
 
     @abc.abstractmethod
     def _write_log(self, loss, global_step):
@@ -812,7 +946,7 @@ class PyTorchBaseRunner(metaclass=abc.ABCMeta):
 
     def _maybe_save_loss(self, loss, epoch=None, step_offset=0):
         if self._save_losses and self._is_fetch_step(step_offset):
-            self._save_loss(loss, self.world_global_step, epoch, step_offset)
+            self._save_loss(loss, self._global_step, epoch, step_offset)
 
     @cm.step_closure
     def _save_loss(
@@ -837,16 +971,18 @@ class PyTorchBaseRunner(metaclass=abc.ABCMeta):
         else:
             self._loss_saver.add(loss, global_step + step_offset)
 
-    def _maybe_save_summaries(self, step_offset=0):
+    def _maybe_save_summaries(self, step_offset=0, base_step=None):
         """Saves summaries calculated at the current step."""
         if self._is_fetch_step(step_offset):
-            save_all_summaries(
-                self._writer, self.world_global_step + step_offset
-            )
+            if base_step is None:
+                base_step = self._global_step
+            save_all_summaries(self._writer, base_step + step_offset)
+        else:
+            discard_cached_summaries()
 
     def _maybe_save_checkpoint(self, step_offset=0):
         if self._is_checkpoint_step(step_offset):
-            self._save_checkpoint(self.world_global_step)
+            self._save_checkpoint(self._global_step)
 
     @abc.abstractmethod
     def _save_checkpoint(self, *args, **kwargs):
@@ -861,16 +997,19 @@ class PyTorchBaseRunner(metaclass=abc.ABCMeta):
             The loaded state dict. If checkpoint path was None, returns None.
         """
         if checkpoint_path:
+            logging.info(
+                f"Loading weights from checkpoint {self._checkpoint_path}"
+            )
             state_dict = cbtorch.load(checkpoint_path)
             self._model.set_state(state_dict)
         else:
+            logging.info(
+                f"No checkpoint was provided, model parameters will be "
+                f"initialized randomly"
+            )
             state_dict = None
 
-        if (
-            state_dict
-            and not self._is_pretrained_checkpoint
-            and mode in (modes.TRAIN, modes.TRAIN_AND_EVAL)
-        ):
+        if state_dict and not self._is_pretrained_checkpoint:
             self._global_step = state_dict.get("global_step", 0)
         else:
             self._global_step = 0
@@ -892,6 +1031,12 @@ class PyTorchBaseRunner(metaclass=abc.ABCMeta):
                 step = int(match.group(1))
                 if last_ckpt[0] is None or step > last_ckpt[0]:
                     last_ckpt = (step, os.path.join(self._model_dir, name))
+
+        if last_ckpt[1] is not None:
+            logging.info(
+                f"Found latest checkpoint at {last_ckpt[1]}."
+                f"This checkpoint will be used for loading model state."
+            )
         return last_ckpt[1]
 
     def _maybe_check_loss_value(self, loss, step_offset=0):
@@ -916,6 +1061,15 @@ class PyTorchBaseRunner(metaclass=abc.ABCMeta):
             )
         if torch.isinf(loss).any().item():
             raise ValueError("inf loss detected.")
+
+    def _maybe_log_throughput(self, step_offset=0):
+        """Conditionally add throughput details to tensorboard"""
+        if self._is_fetch_step(step_offset):
+            self._log_throughput(self._global_step + step_offset)
+
+    def _log_throughput(self, step):
+        """Add throughput details to tensorboard"""
+        # Can be optionally implemented downstream
 
     @cm.step_closure
     def _accumulate_loss_value(self, loss: torch.Tensor):
@@ -973,19 +1127,7 @@ class PyTorchBaseRunner(metaclass=abc.ABCMeta):
                 to initialize and configure both the model and the runner
         """
         runconfig_params = params["runconfig"]
-
-        # For k8s flow, cs_ip is determined based on our custom scheduler. When K8S_CS_IP
-        # is set, we use its value as cs_ip. We raise an error if cs_ip is set in the runconfig.
-        k8s_cs_ip = os.environ.get("K8S_CS_IP", None)
-        if k8s_cs_ip:
-            if runconfig_params["cs_ip"] is not None:
-                raise ValueError(
-                    "cs_ip is determined internally and should not be specified"
-                )
-            cs_ip = k8s_cs_ip
-            logging.info(f"Setting cs_ip to: {cs_ip}")
-        else:
-            cs_ip = runconfig_params["cs_ip"]
+        RunConfigParamsValidator().validate(runconfig_params)
 
         if (
             runconfig_params["compile_only"]
@@ -994,12 +1136,10 @@ class PyTorchBaseRunner(metaclass=abc.ABCMeta):
             raise ValueError("Please set one of compile_only and validate_only")
         validate_only = runconfig_params["validate_only"]
         compile_only = runconfig_params["compile_only"] or validate_only
-        appliance = runconfig_params.get("appliance", False)
+        use_cs = runconfig_params["target_device"] == DeviceType.CSX
         use_appliance_data = runconfig_params.get("use_appliance_data", True)
-        use_cs = bool(cs_ip or compile_only or appliance)
 
-        # Providing a CS ip or providing the compile_only flag indicates that
-        # a CS workflow is being run. Thus, the cbtorch backend must be initialized
+        # The cbtorch backend must be initialized
         # in order for the run to be configured correctly
         if use_cs:
 
@@ -1010,43 +1150,45 @@ class PyTorchBaseRunner(metaclass=abc.ABCMeta):
             service_workdir = runconfig_params["service_dir"]
             compile_dir = runconfig_params.get("compile_dir")
             default_dir = service_workdir
-            if appliance:
-                from cerebras_appliance import DEFAULT_COMPILE_DIR
 
-                default_dir = DEFAULT_COMPILE_DIR
+            from cerebras_appliance import DEFAULT_COMPILE_DIR
+
+            default_dir = DEFAULT_COMPILE_DIR
             compile_dir = compile_dir or default_dir
 
             cbtorch.initialize(
                 service_workdir=service_workdir,
                 compile_dir=compile_dir,
-                cs_ip=cs_ip,
                 compile_only=compile_only,
-                appliance=appliance,
+                appliance=use_cs,
                 use_appliance_data=use_appliance_data,
                 use_cbfloat16=use_cbfloat16,
             )
 
-            if appliance:
-                execution_strategy = (
-                    runconfig_params.get("execution_strategy")
-                    or ExecutionStrategy.weight_streaming
+            seed = runconfig_params.get("seed")
+            if seed is not None:
+                cm.set_rng_state(seed)
+
+            execution_strategy = (
+                runconfig_params.get("execution_strategy")
+                or ExecutionStrategy.weight_streaming
+            )
+            if (
+                runconfig_params["num_csx"] > 1
+                and execution_strategy != ExecutionStrategy.weight_streaming
+            ):
+                raise ValueError(
+                    f"Using multiple CS-X systems is only supported in "
+                    f"appliance mode with "
+                    f"{ExecutionStrategy.weight_streaming} execution "
+                    f"strategy."
                 )
-                if (
-                    runconfig_params["num_csx"] > 1
-                    and execution_strategy != ExecutionStrategy.weight_streaming
-                ):
-                    raise ValueError(
-                        f"Using multiple CS-X systems is only supported in "
-                        f"appliance mode with "
-                        f"{ExecutionStrategy.weight_streaming} execution "
-                        f"strategy."
-                    )
-                cbtorch.env().weight_streaming_mode = (
-                    execution_strategy == ExecutionStrategy.weight_streaming
-                )
-                logging.debug(
-                    f"Running with {execution_strategy} execution strategy"
-                )
+            cbtorch.env().weight_streaming_mode = (
+                execution_strategy == ExecutionStrategy.weight_streaming
+            )
+            logging.debug(
+                f"Running with {execution_strategy} execution strategy"
+            )
 
             # override model params if needed, before creating the model
             use_bfloat16 = params["model"].get("use_bfloat16", False)
@@ -1060,43 +1202,18 @@ class PyTorchBaseRunner(metaclass=abc.ABCMeta):
                 params["model"]["use_bfloat16"] = False
                 use_bfloat16 = False
 
-            half_dtype_instance.use_bfloat16 = use_bfloat16
-            if use_bfloat16 and cm.use_cs():
-                from modelzoo.common.pytorch import amp
-
-                amp.use_bfloat16(use_bfloat16)
-
-            loss_scaling_factor = params["optimizer"].get(
-                "loss_scaling_factor", 1.0
-            )
-            if loss_scaling_factor == "dynamic" and use_bfloat16:
-                params["optimizer"]["loss_scaling_factor"] = 1.0
-                logging.info(
-                    "No need to use DLS for loss when `use_bfloat16` is set to"
-                    " `True`. Setting `loss_scaling_factor ` to `1.0`."
-                )
-
             # Initialize the model and runner
-            model: PyTorchBaseModel = model_fn(params)
-
-            if appliance:
-                from modelzoo.common.pytorch.pytorch_cs_appliance import (
-                    PyTorchCSAppliance,
-                )
-
-                return PyTorchCSAppliance(model, params)
-            elif compile_only:
-                from modelzoo.common.pytorch.pytorch_cs_compiler import (
-                    PyTorchCSCompiler,
-                )
-
-                return PyTorchCSCompiler(model, params)
+            if isclass(model_fn) and issubclass(model_fn, PyTorchBaseModel):
+                # to keep compatibility for if a user inherits from PyTorchBaseModel
+                model = model_fn(params)
             else:
-                from modelzoo.common.pytorch.pytorch_cs_runner import (
-                    PyTorchCSRunner,
-                )
+                model = PyTorchBaseModel(params, model_fn)
 
-                return PyTorchCSRunner(model, params)
+            from modelzoo.common.pytorch.pytorch_cs_appliance import (
+                PyTorchCSAppliance,
+            )
+
+            return PyTorchCSAppliance(model, params)
         else:
             from modelzoo.common.pytorch.pytorch_dist_runner import (
                 PyTorchDistRunner,
@@ -1104,10 +1221,15 @@ class PyTorchBaseRunner(metaclass=abc.ABCMeta):
             from modelzoo.common.pytorch.pytorch_runner import PyTorchRunner
 
             if (
-                runconfig_params["cpu"] or not torch.cuda.is_available()
+                runconfig_params["target_device"] == DeviceType.CPU
+                or not torch.cuda.is_available()
             ):  # use cpu
                 device = torch.device("cpu")
-                model: PyTorchBaseModel = model_fn(params, device)
+                if isclass(model_fn) and issubclass(model_fn, PyTorchBaseModel):
+                    # to keep compatibility for if a user inherits from PyTorchBaseModel
+                    model = model_fn(params)
+                else:
+                    model = PyTorchBaseModel(params, model_fn, device)
                 return PyTorchRunner(device, model, params)
             else:  # use gpu
                 world_size = torch.cuda.device_count()
@@ -1121,7 +1243,13 @@ class PyTorchBaseRunner(metaclass=abc.ABCMeta):
                             "more than 1 GPU is available."
                         )
                     device = torch.device("cuda")
-                    model: PyTorchBaseModel = model_fn(params, device)
+                    if isclass(model_fn) and issubclass(
+                        model_fn, PyTorchBaseModel
+                    ):
+                        # to keep compatibility for if a user inherits from PyTorchBaseModel
+                        model = model_fn(params)
+                    else:
+                        model = PyTorchBaseModel(params, model_fn, device)
                     return PyTorchRunner(device, model, params)
                 else:  # multi gpu
                     if world_size == 1:
@@ -1131,5 +1259,11 @@ class PyTorchBaseRunner(metaclass=abc.ABCMeta):
                         )
                     # model with no device, used to create optimizer and scheduler
                     # actual models will be created in on_process_start()
-                    model: PyTorchBaseModel = model_fn(params, None)
+                    if isclass(model_fn) and issubclass(
+                        model_fn, PyTorchBaseModel
+                    ):
+                        # to keep compatibility for if a user inherits from PyTorchBaseModel
+                        model = model_fn(params)
+                    else:
+                        model = PyTorchBaseModel(params, model_fn)
                     return PyTorchDistRunner(model, params)
