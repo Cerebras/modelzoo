@@ -43,7 +43,7 @@ from tqdm import tqdm
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "../../../../../.."))
 from modelzoo.common.input.utils import check_and_create_output_dirs
-from modelzoo.common.pytorch.utils import read_params_file
+from modelzoo.common.run_utils.cli_parser import read_params_file
 from modelzoo.transformers.data_processing.utils import split_list
 from modelzoo.vision.pytorch.input.classification.dataset_factory import (
     VisionSubset,
@@ -53,6 +53,7 @@ from modelzoo.vision.pytorch.unet.utils import set_defaults
 from modelzoo.vision.pytorch.unet.input.SeverstalBinaryClassDataProcessor import (  # noqa
     SeverstalBinaryClassDataProcessor,
 )
+
 
 def update_params_from_args(args, params):
     """
@@ -68,6 +69,7 @@ def update_params_from_args(args, params):
 
 
 def _get_dataset(params, is_training):
+    params["use_worker_cache"] = False
     return getattr(sys.modules[__name__], params["data_processor"])(
         params
     ).create_dataset(is_training)

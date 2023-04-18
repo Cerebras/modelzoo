@@ -51,7 +51,7 @@ The steps to perform are listed in the diagram below. Bold files are scripts to 
 
 ## Key features from CSoft platform
 
-* T5 models support [Variable Tensor Shape (VTS)](https://docs.cerebras.net/en/latest/pytorch-docs/pytorch-vts.html) configurations.  At a high-level, this means that we can take advantage of Cerebras hardware's differences from GPU's to perform operations on different sized sequences in parallel, without requiring padding tokens. This reduces the amount of time spent on computations that are never used in the end. For more details, see [\[4\]](https://www.cerebras.net/software/increasing-model-throughput-with-variable-tensor-shape-computations/) and [\[5\]](https://docs.cerebras.net/en/latest/pytorch-docs/pytorch-vts.html).
+* In [Layer Pipelined execution](https://docs.cerebras.net/en/latest/wsc/cerebras-basics/cerebras-execution-modes.html#layer-pipelined-mode), T5 models support [Variable Tensor Shape (VTS)](https://docs.cerebras.net/en/latest/wsc/general/sparse-input.html) configurations.  At a high-level, this means that we can take advantage of Cerebras hardware's differences from GPU's to perform operations on different sized sequences in parallel, without requiring padding tokens. This reduces the amount of time spent on computations that are never used in the end. For more details, see [\[4\]](https://www.cerebras.net/software/increasing-model-throughput-with-variable-tensor-shape-computations/).
 To run either model with VTS, simply add `enable_vts: True` to the `model` section of the configuration YAML file for a training run.  
 * T5 currently support pipeline execution mode, in which the entire model is loaded onto the Wafer-Scale Engine (WSE) and data streams across the layers. See [\[6\]](https://docs.cerebras.net/en/latest/cerebras-basics/cerebras-execution-modes.html#layer-pipelined-mode) for further details. 
 
@@ -101,15 +101,14 @@ For details about the input function pipeline used for the models located in thi
 
 ## To compile/validate, run train and eval on Cerebras System
 
-Please follow the instructions on our Developer Docs at:
-https://docs.cerebras.net/en/latest/getting-started/pytorch/index.html
+Please follow the instructions on our [quickstart in the Developer Docs](https://docs.cerebras.net/en/latest/wsc/getting-started/cs-appliance.html).
 
 ## To run train and eval on GPU/CPU
 
 If running on a cpu or gpu, activate the environment from [Python GPU Environment setup](../../../../PYTHON-SETUP.md), and simply run:
 
 ```
-python run.py --mode train --params path/to/yaml --model_dir /path/to/model_dir
+python run.py {CPU,GPU} --mode train --params path/to/yaml --model_dir /path/to/model_dir
 ```
 
 For each of these commands,
@@ -128,10 +127,11 @@ There are a couple modifications to both models based on current support for ope
 
 In the [configs](./configs/) directory we have files for T5. 
 
-* [T5-small](configs/t5_small.yaml) have a small reference with `d_kv=64`, `num_heads=6`, `encoder_num_hidden_layers=8`.
-* [T5-base](configs/t5_base.yaml) have a base reference with `d_kv=64`, `num_heads=12`, `encoder_num_hidden_layers=12`.
+* [T5-small](configs/t5_small.yaml) have a small reference with `d_kv=64`, `num_heads=6`, `encoder_num_hidden_layers=8`. This config runs in [Layer Pipelined mode](https://docs.cerebras.net/en/latest/wsc/cerebras-basics/cerebras-execution-modes.html#layer-pipelined-mode).
+* [T5-base](configs/t5_base.yaml) have a base reference with `d_kv=64`, `num_heads=12`, `encoder_num_hidden_layers=12`. This config runs in [Layer Pipelined mode](https://docs.cerebras.net/en/latest/wsc/cerebras-basics/cerebras-execution-modes.html#layer-pipelined-mode).
+* [T5-3B](configs/t5_3B.yaml) have a 3B model reference with `d_kv=128`, `num_heads=32`, `encoder_num_hidden_layers=24`. This config runs in [Weight Streaming mode](https://docs.cerebras.net/en/latest/wsc/cerebras-basics/cerebras-execution-modes.html#weight-streaming-mode)
+* [T5-11B](configs/t5_11B.yaml) have a base reference with `d_kv=128`, `num_heads=128`, `encoder_num_hidden_layers=24`. This config runs in [Weight Streaming mode](https://docs.cerebras.net/en/latest/wsc/cerebras-basics/cerebras-execution-modes.html#weight-streaming-mode)
 
-All configs are meant to be run on Pipeline mode using Appliance mode and Kubernetes flow. Slurm workflow is available as a legacy support.
 
 These files are just samples, and can be adjusted for any changes in training procedure that you desire, such as different number of layers or hidden sizes, or different number of steps.  
 
@@ -147,9 +147,9 @@ These files are just samples, and can be adjusted for any changes in training pr
 
 [4] [VTS Conceptual Explanation Blog](https://www.cerebras.net/software/increasing-model-throughput-with-variable-tensor-shape-computations/)
 
-[5] [VTS Software Documentation](https://docs.cerebras.net/en/latest/pytorch-docs/pytorch-vts.html)
+[5] [VTS Software Documentation](https://docs.cerebras.net/en/latest/wsc/general/sparse-input.html)
 
-[6] [Pipeline Execution Mode](https://docs.cerebras.net/en/latest/cerebras-basics/cerebras-execution-modes.html#layer-pipelined-mode)
+[6] [Pipeline Execution Mode](https://docs.cerebras.net/en/latest/wsc/cerebras-basics/cerebras-execution-modes.html#layer-pipelined-mode)
 
 [7] [Adam](https://arxiv.org/abs/1412.6980)
 

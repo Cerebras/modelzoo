@@ -12,6 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Pytorch GPT2/3 Dataloader"""
+
+import logging
+import math
 import os
 import random
 from pathlib import Path
@@ -32,16 +36,13 @@ class GptHDF5DataProcessor(torch.utils.data.IterableDataset):
     """
     A HDF5 dataset processor for GPT pre-training.
     Performs on-the-fly processing of data from text.
-
     Functionality includes:
         Reading data from text documents
         Creating creating input sequences and masks, and
         autoregressive LM labels
-
     :param dict params: dict containing training
         input parameters for creating dataset.
     Expects the following fields:
-
     - "data_dir" (str or list of str): Path to dataset HDF5 files
     - "max_sequence_length (int): Maximum length of the sequence to generate
     - "batch_size" (int): Batch size.
@@ -76,7 +77,7 @@ class GptHDF5DataProcessor(torch.utils.data.IterableDataset):
         # Features in HDF5 files
         self.features_list = ["input_ids", "attention_mask", "labels"]
 
-        assert self.batch_size > 0, "Batch size should be positive."
+        assert self.batch_size > 0, "Batch size should be a positive number."
 
         if not isinstance(self.data_dir, list):
             self.data_dir = [self.data_dir]
@@ -84,12 +85,14 @@ class GptHDF5DataProcessor(torch.utils.data.IterableDataset):
         files = []
         for directory in self.data_dir:
             p = Path(directory)
-            assert p.is_dir()
+            assert (
+                p.is_dir()
+            ), f"The path {directory} does not exist or is not a directory."
             files.extend(p.glob('*.h5'))
 
         files = sorted(files)
         if not files:
-            raise RuntimeError('No hdf5 datasets found')
+            raise RuntimeError("No .h5 dataset files found.")
 
         self.num_tasks = num_tasks()
         self.task_id = task_id()
@@ -116,8 +119,8 @@ class GptHDF5DataProcessor(torch.utils.data.IterableDataset):
 
         # Single worker
         # laod dataloader state from previous run for restart
-        self.dataloader_state_file = self.dataloader_state.get(
-            'dataloader_state_file', None
+        self.dataloader_state_path = self.dataloader_state.get(
+            'save_iter_state_path', None
         )
         self.num_workers_prev_state = self.dataloader_state.get(
             'num_workers', None
@@ -127,27 +130,52 @@ class GptHDF5DataProcessor(torch.utils.data.IterableDataset):
                 self.num_workers == self.num_workers_prev_state
             ), "num_workers should be the same at the restart"
 
-        # Sanity check whether or not "dataloader_state_file" is readable
-        if self.dataloader_state_file is not None:
-            assert os.path.isfile(
-                self.dataloader_state_file
-            ), f"Invalid dataloader state file: '{self.dataloader_state_file}'"
-            with open(self.dataloader_state_file, 'r') as f:
-                self.prev_worker_iter_index = int(f.readline())
-        else:
-            self.prev_worker_iter_index = 0
+        self.prev_worker_iter_index = 0
+        if self.dataloader_state_path is not None:
+            if os.path.exists(self.dataloader_state_path):
+                # check if state file is available that contains iter to start from
+                if os.path.isfile(
+                    os.path.join(
+                        self.dataloader_state_path,
+                        'data_iter_checkpoint_state_file_global',
+                    )
+                ):
+                    with open(
+                        os.path.join(
+                            self.dataloader_state_path,
+                            'data_iter_checkpoint_state_file_global',
+                        ),
+                        'r',
+                    ) as f:
+                        try:
+                            global_ckpt_step = int(f.readline())
+                        except IOError as error:
+                            logging.error(
+                                'Caught this error: '
+                                + repr(error)
+                                + f'not able to read data iter ckpt step'
+                            )
+                    # add worker_id suffix to correctly load state for the current task/worker
+                    self.dataloader_state_file = os.path.join(
+                        self.dataloader_state_path,
+                        f'data_iter_state_file_worker_{self.task_id}_step_{global_ckpt_step}.txt',
+                    )
+                    if os.path.isfile(self.dataloader_state_file):
+                        with open(self.dataloader_state_file, 'r') as f:
+                            samples_seen = int(f.readline())
+                            if samples_seen % self.batch_size == 0:
+                                self.prev_worker_iter_index = int(
+                                    samples_seen / self.batch_size
+                                )
+                            else:
+                                self.prev_worker_iter_index = (
+                                    math.floor(samples_seen / self.batch_size)
+                                    + 1
+                                )
 
     def _load_buffer(self, data_partitions):
-        worker_info = torch.utils.data.get_worker_info()
-        if worker_info is not None:
-            worker_id = worker_info.id
-        else:
-            # 1 sub-process
-            worker_id = 0
-
-        restart_iter_partition_id = (
-            0  # partition id should default to 0 if not reading iter from file
-        )
+        # partition id should default to 0 if not reading iter from file
+        restart_iter_partition_id = 0
         restart_iter_start_idx = 0  # start_idx should default to 0
         # Sanity check whether or not "dataloader_state_file" is readable
         if self.prev_worker_iter_index > 0:
@@ -217,8 +245,11 @@ class GptHDF5DataProcessor(torch.utils.data.IterableDataset):
             file_path = partition_specs[0]
             start_idx_org = partition_specs[1]
             num_examples = partition_specs[2]
-            if restart_iter_partition_id >= 0 and partition_idx == 0:
-                start_idx = restart_iter_start_idx
+            if self.prev_worker_iter_index > 0:
+                if restart_iter_partition_id >= 0 and partition_idx == 0:
+                    start_idx = restart_iter_start_idx
+                else:
+                    start_idx = start_idx_org
             else:
                 start_idx = start_idx_org
             with h5py.File(file_path, mode='r') as h5_file:

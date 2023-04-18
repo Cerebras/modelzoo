@@ -61,7 +61,7 @@ model:
 
     # T5 layer norm (no mean subtraction, and bias correction)
     use_t5_layer_norm: False
-    use_pre_encoder_decoder_layer_norm: True
+    use_pre_encoder_decoder_layer_norm: False
 
     # Encoder -- ffn
     d_ff: 2048 # Size of the intermediate feed forward layer in t5 blocks.

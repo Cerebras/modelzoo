@@ -52,6 +52,9 @@ class Adadelta(CSOptimizer):
         )
         super(Adadelta, self).__init__(params, defaults)
 
+    def state_names_to_sparsify(self):
+        return ["square_avg", "acc_delta"]
+
     def preinitialize(self):
         """
         Allocates tensors for the optimizer state to allow direct compilation
@@ -66,6 +69,7 @@ class Adadelta(CSOptimizer):
                     p, device="cpu"
                 ).to(p.device)
 
+    @torch.no_grad()
     def step(self, closure=None):
         """Performs a single optimization step.
 
@@ -88,7 +92,7 @@ class Adadelta(CSOptimizer):
                 if p.grad is None:
                     continue
 
-                grad = p.grad.data
+                grad = p.grad
 
                 if grad.is_sparse:
                     raise RuntimeError(
@@ -99,17 +103,15 @@ class Adadelta(CSOptimizer):
                 square_avg = state["square_avg"]
                 acc_delta = state["acc_delta"]
 
-                p_data = p.data
-
                 grad = grad if not maximize else -grad
 
                 if weight_decay != 0:
-                    grad = grad.add(p_data, alpha=weight_decay)
+                    grad = grad.add(p, alpha=weight_decay)
 
                 square_avg.mul_(rho).addcmul_(grad, grad, value=1 - rho)
                 std = square_avg.add(eps).sqrt_()
                 delta = acc_delta.add(eps).sqrt_().div_(std).mul_(grad)
                 acc_delta.mul_(rho).addcmul_(delta, delta, value=1 - rho)
-                p_data.add_(-lr * delta)
+                p.add_(-lr * delta)
 
         return loss

@@ -47,7 +47,7 @@ model:
     num_hidden_layers: 24
     dropout_rate: 0.1
     layer_norm_epsilon: 1.0e-5
- 
+
     # Encoder - Attention
     num_heads: 16
     attention_type: "scaled_dot_product"
@@ -62,6 +62,7 @@ model:
 
     # Task-specific
     use_bias_in_output: False
+    loss_scaling: "batch_size"
     loss_weight: 0.0009765625 # = 1/max_sequence_length
 
     # Cerebras parameters

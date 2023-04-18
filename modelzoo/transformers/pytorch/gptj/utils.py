@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from modelzoo.transformers.pytorch.gpt2.utils import set_attention_kernel
+
 
 def set_defaults(params):
     """
@@ -24,3 +26,11 @@ def set_defaults(params):
     params["optimizer"]["loss_scaling_factor"] = params["optimizer"].get(
         "loss_scaling_factor", 1.0
     )
+    params["optimizer"]["log_summaries"] = params["optimizer"].get(
+        "log_summaries", False
+    )
+
+    params["model"]["precision_opt_level"] = params["model"].get(
+        "precision_opt_level", 1
+    )
+    set_attention_kernel(params)

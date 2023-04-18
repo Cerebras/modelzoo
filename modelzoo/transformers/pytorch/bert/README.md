@@ -2,7 +2,7 @@
 
 - [Overview of the model](#overview-of-the-model)
 - [Sequence of the steps to perform](#sequence-of-the-steps-to-perform)
-- [Key features from CSoft platform used in this reference implementation](#key-features-from-csoft-platform-used-in-this-reference-implementation)
+  - [Features to improve performance with small BERT models when running in Pipelined Execution mode](#features-to-improve-performance-with-small-bert-models-when-running-in-pipelined-execution-mode)
   - [Variable Tensor Shape](#variable-tensor-shape)
   - [Multi-Replica data parallel training](#multi-replica-data-parallel-training)
 - [Structure of the code](#structure-of-the-code)
@@ -41,7 +41,7 @@ We also support the [RoBERTa](https://arxiv.org/abs/1907.11692) model, which is 
 
 
 # Sequence of the steps to perform
-This document walks you through an example showing the steps to run a BERT pre-training on the Cerebras Wafer Scale Engine (and on GPUs) using the code in this repo.
+This document walks you through an example showing the steps to run a BERT pre-training on the Cerebras Wafer-Scale Cluster (and on GPUs) using the code in this repo.
 
 > **Note**: You can use any subset of the steps described in this example. For example, if you already downloaded your preferred dataset and created the CSV files, then you can skip the section [Preprocess data](#preprocess-data).
 
@@ -52,9 +52,10 @@ The following block diagram shows a high-level view of the sequence of steps you
 <!-- ## Running BERT on the Cerebras System
 <img src="./images/BERT_PT_Workflow.jpg" alt="drawing" width="1800" height="300"/> -->
 
-# Key features from CSoft platform used in this reference implementation
+## Features to improve performance with small BERT models when running in Pipelined Execution mode
+
 In this section, we list CSoft platform specific features which help improve performance for the models listed in this folder.
-All of them are running in the pipeline mode, where all layers of the network are loaded altogether into the Cerebras wafer, for more detailed explanation of this mode, refer to [Layer pipelined mode](https://docs.cerebras.net/en/latest/cerebras-basics/cerebras-execution-modes.html#layer-pipelined-mode).
+All of them are running in the pipeline mode, where all layers of the network are loaded altogether into the Cerebras wafer, for more detailed explanation of this mode, refer to [Layer pipelined mode](https://docs.cerebras.net/en/latest/wsc/cerebras-basics/cerebras-execution-modes.html#layer-pipelined-mode).
 
 ## Variable Tensor Shape
 By default, pre-training is configured to use VTS mode when running on the Cerebras System. When running in the VTS mode, the Cerebras System does not perform any computations on the padding tokens. This can potentially result in training speedups. The VTS mode can be disabled by setting `model.enable_vts: False` in the appropriate config file (see [Configs included for this model](#Configs-included-for-this-model) section).
@@ -62,17 +63,17 @@ Regardless of the setting of this flag, VTS is not used for running in the eval 
 In order to take full advantage of the potential speedups from the VTS, it is helpful to batch samples such that every sample in a given batch has a similar length.
 Accordingly, for BERT pre-training we bucket samples of similar lengths together before batching. The boundaries between different buckets are defined by `train_input.buckets`.
 For more details about VTS, please refer to [PyTorch Variable Tensor Shape
-](https://docs.cerebras.net/en/latest/pytorch-docs/pytorch-vts.html) documentation page.
+](https://docs.cerebras.net/en/latest/wsc/general/sparse-input.html) documentation page.
 
 ## Multi-Replica data parallel training  
 When training on the Cerebras System, the `--multireplica` flag can be used to perform data-parallel training
-across multiple copies of the model at the same time. For more details about this feature, please refer to [Multi-Replica Data Parallel Training](https://docs.cerebras.net/en/latest/general/multi-replica-data-parallel-training.html) documentation page.
+across multiple copies of the model at the same time. For more details about this feature, please refer to [Multi-Replica Data Parallel Training](https://docs.cerebras.net/en/latest/wsc/general/multi-replica-data-parallel-training.html) documentation page.
 
 # Structure of the code
 * `configs/`: YAML configuration files.
 * `fine_tuning/`: Code for fine-tuning the BERT model.
 * `input/`: Input pipeline implementation based on the [Open Web Text dataset](https://skylion007.github.io/OpenWebTextCorpus/). This directory also contains the scripts you can use to download and prepare the Open Web Text dataset. Vocab files are located in `transformers/vocab/`.
-* `model.py`: Provides a common wrapper for all models, using the `PyTorchBaseModel` class, which interfaces with  model-specific code. In this repo the model-specific code is in `bert_pretrain_models.py` and `bert_finetune_models.py`. The wrapper provides a common interface for handling the function call of the model with its specific data format. It also provides a common interface to use the same format of configuration files from `configs/` to construct various models.
+* `model.py`: Provides a common wrapper for all models under class `BertForPreTrainingModel`, using the `PyTorchBaseModel` class, which interfaces with model-specific code. In this repo the model-specific code, i.e., model architecture is in `bert_pretrain_models.py::BertPretrainModel` and the finetuning model architectures are in `bert_finetune_models.py`. This wrapper provides a common interface for handling the function call of the model with its specific data format. It also provides a common interface to use the same format of configuration files from `configs/` to construct various models.
 * `data.py`: The entry point to the data input pipeline code.
 * `run.py`: Training script. Performs training and validation.
 * `utils.py`: Miscellaneous helper functions.
@@ -331,36 +332,42 @@ The features dictionary has the following key/values:
 
 ## To compile/validate, run train and eval on Cerebras System
 
-Please follow the instructions on our Developer Docs at:
-https://docs.cerebras.net/en/latest/getting-started/pytorch/index.html
+Please follow the instructions on our [quickstart in the Developer Docs](https://docs.cerebras.net/en/latest/wsc/getting-started/cs-appliance.html).
 
 ## To run train and eval on GPU/CPU
 
 If running on a cpu or gpu, activate the environment from [Python GPU Environment setup](../../../../PYTHON-SETUP.md), and simply run:
 
 ```
-python run.py --mode train --params /path/to/yaml --model_dir /path/to/model_dir
+python run.py CPU --mode train --params /path/to/yaml --model_dir /path/to/model_dir
 ```
-
-Compared to running on the Cerebras Systems, the only differences are the removal of `--cs_ip` arguments.
+or
+```
+python run.py GPU --mode train --params /path/to/yaml --model_dir /path/to/model_dir
+```
 
 > **Note**: Change the command to `--mode eval` for evaluation.
 
 ## MLM loss scaling
 
 The MLM Loss is scaled by the number of masked tokens in the current batch. For numerical reasons this scaling is done in two steps:
-- First, the `masked_lm_weights` tensor is scaled by `batch_size / num_masked_tokens_in_batch` in the input pipeline, and then
-- The final loss is scaled by `1 / batch_size`.
+
+- First, the `masked_lm_weights` tensor is scaled by `batch_size / num_masked_tokens_in_batch` in the input pipeline.
+- Then, the final loss is scaled by `1 / batch_size`.
 
 ## Configs included for this model
+
 In order to train the model, you need to provide a yaml config file. Below is the list of yaml config files included for this model implementation at [configs](./configs/) folder. Also, feel free to create your own following these examples:
+
 - `bert_base_*.yaml` have the standard bert-base config with `hidden_size=768`, `num_hidden_layers=12`, `num_heads=12`.
 - `bert_large_*.yaml` have the standard bert-large config with `hidden_size=1024`, `num_hidden_layers=24`, `num_heads=16`.
 - Files with substrings `MSL***` like `bert_base_MSL128.yaml` contain different maximum sequence length. Popular sequence lengths are `128`, `512`, `1024` provided in our example config files.
-- Files like `bert_*_vts.yaml` with `_vts` substring in their names enable variable tensor shape (VTS) training, which is a unique feature provided on Cerebras hardware to improve model performance. You can find details about the VTS implementation [here](#variable-tensor-shape).
 - Files like `roberta_*.yaml` are provided to run RoBERTa model variants [RoBERTa: A Robustly Optimized BERT Pretraining Approach](https://arxiv.org/abs/1907.11692).
-
-All configs are meant to be run on Pipeline mode using Appliance mode and Kubernetes flow. Slurm workflow is available as a legacy support.
+- All the Weight Streaming configs have `_ws.yaml` suffix. Below is the list of available configs for Weight Streaming:
+  - `bert_large_MSL128_ws.yaml`: Same as large model above with MSL 128.
+  - `bert_large_MSL512_ws.yaml`: Same as large model above with MSL 512.
+  - `bert_base_MSL4k_ws.yaml`: Same as base model above with MSL 4k.
+  - `bert_large_MSL10k_ws_preview.yaml`: Same as large model above with MSL 10k. (Available as a preview.)
 
 # Appendix
 

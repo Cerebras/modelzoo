@@ -20,6 +20,7 @@ from modelzoo.common.pytorch.model_utils.create_initializer import (
 )
 from modelzoo.common.pytorch.run_utils import half_dtype_instance
 from modelzoo.vision.pytorch.layers.ConvNormActBlock import ConvNormActBlock
+from modelzoo.vision.pytorch.losses.dice_loss import DiceCELoss
 from modelzoo.vision.pytorch.unet.layers.Decoder import Decoder
 from modelzoo.vision.pytorch.unet.layers.Encoder import Encoder
 from modelzoo.vision.pytorch.unet.layers.UNetBlock import UNetBlock
@@ -56,14 +57,34 @@ class UNet(nn.Module):
         self.downscale_first_conv = model_params["downscale_first_conv"]
         self.downscale_encoder_blocks = model_params["downscale_encoder_blocks"]
         self.downscale_bottleneck = model_params["downscale_bottleneck"]
+        self.include_background = not model_params["ignore_background_class"]
+        self.input_shape = [
+            model_params["batch_size"],
+            self.num_classes,
+            *model_params["image_shape"],
+        ]
 
-        self.loss_type = model_params.get("loss", "bce")
-        assert (
-            self.num_classes == 2
-        ), "BCE loss may only be used when there are two classes!"
-        self.num_output_channels = 1
-        if "bce" in self.loss_type:
+        self.loss_type = model_params.get(
+            "loss", "bce" if self.num_classes <= 2 else "ssce"
+        ).lower()
+        if "bce" in self.loss_type and "multilabel_bce" not in self.loss_type:
+            assert (
+                self.num_classes == 2
+            ), "BCE loss may only be used when there are two classes!"
+            self.num_output_channels = 1
+        else:
+            self.num_output_channels = self.num_classes
+
+        if self.loss_type == "bce":
             self.loss_fn = self.bce_loss
+        elif self.loss_type == "multilabel_bce":
+            self.loss_fn = nn.BCEWithLogitsLoss()
+        elif ("ssce" in self.loss_type) and ("dice" in self.loss_type):
+            self.loss_fn = DiceCELoss(
+                self.num_classes, self.input_shape, self.include_background,
+            )
+        elif "ssce" in self.loss_type:
+            self.loss_fn = nn.CrossEntropyLoss()
 
         if self.residual_blocks:
             assert self.downscale_method == "max_pool"
@@ -91,12 +112,10 @@ class UNet(nn.Module):
         ), "Number of encoder filters should be equal to number of decoder filters + 1 (bottleneck)"
 
         # initializers
-        self.initializer = create_initializer(model_params["initializer"])
-        self.bias_initializer = create_initializer(
-            model_params["bias_initializer"]
-        )
-        self.norm_weight_initializer = create_initializer(
-            model_params.get("norm_weight_initializer", {"name": "ones"})
+        self.conv_initializer = model_params["initializer"]
+        self.bias_initializer = model_params["bias_initializer"]
+        self.norm_weight_initializer = model_params.get(
+            "norm_weight_initializer", {"name": "ones"}
         )
 
         self.initial_conv = None
@@ -190,9 +209,9 @@ class UNet(nn.Module):
     def reset_parameters(self):
         for m in self.modules():
             if isinstance(m, (nn.Conv2d, nn.ConvTranspose2d)):
-                self.initializer(m.weight)
+                create_initializer(self.conv_initializer)(m.weight)
                 if m.bias is not None:
-                    self.bias_initializer(m.bias)
+                    create_initializer(self.bias_initializer)(m.bias)
             elif isinstance(m, (nn.BatchNorm2d, nn.GroupNorm)):
-                self.norm_weight_initializer(m.weight)
-                self.bias_initializer(m.bias)
+                create_initializer(self.norm_weight_initializer)(m.weight)
+                create_initializer(self.bias_initializer)(m.bias)

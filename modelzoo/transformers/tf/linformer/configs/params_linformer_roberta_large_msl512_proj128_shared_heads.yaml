@@ -4,7 +4,7 @@
 train_input:
   data_processor: "BertMlmOnlyTfRecordsDynamicMaskProcessor"
   data_dir: "./language/datasets/wikicorpus/train_cased_msl512_mlm_only_unmasked"
-  vocab_file: "../../vocab/google_research_uncased_L-12_H-768_A-12.txt"
+  vocab_file: "../../vocab/google_research_cased_L-12_H-768_A-12.txt"
   do_lower: False
   max_sequence_length: 512
   max_predictions_per_seq: 80

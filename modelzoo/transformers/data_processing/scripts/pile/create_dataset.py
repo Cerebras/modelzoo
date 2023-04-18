@@ -34,20 +34,6 @@
 # LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 # SOFTWARE.
-#
-# Copyright 2022 Cerebras Systems.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
 
 """
 Script that generates a dataset in tfrecords or HDF5 format for GPT Models.
@@ -63,19 +49,21 @@ from multiprocessing import Pool, cpu_count
 
 from tqdm import tqdm
 
-sys.path.append(os.path.join(os.path.dirname(__file__), "../../../../../.."))
+sys.path.append(os.path.join(os.path.dirname(__file__), "../../../../.."))
 from modelzoo.common.input.utils import check_and_create_output_dirs
 from modelzoo.transformers.data_processing.scripts.pile.tokenizer import (
     get_tokenizer,
 )
 from modelzoo.transformers.data_processing.scripts.pile.utils import (
+    seed_runs,
+    write_files,
+)
+from modelzoo.transformers.data_processing.scripts.utils import (
     archive_to_tokens,
     get_files,
     read_checkpoint,
-    seed_runs,
-    split_list,
-    write_files,
 )
+from modelzoo.transformers.data_processing.utils import split_list
 
 
 def parse_args():
@@ -114,10 +102,16 @@ def parse_args():
         ),
     )
     parser.add_argument(
-        "--vocab_file", type=str, required=True, help="path to vocabulary"
+        "--vocab_file",
+        type=str,
+        default=None,
+        help="path to the vocabulary file. Defaults to None.",
     )
     parser.add_argument(
-        "--encoder_file", type=str, default=None, help="path to BPE encoder"
+        "--encoder_file",
+        type=str,
+        default=None,
+        help="path to the encoder file. Defaults to None.",
     )
     parser.add_argument(
         "--max_seq_length",
@@ -156,10 +150,17 @@ def parse_args():
         "--processes",
         type=int,
         default=0,
-        help="Number of processes to use. Default to cpu count.",
+        help=(
+            "Number of processes to use. Default to cpu count."
+            + "Note: this number has to be <= number of (compressed) input files,"
+            + "otherwise it returns an error because it cannot divide files across"
+            + "processes properly."
+        ),
     )
     parser.add_argument(
-        "--ftfy", action="store_true", help="Fix text with ftfy"
+        "--ftfy",
+        action="store_true",
+        help="Fix text with ftfy. Defaults to False.",
     )
     parser.add_argument(
         "--ftfy_normalizer",
@@ -172,27 +173,28 @@ def parse_args():
             + " characters become single combined characters. Changing this to"
             + " `NFKC` applies more compatibility conversions. Using `None`"
             + " applies no normalization while fixing text."
+            + "This argument only works when `--ftfy` is set to True. Defaults to `NFC`"
         ),
     )
     parser.add_argument(
         "--wikitext-detokenize",
         action="store_true",
-        help="use wikitext detokenizer to fix text",
+        help="use wikitext detokenizer to fix text. Defaults to False.",
     )
     parser.add_argument(
         "--write_remainder",
         action="store_true",
-        help="write the remainder files when data is left over from processing",
+        help="write the remainder files when data is left over from processing. Defaults to False",
     )
     parser.add_argument(
         "--resume_from_checkpoint",
         action="store_true",
-        help="resume record writing from a given checkpoint",
+        help="resume record writing from a given checkpoint. Defautls to False.",
     )
     parser.add_argument(
         "--display_pbar",
         action="store_true",
-        help="display progress while runs",
+        help="display progress while runs. Defaults to False",
     )
     parser.add_argument(
         "--eos_id",
@@ -216,12 +218,12 @@ def parse_args():
         "--files_per_record",
         type=int,
         default=50000,
-        help="Text files to write per tfrecord/HDF5 file",
+        help="Number of samples with max_sequence_length to write per tfrecord/HDF5 file. Defaults to 50000",
     )
     parser.add_argument(
         "--write_in_batch",
         action="store_true",
-        help="Whether to write the samples in batch for the HDF5 format, setting to false will save memory but a bit slower",
+        help="Whether to write the samples in batch for the HDF5 format, setting to false will save memory but a bit slower. Defautls to False.",
     )
     return parser.parse_args()
 
@@ -257,7 +259,7 @@ def create_dataset(params):
     pbar = tqdm(
         desc=f"Parsed 0 input files. Files written ", disable=not display_pbar,
     )
-    checkpoint_path = f"{args.output_dir}/checkpoint.txt"
+    checkpoint_path = f"{args.output_dir}/checkpoint_{process_no}.txt"
     resume_files_processed, df_count = read_checkpoint(
         checkpoint_path, resume_from_checkpoint
     )
@@ -326,9 +328,10 @@ def create_dataset(params):
     else:
         remainder = tokenized_files_array
 
-    n_examples = df_count * args.files_per_record + len(remainder)
+    n_examples = df_count * args.files_per_record
     if write_remainder:
-        write_files(
+        n_examples += len(remainder)
+        _df_count, _ = write_files(
             remainder,
             args,
             start_number=df_count,
@@ -336,6 +339,12 @@ def create_dataset(params):
             process_number=process_no,
             rng=rng,
         )
+        pbar.update(_df_count - df_count)
+        pbar.set_description(
+            f"Parsed {files_processed} input files. Files written "
+        )
+        with open(checkpoint_path, "w") as checkpoint_file:
+            checkpoint_file.write(f"{files_processed}, {_df_count}")
 
     successful_files = files_processed - discarded_files
     return {
@@ -364,7 +373,7 @@ def create_dataset_mp(files, args):
         # We hit errors in two potential scenarios,
         # 1) Files is an empty list, in which case there is nothing to split
         # 2) There are more processes than files, in which case we cannot split
-        #    the files to processes correctly, as there will be many ideal
+        #    the files to processes correctly, as there will be many idle
         #    processes which are not doing anything.
         print(e)
         raise
@@ -394,14 +403,15 @@ def main():
 
     output_dir = args.output_dir
 
-    if args.file_format == "tfrecords":
-        check_and_create_output_dirs(output_dir, filetype="tfrecord")
-    elif args.file_format == "HDF5":
-        check_and_create_output_dirs(output_dir, filetype="h5")
-    else:
-        raise Exception(
-            "Only supports `tfrecords` or `HDF5` file formats for now."
-        )
+    if not args.resume_from_checkpoint:
+        if args.file_format == "tfrecords":
+            check_and_create_output_dirs(output_dir, filetype="tfrecord")
+        elif args.file_format == "HDF5":
+            check_and_create_output_dirs(output_dir, filetype="h5")
+        else:
+            raise Exception(
+                "Only supports `tfrecords` or `HDF5` file formats for now."
+            )
     input_files = get_files(args.input_dir)
 
     json_params_file = os.path.join(args.output_dir, "data_params.json")
@@ -437,7 +447,9 @@ def main():
     data["processed_files"] = results["processed"]
     data["successful_files"] = results["successful"]
     data["n_examples"] = results["examples"]
-    data["eos_id"] = args.eos_id[0]
+    data["eos_id"] = (
+        args.eos_id[0] if isinstance(args.eos_id, list) else args.eos_id
+    )
     data["pad_id"] = args.pad_id
 
     with open(json_params_file, 'w') as _fout:

@@ -91,7 +91,11 @@ class LRScheduler(torch.optim.lr_scheduler.LambdaLR, abc.ABC):
 
     def lr_function(self, global_step):
         if cm.use_cs():
-            return self._lr_function(global_step)
+            # technically should be one lr tensor for each param group
+            # for now assume all lr are same across param groups
+            lr = self._lr_function(global_step)
+            self._last_lr = [lr for group in self.optimizer.param_groups]
+            return lr
         else:
             return self._lr_function(torch.tensor(global_step)).item()
 
@@ -113,12 +117,14 @@ class LRScheduler(torch.optim.lr_scheduler.LambdaLR, abc.ABC):
         return [lmbda(self.last_epoch) for lmbda in self.lr_lambdas]
 
     def state_dict(self):
+        if cm.is_appliance():
+            # update last epoch as step is only called once
+            self.last_epoch = cm.get_run_step() + LRScheduler.initial_epoch
+
         state = super().state_dict()
-        return {
-            key: val
-            for key, val in state.items()
-            if key not in ("cb_scheduler",)
-        }
+        state.pop("cb_scheduler", None)
+        state.pop("_last_lr", None)
+        return state
 
     def load_state_dict(self, state_dict: dict):
         super().load_state_dict(state_dict)
@@ -146,12 +152,11 @@ class LRScheduler(torch.optim.lr_scheduler.LambdaLR, abc.ABC):
 
 
 class ConstantLR(LRScheduler):
-    """
-    Constant update
+    r"""Maintains a constant learning rate for each parameter group (no decaying).
 
     Args:
         optimizer: The optimizer to schedule
-        val: The actual learning_rate value
+        val: The learning_rate value to maintain
         decay_steps: The number of steps to decay for
     """
 
@@ -180,8 +185,10 @@ class ConstantLR(LRScheduler):
 
 
 class PolynomialLR(LRScheduler):
-    """
-    Polynomial Decay
+    r"""Decays the learning rate of each parameter group using a polynomial function
+    in the given `decay_steps`.
+    
+    This class is similar to the `Pytorch PolynomialLR LRS`_.
 
     Args:
         optimizer: The optimizer to schedule
@@ -192,6 +199,9 @@ class PolynomialLR(LRScheduler):
             which is ratio of step completion (1 for linear)
             Default: 1.0 (only Linear supported at the moment)
         cycle: Whether to cycle
+
+    .. _Pytorch PolynomialLR LRS:
+        https://pytorch.org/docs/stable/generated/torch.optim.lr_scheduler.PolynomialLR.html#torch.optim.lr_scheduler.PolynomialLR
     """
 
     def __init__(
@@ -249,8 +259,9 @@ class PolynomialLR(LRScheduler):
 
 
 class ExponentialLR(LRScheduler):
-    """
-    Exponential Decay
+    r"""Decays the learning rate of each parameter group by `decay_rate` every step.
+    
+    This class is similar to the `Pytorch ExponentialLR LRS`_.
 
     Args:
         optimizer: The optimizer to schedule
@@ -258,6 +269,9 @@ class ExponentialLR(LRScheduler):
         decay_steps: Number of steps to perform the decay
         decay_rate: The decay rate
         staircase: If True decay the learning rate at discrete intervals
+    
+    .. _Pytorch ExponentialLR LRS:
+        https://pytorch.org/docs/stable/generated/torch.optim.lr_scheduler.ExponentialLR.html#torch.optim.lr_scheduler.ExponentialLR
     """
 
     def __init__(
@@ -294,8 +308,8 @@ class ExponentialLR(LRScheduler):
 
 
 class InverseExponentialTimeDecayLR(LRScheduler):
-    """
-    InverseExponentialTimeDecay
+    r"""Decays the learning rate inverse-exponentially over time, as described
+    in the `Keras InverseTimeDecay class`_.
 
     Args:
         optimizer: The optimizer to schedule
@@ -304,6 +318,9 @@ class InverseExponentialTimeDecayLR(LRScheduler):
         decay_steps: Number of steps to perform the decay.
         decay_rate: The decay rate.
         staircase: If True decay the learning rate at discrete intervals.
+
+    .. _Keras InverseTimeDecay class:
+        https://www.tensorflow.org/api_docs/python/tf/keras/optimizers/schedules/InverseTimeDecay
     """
 
     def __init__(
@@ -352,8 +369,13 @@ class InverseExponentialTimeDecayLR(LRScheduler):
 
 
 class InverseSquareRootDecayLR(LRScheduler):
-    """
-    InverseSquareRootDecay
+    r"""Decays the learning rate inverse-squareroot over time, as described
+    in the following equation:
+
+    .. math::
+        \begin{aligned}
+            lr_t & = \frac{\text{scale}}{\sqrt{\max\{t, \text{warmup_steps}\}}}.
+        \end{aligned}
 
     Args:
         optimizer: The optimizer to schedule
@@ -409,14 +431,17 @@ class InverseSquareRootDecayLR(LRScheduler):
 
 
 class CosineDecayLR(LRScheduler):
-    """
-    Cosine Decay
+    r"""Applies the cosine decay schedule as described
+    in the `Keras CosineDecay class`_.
 
     Args:
         optimizer: The optimizer to schedule
         initial_learning_rate: The initial learning rate.
         end_learning_rate: The final learning rate
         decay_steps: Number of steps to perform the decay
+
+    .. _Keras CosineDecay class:
+        https://www.tensorflow.org/api_docs/python/tf/keras/optimizers/schedules/CosineDecay
     """
 
     def __init__(
@@ -461,6 +486,23 @@ class CosineDecayLR(LRScheduler):
 
 
 class SequentialLR(torch.optim.lr_scheduler.SequentialLR):
+    r"""Receives the list of schedulers that is expected to be called sequentially
+    during optimization process and milestone points that provides exact
+    intervals to reflect which scheduler is supposed to be called at a given
+    step. 
+    
+    This class is a wrapper around the `Pytorch SequentialLR LRS`_.
+
+    Args:
+        optimizer: Wrapped optimizer
+        schedulers (list): List of chained schedulers.
+        milestones (list): List of integers that reflects milestone points.
+        last_epoch (int): The index of last epoch. Default: -1.
+
+    .. _Pytorch SequentialLR LRS:
+        https://pytorch.org/docs/stable/generated/torch.optim.lr_scheduler.SequentialLR.html#torch.optim.lr_scheduler.SequentialLR
+    """
+
     def __init__(self, optimizer, *args, **kwargs):
         if cm.use_cs():
             from modelzoo.common.pytorch import cbtorch
@@ -475,6 +517,15 @@ class SequentialLR(torch.optim.lr_scheduler.SequentialLR):
         super().__init__(optimizer, *args, **kwargs)
         LRScheduler.initial_epoch = self.last_epoch
         self._init_step()
+
+    def state_dict(self):
+        if cm.is_appliance():
+            # update last epoch as step is only called once
+            self.last_epoch = cm.get_run_step() + LRScheduler.initial_epoch
+
+        state = super().state_dict()
+        state.pop("_last_lr", None)
+        return state
 
     def load_state_dict(self, state_dict: dict):
         super().load_state_dict(state_dict)
@@ -500,7 +551,11 @@ class SequentialLR(torch.optim.lr_scheduler.SequentialLR):
 
     def lr_function(self, global_step):
         if cm.use_cs():
-            return self._lr_function(global_step)
+            # technically should be one lr tensor for each param group
+            # for now assume all lr are same across param groups
+            lr = self._lr_function(global_step)
+            self._last_lr = [lr for group in self.optimizer.param_groups]
+            return lr
         else:
             return self._lr_function(torch.tensor(global_step)).item()
 
@@ -539,6 +594,18 @@ class SequentialLR(torch.optim.lr_scheduler.SequentialLR):
 
 
 class PiecewiseConstantLR(SequentialLR):
+    r"""Adjusts the learning rate to a predefined constant at each milestone and
+    holds this value until the next milestone. Notice that such adjustment can
+    happen simultaneously with other changes to the learning rate from outside
+    this scheduler.
+
+    Args:
+        optimizer: The optimizer to schedule
+        learning_rates: List of learning rates to maintain before/during each
+            milestone.
+        milestones: List of step indices. Must be increasing.
+    """
+
     def __init__(
         self,
         optimizer,
@@ -566,14 +633,21 @@ class PiecewiseConstantLR(SequentialLR):
 
 
 class MultiStepLR(LRScheduler):
-    """
-    MultiStep
+    r"""Decays the learning rate of each parameter group by gamma once the number of
+    steps reaches one of the milestones. Notice that such decay can happen
+    simultaneously with other changes to the learning rate from outside this
+    scheduler. 
+    
+    This class is similar to the `Pytorch MultiStepLR LRS`_.
 
     Args:
         optimizer: The optimizer to schedule
         initial_learning_rate: The initial learning rate.
         gamma: Multiplicative factor of learning rate decay.
         milestones: List of step indices. Must be increasing.
+
+    .. _Pytorch MultiStepLR LRS:
+        https://pytorch.org/docs/stable/generated/torch.optim.lr_scheduler.MultiStepLR.html#torch.optim.lr_scheduler.MultiStepLR
     """
 
     def __init__(
@@ -626,14 +700,20 @@ class MultiStepLR(LRScheduler):
 
 
 class StepLR(LRScheduler):
-    """
-    Step Decay
+    r"""Decays the learning rate of each parameter group by gamma every `step_size`.
+    Notice that such decay can happen simultaneously with other changes to the
+    learning rate from outside this scheduler. 
+    
+    This class is similar to the `Pytorch StepLR LRS`_.
 
     Args:
         optimizer: The optimizer to schedule
         initial_learning_rate: The initial learning rate.
         step_size: Period of learning rate decay.
         gamma: Multiplicative factor of learning rate decay.
+
+    .. _Pytorch StepLR LRS:
+        https://pytorch.org/docs/stable/generated/torch.optim.lr_scheduler.StepLR.html#torch.optim.lr_scheduler.StepLR
     """
 
     def __init__(
@@ -675,14 +755,46 @@ class StepLR(LRScheduler):
 
 
 class CosineAnnealingLR(LRScheduler):
-    """
-    CosineAnnealing
+    r"""Set the learning rate of each parameter group using a cosine annealing
+    schedule, where :math:`\eta_{max}` is set to the initial lr and
+    :math:`T_{cur}` is the number of steps since the last restart in SGDR:
+
+    .. math::
+        \begin{aligned}
+            \eta_t & = \eta_{min} + \frac{1}{2}(\eta_{max} - \eta_{min})\left(1
+            + \cos\left(\frac{T_{cur}}{T_{max}}\pi\right)\right),
+            & T_{cur} \neq (2k+1)T_{max}; \\
+            \eta_{t+1} & = \eta_{t} + \frac{1}{2}(\eta_{max} - \eta_{min})
+            \left(1 - \cos\left(\frac{1}{T_{max}}\pi\right)\right),
+            & T_{cur} = (2k+1)T_{max}.
+        \end{aligned}
+
+    Notice that because the schedule is defined recursively, the learning rate
+    can be simultaneously modified outside this scheduler by other operators.
+    If the learning rate is set solely by this scheduler, the learning rate at
+    each step becomes:
+
+    .. math::
+        \eta_t = \eta_{min} + \frac{1}{2}(\eta_{max} - \eta_{min})\left(1 +
+        \cos\left(\frac{T_{cur}}{T_{max}}\pi\right)\right)
+
+    It has been proposed in
+    `SGDR: Stochastic Gradient Descent with Warm Restarts`_. Note that this only
+    implements the cosine annealing part of SGDR, and not the restarts.
+
+    This class is similar to the `Pytorch CosineAnnealingLR LRS`_.
 
     Args:
         optimizer: The optimizer to schedule
         initial_learning_rate: The initial learning rate.
         T_max: Maximum number of iterations.
         eta_min: Minimum learning rate.
+
+    .. _SGDR\: Stochastic Gradient Descent with Warm Restarts:
+        https://arxiv.org/abs/1608.03983
+
+    .. _Pytorch CosineAnnealingLR LRS:
+        https://pytorch.org/docs/stable/generated/torch.optim.lr_scheduler.CosineAnnealingLR.html#torch.optim.lr_scheduler.CosineAnnealingLR
     """
 
     def __init__(
@@ -721,8 +833,8 @@ class CosineAnnealingLR(LRScheduler):
 
 
 class LambdaLR(LRScheduler):
-    """
-    CosineAnnealing
+    r"""Sets the learning rate of each parameter group to the initial lr times a
+    given function (which is specified by overriding `set_lr_lambda`).
 
     Args:
         optimizer: The optimizer to schedule
@@ -776,15 +888,36 @@ class LambdaLR(LRScheduler):
 
 
 class CosineAnnealingWarmRestarts(LRScheduler):
-    """
-    CosineAnnealingWarmRestarts
+    r"""Set the learning rate of each parameter group using a cosine annealing
+    schedule, where :math:`\eta_{max}` is set to the initial lr, :math:`T_{cur}`
+    is the number of steps since the last restart and :math:`T_{i}` is the number
+    of steps between two warm restarts in SGDR:
+
+    .. math::
+        \eta_t = \eta_{min} + \frac{1}{2}(\eta_{max} - \eta_{min})\left(1 +
+        \cos\left(\frac{T_{cur}}{T_{i}}\pi\right)\right)
+
+    When :math:`T_{cur}=T_{i}`, set :math:`\eta_t = \eta_{min}`.
+    When :math:`T_{cur}=0` after restart, set :math:`\eta_t=\eta_{max}`.
+
+    It has been proposed in
+    `SGDR: Stochastic Gradient Descent with Warm Restarts`_.    
+
+    This class is similar to the `Pytorch CosineAnnealingWarmRestarts LRS`_.
 
     Args:
         optimizer: The optimizer to schedule
         initial_learning_rate: The initial learning rate.
         T_0: Number of iterations for the first restart.
-        T_mult: A factor increases Ti after a restart.
+        T_mult: A factor increases Ti after a restart. Currently T_mult must be
+            set to 1.0
         eta_min: Minimum learning rate.
+
+    .. _SGDR\: Stochastic Gradient Descent with Warm Restarts:
+        https://arxiv.org/abs/1608.03983
+
+    .. _Pytorch CosineAnnealingWarmRestarts LRS:
+        https://pytorch.org/docs/stable/generated/torch.optim.lr_scheduler.CosineAnnealingWarmRestarts.html#torch.optim.lr_scheduler.CosineAnnealingWarmRestarts
     """
 
     def __init__(
@@ -864,8 +997,8 @@ class CosineAnnealingWarmRestarts(LRScheduler):
 
 
 class MultiplicativeLR(LRScheduler):
-    """
-    Multiplicative
+    r"""Multiply the learning rate of each parameter group by the supplied
+    coefficient.
 
     Args:
         optimizer: The optimizer to schedule
@@ -918,10 +1051,7 @@ class MultiplicativeLR(LRScheduler):
 
 
 class ChainedScheduler(torch.optim.lr_scheduler.ChainedScheduler):
-    """
-    ChainedScheduler
-
-    Chains list of learning rate schedulers.
+    r"""Chains list of learning rate schedulers.
     It takes a list of chainable learning rate schedulers and
     performs consecutive step() functions belonging to them by just one call.
     """
@@ -933,6 +1063,11 @@ class ChainedScheduler(torch.optim.lr_scheduler.ChainedScheduler):
         super().__init__(*args, **kwargs)
         self.optimizer = self._schedulers[0].optimizer
         self._init_step()
+
+    def state_dict(self):
+        state = super().state_dict()
+        state.pop("_last_lr", None)
+        return state
 
     def _init_step(self):
         if not cm.use_cs():
@@ -958,7 +1093,11 @@ class ChainedScheduler(torch.optim.lr_scheduler.ChainedScheduler):
 
     def lr_function(self, global_step):
         if cm.use_cs():
-            return self._lr_function(global_step)
+            # technically should be one lr tensor for each param group
+            # for now assume all lr are same across param groups
+            lr = self._lr_function(global_step)
+            self._last_lr = [lr for group in self.optimizer.param_groups]
+            return lr
         else:
             return self._lr_function(torch.tensor(global_step)).item()
 
@@ -995,8 +1134,24 @@ class ChainedScheduler(torch.optim.lr_scheduler.ChainedScheduler):
 
 
 class CyclicLR(LRScheduler):
-    """
-    Cyclic
+    r"""Sets the learning rate of each parameter group according to
+    cyclical learning rate policy (CLR). The policy cycles the learning
+    rate between two boundaries with a constant frequency, as detailed in
+    the paper `Cyclical Learning Rates for Training Neural Networks`_.
+    The distance between the two boundaries can be scaled on a per-iteration
+    or per-cycle basis.
+
+    Cyclical learning rate policy changes the learning rate after every batch.
+    `step` should be called after a batch has been used for training.
+
+    This class has three built-in policies, as put forth in the paper:
+
+    * "triangular": A basic triangular cycle without amplitude scaling.
+    * "triangular2": A basic triangular cycle that scales initial amplitude by half each cycle.
+    * "exp_range": A cycle that scales initial amplitude by :math:`\text{gamma}^{\text{cycle iterations}}`
+      at each cycle iteration.
+
+    This class is similar to the `Pytorch CyclicLR LRS`_.
 
     Args:
         optimizer: The optimizer to schedule.
@@ -1004,9 +1159,14 @@ class CyclicLR(LRScheduler):
         max_lr: Upper learning rate boundaries in the cycle.
         step_size_up: Number of training iterations in the increasing half of a cycle.
         step_size_down: Number of training iterations in the decreasing half of a cycle.
-        mode: One of {triangular, triangular2, exp_range}.
+        mode: One of {'triangular', 'triangular2', 'exp_range'}.
         gamma: Constant in 'exp_range' scaling function: gamma**(cycle iterations).
-        scale_mode: Defines whether scale_fn is evaluated on cycle number or cycle iterations.
+        scale_mode: {'cycle', 'iterations'} Defines whether scale_fn is evaluated on cycle number or cycle iterations.
+
+    .. _Cyclical Learning Rates for Training Neural Networks: https://arxiv.org/abs/1506.01186
+
+    .. _Pytorch CyclicLR LRS:
+        https://pytorch.org/docs/stable/generated/torch.optim.lr_scheduler.CyclicLR.html#torch.optim.lr_scheduler.CyclicLR
     """
 
     def __init__(
@@ -1103,8 +1263,17 @@ class CyclicLR(LRScheduler):
 
 
 class OneCycleLR(LRScheduler):
-    """
-    OneCycle
+    r"""Sets the learning rate of each parameter group according to the
+    1cycle learning rate policy. The 1cycle policy anneals the learning
+    rate from an initial learning rate to some maximum learning rate and then
+    from that maximum learning rate to some minimum learning rate much lower
+    than the initial learning rate.
+    This policy was initially described in the paper `Super-Convergence:
+    Very Fast Training of Neural Networks Using Large Learning Rates`_.
+
+    This scheduler is not chainable.
+
+    This class is similar to the `Pytorch OneCycleLR LRS`_.
 
     Args:
         optimizer: The optimizer to schedule
@@ -1115,6 +1284,12 @@ class OneCycleLR(LRScheduler):
         final_div_factor: Determines the minimum learning rate via min_lr = initial_lr/final_div_factor.
         three_phase: If True, use a third phase of the schedule to annihilate the learning rate
         anneal_strategy: Specifies the annealing strategy: “cos” for cosine annealing, “linear” for linear annealing.
+
+    .. _Super-Convergence\: Very Fast Training of Neural Networks Using Large Learning Rates:
+        https://arxiv.org/abs/1708.07120
+
+    .. _Pytorch OneCycleLR LRS:
+        https://pytorch.org/docs/stable/generated/torch.optim.lr_scheduler.OneCycleLR.html#torch.optim.lr_scheduler.OneCycleLR
     """
 
     def __init__(

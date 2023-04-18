@@ -143,37 +143,6 @@ For more details about the input function pipeline used for the models located i
 
 
 
-## Compile model
-
-We recommend that you first compile your model successfully on a support cluster CPU node before running it on the CS system.
-
-### Validate only
-
-You can run in `validate_only` mode that runs a fast, light-weight verification. In this mode, the compilation will only run through the first few stages, up until kernel library matching. You can run it by using the below command:
-
-```bash
-csrun_cpu python run.py \
-  --mode=train \
-  --params <path/to/yaml> \
-  --model_dir </path/to/model_dir> \
-  --validate_only 
-```
-
-After a successful `validate_only` run, you can run full compilation with `compile_only` mode.
-
-### Compile only
-
-This step runs the full compilation through all stages of the Cerebras software stack to generate a CS system executable. You can run it by using the below command:
-
-```bash
-csrun_cpu python run.py \
-  --mode=train \
-  --params <path/to/yaml> \
-  --model_dir </path/to/model_dir> \
-  --compile_only 
-```
-
-When the above compilation is successful, the model is guaranteed to run on CS system. You can also use this mode to run pre-compilations of many different model configurations offline, so that you can fully utilize allocated CS system cluster time.
 
 ## Run fine-tuning
 
@@ -196,41 +165,26 @@ These summarization layers are jointly fine-tuned with BERT.
 
 Same applies for the `eval_input`.
 
-### Run fine-tuning on Cerebras System <a name="run-fine-tuning-on-the-cerebras-system"></a>
+## To compile/validate, run train and eval on Cerebras System
 
-Follow [How to train on the CS System](../../../#how-to-train-on-the-cs-system) and execute the following command from within the Cerebras environment:
+Please follow the instructions on our [quickstart in the Developer Docs](https://docs.cerebras.net/en/latest/wsc/getting-started/cs-appliance.html).
 
-```bash
-csrun_wse python run.py \
---mode train \
---cs_ip x.x.x.x \
---params /path/to/yaml \
---model_dir /path/to/model_dir \
---checkpoint_path /path/to/pretrained_checkpoint.mdl
+> **Note**: To specify a BERT pretrained checkpoint use: `--checkpoint_path` is the path to the saved checkpoint from BERT pre-training,`--is_pretrained_checkpoint` flag is needed for loading the pre-trained BERT model for fine-tuning.
+
+## To run train and eval on GPU/CPU
+
+If running on a cpu or gpu, activate the environment from [Python GPU Environment setup](../../../../PYTHON-SETUP.md), and simply run:
+
+```
+python run.py CPU --mode train --params /path/to/yaml --model_dir /path/to/model_dir
+```
+or
+```
+python run.py GPU --mode train --params /path/to/yaml --model_dir /path/to/model_dir
 ```
 
-where:
+> **Note**: Change the command to `--mode eval` for evaluation.
 
-- `/path/to/yaml` is a path to the YAML config file with model parameters. A few example YAML config files can be found in [configs](#configs-included-for-this-model) directory.
-- `/path/to/model_dir` is a path to the directory where you would like to store the logs and other artifacts of the run.
-- `cs_ip` is the IP address of the CM endpoint.
-- `checkpoint_path` is the path to the saved checkpoint from BERT fine-tuning.
-
-### Run fine-tuning on GPU
-
-To run fine-tuning on GPU, use the `run.py` Python utility as follows:
-
-```bash
-python run.py \
---mode train \
---params /path/to/yaml \
---model_dir /path/to/model_dir \
---checkpoint_path /path/to/pretrained_checkpoint.mdl
-```
-
-The description of the command-line arguments is the same as in the above section.
-For more information about how to start training task on GPU/CPU or the Cerebras System,
-refer to [fine-tuning README.md](./../README.md).
 
 ## Configs included for this model
 

@@ -6,12 +6,12 @@ PubMed dataset comprises of data from PubMed Baseline, Update and Full text comm
 2. PubMed UpdateFiles Abstracts: ftp://ftp.ncbi.nlm.nih.gov/pubmed/updatefiles/
 3. PubMed FullText Commercial: ftp://ftp.ncbi.nlm.nih.gov/pub/pmc/oa_bulk/
 
-The following vocab files for PubMed dataset are located in [transformers/vocab](../../../../vocab)
+The following vocab files for PubMed dataset are located in [transformers/vocab](../../../vocab/)
 
 * `uncased_pubmed_abstracts_and_fulltext_vocab.txt` - Size: 30522
 * `uncased_pubmed_abstracts_only_vocab.txt` - Size: 28895
 
-The following configuration files related to PubMed dataset are available at [transformers/bert/tf/configs](../../../../bert/tf/configs)
+The following configuration files related to PubMed dataset are available at [transformers/bert/tf/configs](../../../tf/bert/tf/configs)
 
 * `params_pubmedbert_base_msl128.yaml` 
 * `params_pubmedbert_base_msl512.yaml`
@@ -57,7 +57,6 @@ The preprocessed dataset from stage 3 is now used to write to TFRecords. The exa
 - `masked_lm_prob`: Masked LM Probability
 - `do_lower_case`: Whether the tokens are to be converted to lower case or not
 - `mask_whole_word`: Whether to mask all the tokens in a word or not
-
 
 The examples in the TFRecords have the following key/values in itsfeatures dictionary:
 
@@ -198,49 +197,49 @@ source create_pubmed_datasets.sh ${OUTPUTDIR} ${DATASET_NAME} ${VOCAB_FILE}
           VOCAB_FILE: Location to vocab file which contains WordPiece to id mapping.
         
 
-Example Usage: source create_pubmed_datasets.sh /tmp/pubmed_tfrecords pubmed_baseline ../vocab/uncased_pubmed_abstracts_and_fulltext_vocab.txt
+Example Usage: source create_pubmed_datasets.sh /path_to/pubmed_tfrecords pubmed_baseline ../vocab/uncased_pubmed_abstracts_and_fulltext_vocab.txt
 
 ```
-Refer to [vocab directory](../../vocab) for PubMed and Google vocab files.
+Refer to [vocab directory](../../../vocab) for PubMed and Google vocab files.
 
 ```
 Directory Structure: 
 
 Output directory = <args.output_dir>/<args.dataset>. Subfolder structure for this output directory is as shown below
 
-<args.output_dir>/<args.dataset> (Example: /tmp/pubmed_tfrecords/pubmed_baseline)
+<args.output_dir>/<args.dataset> (Example: /path_to/pubmed_tfrecords/pubmed_baseline)
 ├── download
-│   ├── extracted
-│   │   ├── <>.xml
-│   │   ├── <>.xml
-│   ├── <>.xml.gz
-│   ├── <>.xml.gz
+│   ├── extracted
+│   │   ├── <>.xml
+│   │   ├── <>.xml
+│   ├── <>.xml.gz
+│   ├── <>.xml.gz
 ├── formatted
-│   ├── <>.txt
-│   ├── <>.txt
+│   ├── <>.txt
+│   ├── <>.txt
 ├── sharded
-│   ├── test
-│   │   ├── <>.txt
-│   │   └── <>.txt
-│   └── training
-│       ├── <>.txt
-│       └── <>.txt
+│   ├── test
+│   │   ├── <>.txt
+│   │   └── <>.txt
+│   └── training
+│       ├── <>.txt
+│       └── <>.txt
 └── tfrecord
     ├── uncased_msl128_mp20_wwmTrue_dupe5
-    │   ├── params.json
-    │   ├── test
-    │   │   ├── <>.tfrecords
-    │   │   ├── <>.tfrecords
-    │   └── training
-    │   │   ├── <>.tfrecords
-    │   │   ├── <>.tfrecords    
+    │   ├── params.json
+    │   ├── test
+    │   │   ├── <>.tfrecords
+    │   │   ├── <>.tfrecords
+    │   └── training
+    │   │   ├── <>.tfrecords
+    │   │   ├── <>.tfrecords    
     └── uncased_msl512_mp80_wwmTrue_dupe5
-    │   ├── params.json
-    │   ├── test
-    │   │   ├── <>.tfrecords
-    │   │   ├── <>.tfrecords
-    │   └── training
-    │   │   ├── <>.tfrecords
-    │   │   ├── <>.tfrecords 
+    │   ├── params.json
+    │   ├── test
+    │   │   ├── <>.tfrecords
+    │   │   ├── <>.tfrecords
+    │   └── training
+    │   │   ├── <>.tfrecords
+    │   │   ├── <>.tfrecords 
 
 ```

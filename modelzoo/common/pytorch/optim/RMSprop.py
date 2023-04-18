@@ -57,6 +57,9 @@ class RMSprop(CSOptimizer):
 
         super(RMSprop, self).__init__(params, defaults)
 
+    def state_names_to_sparsify(self):
+        return ["square_avg", "momentum_buffer", "grad_avg"]
+
     def preinitialize(self):
         """
         Allocates tensors for the optimizer state to allow direct compilation
@@ -76,6 +79,7 @@ class RMSprop(CSOptimizer):
                         p, device="cpu"
                     ).to(p.device)
 
+    @torch.no_grad()
     def step(self, closure=None):
         """Performs a single optimization step.
 
@@ -99,19 +103,18 @@ class RMSprop(CSOptimizer):
                 if p.grad is None:
                     continue
 
-                grad = p.grad.data
+                grad = p.grad
 
                 if grad.is_sparse:
                     raise RuntimeError(
                         "RMSprop does not support sparse gradients."
                     )
 
-                p_data = p.data
                 state = self.state[p]
                 square_avg = state["square_avg"]
 
                 if weight_decay != 0:
-                    grad = grad.add(p_data, alpha=weight_decay)
+                    grad = grad.add(p, alpha=weight_decay)
 
                 square_avg.mul_(alpha).addcmul_(grad, grad, value=1.0 - alpha)
 
@@ -129,8 +132,8 @@ class RMSprop(CSOptimizer):
                 if momentum > 0.0:
                     momentum_buffer = state["momentum_buffer"]
                     momentum_buffer.mul_(momentum).addcdiv_(grad, avg)
-                    p_data.add_(-lr * momentum_buffer)
+                    p.add_(-lr * momentum_buffer)
                 else:
-                    p_data.addcdiv_(-lr * grad, avg)
+                    p.addcdiv_(-lr * grad, avg)
 
         return loss

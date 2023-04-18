@@ -12,27 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
-import warnings
-import tempfile
+import logging
 
 from modelzoo.common.pytorch import cb_model as cm
-from modelzoo.common.pytorch.utils import get_debug_args
-
-
-def get_default_inis():
-    return {
-        "ws_opt_refinement_opt": "true",
-        "ws_opt_act_buffer_cols": 8,
-        "ws_opt_target_max_actv_wios": 16,
-        "ws_opt_target_wgt_port_group_size": 12,
-        "ws_rt_enable_worker_flow": "true",
-        "ws_run_memoize_actv_mem_mapping": "true",
-        "ws_rt_mem_limit_high": "0.5",
-        "ws_opt_lower_transform_in_waf_to_rt": "true",
-        "ws_opt_duplicate_weight_source": "false",
-        "ol_csp_allow_transpose": "true",
-    }
+from modelzoo.vision.pytorch.utils.run_utils import (
+    get_default_inis,
+    update_runconfig_debug_args_path,
+)
 
 
 def set_defaults(params):
@@ -43,41 +29,26 @@ def set_defaults(params):
         params: The dictionary containing the params
     """
 
-    def use_cs():
-        k8s_cs_ip = os.environ.get("K8S_CS_IP", None)
-        if k8s_cs_ip:
-            cs_ip = k8s_cs_ip
-        else:
-            cs_ip = params["runconfig"]["cs_ip"]
+    default_inis_dict = get_default_inis()
+    update_runconfig_debug_args_path(params, default_inis_dict)
 
-        validate_only = params["runconfig"]["validate_only"]
-        compile_only = params["runconfig"]["compile_only"] or validate_only
-        appliance = params["runconfig"].get("appliance", False)
-        use_cs = bool(cs_ip or compile_only or appliance)
-        return use_cs
+    # For performance
+    if params["runconfig"]["log_steps"] > 1:
+        params["runconfig"]["skip_train_recv_activations"] = True
 
-    if use_cs():
-        from cerebras_appliance.run_utils import write_debug_args
+    if params["runconfig"]["checkpoint_steps"] == 0:
+        logging.warning(
+            f"Setting `runconfig.checkpoint_steps` to max_steps. "
+            f"Setting to 0 only saves initial checkpoint"
+        )
+        params["runconfig"]["checkpoint_steps"] = params["runconfig"][
+            "max_steps"
+        ]
 
-        if not params["runconfig"].get("debug_args_path"):
-            cwd = os.getcwd()
-
-            with tempfile.TemporaryDirectory(dir=cwd) as ini_dir:
-                # Create and populate debug.ini
-                with open(os.path.join(ini_dir, "debug.ini"), "w") as fp:
-                    for key, val in get_default_inis().items():
-                        fp.write(f"{key}: {val}\n")
-
-                # Uses debug.ini from current path if it exists
-                debug_args = get_debug_args(None, ini_dir)
-
-            # in the case debug_args_path is not set
-            # create a default debug_args file in the debug_args_dir
-            debug_args_path = os.path.join(
-                params["runconfig"]["model_dir"], ".debug_args.proto"
-            )
-            write_debug_args(debug_args, debug_args_path)
-            params["runconfig"]["debug_args_path"] = debug_args_path
+    # Data params:
+    params["train_input"]["normalize_data_method"] = params["train_input"].get(
+        "normalize_data_method", None
+    )
 
     # Model params:
     if "input_channels" not in params["model"].keys():
@@ -85,6 +56,25 @@ def set_defaults(params):
             "image_shape"
         )[-1]
 
+    input_mode = params["runconfig"]["mode"]
+    shape_key = (
+        "image_shape"
+        if params["train_input"].get("image_shape")
+        else "input_shape"
+    )
+    params["model"]["image_shape"] = params[f"{input_mode}_input"].get(
+        shape_key
+    )
+    params["model"]["batch_size"] = params[f"{input_mode}_input"]["batch_size"]
+    convert_to_onehot = params["model"]["loss"] == "multilabel_bce"
+    params['train_input']['convert_to_onehot'] = convert_to_onehot
+    params['train_input']["use_worker_cache"] = params['train_input'].get(
+        "use_worker_cache", False
+    )
+    params['eval_input']['convert_to_onehot'] = convert_to_onehot
+    params['eval_input']["use_worker_cache"] = params['eval_input'].get(
+        "use_worker_cache", False
+    )
     params["model"]["num_classes"] = params["train_input"]["num_classes"]
     params["model"]["skip_connect"] = params["model"].get("skip_connect", True)
     params["model"]["downscale_method"] = params["model"].get(
@@ -108,15 +98,20 @@ def set_defaults(params):
     if (params["model"]["downscale_method"] == "max_pool") and (
         params["model"]["downscale_encoder_blocks"]
     ):
-        warnings.warn(
+        logging.warning(
             "Setting downscale_encoder_blocks has no effect when using max_pool"
         )
     if (params["model"]["downscale_method"] == "max_pool") and (
         params["model"]["downscale_bottleneck"]
     ):
-        warnings.warn(
+        logging.warning(
             "Setting downscale_bottleneck has no effect when using max_pool"
         )
+
+    # ignore_background_class only used by dice + cross entropy loss
+    params["model"]["ignore_background_class"] = params["model"].get(
+        "ignore_background_class", True
+    )
 
     # Param defaults for metrics
     params["model"]["eval_ignore_classes"] = params["model"].get(
@@ -129,6 +124,16 @@ def set_defaults(params):
         "eval_metrics", ["mIOU", "DSC", "Acc"]
     )
     params["model"]["use_bfloat16"] = params["model"].get("use_bfloat16", False)
+
+    if params["model"]["use_conv3d"] and params["model"]["use_bfloat16"]:
+        raise ValueError(
+            f"use_bloat16=True not supported for UNet3D model. "
+            f"Please set `use_bfloat16` to False"
+        )
+
+    if params["model"]["use_bfloat16"]:
+        params["optimizer"]["loss_scaling_factor"] = 1.0
+
     downscale_method = params["model"]["downscale_method"]
     convs_per_block = params["model"]["convs_per_block"]
     skip_connect = params["model"]["skip_connect"]
@@ -146,7 +151,7 @@ def set_defaults(params):
         )
 
     # Pass settings into data loader.
-    for model_key in ("mixed_precision", "loss"):
+    for model_key in ("mixed_precision", "loss", "use_bfloat16"):
         for input_key in ("train_input", "eval_input"):
             params[input_key][model_key] = params["model"].get(model_key)
 

@@ -81,6 +81,7 @@ class TransformerDecoder(nn.Module):
         ] = None,
         past_kv: Optional[List[Union[SelfAttnKV, SelfAndCrossAttnKV]]] = None,
         cache_present_kv: bool = False,
+        **extra_args,
     ) -> Union[
         Tensor, Tuple[Tensor, List[Union[SelfAttnKV, SelfAndCrossAttnKV]]]
     ]:
@@ -124,6 +125,7 @@ class TransformerDecoder(nn.Module):
                 cache_present_kv=cache_present_kv,
                 self_attn_position_bias=self_attn_position_bias,
                 cross_attn_position_bias=cross_attn_position_bias,
+                **extra_args,
             )
             if cache_present_kv:
                 present_kv.append(output[1])

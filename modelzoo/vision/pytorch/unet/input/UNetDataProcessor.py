@@ -16,10 +16,10 @@ import matplotlib.pyplot as plt
 import torch
 from torchvision import transforms
 
-from modelzoo.common.pytorch.run_utils import half_dtype_instance
 from modelzoo.vision.pytorch.input.utils import (
     FastDataLoader,
     ShardedSampler,
+    num_tasks,
     task_id,
 )
 from modelzoo.vision.pytorch.unet.input.preprocessing_utils import (
@@ -53,10 +53,11 @@ class UNetDataProcessor:
         self.prefetch_factor = params.get("prefetch_factor", 10)
         self.persistent_workers = params.get("persistent_workers", True)
 
-        # TODO: copy `mixed_precison` param from model section in utils.py
         self.mixed_precision = params.get("mixed_precision")
         if self.mixed_precision:
-            self.mp_type = half_dtype_instance.half_dtype
+            self.mp_type = (
+                torch.bfloat16 if params["use_bfloat16"] else torch.float16
+            )
         else:
             self.mp_type = torch.float32
 
@@ -75,8 +76,16 @@ class UNetDataProcessor:
         if self.shuffle_seed is not None:
             generator_fn.manual_seed(self.shuffle_seed)
 
+        self.disable_sharding = False
+        samples_per_task = len(dataset) // num_tasks()
+        if self.batch_size > samples_per_task:
+            print(
+                f"Dataset size: {len(dataset)} too small for num_tasks: {num_tasks} and batch_size: {self.batch_size}, using duplicate data for activation workers..."
+            )
+            self.disable_sharding = True
+
         if shuffle:
-            if self.duplicate_act_worker_data:
+            if self.duplicate_act_worker_data or self.disable_sharding:
                 # Multiples activation workers, each sending same data in different
                 # order since the dataset is extremely small
                 if self.shuffle_seed is None:
@@ -155,6 +164,24 @@ class UNetDataProcessor:
 
         if self.loss_type == "bce":
             mask = mask.to(self.mp_type)
+        elif self.loss_type == "multilabel_bce":
+            mask = torch.squeeze(mask, 0)
+            # Only long tensors are accepted by one_hot fcn.
+            mask = mask.to(torch.long)
+
+            # out shape: (H, W, num_classes)
+            mask = torch.nn.functional.one_hot(
+                mask, num_classes=self.num_classes
+            )
+            # out shape: (num_classes, H, W)
+            mask = torch.permute(mask, [2, 0, 1])
+            mask = mask.to(self.mp_type)
+
+        elif self.loss_type == "ssce":
+            # out shape: (H, W) with each value in [0, num_classes)
+            mask = torch.squeeze(mask, 0)
+
+            mask = mask.to(torch.int32)
         if self.mixed_precision:
             image = image.to(self.mp_type)
 

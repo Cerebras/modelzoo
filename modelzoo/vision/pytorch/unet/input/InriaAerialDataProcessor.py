@@ -21,7 +21,7 @@ from PIL import Image
 from torchvision import transforms
 from torchvision.datasets import VisionDataset
 
-from modelzoo.common.pytorch.run_utils import half_dtype_instance
+from modelzoo.common.pytorch import cb_model as cm
 from modelzoo.vision.pytorch.input.classification.dataset_factory import (
     VisionSubset,
 )
@@ -29,6 +29,7 @@ from modelzoo.vision.pytorch.input.transforms import LambdaWithParam
 from modelzoo.vision.pytorch.input.utils import (
     FastDataLoader,
     ShardedSampler,
+    create_worker_cache,
     num_tasks,
     task_id,
 )
@@ -47,6 +48,7 @@ class InriaAerialDataset(VisionDataset):
         transforms=None,
         transform=None,
         target_transform=None,
+        use_worker_cache=False,
     ):
         super(InriaAerialDataset, self).__init__(
             root, transforms, transform, target_transform
@@ -63,6 +65,13 @@ class InriaAerialDataset(VisionDataset):
             raise ValueError(
                 "split {split} has no mask images and hence target_transform should be None. Got {target_tranform}"
             )
+        if use_worker_cache and cm.is_streamer():
+            if not cm.is_appliance():
+                raise RuntimeError(
+                    "use_worker_cache not supported for non-appliance runs"
+                )
+            else:
+                self.root = create_worker_cache(self.root)
 
         self.data_dir = os.path.join(self.root, self.split)
         self.image_dir = os.path.join(self.data_dir, "images")
@@ -79,7 +88,7 @@ class InriaAerialDataset(VisionDataset):
         """
 
         image_file_path = os.path.join(self.image_dir, self.file_list[index])
-        image = Image.open(image_file_path).convert("L")  # PILImage
+        image = Image.open(image_file_path)  # 3-channel PILImage
 
         mask_file_path = os.path.join(self.mask_dir, self.file_list[index])
         target = Image.open(mask_file_path)  # PILImage
@@ -93,6 +102,7 @@ class InriaAerialDataset(VisionDataset):
 
 class InriaAerialDataProcessor:
     def __init__(self, params):
+        self.use_worker_cache = params["use_worker_cache"]
         self.data_dir = params["data_dir"]
 
         self.num_classes = params["num_classes"]
@@ -120,7 +130,9 @@ class InriaAerialDataProcessor:
 
         self.mixed_precision = params.get("mixed_precision")
         if self.mixed_precision:
-            self.mp_type = half_dtype_instance.half_dtype
+            self.mp_type = (
+                torch.bfloat16 if params["use_bfloat16"] else torch.float16
+            )
         else:
             self.mp_type = torch.float32
 
@@ -145,6 +157,7 @@ class InriaAerialDataProcessor:
             root=self.data_dir,
             split=split,
             transforms=self.transform_image_and_mask,
+            use_worker_cache=self.use_worker_cache,
         )
 
         if self.overfit:
@@ -188,6 +201,12 @@ class InriaAerialDataProcessor:
         else:
             data_sampler = torch.utils.data.SequentialSampler(dataset)
 
+        num_samples_per_task = len(data_sampler)
+
+        assert (
+            num_samples_per_task >= self.batch_size
+        ), f"Number of samples available per task(={num_samples_per_task}) is less than batch_size(={self.batch_size})"
+
         if self.use_fast_dataloader:
             dataloader_fn = FastDataLoader
             print("-- Using FastDataloader -- ")
@@ -223,7 +242,12 @@ class InriaAerialDataProcessor:
 
     def preprocess_image(self, image):
 
-        # converts to (C, H, W) format. In this case (1, H, W)
+        if self.image_shape[-1] == 1:
+            image = image.convert(
+                "L"
+            )  # convert PILImage to grayscale (H, W, 1)
+
+        # converts to (C, H, W) format.
         to_tensor_transform = transforms.PILToTensor()
 
         # Normalize

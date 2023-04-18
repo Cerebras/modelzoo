@@ -110,13 +110,13 @@ def compute_confusion_matrix(
     confusion_matrix = torch.zeros(
         num_classes * num_classes,
         device=predictions.device,
-        dtype=predictions.dtype,
+        dtype=torch.float32,
     )
     index = labels * num_classes + predictions
 
     if weights is None:
         weights = torch.ones_like(
-            predictions, device=predictions.device, dtype=predictions.dtype
+            predictions, device=predictions.device, dtype=torch.float32
         )
 
     if not on_device:

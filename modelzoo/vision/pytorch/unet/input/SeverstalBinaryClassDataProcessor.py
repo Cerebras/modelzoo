@@ -22,6 +22,8 @@ from PIL import Image
 from torchvision import transforms
 from torchvision.datasets import VisionDataset
 
+from modelzoo.common.pytorch import cb_model as cm
+from modelzoo.vision.pytorch.input.utils import create_worker_cache
 from modelzoo.vision.pytorch.unet.input.UNetDataProcessor import (
     UNetDataProcessor,
 )
@@ -37,6 +39,7 @@ class SeverstalBinaryClassDataset(VisionDataset):
         transforms=None,
         transform=None,
         target_transform=None,
+        use_worker_cache=False,
     ):
         super(SeverstalBinaryClassDataset, self).__init__(
             root, transforms, transform, target_transform
@@ -44,6 +47,14 @@ class SeverstalBinaryClassDataset(VisionDataset):
         self.train_test_split = train_test_split
         assert class_id_to_consider <= 4, "Maximum 4 available classes."
         self.class_id_to_consider = class_id_to_consider
+
+        if use_worker_cache and cm.is_streamer():
+            if not cm.is_appliance():
+                raise RuntimeError(
+                    "use_worker_cache not supported for non-appliance runs"
+                )
+            else:
+                self.root = create_worker_cache(self.root)
 
         self.data_dir = self.root
 
@@ -141,6 +152,7 @@ class SeverstalBinaryClassDataProcessor(UNetDataProcessor):
     def __init__(self, params):
         super(SeverstalBinaryClassDataProcessor, self).__init__(params)
 
+        self.use_worker_cache = params["use_worker_cache"]
         self.train_test_split = params["train_test_split"]
         self.class_id_to_consider = params["class_id"]
 
@@ -183,6 +195,7 @@ class SeverstalBinaryClassDataProcessor(UNetDataProcessor):
             class_id_to_consider=self.class_id_to_consider,
             split=split,
             transforms=self.transform_image_and_mask,
+            use_worker_cache=self.use_worker_cache,
         )
         return dataset
 

@@ -83,7 +83,7 @@ class Trainer:
             raise ValueError(
                 "Loss scaling factor must be either numeric or "
                 "one of the string values ['dynamic, 'tf_dynamic']. "
-                f"Instead got {self._lost_scaling_factor}."
+                f"Instead got {self._loss_scaling_factor}."
             )
 
         # Dynamic loss scaling (DLS) params required by

@@ -37,3 +37,6 @@ def set_defaults(params, mode=None):
         max_sequence_length = params["train_input"]["max_sequence_length"]
         loss_weight *= 1.0 / max_sequence_length
     params["model"]["loss_weight"] = loss_weight
+    params["optimizer"]["log_summaries"] = params["optimizer"].get(
+        "log_summaries", False
+    )

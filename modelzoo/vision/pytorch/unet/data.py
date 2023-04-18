@@ -23,15 +23,35 @@ from modelzoo.vision.pytorch.unet.input.Hdf5DataProcessor import (  # noqa
 from modelzoo.vision.pytorch.unet.input.InriaAerialDataProcessor import (  # noqa
     InriaAerialDataProcessor,
 )
+from modelzoo.vision.pytorch.unet.input.SkmDataProcessor import (  # noqa
+    SkmDataProcessor,
+)
+from modelzoo.vision.pytorch.unet.input.CityscapesDataProcessor import (  # noqa
+    CityscapesDataProcessor,
+)
 
 
-def train_input_dataloader(params):
+def train_input_dataloader_fn(params):
     return getattr(
         sys.modules[__name__], params["train_input"]["data_processor"]
     )(params["train_input"]).create_dataloader(is_training=True)
 
 
-def eval_input_dataloader(params):
+def eval_input_dataloader_fn(params):
     return getattr(
         sys.modules[__name__], params["eval_input"]["data_processor"]
     )(params["eval_input"]).create_dataloader(is_training=False)
+
+
+def train_input_dataloader(params):
+    use_distributed = params["runconfig"].get("enable_distributed", False)
+    if use_distributed:
+        return train_input_dataloader_fn
+    return train_input_dataloader_fn(params)
+
+
+def eval_input_dataloader(params):
+    use_distributed = params["runconfig"].get("enable_distributed", False)
+    if use_distributed:
+        return eval_input_dataloader_fn
+    return eval_input_dataloader_fn(params)

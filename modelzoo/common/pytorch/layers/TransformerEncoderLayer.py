@@ -51,6 +51,7 @@ class TransformerEncoderLayer(nn.Module):
         use_projection_bias_in_attention: Add bias to Q,K,V projections
             in the Attention layer. Defaults to False.
         attention_type: Should be in ["scaled_dot_product", "dot_product"]
+        attention_softmax_fp32: Use FP32 softmax in attention block.
         attention_inner_dim (int):  Number of output units in attention query/key/value projection. Defaults to d_model
         add_cross_attention: If ``True``, adds cross-attention layer between encoder/decoder,
             otherwise, only self-attention is used in the decoder (GPT-style models should set to ``False``)
@@ -90,6 +91,7 @@ class TransformerEncoderLayer(nn.Module):
         device=None,
         attention_dropout_rate: Optional[float] = None,
         attention_type="scaled_dot_product",
+        attention_softmax_fp32: Optional[bool] = True,
         attention_inner_dim=None,
         use_projection_bias_in_attention=False,
         use_ffn_bias_in_attention=False,
@@ -119,6 +121,7 @@ class TransformerEncoderLayer(nn.Module):
             dropout=attention_dropout_rate,
             batch_first=batch_first,
             attention_type=attention_type,
+            softmax_dtype_fp32=attention_softmax_fp32,
             use_projection_bias=use_projection_bias_in_attention,
             use_ffn_bias=use_ffn_bias_in_attention,
             attention_initializer=attention_initializer,
@@ -171,6 +174,7 @@ class TransformerEncoderLayer(nn.Module):
         src_mask: Optional[Tensor] = None,
         src_key_padding_mask: Optional[Tensor] = None,
         self_attn_position_bias: Optional[Tensor] = None,
+        **extra_args,
     ) -> Tensor:
         r"""Pass the input through the encoder layer.
 
@@ -192,6 +196,7 @@ class TransformerEncoderLayer(nn.Module):
                 src_mask,
                 src_key_padding_mask,
                 self_attn_position_bias=self_attn_position_bias,
+                **extra_args,
             )
             x = x + self.ffn(self.norm2(x))
         else:
@@ -202,6 +207,7 @@ class TransformerEncoderLayer(nn.Module):
                     src_mask,
                     src_key_padding_mask,
                     self_attn_position_bias=self_attn_position_bias,
+                    **extra_args,
                 )
             )
             x = self.norm2(x + self.ffn(x))
@@ -215,6 +221,7 @@ class TransformerEncoderLayer(nn.Module):
         attn_mask: Optional[Tensor],
         key_padding_mask: Optional[Tensor],
         self_attn_position_bias: Optional[Tensor],
+        **extra_args,
     ) -> Tensor:
         x = self.self_attn(
             x,
@@ -224,5 +231,6 @@ class TransformerEncoderLayer(nn.Module):
             key_padding_mask=key_padding_mask,
             position_bias=self_attn_position_bias,
             need_weights=False,
+            **extra_args,
         )
         return self.dropout1(x)

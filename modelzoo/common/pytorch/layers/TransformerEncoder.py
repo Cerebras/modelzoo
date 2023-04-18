@@ -71,6 +71,7 @@ class TransformerEncoder(nn.Module):
         mask: Optional[Tensor] = None,
         src_key_padding_mask: Optional[Tensor] = None,
         self_attn_position_bias: Optional[Tensor] = None,
+        **extra_args,
     ) -> Tensor:
         r"""Pass the input through the encoder layers in turn.
 
@@ -90,6 +91,7 @@ class TransformerEncoder(nn.Module):
                 src_mask=mask,
                 src_key_padding_mask=src_key_padding_mask,
                 self_attn_position_bias=self_attn_position_bias,
+                **extra_args,
             )
 
         if self.norm is not None:

@@ -1,0 +1,184 @@
+properties:
+  autogen_policy:
+    type:
+    - string
+    - 'null'
+  check_loss_values:
+    type: boolean
+  checkpoint_path:
+    type:
+    - string
+    - 'null'
+  checkpoint_steps:
+    type: integer
+  compile_dir:
+    type:
+    - string
+    - 'null'
+  compile_only:
+    type:
+    - boolean
+    - 'null'
+  credentials_path:
+    type:
+    - string
+    - 'null'
+  debug_args_path:
+    type:
+    - string
+    - 'null'
+  dist_addr:
+    type: string
+  dist_backend:
+    type: string
+  enable_distributed:
+    type: boolean
+  enable_summaries:
+    type: boolean
+  eval_steps:
+    type:
+    - integer
+    - 'null'
+  execution_strategy:
+    type:
+    - string
+    - 'null'
+  experimental_api:
+    type:
+    - boolean
+    - 'null'
+  init_method:
+    type: string
+  is_pretrained_checkpoint:
+    type: boolean
+  job_labels:
+    type:
+    - array
+    - 'null'
+  job_time_sec:
+    type:
+    - integer
+    - 'null'
+  log_steps:
+    type: integer
+  logging:
+    type:
+    - string
+    - 'null'
+  main_process_id:
+    type: integer
+  max_steps:
+    type:
+    - integer
+    - 'null'
+  mgmt_address:
+    type:
+    - string
+    - 'null'
+  mgmt_namespace:
+    type:
+    - string
+    - 'null'
+  mode:
+    type: string
+  model_dir:
+    type: string
+  mount_dirs:
+    type:
+    - array
+    - 'null'
+  multireplica:
+    type:
+    - boolean
+    - 'null'
+  num_act_servers:
+    type: integer
+  num_csx:
+    type: integer
+  num_epochs:
+    type:
+    - integer
+    - 'null'
+  num_replicas:
+    type: integer
+  num_steps:
+    type:
+    - integer
+    - 'null'
+  num_wgt_servers:
+    type:
+    - integer
+    - 'null'
+  num_workers_per_csx:
+    type: integer
+  python_paths:
+    type:
+    - array
+    - 'null'
+  save_initial_checkpoint:
+    type: boolean
+  save_losses:
+    type: boolean
+  save_stream_size:
+    type: integer
+  seed:
+    type: integer
+  service_dir:
+    type: string
+  show_debug_metrics:
+    type: boolean
+  steps_per_epoch:
+    type: integer
+  sync_batchnorm:
+    type: boolean
+  target_device:
+    type:
+    - string
+  transfer_processes:
+    type:
+    - integer
+    - 'null'
+  validate_only:
+    type:
+    - boolean
+    - 'null'
+  autoload_last_checkpoint:
+    type: 
+    - boolean
+    - 'null'
+  keep_checkpoint_max:
+    type:
+    - integer
+    - 'null' 
+  variant:
+    type: 
+    - string
+    - 'null' 
+  use_appliance_data:
+    type: 
+    - boolean 
+    - 'null' 
+  use_cs_grad_accum:
+    type: 
+    - boolean 
+    - 'null'
+  use_cstorch_optimizer_step:
+    type:
+    - boolean
+    - 'null'
+  skip_train_recv_activations:
+    type:
+    - boolean
+    - 'null'
+  eval_frequency:
+    type:
+    - integer
+    - 'null'
+  save_summary_steps:
+    type:
+    - integer
+    - 'null'
+  disable_version_check:
+    type: boolean
+type: object
+additionalProperties: false

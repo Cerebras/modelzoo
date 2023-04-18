@@ -15,10 +15,14 @@
 import torch
 import torch.nn as nn
 
-from modelzoo.common.pytorch.layers.utils import apply_loss_reduction
+from modelzoo.common.pytorch.layers.utils import (
+    apply_loss_reduction,
+    autogen_loss,
+)
 
 
 # Adapted from https://github.com/pytorch/pytorch/blob/473b733bae7009945cc5712699d346678e8a40ff/torch/_decomp/decompositions.py#L349
+@autogen_loss
 class HuberLoss(nn.Module):
     def __init__(self, reduction='mean', delta=1.0):
         super(HuberLoss, self).__init__()

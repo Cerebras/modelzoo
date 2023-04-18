@@ -40,9 +40,11 @@ class GPT2LMHeadModel(nn.Module):
         # Embedding
         vocab_size=50257,
         max_position_embeddings=1024,
+        embd_pdrop=0.1,
         position_embedding_type="learned",
         hidden_size=768,
         share_embedding_weights=True,
+        embedding_layer_norm=False,
         # Encoder
         num_hidden_layers=12,
         dropout_rate=0.1,
@@ -54,6 +56,7 @@ class GPT2LMHeadModel(nn.Module):
         use_ffn_bias_in_attention=True,
         attention_dropout_rate=0.1,
         attention_softmax_fp32=True,
+        attention_kernel=None,
         # Encoder - ffn
         filter_size=3072,
         nonlinearity="gelu",
@@ -67,6 +70,7 @@ class GPT2LMHeadModel(nn.Module):
         # Loss
         loss_weight=1.0,
         fixed_sparse_attention=None,
+        loss_scaling="num_tokens",
     ):
         super(GPT2LMHeadModel, self).__init__()
 
@@ -74,6 +78,7 @@ class GPT2LMHeadModel(nn.Module):
         self.initializer_range = initializer_range
         self.num_hidden_layers = num_hidden_layers
         self.share_embedding_weights = share_embedding_weights
+        self.embedding_layer_norm = embedding_layer_norm
         self.max_position_embeddings = max_position_embeddings
         self.position_embedding_type = position_embedding_type
 
@@ -113,7 +118,12 @@ class GPT2LMHeadModel(nn.Module):
             max_position_embeddings=max_position_embeddings,
         )
 
-        self.drop = nn.Dropout(dropout_rate)
+        if self.embedding_layer_norm:
+            self.embedding_ln_f = nn.LayerNorm(
+                hidden_size, eps=layer_norm_epsilon
+            )
+
+        self.drop_embd = nn.Dropout(embd_pdrop)
 
         decoder_layer = TransformerDecoderLayer(
             d_model=hidden_size,
@@ -123,6 +133,7 @@ class GPT2LMHeadModel(nn.Module):
             activation=nonlinearity,
             layer_norm_eps=layer_norm_epsilon,
             norm_first=True,
+            extra_attention_params={"attention_kernel": attention_kernel},
             add_cross_attention=False,
             attention_type=attention_type,
             attention_dropout_rate=attention_dropout_rate,
@@ -156,6 +167,8 @@ class GPT2LMHeadModel(nn.Module):
         self.lm_head = nn.Linear(
             hidden_size, vocab_size, bias=use_bias_in_output
         )
+
+        self.tie_weights()
 
         self.__reset_parameters()
 
@@ -208,7 +221,9 @@ class GPT2LMHeadModel(nn.Module):
         self, input_ids=None, attention_mask=None, labels=None,
     ):
         hidden_states = self.embedding_layer(input_ids)
-        hidden_states = self.drop(hidden_states)
+        if self.embedding_layer_norm:
+            hidden_states = self.embedding_ln_f(hidden_states)
+        hidden_states = self.drop_embd(hidden_states)
 
         causal_attention_mask = build_broadcastable_attention_mask(
             attention_mask,

@@ -24,7 +24,6 @@ from functools import partial
 import numpy as np
 import torch
 
-from modelzoo.common.pytorch import cb_model as cm
 from modelzoo.common.pytorch.input_utils import bucketed_batch
 from modelzoo.transformers.pytorch.bert.input.utils import build_vocab
 from modelzoo.transformers.pytorch.input_utils import (
@@ -50,60 +49,59 @@ class T5DynamicDataProcessor(torch.utils.data.IterableDataset):
     """
     Reads text files containing the input text tokens, adds extra ids for
     language modeling task on the fly.
-    :param str src_vocab_file: Path to file containing tokens of vocabulary, 
+    :param str src_vocab_file: Path to file containing tokens of vocabulary,
     one token per line.
-    :param str src_data_dir: Path to directory containing the output of 
+    :param str src_data_dir: Path to directory containing the output of
     preprocess.sh, with all the files of tokenized data.
-    :param int batch_size: Number of sequences per batch. Note that it is 
-    different between systems. 
-    :param bool shuffle, optional: If true the data will be shuffled before passing 
-    into the model. Recommended for training. Can be set to False for 
+    :param int batch_size: Number of sequences per batch. Note that it is
+    different between systems.
+    :param bool shuffle, optional: If true the data will be shuffled before passing
+    into the model. Recommended for training. Can be set to False for
     debugging.
-    :param int shuffle_seed, optional: Sets random seed for the order of 
-    data shuffling. Allows for reproducibility while still shuffling data. 
-    :param int shuffle_buffer: Size of buffer used to store data before 
-    shuffling 
-    :param int extra_ids, optional: Number of sentinel tokens for T5 objective 
-    :param int src_max_sequence_length, optional: Largest possible sequence 
-    length for the input. If longer it will be truncated. All other sequences 
-    padded to this length. 
-    :param int tgt_max_sequence_length, optional: Largest possible sequence 
+    :param int shuffle_seed, optional: Sets random seed for the order of
+    data shuffling. Allows for reproducibility while still shuffling data.
+    :param int shuffle_buffer: Size of buffer used to store data before
+    shuffling
+    :param int extra_ids, optional: Number of sentinel tokens for T5 objective
+    :param int src_max_sequence_length, optional: Largest possible sequence
+    length for the input. If longer it will be truncated. All other sequences
+    padded to this length.
+    :param int tgt_max_sequence_length, optional: Largest possible sequence
     length for the labels. If longer it will be truncated. All other sequences
     padded to this length.
     :param int num_workers, optional: Number of processes that move data to the
-    accelerator system, so that the system doesn't process data faster than 
+    accelerator system, so that the system doesn't process data faster than
     it receives it.
     :param bool drop_last, optional: If the last batch is not the full size,
     i.e. the dataset could not divide evenly into the batch-size, do not
     use the last batch.
-    :param int prefetch_factor, optional: Number of batch loaded in advance 
-    by each worker. 
-    :param bool persistent_workers, optional: If set, workers will not be 
-    shutdown after going through the dataset once. 
-    :param bool do_lower, optional: If set, will lowercase all tokens in vocabulary. 
+    :param int prefetch_factor, optional: Number of batch loaded in advance
+    by each worker.
+    :param bool persistent_workers, optional: If set, workers will not be
+    shutdown after going through the dataset once.
+    :param bool do_lower, optional: If set, will lowercase all tokens in vocabulary.
     T5's vocabulary is cased so this is not recommended.
-    :param list buckets, optional: A list of boundaries for sequence lengths 
+    :param list buckets, optional: A list of boundaries for sequence lengths
     to bucket together in order to speed up VTS/VSL.
-    :param bool dynamic_loss_weight, optional: If set, will divide the loss 
-    for a token by the length of the sequence that the token comes from. 
-    :param bool pack_sequences, optional: If set, will concatenate sequences   
+    :param bool dynamic_loss_weight, optional: If set, will divide the loss
+    for a token by the length of the sequence that the token comes from.
+    :param bool pack_sequences, optional: If set, will concatenate sequences
     so that computation is performed on real data rather than padding
     :param int num_documents_to_concatenate, optional: Specifies how many
     documents to pack together
     :param str oov_token, optional: Token for out-of-vocabulary words/sub-words
     :param str sos_token, optional: Token for start-of-sequence
     :param str eos_token, optional: Token for end-of-sequence
-    :param str pad_token, optional: Token for padding  
+    :param str pad_token, optional: Token for padding
     :param int labels_pad_id, optional: Can set specific padding for labels
     :param int input_pad_id, optional: Can set specific padding for inputs
-    :param bool mixed_precision, optional: If set, will use float16 rather 
+    :param bool mixed_precision, optional: If set, will use float16 rather
     than float32 when possible
     """
 
     def __init__(self, params):
         super(T5DynamicDataProcessor, self).__init__()
 
-        self.use_cs = cm.use_cs()
         # Input params.
         self.meta_data = self.get_meta_data(params["src_data_dir"])
 
@@ -139,7 +137,7 @@ class T5DynamicDataProcessor(torch.utils.data.IterableDataset):
         )
         self.shuffle = params.get("shuffle", True)
         self.shuffle_seed = params.get("shuffle_seed", None)
-        np.random.seed(self.shuffle_seed)
+        self.np_rng = np.random.default_rng(self.shuffle_seed)
         self.shuffle_buffer = params.get("shuffle_buffer", 10 * self.batch_size)
         self.do_lower = params.get("do_lower", False)
 
@@ -315,7 +313,7 @@ class T5DynamicDataProcessor(torch.utils.data.IterableDataset):
             lambda x: parse_text("".join(x), do_lower=self.do_lower), dataset
         )
         dataset = map(self.src_tokenize, dataset)
-        dataset = map(select_random_chunk, dataset)
+        dataset = map(partial(select_random_chunk, rng=self.np_rng), dataset)
 
         # pack sequences to reduce padding
         if self.pack_sequences:
@@ -346,6 +344,7 @@ class T5DynamicDataProcessor(torch.utils.data.IterableDataset):
                 vocab_size=self.src_vocab_size,
                 sos_token=self.special_tokens_indices["sos_token"],
                 eos_token=self.special_tokens_indices["eos_token"],
+                rng=self.np_rng,
             ),
             dataset,
         )
@@ -402,6 +401,7 @@ class T5DynamicDataProcessor(torch.utils.data.IterableDataset):
         if self.shuffle_seed is not None:
             self.shuffle_seed += worker_id + 1
         self.rng = random.Random(self.shuffle_seed)
+        self.np_rng = np.random.default_rng(self.shuffle_seed)
 
         # Shard the data across multiple processes.
         self.text_files_per_task_per_worker = shard_list_interleaved(

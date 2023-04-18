@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import inspect
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
@@ -185,12 +186,18 @@ class CBMetric(ABC):
         if self._is_appliance:
 
             def _on_activations_received():
-                cpu_args = list()
-                cpu_kwargs = dict()
-                for tensor in device_outputs.args:
-                    cpu_args.append(state.get_activation_for_output(tensor))
-                for key, tensor in device_outputs.kwargs.items():
-                    cpu_kwargs[key] = state.get_activation_for_output(tensor)
+                cpu_args = [
+                    state.get_activation_for_output(tensor)
+                    if isinstance(tensor, torch.Tensor)
+                    else tensor
+                    for tensor in device_outputs.args
+                ]
+                cpu_kwargs = {
+                    key: state.get_activation_for_output(tensor)
+                    if isinstance(tensor, torch.Tensor)
+                    else tensor
+                    for key, tensor in device_outputs.kwargs.items()
+                }
 
                 self.update_on_host(*cpu_args, **cpu_kwargs)
                 self._num_updates += 1
@@ -201,7 +208,8 @@ class CBMetric(ABC):
                     "cb_metric": {
                         self.name: [device_outputs.args, device_outputs.kwargs]
                     }
-                }
+                },
+                force=True,
             )
 
             state.register_activation_callback(_on_activations_received)
@@ -247,6 +255,112 @@ class CBMetric(ABC):
             state = cbtorch.state()
             state.track_object(state_dict)
             cm.set_metric_state_names(state_dict, self.name)
+
+    @classmethod
+    def create_metric_impl_factory(
+        cls,
+        pipeline_metric_cls: Optional["CBMetric"] = None,
+        ws_metric_cls: Optional["CBMetric"] = None,
+    ) -> "CBMetric":
+        """
+        Returns a factory for generating a correct instance of a metric
+
+        Args:
+            pipeline_metric_cls: Optional `CBMetric` which specifies the compute
+                for the pipeline execution strategy. Can be used for, and is the
+                default for CPU/GPU
+            ws_metric_cls: Optional `CBMetric` which species the compute in weight
+                streaming execution strategy. Can be used for CPU/GPU
+        Returns:
+            metric_factory: (*args, **kwargs) -> `CBMetric` that automatically gives
+                an instance of the correct metric given the execution strategy
+        Raises:
+            AssertionError: if values of `pipeline_metric_cls` or `ws_metric_cls`
+                are invalid
+        """
+        if pipeline_metric_cls is None and ws_metric_cls is None:
+            raise ValueError(
+                f"At least one metric implementation for either pipeline or weight streaming "
+                f"execution strategy must be provided, but both are None."
+            )
+
+        if pipeline_metric_cls is not None and not (
+            issubclass(pipeline_metric_cls, cls)
+        ):
+            raise TypeError(
+                f"expected provided pipeline metric to be a subclass of {cls}, "
+                f"got {type(pipeline_metric_cls)}"
+            )
+        if ws_metric_cls is not None and not (issubclass(ws_metric_cls, cls)):
+            raise TypeError(
+                f"expected provided WS metric to be a subclass of {cls}, "
+                f"got {type(ws_metric_cls)}"
+            )
+
+        # check if update on device was overridden
+        if pipeline_metric_cls is not None and ws_metric_cls is not None:
+            if (
+                pipeline_metric_cls.update_on_device
+                == CBMetric.update_on_device
+            ):
+                pipe_method = pipeline_metric_cls.update_on_host
+            else:
+                pipe_method = pipeline_metric_cls.update_on_device
+            pipe_spec = inspect.getfullargspec(pipe_method)
+
+            if ws_metric_cls.update_on_device == CBMetric.update_on_device:
+                ws_method = ws_metric_cls.update_on_host
+            else:
+                ws_method = ws_metric_cls.update_on_device
+            ws_spec = inspect.getfullargspec(ws_method)
+
+            if pipe_spec != ws_spec:
+                raise ValueError(
+                    f"The signature seen by calling the pipeline metric implementation "
+                    f"{pipeline_metric_cls} does not match the one seen by the WS metric "
+                    f"implementation {ws_metric_cls}. The methods that define these "
+                    f"signatures are {pipe_method} for the pipeline metric and {ws_method} for "
+                    f"the weight streaming metric. Please ensure that they take the same "
+                    f"args, kwargs, and have the same default values."
+                )
+
+        # return a factory for the metric
+        def metric_factory(*args, **kwargs):
+            """
+            Returns an instance of the proper metric for the execution strategy
+
+            Raises:
+                TypeError: if the needed metric class was not provided
+            """
+            if cm.use_cs():
+                if cbtorch.env().weight_streaming_mode:
+                    if ws_metric_cls:
+                        return ws_metric_cls(*args, **kwargs)
+                    raise TypeError(
+                        f"No weight streaming implementation was provided for this metric, "
+                        f"but you are running the weight streaming strategy. "
+                        f"The only registered metric is a pipeline implementation "
+                        f"{pipeline_metric_cls}. If you'd like to use this metric with the "
+                        f"weight streaming execution strategy, please provide an implementation, "
+                        f"or change the execution strategy."
+                    )
+                else:
+                    if pipeline_metric_cls:
+                        return pipeline_metric_cls(*args, **kwargs)
+                    raise TypeError(
+                        f"No pipeline implementation was provided for this metric, "
+                        f"but you are running the pipeline strategy. "
+                        f"The only registered metric is a weight streaming implementation "
+                        f"{ws_metric_cls}. If you'd like to use this metric with the "
+                        f"pipeline execution strategy, please provide an implementation, "
+                        f"or change the execution strategy."
+                    )
+            else:
+                if pipeline_metric_cls:  # pipeline is cpu/gpu default
+                    return pipeline_metric_cls(*args, **kwargs)
+                return ws_metric_cls(*args, **kwargs)
+
+        return metric_factory
 
 
 # Keeps track of all registered metrics

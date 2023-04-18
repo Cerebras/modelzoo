@@ -100,7 +100,7 @@ optimizer:
           end_learning_rate: 0.0006
         - scheduler: "CosineDecay"
           initial_learning_rate: 0.0006
-          decay_steps: 316800
+          steps: 316800
           end_learning_rate: 0.00006 # end_learning_rate = initial_learning_rate * alpha. alpha = 1.0 - beta1
 
 runconfig:

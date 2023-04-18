@@ -16,8 +16,6 @@ from typing import Optional, Tuple
 
 import torch
 
-NEGATIVE_INFINITY = -1.0e4
-
 
 def _extend_mask_to_shape_of_4(mask: torch.Tensor):
     assert len(mask.shape) in [
@@ -71,7 +69,8 @@ def make_key_padding_mask_broadcastable(
 
     if multiply_neg_inf:
         extended_key_padding_mask = (
-            extended_key_padding_mask * NEGATIVE_INFINITY
+            extended_key_padding_mask
+            * torch.finfo(extended_key_padding_mask.dtype).min
         )
 
     return extended_key_padding_mask
@@ -136,7 +135,10 @@ def build_broadcastable_attention_mask(
         )
 
     if multiply_neg_inf:
-        extended_attention_mask = extended_attention_mask * NEGATIVE_INFINITY
+        extended_attention_mask = (
+            extended_attention_mask
+            * torch.finfo(extended_attention_mask.dtype).min
+        )
 
     return extended_attention_mask
 
@@ -222,7 +224,9 @@ def make_sparse_mask_broadcastable(
     )
 
     if multiply_neg_inf:
-        sparse_attention_mask = sparse_attention_mask * NEGATIVE_INFINITY
+        sparse_attention_mask = (
+            sparse_attention_mask * torch.finfo(sparse_attention_mask.dtype).min
+        )
 
     return sparse_attention_mask
 
@@ -298,10 +302,12 @@ def get_extended_attention_mask(
         raise ValueError(
             f"Wrong shape for input_ids (shape {input_shape}) or attention_mask (shape {attention_mask.shape})"
         )
-    # Scale all the `1.0` masked-off values with `-10000.0`, since we are
-    # adding it to the raw scores before the softmax; this is effectively
+    # Scale all the `1.0` masked-off values with the min float value, since we
+    # are adding it to the raw scores before the softmax; this is effectively
     # the same as removing these entirely.
-    return extended_attention_mask * -1e4
+    return (
+        extended_attention_mask * torch.finfo(extended_attention_mask.dtype).min
+    )
 
 
 def smooth_loss(prediction_scores, loss, label_smoothing, classes):

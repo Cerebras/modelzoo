@@ -52,6 +52,17 @@ def set_defaults(params):
     params["optimizer"]["disable_lr_steps_reset"] = params["optimizer"].get(
         "disable_lr_steps_reset", True
     )
+    params["optimizer"]["log_summaries"] = params["optimizer"].get(
+        "log_summaries", False
+    )
+
+    # Attention softmax is fp32 by default.
+    params["model"]["attention_softmax_fp32"] = True
+
+    # Only WS configs have precision_opt_level setting.
+    # Attention softmax is bf16 for precision_opt_level: 2
+    if params["model"].get("precision_opt_level", 1) == 2:
+        params["model"]["attention_softmax_fp32"] = False
 
 
 def set_custom_stack_params(params):
@@ -88,9 +99,15 @@ def check_unused_model_params(model_params):
     """
     model_params.pop("to_float16", None)
     model_params.pop("mixed_precision", None)
-    if len(model_params) > 0:
+    # `precision_opt_level` is accessed later,
+    # so we remove it from the list of unused params
+    unused_params = [
+        key
+        for key in model_params.keys()
+        if key not in ["precision_opt_level", "use_bfloat16"]
+    ]
+    if unused_params:
         logging.warning(
-            "The following model params are unused: "
-            + ", ".join(model_params.keys())
+            "The following model params are unused: " + ", ".join(unused_params)
         )
     logging.root.setLevel(logging.INFO)

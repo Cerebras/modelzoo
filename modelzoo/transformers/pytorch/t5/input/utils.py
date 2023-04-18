@@ -54,7 +54,7 @@ def flat_map(fn, dataset):
             yield output
 
 
-def select_random_chunk(tokens, max_length=65536):
+def select_random_chunk(tokens, max_length=65536, rng=None):
     """
     Select a random chunk of a sample. This is used to prevent bias towards
     very long passages in the corpus.
@@ -62,6 +62,8 @@ def select_random_chunk(tokens, max_length=65536):
     :param list tokens: A list of token indices.
     :param int max_length: the maximum allowed length of a sample before
         splitting.
+    :param np.random.Generator rng: The numpy random generator to be used as
+        the source of randomness for this function.
     :returns: A list that is a random chunk of `tokens` if
         `len(tokens) > max_length` or `tokens` otherwise.
     """
@@ -71,7 +73,7 @@ def select_random_chunk(tokens, max_length=65536):
         return tokens
     # np.random.uniform sometimes includes the upper bound, so we subtract 1e-5
     # to make the effective range [0, num_segments)
-    start_index = max_length * int(np.random.uniform(0, num_segments - 1e-5))
+    start_index = max_length * int(rng.uniform(0, num_segments - 1e-5))
     end_index = min(start_index + max_length, num_tokens)
     return tokens[start_index:end_index]
 
@@ -97,19 +99,19 @@ def concatenate_documents(dataset, num_to_concatenate=128, pad_id=0):
             count = 0
 
 
-def _random_segmentation(num_items, num_segments):
+def _random_segmentation(num_items, num_segments, rng):
     """
     Partition a sequence of items randomly into non-empty segments.
     :param int num_items: An integer scalar > 0.
     :param int num_segments: An integer scalar in `[1, num_items]`.
     :param int seed: an integer seed.
+    :param np.random.Generator rng: The numpy random generator to be used as
+        the source of randomness for this function.
     :return: A numpy array with shape `[num_segments]` containing positive
         integers that add up to `num_items`.
-    Note: Inspired by Tensorflow version of `_random_segmentation`, See:
-    https://github.com/Cerebras/monolith/blob/77ac9c8d5d19ab9412fd71dacd12f3cf241eb316/src/models/transformers/tf/t5/input/data_processing/utils.py#L102
     """
     first_in_segment = np.arange(num_items - 1) < num_segments - 1
-    np.random.shuffle(first_in_segment)
+    rng.shuffle(first_in_segment)
     first_in_segment_padded = np.pad(first_in_segment, [[1, 0]])
     segment_id = np.cumsum(first_in_segment_padded)
 
@@ -123,7 +125,7 @@ def _random_segmentation(num_items, num_segments):
 
 
 def random_spans_noise_mask(
-    length, noise_density=0.15, mean_noise_span_length=3.0
+    length, noise_density=0.15, mean_noise_span_length=3.0, rng=None
 ):
     """
     Noise mask consisting of random spans of noise tokens.
@@ -137,11 +139,15 @@ def random_spans_noise_mask(
     :param int length: Length of the incoming token sequence.
     :param float noise_density: A float - approximate density of output mask.
     :param float mean_noise_span_length: A number used in the noise mask calculation.
+    :param np.random.Generator rng: The numpy random generator to be used as
+        the source of randomness for this function.
     :return: A boolean np.array with shape `[length]`.
-
-    Note: Inspired by Tensorflow version of `random_spans_noise_mask`, See:
-    https://github.com/Cerebras/monolith/blob/77ac9c8d5d19ab9412fd71dacd12f3cf241eb316/src/models/transformers/tf/t5/input/data_processing/utils.py#L123
     """
+    assert rng is not None, "You must specify a random number generator"
+    assert isinstance(
+        rng, np.random.Generator
+    ), f"rng must be a `np.random.Generator` object, got {type(rng)}"
+
     # Increase the length to avoid degeneracy.
     original_length = length
     length = max(length, 2)
@@ -159,9 +165,11 @@ def random_spans_noise_mask(
     num_nonnoise_tokens = length - num_noise_tokens
 
     # Pick the lengths of the noise spans and the non-noise spans.
-    noise_span_lengths = _random_segmentation(num_noise_tokens, num_noise_spans)
+    noise_span_lengths = _random_segmentation(
+        num_noise_tokens, num_noise_spans, rng=rng
+    )
     nonnoise_span_lengths = _random_segmentation(
-        num_nonnoise_tokens, num_noise_spans
+        num_nonnoise_tokens, num_noise_spans, rng=rng
     )
 
     # Stack both lengths into one tensor.
@@ -209,8 +217,6 @@ def noise_token_span_to_unique_sentinel(tokens, noise_mask, vocab_size):
     :param int vocab_size: Size of the vocabulary with tokens.
     :return: np.array with sentinels of the same type and shape as
         `tokens`.
-    Note: Inspired by Tensorflow version of `noise_token_span_to_unique_sentinel`, See:
-    https://github.com/Cerebras/monolith/blob/master/src/models/transformers/tf/t5/input/data_processing/utils.py#L52
     """
     previous_token_is_noise = np.pad(noise_mask[:-1], [[1, 0]])
 
@@ -227,7 +233,9 @@ def noise_token_span_to_unique_sentinel(tokens, noise_mask, vocab_size):
     return np.extract(np.logical_not(subsequent_noise_tokens), tokens)
 
 
-def construct_denoising_objective(tokens, vocab_size, sos_token, eos_token):
+def construct_denoising_objective(
+    tokens, vocab_size, sos_token, eos_token, rng
+):
     """
     Formats a raw sequence into a corrupted sequence and corresponding denoising
     targets.
@@ -235,13 +243,17 @@ def construct_denoising_objective(tokens, vocab_size, sos_token, eos_token):
     :param int vocab_size: The size of the vocabulary.
     :param int sos_token: The index of the `SOS` token in the vocabulary.
     :param int eos_token: The index of the `EOS` token in the vocabulary.
+    :param np.random.Generator rng: The numpy random generator to be used as
+        the source of randomness for this function.
     :returns: a tuple `(feature_dict, label)` of denoising source and target
         numpy arrays.
-
-    Note: Inspired by Tensorflow version of `construct_denoising_objective`, See:
-    https://github.com/Cerebras/monolith/blob/77ac9c8d5d19ab9412fd71dacd12f3cf241eb316/src/models/transformers/tf/t5/input/data_processing/utils.py#L288
     """
-    noise_mask = random_spans_noise_mask(len(tokens))
+    assert rng is not None, "You must specify a random number generator"
+    assert isinstance(
+        rng, np.random.Generator
+    ), f"rng must be a `np.random.Generator` object, got {type(rng)}"
+
+    noise_mask = random_spans_noise_mask(len(tokens), rng=rng)
     encoder_input_ids = noise_token_span_to_unique_sentinel(
         tokens, noise_mask, vocab_size
     )
@@ -282,9 +294,6 @@ def get_raw_sequence_lengths(
         before masking then it will have length at most max_sequence_length
         after masking; an integer that is the maximum possible length of a
         decoder sequence.
-
-    Note: Inspired by Tensorflow version of `get_raw_sequence_lengths`, See:
-    https://github.com/Cerebras/monolith/blob/a8137aab09707b3c435d93b69e3bbf9f0ccd6b85/src/models/transformers/tf/t5/input/data_processing/utils.py#L193
     """
 
     def get_post_masking_lens(unmasked_len):
@@ -311,9 +320,6 @@ def split_sequences(tokens, length):
     :returns: A list of sequences containing exactly the same samples as before
         split into seperate samples such that no element of the dataset has
         length longer than specified.
-
-    Note: Inspired by Tensorflow version of `split_sequences`, See:
-    https://github.com/Cerebras/monolith/blob/a8137aab09707b3c435d93b69e3bbf9f0ccd6b85/src/models/transformers/tf/t5/input/data_processing/utils.py#L252
     """
     n_tokens = len(tokens)
     num_segments = math.ceil(n_tokens / length)

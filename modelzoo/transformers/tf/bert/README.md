@@ -58,7 +58,7 @@ The following block diagram shows a high-level view of the sequence of steps you
 <img src="./images/bert-flow-on-cerebras-system.png" alt="drawing" width="1800" height="300"/> -->
 
 # Key features from CSoft platform used in this reference implementation
-In this section, we list CSoft platform specific features which help improve performance for the models listed in this folder. All of them are running in the pipeline mode, where all layers of the network are loaded altogether into the Cerebras wafer, for more detailed explanation of this mode, refer to [Layer pipelined mode](https://docs.cerebras.net/en/latest/cerebras-basics/cerebras-execution-modes.html#layer-pipelined-mode).
+In this section, we list CSoft platform specific features which help improve performance for the models listed in this folder. All of them are running in the pipeline mode, where all layers of the network are loaded altogether into the Cerebras wafer, for more detailed explanation of this mode, refer to [Layer pipelined mode](https://docs.cerebras.net/en/latest/wsc/cerebras-basics/cerebras-execution-modes.html#layer-pipelined-mode).
 
 ## Variable Sequence Length
 By default, pretraining is configured to use VSL mode when running on the Cerebras System. When running in the VSL mode, the Cerebras System does not perform any computations on the padding tokens. This can potentially result in training speedups. The VSL mode can be disabled by setting `model.enable_vsl: False` in the appropriate config file (see [Configs included for this model](#Configs-included-for-this-model) section). Regardless of the setting of this flag, VSL is not used for running in the eval mode.
@@ -67,7 +67,7 @@ In order to take full advantage of the potential speedups from the VSL, it is he
 
 ## Multi-Replica data parallel training  
 When training on the Cerebras System, the `--multireplica` flag can be used to perform data-parallel training
-across multiple copies of the model at the same time. For more details about this feature, please refer to [Multi-Replica Data Parallel Training](https://docs.cerebras.net/en/latest/general/multi-replica-data-parallel-training.html) documentation page.
+across multiple copies of the model at the same time. For more details about this feature, please refer to [Multi-Replica Data Parallel Training](https://docs.cerebras.net/en/latest/wsc/general/multi-replica-data-parallel-training.html) documentation page.
 
 ## Structure of the code
 
@@ -322,7 +322,7 @@ The features dictionary has the following key/values:
 
 ## Input pipeline with sharding
 
-In addition, the above-created TFRecords are used by the `BertTfRecordsProcessor` class to create a sharded dataset, using the `shard_dataset.py` utility. For a detailed explanation of sharding, see <a href="https://docs.cerebras.net/en/latest/tensorflow-docs/preparing-tf-input/sharding-for-cs.html" class="external-link">Sharding For the Cerebras System</a>.
+In addition, the above-created TFRecords are used by the `BertTfRecordsProcessor` class to create a sharded dataset, using the `shard_dataset.py` utility.
 
 Sharding is a method of splitting and storing a single logical dataset in multiple databases. By distributing the data among multiple machines, a cluster of database systems can store larger dataset and handle additional requests. Sharding is necessary if a dataset is too large to be stored in a single database, for more on [sharding](https://medium.com/@jeeyoungk/how-sharding-works-b4dec46b3f6). 
 
@@ -339,8 +339,8 @@ Sharding is a method of splitting and storing a single logical dataset in multip
 
 ## To compile/validate, run train and eval on Cerebras System
 
-Please follow the instructions on our Developer Docs at:
-https://docs.cerebras.net/en/latest/getting-started/tensorflow/index.html
+Please follow the instructions on our [quickstart in the Developer Docs](https://docs.cerebras.net/en/latest/wsc/getting-started/cs-appliance.html).
+
 
 ## To run train and eval on GPU/CPU
 
@@ -360,9 +360,8 @@ model:
 Next, simply run:
 
 ```
-python run.py --mode train --params /path/to/yaml --model_dir /path/to/model_dir
+python run.py {CPU,GPU} --mode train --params /path/to/yaml --model_dir /path/to/model_dir
 ```
-Compared to running on the Cerebras Systems, the only differences are the removal of `csrun_wse` and `--cs_ip` arguments.
 
 > **Note**: Change the command to `--mode eval` for evaluation.
 
@@ -387,7 +386,7 @@ In order to train the model, you need to provide a yaml config file. Below is th
 - `params_pubmedbert_*_msl*.yaml` contain the yaml config file to train the [PubMedBERT](https://arxiv.org/pdf/2007.15779.pdf) model, where there are `base` and `large` for the model size and sequence lengths of `128` and `512`.
 - The `pubmedbert` and `roberta` have different MSLs.
 
-All configs are meant to run in Pipeline mode in Appliance mode with Kubernetes flow. Slurm flow is available as a legacy support.
+All configs are meant to run in [Pipelined mode](https://docs.cerebras.net/en/latest/wsc/cerebras-basics/cerebras-execution-modes.html#layer-pipelined-mode)
 
 # References
 

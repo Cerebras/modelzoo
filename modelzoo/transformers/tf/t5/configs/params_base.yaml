@@ -79,9 +79,6 @@ runconfig:
     keep_checkpoint_max: 3
     tf_random_seed: 1202
     enable_distributed: False
-    validate_only: False
-    compile_only: False
-    mode: "train"
 
 ### CS-specific configurations
 csconfig:

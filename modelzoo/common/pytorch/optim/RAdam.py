@@ -22,19 +22,18 @@ from modelzoo.common.pytorch.utils import to_tensor
 
 
 class RAdam(CSOptimizer):
-    """
-    RAdam optimizer implemented to conform to execution within the
+    r"""RAdam optimizer implemented to conform to execution within the
     constraints of the Cerebras WSE.
 
     Args:
-    params (iterable): iterable of parameters to optimize or dicts defining
-        parameter groups
-    lr (float, optional): learning rate (default: 1e-3)
-    betas (Tuple[float, float], optional): coefficients used for computing
-        running averages of gradient and its square (default: (0.9, 0.999))
-    eps (float, optional): term added to the denominator to improve
-        numerical stability (default: 1e-6)
-    weight_decay (float, optional): weight decay (L2 penalty) (default: 0)
+        params (iterable): iterable of parameters to optimize or dicts defining
+            parameter groups
+        lr (float, optional): learning rate (default: 1e-3)
+        betas (Tuple[float, float], optional): coefficients used for computing
+            running averages of gradient and its square (default: (0.9, 0.999))
+        eps (float, optional): term added to the denominator to improve
+            numerical stability (default: 1e-6)
+        weight_decay (float, optional): weight decay (L2 penalty) (default: 0)
 
     """
 
@@ -65,6 +64,9 @@ class RAdam(CSOptimizer):
         defaults = dict(lr=lr, betas=betas, eps=eps, weight_decay=weight_decay,)
         super().__init__(params, defaults, enable_global_step=True)
 
+    def state_names_to_sparsify(self):
+        return ["exp_avg", "exp_avg_sq"]
+
     def preinitialize(self):
         """
         Allocates tensors for the optimizer state to allow direct compilation
@@ -85,6 +87,7 @@ class RAdam(CSOptimizer):
                     p.device
                 )
 
+    @torch.no_grad()
     def step(self, closure=None):
         """Performs a single optimization step.
 
@@ -106,19 +109,19 @@ class RAdam(CSOptimizer):
             for p in group['params']:
                 if p.grad is not None:
 
-                    grad = p.grad.data
+                    grad = p.grad
                     state = self.state[p]
                     exp_avg, exp_avg_sq = state["exp_avg"], state["exp_avg_sq"]
                     global_step = self._get_global_step(p)
 
                     if group["weight_decay"] > 0.0:
-                        grad = grad.add(p.data, alpha=group["weight_decay"])
+                        grad = grad.add(p, alpha=group["weight_decay"])
 
                     beta1t = torch.pow(
-                        to_tensor(beta1).to(p.data.device), global_step
+                        to_tensor(beta1).to(p.device), global_step
                     )
                     beta2t = torch.pow(
-                        to_tensor(beta2).to(p.data.device), global_step
+                        to_tensor(beta2).to(p.device), global_step
                     )
 
                     bias_correction1 = 1 - beta1t
@@ -141,8 +144,8 @@ class RAdam(CSOptimizer):
                         rho_inf - 2 * global_step * beta2t / bias_correction2
                     )
 
-                    one = to_tensor(1.0).to(p.data.device)
-                    five = to_tensor(5.0).to(p.data.device)
+                    one = to_tensor(1.0).to(p.device)
+                    five = to_tensor(5.0).to(p.device)
 
                     # Compute the variance rectification term and update parameters accordingly
                     rect = torch.where(
@@ -167,6 +170,6 @@ class RAdam(CSOptimizer):
 
                     update *= group["lr"]
 
-                    p.data.sub_(update)
+                    p.sub_(update)
 
         return loss

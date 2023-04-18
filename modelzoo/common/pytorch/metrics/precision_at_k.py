@@ -22,7 +22,7 @@ import torch
 from modelzoo.common.pytorch.metrics.cb_metric import CBMetric
 
 
-class PrecisionAtKMetric(CBMetric):
+class _PipelinePrecisionAtKMetric(CBMetric):
     """
     Precision@K takes the top K predictions and computes the true positive at K
     and false positive at K. For K = 1, it is the same as Precision.
@@ -58,7 +58,7 @@ class PrecisionAtKMetric(CBMetric):
 
     def __init__(self, k, name: Optional[str] = None):
         self.k = k
-        super(PrecisionAtKMetric, self).__init__(name=name)
+        super(_PipelinePrecisionAtKMetric, self).__init__(name=name)
 
     def init_state(self):
         self.reset_state()
@@ -103,3 +103,9 @@ class PrecisionAtKMetric(CBMetric):
     def reset_state(self):
         self.true_positive_at_k = 0.0
         self.false_positive_at_k = 0.0
+
+
+# Create a factory for creating a metric depending on execution strategy
+PrecisionAtKMetric = CBMetric.create_metric_impl_factory(
+    pipeline_metric_cls=_PipelinePrecisionAtKMetric, ws_metric_cls=None,
+)

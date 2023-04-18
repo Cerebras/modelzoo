@@ -23,6 +23,15 @@ from typing import Optional, Tuple
 
 import torch
 
+from cerebras_appliance.CSConfig import CSConfig
+from cerebras_appliance.pb.workflow.appliance.common.common_config_pb2 import (
+    DebugArgs,
+    ExecutionStrategy,
+)
+from cerebras_appliance.run_utils import (
+    get_debug_args,
+    update_debug_args_with_autogen_policy,
+)
 from modelzoo import CSOFT_PACKAGE, CSoftPackage
 from modelzoo.common.pytorch import cb_model as cm
 from modelzoo.common.pytorch import cbtorch, modes
@@ -35,7 +44,6 @@ from modelzoo.common.pytorch.sparsity.appliance import (
     build_sparsify_grouper,
     validate_sparsity_params,
 )
-from modelzoo.common.pytorch.summaries import save_all_summaries
 
 COMPILE_ONLY_MSG = "Compiling the model. This may take a few minutes."
 
@@ -45,6 +53,9 @@ class PyTorchCSAppliance(PyTorchBaseCSRunner):
 
     def __init__(self, model: PyTorchBaseModel, params: dict):
         super().__init__(model, params)
+
+        if self._save_stream_size:
+            raise ValueError(f"Saving input streams on CSX is not supported.")
 
         self._save_losses = self._runconfig.get("save_losses", True)
 
@@ -72,13 +83,74 @@ class PyTorchCSAppliance(PyTorchBaseCSRunner):
             self._runconfig["num_csx"] = 1
 
         cbtorch.state().set_num_csx(self._runconfig["num_csx"])
-        self._appliance = cbtorch.core.appliance.ApplianceMode(self._params)
 
+        debug_args = DebugArgs()
+        if self._runconfig.get("debug_args_path"):
+            debug_args = get_debug_args(self._runconfig["debug_args_path"])
+
+        update_debug_args_with_autogen_policy(
+            debug_args, self._runconfig.get("autogen_policy")
+        )
+
+        execution_strategy = (
+            ExecutionStrategy.ES_WEIGHT_STREAMING
+            if cbtorch.env().weight_streaming_mode
+            else ExecutionStrategy.ES_PIPELINE
+        )
+
+        cs_config = CSConfig(
+            num_csx=self._runconfig.get("num_csx", 1),
+            max_wgt_servers=self._runconfig["num_wgt_servers"],
+            mgmt_address=self._runconfig.get("mgmt_address"),
+            mgmt_namespace=self._runconfig.get("mgmt_namespace"),
+            credentials_path=self._runconfig.get("credentials_path"),
+            debug_args=debug_args,
+            mount_dirs=self._runconfig.get("mount_dirs"),
+            python_paths=self._runconfig.get("python_paths"),
+            transfer_processes=self._runconfig.get("transfer_processes"),
+            num_workers_per_csx=self._runconfig["num_workers_per_csx"],
+            execution_strategy=execution_strategy,
+            job_labels=self._runconfig.get("job_labels"),
+            max_act_per_csx=self._runconfig["num_act_servers"],
+            job_time_sec=self._runconfig["job_time_sec"],
+            disable_version_check=self._runconfig["disable_version_check"],
+        )
+        precision_opt_level = None
+        if "model" in self._params:
+            precision_opt_level = self._params["model"].get(
+                "precision_opt_level", 1
+            )
+        use_cs_grad_accum = self._runconfig.get("use_cs_grad_accum", False)
+        self.skip_train_recv_activations = self._runconfig.get(
+            "skip_train_recv_activations", False
+        )
+
+        self._appliance = cbtorch.core.appliance.ApplianceMode(
+            cbtorch.env().service_workdir,
+            cbtorch.env().compile_dir,
+            cs_config,
+            precision_opt_level,
+            use_cs_grad_accum,
+        )
         # Cache the original xla loss tensor for retrieving its value later
         self._loss_tensor = None
 
-        if "sparsity" in self._params:
-            validate_sparsity_params(self._params["sparsity"])
+        self.train_data_fn = None
+        self.eval_data_fn = None
+        self.send_weights_grouper = None
+
+        sparsity = self._params.get("sparsity", {})
+        if sparsity:
+            # Sparsity is incompatible with our optimization enabling dense
+            # matmul by default...
+            self._appliance.cs_config.debug_args.debug_ini.frozen_content += (
+                "\nws_dense_dmatmul: false\n"
+            )
+            validate_sparsity_params(sparsity)
+
+    @property
+    def _should_log_extra_summaries(self):
+        return self._log_summaries and self._num_batches_processed == 0
 
     def get_loss_value(self) -> torch.Tensor:
         """Fetch all activations and return the loss value."""
@@ -90,11 +162,37 @@ class PyTorchCSAppliance(PyTorchBaseCSRunner):
 
         return cbtorch.state().get_activation_for_output(self._loss_tensor)
 
+    def get_input_fn_params(self):
+        """ Construct the input function params using params dictionary """
+        cerebras_params = {
+            "num_epochs": None,  # If dataloader contents mismatch with len default to steps
+            "num_steps": self._total_steps,
+            "checkpoint_steps": self._checkpoint_steps,
+            # pylint: disable=protected-access
+            "num_workers_per_csx": self._appliance._cs_config.num_workers_per_csx,
+        }
+        if "cerebras" in self._params:
+            cerebras_params["cerebras"] = self._params.get("cerebras")
+
+        return ([self._params], {"__cerebras_params": cerebras_params})
+
+    def maybe_get_loss_value(self, step) -> torch.Tensor:
+        """Fetch loss value if its a fetch step otherwise return None."""
+        if self._is_fetch_step_helper(step):
+            loss = self.get_loss_value()
+        else:
+            loss = None
+        return loss
+
     ##################################################################
     #                         Training Hooks                         #
     ##################################################################
 
     def on_train_start(self):
+
+        if not self._compile_only:
+            self._start_time = time.time()
+
         # Losses are fetched (but maybe not displayed) at every step
         if self._model.grad_scaler:
             self._scaler = self._model.grad_scaler
@@ -115,6 +213,15 @@ class PyTorchCSAppliance(PyTorchBaseCSRunner):
     def on_train_batch_start(self, data):
         if self._num_batches_processed == 0:
             self._appliance.tracker_execute.start("Tracing forward pass")
+
+            sparsity = self._params.get("sparsity", {})
+            if sparsity:
+                # Build tensor grouper before tracing model so the initial
+                # weights can have their sparsity attributes annotated.
+                self.send_weights_grouper = build_sparsify_grouper(
+                    sparsity, self._model
+                )
+
             return super().on_train_batch_start(data)
         return data
 
@@ -123,40 +230,37 @@ class PyTorchCSAppliance(PyTorchBaseCSRunner):
             self._appliance.tracker_execute.stop("Tracing forward pass")
             logging.info(COMPILE_ONLY_MSG)
 
-            send_weights_grouper = None
-            sparsity = self._params.get("sparsity", {})
-            if sparsity and sparsity.get("type") == "sideband":
-                # Sparsity is incompatible with our optimization enabling dense
-                # matmul by default...
-                self._appliance.cs_config.debug_args.debug_ini.frozen_content += (
-                    "ws_dense_dmatmul: false\n"
-                )
-                send_weights_grouper = build_sparsify_grouper(
-                    sparsity, self._model
-                )
-
             batch_size = self._train_dataloader.batch_size
 
-            self._appliance.compile(batch_size, self._validate_only)
-            logging.info("Compile for training completed successfully!")
+            with self._appliance.build_worker_image():
+                self._appliance.compile(
+                    cbtorch.state().outputs, batch_size, self._validate_only
+                )
+                logging.info("Compile for training completed successfully!")
 
             if not self._compile_only:
                 assert self._initial_state_file is not None
 
                 self._appliance.execute(
                     self.train_data_fn,
+                    self.get_input_fn_params(),
                     batch_size,
                     self._total_steps,
                     self._checkpoint_steps,
                     self._active_mode,
                     self._initial_state_file,
                     cleanup_stack=self._cleanup_stack,
-                    send_weights_grouper=send_weights_grouper,
+                    send_weights_grouper=self.send_weights_grouper,
                 )
 
                 logging.debug("Execute setup complete")
 
-                loss = self.get_loss_value()
+                if self.skip_train_recv_activations:
+                    loss = self.maybe_get_loss_value(
+                        self._num_batches_processed
+                    )
+                else:
+                    loss = self.get_loss_value()
 
         if not self._compile_only:
             super().on_train_batch_end(loss, epoch, step)
@@ -171,24 +275,30 @@ class PyTorchCSAppliance(PyTorchBaseCSRunner):
             # Cache the loss lazy tensor used in compile
             self._loss_tensor = loss
             return loss
+        if self.skip_train_recv_activations:
+            return self.maybe_get_loss_value(self._num_batches_processed + 1)
         else:
             return self.get_loss_value()
 
     def backward(self, loss):
         if self._num_batches_processed == 0:
             return super().backward(loss)
+        return None
 
     def optimizer_zero_grad(self):
         if self._num_batches_processed == 0:
             return super().optimizer_zero_grad()
+        return None
 
     def optimizer_step(self):
         if self._num_batches_processed == 0:
             return super().optimizer_step()
+        return None
 
     def lr_scheduler_step(self):
         if self._num_batches_processed == 0:
             return super().lr_scheduler_step()
+        return None
 
     ##################################################################
     #                        Evaluation Hooks                        #
@@ -200,6 +310,7 @@ class PyTorchCSAppliance(PyTorchBaseCSRunner):
 
     def on_eval_end(self, early_exit=False):
         if not self._compile_only:
+            save_perf(self._perf_dir)
             cm.run_step_closures()
             super().on_eval_end(early_exit)
 
@@ -236,14 +347,18 @@ class PyTorchCSAppliance(PyTorchBaseCSRunner):
 
             batch_size = self._eval_dataloader.batch_size
 
-            self._appliance.compile(batch_size, self._validate_only)
-            logging.info("Compile for evaluation completed successfully!")
+            with self._appliance.build_worker_image():
+                self._appliance.compile(
+                    cbtorch.state().outputs, batch_size, self._validate_only
+                )
+                logging.info("Compile for evaluation completed successfully!")
 
             if not self._compile_only:
                 assert self._initial_state_file is not None
 
                 self._appliance.execute(
                     self.eval_data_fn,
+                    self.get_input_fn_params(),
                     batch_size,
                     self._total_steps,
                     0,  # checkpoint_steps
@@ -263,23 +378,20 @@ class PyTorchCSAppliance(PyTorchBaseCSRunner):
         if not self._compile_only:
             super().compute_eval_metrics()
 
-    def _maybe_save_summaries(self, step_offset=0):
-        """Saves summaries calculated at the current step."""
-        if self._is_fetch_step(step_offset):
-            save_all_summaries(
-                self._writer, self.world_global_step + step_offset,
-            )
-
     ##################################################################
     #                   Override Abstract Methods                    #
     ##################################################################
 
-    def train(self, dataloader: torch.utils.data.DataLoader) -> None:
-        dataloader = cbtorch.dataloader(dataloader, use_parallel_loader=False)
+    def train(self, train_dataloader: torch.utils.data.DataLoader) -> None:
+        dataloader = cbtorch.dataloader(
+            train_dataloader, use_parallel_loader=False
+        )
         super().train(dataloader)
 
-    def evaluate(self, dataloader: cbtorch.data.DataLoader):
-        dataloader = cbtorch.dataloader(dataloader, use_parallel_loader=False)
+    def evaluate(self, eval_dataloader: cbtorch.data.DataLoader):
+        dataloader = cbtorch.dataloader(
+            eval_dataloader, use_parallel_loader=False
+        )
         super().evaluate(dataloader)
 
     def _should_stop(self, epoch_step: int, mode: str) -> Tuple[bool, bool]:
@@ -304,10 +416,12 @@ class PyTorchCSAppliance(PyTorchBaseCSRunner):
 
         Args:
             checkpoint_path: Path to a checkpoint file.
-        Returns:
-            The loaded state dict. If checkpoint path was None, returns None.
         """
         if not checkpoint_path:
+            logging.info(
+                f"No checkpoint was provided, model parameters will be "
+                f"initialized randomly"
+            )
             self._global_step = 0
             self._initial_step = 0
             return
@@ -320,6 +434,8 @@ class PyTorchCSAppliance(PyTorchBaseCSRunner):
             from cerebras_pytorch.saver.pt_h5_saver import PyTorchH5Saver
         else:
             raise ImportError("Cerebras PyTorch package not installed")
+
+        logging.info(f"Loading weights from checkpoint {self._checkpoint_path}")
 
         with self._appliance.tracker_execute.entry("Load Checkpoint"):
             saver = PyTorchH5Saver()
@@ -339,6 +455,11 @@ class PyTorchCSAppliance(PyTorchBaseCSRunner):
                 with self._appliance.tracker_execute.entry(
                     "Convert PyTorch Checkpoint"
                 ):
+                    logging.info(
+                        "Non Cerebras H5 checkpoint format detected. "
+                        "Converting checkpoint to H5 format. "
+                        "Please be patient, this may take a few minutes."
+                    )
                     state_dict = torch.load(
                         checkpoint_path, map_location=torch.device('cpu'),
                     )
@@ -349,10 +470,7 @@ class PyTorchCSAppliance(PyTorchBaseCSRunner):
                     )
                     saver.save(self._checkpoint_path, state_dict)
 
-            if self._is_pretrained_checkpoint or mode not in (
-                modes.TRAIN,
-                modes.TRAIN_AND_EVAL,
-            ):
+            if self._is_pretrained_checkpoint:
                 self._global_step = 0
 
             self._initial_step = int(self._global_step)
@@ -387,7 +505,10 @@ class PyTorchCSAppliance(PyTorchBaseCSRunner):
         else:
             raise ImportError("Cerebras PyTorch package not installed")
 
-        saver = PyTorchH5Saver(loaded_checkpoint=self._checkpoint_path)
+        saver = PyTorchH5Saver(
+            loaded_checkpoint=self._checkpoint_path,
+            is_pretrained_checkpoint=self._is_pretrained_checkpoint,
+        )
         saver.save(self._initial_state_file, state_dict)
 
     @cm.step_closure
@@ -459,6 +580,8 @@ class PyTorchCSAppliance(PyTorchBaseCSRunner):
         post_transfer_callback(CerebrasStateDict.create(spec, file_name))
         logging.info(f"Saved checkpoint at global step: {step}")
         logging.debug(f"Checkpoint file: {file_name}")
+
+        self.on_checkpoint_saved(file_name, step)
 
     def _increment_global_step(self):
         self._global_step += 1

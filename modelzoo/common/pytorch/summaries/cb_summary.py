@@ -12,14 +12,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+"""
+Base class for creating summaries compatible with CPU/GPU/CS-X.
+"""
 
+from abc import ABCMeta, abstractmethod
+from dataclasses import dataclass, field
+from typing import Any, Dict, List
+
+import torch
 from torch.utils.tensorboard import SummaryWriter
 
 from modelzoo.common.pytorch import cb_model as cm
 from modelzoo.common.pytorch import cbtorch
+
+# Keeps track of all registered summaries
+_SUMMARIES: Dict[str, "CBSummary"] = dict()
 
 
 @dataclass
@@ -37,7 +45,21 @@ class DeviceOutputs:
     kwargs: Dict[str, Any] = field(default_factory=dict)
 
 
-class CBSummary(ABC):
+class CBSummaryMeta(ABCMeta):
+    """Metaclass for CBSummary to handle instance creation."""
+
+    def __call__(cls, name, *args, **kwargs):
+        # See if a summary with the given name already exists
+        instance = _SUMMARIES.get(name)
+        if name not in _SUMMARIES:
+            # Create one if it doesn't exist
+            instance = super().__call__(name, *args, **kwargs)
+            # Register the summary in the global list
+            _SUMMARIES[instance.name] = instance
+        return instance
+
+
+class CBSummary(metaclass=CBSummaryMeta):
     """Base class for creating summaries on CS devices.
 
     Subclasses must override methods to provide the full functionality of the
@@ -70,22 +92,10 @@ class CBSummary(ABC):
                 f"not supported. `num_receivers` was {cm.num_receivers()}"
             )
 
-        # Get the metric name
-        if name in get_all_summaries():
-            raise ValueError(
-                f"Summary names must be unique, but got name `{name}` which "
-                f"already exists."
-            )
         self._name = name
 
-        # Register the summary in the global list
-        global _SUMMARIES
-        _SUMMARIES[self._name] = self
-
-        # Variable for storing the device outputs after each __call__
-        self._last_device_outputs: Optional[DeviceOutputs] = None
-        # Variable for storing the received activations in appliance mode
-        self._last_host_outputs: Optional[DeviceOutputs] = None
+        # Variable for storing the received summaries
+        self._cached_cpu_activations = []
 
         self._is_appliance = cm.is_appliance()
 
@@ -94,6 +104,7 @@ class CBSummary(ABC):
         """Returns the name of the metric."""
         return self._name
 
+    # pylint: disable=no-self-use
     def run_on_device(self, *args, **kwargs) -> DeviceOutputs:
         """Define the portion of the summary computation that runs on device.
 
@@ -152,43 +163,71 @@ class CBSummary(ABC):
         The arugments to this method are passed directly to `run_on_device`.
         """
         # The device portion needs to run every step to produce a stable graph
-        self._last_device_outputs = self.run_on_device(*args, **kwargs)
-        assert isinstance(self._last_device_outputs, DeviceOutputs), (
+        device_outputs = self.run_on_device(*args, **kwargs)
+        assert isinstance(device_outputs, DeviceOutputs), (
             f"Expected device outputs to be of type `DeviceOutputs`, "
-            f"but got `{type(self._last_device_outputs)}`."
+            f"but got `{type(device_outputs)}`."
         )
+
+        # Detach and clone device outputs to ensure we use the "current" value
+        for idx, tensor in enumerate(device_outputs.args):
+            if isinstance(tensor, torch.Tensor):
+                device_outputs.args[idx] = tensor.detach().clone()
+        for key, tensor in device_outputs.kwargs.items():
+            if isinstance(tensor, torch.Tensor):
+                device_outputs.kwargs[key] = tensor.detach().clone()
 
         if cm.use_cs():
             state = cbtorch.state()
             state.track_object(
                 {
                     "cb_summary": {
-                        self.name: [
-                            self._last_device_outputs.args,
-                            self._last_device_outputs.kwargs,
-                        ]
+                        self.name: [device_outputs.args, device_outputs.kwargs]
                     }
-                }
+                },
+                force=self._is_appliance,
             )
 
         if self._is_appliance:
 
             def _on_activations_received():
-                cpu_args = list()
-                cpu_kwargs = dict()
-                for tensor in self._last_device_outputs.args:
-                    cpu_args.append(state.get_activation_for_output(tensor))
-                for key, tensor in self._last_device_outputs.kwargs.items():
-                    cpu_kwargs[key] = state.get_activation_for_output(tensor)
+                cpu_args = [
+                    state.get_activation_for_output(tensor)
+                    if isinstance(tensor, torch.Tensor)
+                    else tensor
+                    for tensor in device_outputs.args
+                ]
+                cpu_kwargs = {
+                    key: state.get_activation_for_output(tensor)
+                    if isinstance(tensor, torch.Tensor)
+                    else tensor
+                    for key, tensor in device_outputs.kwargs.items()
+                }
 
-                self._last_host_outputs = self.run_on_host(
-                    *cpu_args, **cpu_kwargs
+                self._cached_cpu_activations.append(
+                    self.run_on_host(*cpu_args, **cpu_kwargs)
                 )
 
             state.register_activation_callback(_on_activations_received)
+        else:
 
+            @cm.step_closure
+            def _run_on_host_closure(
+                device_args: List[Any], device_kwargs: Dict[str, Any],
+            ):
+                device_args = cm.to_cpu(device_args)
+                device_kwargs = cm.to_cpu(device_kwargs)
+                self._cached_cpu_activations.append(
+                    self.run_on_host(*device_args, **device_kwargs)
+                )
+
+            _run_on_host_closure(
+                device_outputs.args, device_outputs.kwargs,
+            )
+
+    @cm.step_closure
     def save(self, *args, **kwargs) -> None:
-        """Evaluates the host portion of the summary and saves the results.
+        """Saves the results.
 
         This method is intended to be called inside the training loop whenever
         the summary results need to be saved. The arguments are passed directly
@@ -197,33 +236,21 @@ class CBSummary(ABC):
         NOTE: This method should not be overriden. Instead, `run_on_host` and
         `save_on_host` should be overriden to provide full functionality.
         """
-        if self._is_appliance:
-            self.save_on_host(self._last_host_outputs, *args, **kwargs)
-            self._last_host_outputs = None
-        else:
-
-            @cm.step_closure
-            def _run_on_host_closure(
-                device_args: List[Any],
-                device_kwargs: Dict[str, Any],
-                *args,
-                **kwargs,
-            ):
-                device_args = cm.to_cpu(device_args)
-                device_kwargs = cm.to_cpu(device_kwargs)
-                host_outputs = self.run_on_host(*device_args, **device_kwargs)
-                self.save_on_host(host_outputs, *args, **kwargs)
-
-            _run_on_host_closure(
-                self._last_device_outputs.args,
-                self._last_device_outputs.kwargs,
-                *args,
-                **kwargs,
+        if not self._cached_cpu_activations:
+            raise RuntimeError(
+                f"Attempting to save summary {self._name} before it "
+                f"was fetched. Please ensure to run the summary's host "
+                f"closure to fetch the latest value before calling "
+                f"save()."
             )
+        for value in self._cached_cpu_activations:
+            self.save_on_host(value, *args, **kwargs)
+        self._cached_cpu_activations.clear()
 
-
-# Keeps track of all registered summaries
-_SUMMARIES = dict()
+    @cm.step_closure
+    def discard(self) -> None:
+        """Discards cached activations on host."""
+        self._cached_cpu_activations.clear()
 
 
 def get_all_summaries() -> Dict[str, CBSummary]:
@@ -240,3 +267,9 @@ def save_all_summaries(writer: SummaryWriter, step: int) -> None:
     """
     for summary in get_all_summaries().values():
         summary.save(writer, step)
+
+
+def discard_cached_summaries() -> None:
+    """Discards cached activations for all summaries."""
+    for summary in get_all_summaries().values():
+        summary.discard()

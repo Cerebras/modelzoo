@@ -3,7 +3,7 @@
 
 train_input:
   data_processor: "GptTfRecordsProcessor"
-  data_dir: "./cnn_dailymail/train_msl1024/"
+  data_dir: "./language/datasets/cnn_dailymail/train_msl1024/"
   vocab_size: 50400
   max_sequence_length: 1024
   shuffle: True
@@ -12,7 +12,7 @@ train_input:
 
 eval_input:
   data_processor: "GptTfRecordsProcessor"
-  data_dir: "./cnn_dailymail/val_msl1024/"
+  data_dir: "./language/datasets/cnn_dailymail/val_msl1024/"
   vocab_size: 50400
   max_sequence_length: 1024
   shuffle: True

@@ -52,6 +52,11 @@ class Adamax(CSOptimizer):
         )
         super().__init__(params, defaults)
 
+    def state_names_to_sparsify(self):
+        # Only return state names which can be maskable by sparsity optimizer:
+        # those with the same shape as their corresponding parameter
+        return ["exp_avg", "exp_inf"]
+
     def preinitialize(self):
         """
         Allocates tensors for the optimizer state to allow direct compilation
@@ -77,6 +82,7 @@ class Adamax(CSOptimizer):
                 # beta1 ^ step, initialized for used on step 1
                 state["beta1_power"] = torch.tensor(beta1).to(p.device)
 
+    @torch.no_grad()
     def step(self, closure=None):
         """
         Performs a single optimization step.
@@ -98,11 +104,11 @@ class Adamax(CSOptimizer):
 
                 maximize = group["maximize"]
 
-                grad = p.grad.data
+                grad = p.grad
                 grad = grad if not maximize else -grad
 
                 if group["weight_decay"] > 0.0:
-                    grad = grad.add(p.data, alpha=group["weight_decay"])
+                    grad = grad.add(p, alpha=group["weight_decay"])
 
                 state = self.state[p]
 
@@ -128,6 +134,6 @@ class Adamax(CSOptimizer):
                 update *= group["lr"]
 
                 # Finally, update the weight data.
-                p.data.sub_(update)
+                p.sub_(update)
 
         return loss

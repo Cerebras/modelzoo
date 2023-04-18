@@ -79,27 +79,28 @@ In the following example run commands, we use `/path/to/yaml`, `/path/to/model_d
 
 ## To compile/validate, run train and eval on Cerebras System
 
-Please follow the instructions on our Developer Docs at:
-https://docs.cerebras.net/en/latest/getting-started/pytorch/index.html
+Please follow the instructions on our [quickstart in the Developer Docs](https://docs.cerebras.net/en/latest/wsc/getting-started/cs-appliance.html).
 
 ## To run train and eval on GPU/CPU
 
 If running on a cpu or gpu, activate the environment from [Python GPU Environment setup](../../../../PYTHON-SETUP.md), and simply run:
 
 ```
-python run.py --mode train --params /path/to/yaml --model_dir /path/to/model_dir
+python run.py {CPU,GPU} --mode train --params /path/to/yaml --model_dir /path/to/model_dir
 ```
 ## Configs included for this model
 
-For convenience, we provide different configurations of common model setups designed to give examples of models of different sizes intended for execution in  [weight streaming mode](https://docs.cerebras.net/en/latest/cerebras-basics/cerebras-execution-modes.html).
+For convenience, we provide different configurations of common model setups designed to give examples of models of different sizes intended for execution in  [Weight Streaming mode](https://docs.cerebras.net/en/wsc/latest/cerebras-basics/cerebras-execution-modes.html).
 
 - [params_gpt3_xl.yaml](./configs/params_gpt3_xl.yaml): A 1.3B parameter model designed to match the configuration of the GPT-3 XL model.
+- [params_gpt3_2p7b.yaml](./configs/params_gpt3_2p7b.yaml): A 2.7B parameter GPT-2 model designed to match the configuration of the GPT-3 6.7B model.
 - [params_gpt3_6p7b.yaml](./configs/params_gpt3_6p7b.yaml): A 6.7B parameter GPT-2 model designed to match the configuration of the GPT-3 6.7B model.
 - [params_gpt3_13b.yaml](./configs/params_gpt3_13b.yaml): A 13B parameter GPT-2 model designed to match the configuration of the GPT-3 13B model. Available as an early limited access.
 - [params_gpt3_20b.yaml](./configs/params_gpt3_20b.yaml): A 20B parameter GPT-2 model designed to match the configuration of the GPT-NeoX. Available as an early limited access.
 
+Additionally, the configs under [Cerebras_GPT](./configs/Cerebras_GPT/) are the configurations necessary to reproduce the results in our [Cerebras-GPT Blog](https://www.cerebras.net/cerebras-gpt).
 
-All configs are meant to be run on Weight Streaming mode using Appliance mode and Kubernetes flow.
+All configs are meant to be run on [Weight Streaming mode](https://docs.cerebras.net/en/latest/wsc/cerebras-basics/cerebras-execution-modes.html#weight-streaming-mode)
 
 **NOTE**: In absence of banded sparse attention feature, the GPT3 small, medium and large models are equivalent to the corresponding GPT2 variants available in [gpt2 configs](../gpt2/configs/) directory.
 

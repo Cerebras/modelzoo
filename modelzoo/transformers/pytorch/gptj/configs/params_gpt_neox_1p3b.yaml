@@ -64,7 +64,7 @@ model:
 
     loss_scaling: "batch_size"
     loss_weight: 0.00048828125 # = 1/max_sequence_length
-    
+
     # We use truncated_normal instead of normal (ref: https://github.com/EleutherAI/gpt-neox) with the same std and mean for better performance.
     # We chose to align with Neox 20B for std
     embedding_initializer:
@@ -100,7 +100,7 @@ optimizer:
       end_learning_rate: 4.9e-5   # sqrt(121 / 2048) * 2e-4
     - scheduler: "CosineDecay"
       initial_learning_rate: 4.9e-5
-      decay_steps: 5362037 # 5416198 - 54161
+      steps: 5362037 # 5416198 - 54161
       end_learning_rate: 4.9e-6 # (1 - 0.9) * 4.9e-5
 
 runconfig:

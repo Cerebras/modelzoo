@@ -12,65 +12,44 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+#!/usr/bin/env python3
+
+"""
+Script to train BERT fine tuning token classifier model on CSX/CPU/GPU
+"""
+
 import os
 import sys
 
 import tensorflow as tf
 
+# Disable eager execution
+tf.compat.v1.disable_eager_execution()
+
 sys.path.append(os.path.join(os.path.dirname(__file__), "../../../../../.."))
+
+from modelzoo.common.tf.appliance_utils import ExecutionStrategy, run_appliance
 from modelzoo.transformers.tf.bert.fine_tuning.token_classifier.data import (
     eval_input_fn,
-    predict_input_fn,
     train_input_fn,
 )
 from modelzoo.transformers.tf.bert.fine_tuning.token_classifier.model import (
     model_fn,
 )
 from modelzoo.transformers.tf.bert.fine_tuning.token_classifier.utils import (
-    get_params,
+    set_defaults,
 )
-from modelzoo.transformers.tf.bert.run import create_arg_parser, run
-
-CS1_MODES = ["train", "predict"]
-"""
-Usage:
-python run.py --params=<_> --model_dir=<_> --mode=<_> --checkpoint_path=<_>
-
-    Description:
-    params: path to params config yaml file
-    model_dir[Optional]: path where checkpoints from training to be stored.
-    mode: one of the following choices
-            "validate_only",
-            "compile_only",
-            "train",
-            "eval",
-            "train_and_eval",
-            "predict"
-    checkpoint_path[Optional]: path to pretrained model checkpoint, else initialized
-    to default values
-"""
 
 
 def main():
-    default_model_dir = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), "model_dir"
-    )
-    parser = create_arg_parser(default_model_dir)
-    args = parser.parse_args(sys.argv[1:])
-    params = get_params(args.params)
-
-    run(
-        args,
-        params,
+    run_appliance(
         model_fn,
-        train_input_fn=train_input_fn,
-        eval_input_fn=eval_input_fn,
-        predict_input_fn=predict_input_fn,
-        output_layer_name="output_logits",
-        cs1_modes=CS1_MODES,
+        train_input_fn,
+        eval_input_fn,
+        supported_strategies=[ExecutionStrategy.pipeline,],
+        default_params_fn=set_defaults,
     )
 
 
 if __name__ == '__main__':
-    tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.INFO)
     main()

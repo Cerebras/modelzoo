@@ -12,14 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import copy
+from copy import deepcopy
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 from modelzoo.common.pytorch.metrics import AccuracyMetric
-from modelzoo.common.pytorch.PyTorchBaseModel import PyTorchBaseModel
 from modelzoo.common.pytorch.run_utils import half_dtype_instance
 
 
@@ -77,9 +76,9 @@ class MNIST(nn.Module):
             raise ValueError("only support activation_fn: 'relu'")
 
 
-class MNISTModel(PyTorchBaseModel):
-    def __init__(self, params, device=None):
-        params = copy.deepcopy(params)
+class MNISTModel(nn.Module):
+    def __init__(self, params):
+        super().__init__()
 
         # Disable eval metrics in non-eval modes
         if params["runconfig"]["mode"] != "eval" and params["model"].get(
@@ -87,11 +86,9 @@ class MNISTModel(PyTorchBaseModel):
         ):
             params["model"]["compute_eval_metrics"] = []
 
-        model_params = copy.deepcopy(params["model"])
-
+        model_params = deepcopy(params["model"])
         self.model = self.build_model(model_params)
         self.loss_fn = nn.NLLLoss()
-        super().__init__(params=params, model=self.model, device=device)
 
     def build_model(self, model_params):
         dtype = (

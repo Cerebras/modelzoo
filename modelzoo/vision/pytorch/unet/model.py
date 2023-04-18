@@ -19,15 +19,15 @@ from modelzoo.common.pytorch.metrics import (
     DiceCoefficientMetric,
     MeanIOUMetric,
 )
-from modelzoo.common.pytorch.PyTorchBaseModel import PyTorchBaseModel
 from modelzoo.common.pytorch.run_utils import half_dtype_instance
 from modelzoo.vision.pytorch.unet.modeling_unet import UNet
 
 
-class UNetModel(PyTorchBaseModel):
-    def __init__(self, params, device=None):
-        self.params = params
-        model_params = self.params["model"].copy()
+class UNetModel(torch.nn.Module):
+    def __init__(self, params):
+        super().__init__()
+
+        model_params = params["model"].copy()
         self.loss_type = model_params["loss"]
         self.model = self.build_model(model_params)
 
@@ -50,10 +50,6 @@ class UNetModel(PyTorchBaseModel):
                     num_classes=self.model.num_classes,
                 )
 
-        super(UNetModel, self).__init__(
-            params=params, model=self.model, device=device
-        )
-
     def build_model(self, model_params):
         model = UNet(model_params)
         self.loss_fn = model.loss_fn
@@ -63,25 +59,43 @@ class UNetModel(PyTorchBaseModel):
         inputs, labels = data
         outputs = self.model(inputs)
 
-        loss = self.loss_fn(outputs, labels)
+        if "ssce" in self.loss_type:
+            loss = self.loss_fn(outputs, labels.view(labels.shape).long())
+        else:
+            loss = self.loss_fn(outputs, labels)
 
         if not self.model.training and self.compute_eval_metrics:
             eval_labels = labels.clone()
+            if self.model.num_output_channels > 1:
+                predictions = (
+                    outputs.to(half_dtype_instance.half_dtype)
+                    .argmax(dim=1)
+                    .to(torch.int16)
+                )
+            else:
+                predictions = torch.where(
+                    outputs
+                    > torch.tensor(
+                        0.5, dtype=outputs.dtype, device=outputs.device
+                    ),
+                    torch.tensor(
+                        1,
+                        dtype=half_dtype_instance.half_dtype,
+                        device=outputs.device,
+                    ),
+                    torch.tensor(
+                        0,
+                        dtype=half_dtype_instance.half_dtype,
+                        device=outputs.device,
+                    ),
+                )
 
-            predictions = torch.where(
-                outputs
-                > torch.tensor(0.5, dtype=outputs.dtype, device=outputs.device),
-                torch.tensor(
-                    1,
-                    dtype=half_dtype_instance.half_dtype,
-                    device=outputs.device,
-                ),
-                torch.tensor(
-                    0,
-                    dtype=half_dtype_instance.half_dtype,
-                    device=outputs.device,
-                ),
-            )
+            if self.model.loss_type == "multilabel_bce":
+                # since labels are one-hot tensors
+                # of shape (bsz, num_classes, H, W)
+                eval_labels = torch.argmax(
+                    eval_labels.to(half_dtype_instance.half_dtype), dim=1
+                ).to(torch.int16)
 
             # Build weights
             weights = None

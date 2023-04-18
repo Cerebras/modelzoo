@@ -35,12 +35,14 @@ DEFAULT_YAML_PATH = os.path.join(_curdir, "configs/params.yaml")
 
 
 def get_params(params_file=DEFAULT_YAML_PATH):
+    """Load params from file"""
     with open(params_file, "r") as stream:
         params = yaml.safe_load(stream)
     return params
 
 
 def get_custom_stack_params(params):
+    """Get custom settings"""
     stack_params = {}
     if params["runconfig"]["multireplica"]:
         config = FullConfig()
@@ -51,6 +53,7 @@ def get_custom_stack_params(params):
 
 
 def set_defaults(params):
+    """Set default parameters"""
     # set default weight_servers
     params["runconfig"]["num_wgt_servers"] = params["runconfig"].get(
         "num_wgt_servers", 12

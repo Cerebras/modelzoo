@@ -20,23 +20,23 @@ from modelzoo.common.pytorch.metrics import AccuracyMetric, PerplexityMetric
 from modelzoo.common.pytorch.model_utils.GPTLMHeadModelLoss import (
     GPTLMHeadModelLoss,
 )
-from modelzoo.common.pytorch.PyTorchBaseModel import PyTorchBaseModel
 from modelzoo.transformers.pytorch.gpt2.gpt2_model import GPT2LMHeadModel
 from modelzoo.transformers.pytorch.gpt2.utils import set_custom_stack_params
 
 
-class Gpt2Model(PyTorchBaseModel):
+class Gpt2Model(torch.nn.Module):
     """
     GPT-2 models
     """
 
-    def __init__(self, params, device=None):
-        self.params = params
-        model_params = self.params["model"].copy()
+    def __init__(self, params):
+        super().__init__()
+
+        model_params = params["model"].copy()
         self.model = self.build_model(model_params)
 
         self.loss_fn = GPTLMHeadModelLoss(
-            params["model"]["vocab_size"], self.loss_weight,
+            params["model"]["vocab_size"], self.loss_scaling, self.loss_weight,
         )
         self.compute_eval_metrics = model_params.pop(
             "compute_eval_metrics", True
@@ -45,12 +45,8 @@ class Gpt2Model(PyTorchBaseModel):
             self.perplexity_metric = PerplexityMetric(name="eval/lm_perplexity")
             self.accuracy_metric = AccuracyMetric(name="eval/accuracy")
 
-        super(Gpt2Model, self).__init__(
-            params=params, model=self.model, device=device
-        )
-
         # Add custom Cerebras stack flags
-        set_custom_stack_params(params)
+        set_custom_stack_params()
 
     def _post_device_transfer(self):
         self.model.tie_weights()
@@ -62,6 +58,21 @@ class Gpt2Model(PyTorchBaseModel):
             )
 
         self.loss_weight = model_params.pop("loss_weight", 1.0)
+        self.loss_scaling = model_params.pop(
+            "loss_scaling", "num_tokens"
+        ).lower()
+        if self.loss_weight != 1.0 and self.loss_scaling == "num_tokens":
+            self.loss_scaling = "batch_size"
+            logging.warning(
+                "loss_weight and loss_scaling don't match, fall back to using 'batch_size' for loss_scaling"
+            )
+        default_dropout_rate = model_params.pop("dropout_rate")
+        embedding_dropout_rate = model_params.pop(
+            "embedding_dropout_rate", default_dropout_rate
+        )
+        attention_dropout_rate = model_params.pop(
+            "attention_dropout_rate", default_dropout_rate
+        )
 
         model_params.pop("mixed_precision", None)
 
@@ -71,6 +82,7 @@ class Gpt2Model(PyTorchBaseModel):
             max_position_embeddings=model_params.pop(
                 "max_position_embeddings", 1024
             ),
+            embd_pdrop=embedding_dropout_rate,
             position_embedding_type=model_params.pop(
                 "position_embedding_type", "learned"
             )
@@ -80,9 +92,12 @@ class Gpt2Model(PyTorchBaseModel):
             share_embedding_weights=model_params.pop(
                 "share_embedding_weights", True
             ),
+            embedding_layer_norm=model_params.pop(
+                "embedding_layer_norm", False
+            ),
             # Encoder
             num_hidden_layers=model_params.pop("num_hidden_layers"),
-            dropout_rate=model_params.pop("dropout_rate"),
+            dropout_rate=default_dropout_rate,
             layer_norm_epsilon=float(
                 model_params.pop("layer_norm_epsilon", 1.0e-5),
             ),
@@ -95,10 +110,11 @@ class Gpt2Model(PyTorchBaseModel):
             use_ffn_bias_in_attention=model_params.pop(
                 "use_ffn_bias_in_attention", True
             ),
-            attention_dropout_rate=model_params.pop("attention_dropout_rate"),
+            attention_dropout_rate=attention_dropout_rate,
             attention_softmax_fp32=model_params.pop(
                 "attention_softmax_fp32", True
             ),
+            attention_kernel=model_params.pop("attention_kernel", None),
             # Encoder - ffn
             filter_size=model_params.pop("filter_size"),
             nonlinearity=model_params.pop("nonlinearity", "gelu"),
@@ -117,11 +133,15 @@ class Gpt2Model(PyTorchBaseModel):
             output_layer_initializer=model_params.pop(
                 "output_layer_initializer", None
             ),
+            loss_scaling=self.loss_scaling,
         )
 
-        # `use_bfloat16` is accessed later, so we remove it from the list of unused params
+        # `use_bfloat16` and `precision_opt_level` are accessed later,
+        # so we remove these from the list of unused params
         unused_params = [
-            key for key in model_params.keys() if key != "use_bfloat16"
+            key
+            for key in model_params.keys()
+            if key != "use_bfloat16" and key != "precision_opt_level"
         ]
         if unused_params:
             logging.warning(
@@ -153,9 +173,19 @@ class Gpt2Model(PyTorchBaseModel):
                 labels=lm_labels, predictions=lm_preds, weights=lm_weights,
             )
 
-            unscaled_loss = loss * torch.tensor(
-                lm_labels.shape[0] / self.loss_weight, dtype=torch.float32
-            )
+            if self.loss_scaling == "num_tokens":
+                unscaled_loss = loss * torch.sum(
+                    data["attention_mask"].clone(), dtype=torch.float32
+                )
+            elif self.loss_scaling == "batch_size":
+                unscaled_loss = loss * torch.tensor(
+                    lm_labels.shape[0] / self.loss_weight, dtype=torch.float32
+                )
+            else:
+                raise ValueError(
+                    f"Loss scaling can't be set to {self.loss_scaling}. \
+                    Should be either 'num_tokens' or 'batch_size'"
+                )
 
             self.perplexity_metric(
                 labels=lm_labels, loss=unscaled_loss, weights=lm_weights,

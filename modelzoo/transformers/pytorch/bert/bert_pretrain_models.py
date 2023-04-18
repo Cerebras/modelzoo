@@ -16,13 +16,7 @@ import torch
 import torch.nn as nn
 
 from modelzoo.common.pytorch.layers import FeedForwardNetwork
-from modelzoo.common.pytorch.model_utils.BertPretrainModelLoss import (
-    BertPretrainModelLoss,
-)
 from modelzoo.transformers.pytorch.bert.bert_model import BertModel
-from modelzoo.transformers.pytorch.transformer_utils import (
-    make_key_padding_mask_broadcastable,
-)
 
 
 class BertClassifierHead(nn.Module):
@@ -150,7 +144,7 @@ class BertPretrainModel(nn.Module):
         mlm_loss_weight=1.0,
         label_smoothing=0.0,
         num_classes=2,
-        mlm_nonlinearity="gelu",
+        mlm_nonlinearity=None,
         # Embedding
         vocab_size=50257,
         max_position_embeddings=1024,
@@ -166,8 +160,10 @@ class BertPretrainModel(nn.Module):
         attention_module_str="aiayn_attention",
         extra_attention_params={},
         attention_type="scaled_dot_product",
+        attention_softmax_fp32=True,
         dropout_rate=0.1,
         nonlinearity="gelu",
+        pooler_nonlinearity=None,
         attention_dropout_rate=0.1,
         use_projection_bias_in_attention=True,
         use_ffn_bias_in_attention=True,
@@ -213,8 +209,10 @@ class BertPretrainModel(nn.Module):
             attention_module_str=attention_module_str,
             extra_attention_params=extra_attention_params,
             attention_type=attention_type,
+            attention_softmax_fp32=attention_softmax_fp32,
             dropout_rate=dropout_rate,
             nonlinearity=nonlinearity,
+            pooler_nonlinearity=pooler_nonlinearity,
             attention_dropout_rate=attention_dropout_rate,
             use_projection_bias_in_attention=use_projection_bias_in_attention,
             use_ffn_bias_in_attention=use_ffn_bias_in_attention,
@@ -243,6 +241,9 @@ class BertPretrainModel(nn.Module):
                 kernel_initializer=kernel_initializer,
             )
 
+        if mlm_nonlinearity is None:
+            mlm_nonlinearity = nonlinearity
+
         self.bert_mlm_head = BertMLMHead(
             hidden_size=hidden_size,
             vocab_size=vocab_size,
@@ -254,11 +255,7 @@ class BertPretrainModel(nn.Module):
             kernel_initializer=kernel_initializer,
         )
 
-        self.loss_fn = BertPretrainModelLoss(
-            disable_nsp=self.disable_nsp,
-            mlm_loss_weight=mlm_loss_weight,
-            label_smoothing=label_smoothing,
-        )
+        self.tie_weights()
 
     def reset_parameters(self):
         self.bert_encoder.reset_parameters()
@@ -328,13 +325,11 @@ class BertPretrainModel(nn.Module):
             masked_lm_positions (Tensor):
                 Position ids of mlm tokens. Shape ``[batch_size, max_predictions_per_seq]``
         """
-        attention_mask = make_key_padding_mask_broadcastable(attention_mask)
         mlm_hidden_states, pooled_hidden_states = self.bert_encoder(
             input_ids,
             segment_ids=token_type_ids,
             attention_mask=attention_mask,
         )
-
         batch_size, seq_len, hidden_size = list(mlm_hidden_states.size())
         _, len_labels = list(labels.size())
         should_gather_mlm_labels = len_labels != seq_len

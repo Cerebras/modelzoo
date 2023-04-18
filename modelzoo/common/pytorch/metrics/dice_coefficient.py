@@ -20,55 +20,11 @@ from typing import Optional
 import torch
 
 from modelzoo.common.pytorch import cb_model as cm
-from modelzoo.common.pytorch import cbtorch
 from modelzoo.common.pytorch.metrics.cb_metric import CBMetric, DeviceOutputs
 from modelzoo.common.pytorch.metrics.metric_utils import (
     compute_confusion_matrix,
     divide_no_nan,
 )
-
-
-def DiceCoefficientMetric(*args, **kwargs):
-    """
-    Dice Coefficient is a common evaluation metric for
-    semantic image segmentation.
-
-    Dice Coefficient is defined as follows:
-    Dice = 2 * true_positive / (2 * true_positive + false_positive + false_negative).
-
-    The predictions are accumulated in a confusion matrix, weighted by `weights`,
-    and dice coefficient is then calculated from it.
-
-    If `weights` is `None`, weights default to 1. Use weights of 0 to mask values.
-
-    Args:
-        :param Tensor labels: A `Tensor` of ground truth labels of type `int32` or `int64`.
-        :param Tensor predictions: A `Tensor` of prediction results for semantic labels,
-            of type `int32` or `int64`.
-        :param int num_classes: The possible number of labels the prediction task can have.
-            This value must be provided, since a confusion matrix of
-            dimension = [num_classes, num_classes] will be allocated.
-        :param Tensor weights: Optional `Tensor` whose rank is either 0, or the same rank
-            as `labels`, and must be broadcastable to `labels` (i.e., all dimensions must
-            be either `1`, or the same as the corresponding `labels` dimension).
-        :param name: Optional `string` which indicates name of the metric.
-                If None or empty string, it defaults to the name of the class.
-
-    Returns:
-        dice_coefficient: A `Tensor` representing the dice coefficient.
-
-    Raises:
-        ValueError: If `predictions` and `labels` have mismatched shapes, or if
-            `weights` is not `None` and its shape doesn't match `predictions`
-    """
-
-    ws_enabled = False
-    if cm.use_cs():
-        ws_enabled = cbtorch.env().weight_streaming_mode
-    if ws_enabled:
-        return WSDiceCoefficientMetric(*args, **kwargs)
-    else:
-        return PipelineDiceCoefficientMetric(*args, **kwargs)
 
 
 def compute_helper(confusion_matrix):
@@ -106,7 +62,40 @@ def compute_helper(confusion_matrix):
     return dice_coefficient
 
 
-class PipelineDiceCoefficientMetric(CBMetric):
+class _PipelineDiceCoefficientMetric(CBMetric):
+    """
+    Dice Coefficient is a common evaluation metric for
+    semantic image segmentation.
+
+    Dice Coefficient is defined as follows:
+    Dice = 2 * true_positive / (2 * true_positive + false_positive + false_negative).
+
+    The predictions are accumulated in a confusion matrix, weighted by `weights`,
+    and dice coefficient is then calculated from it.
+
+    If `weights` is `None`, weights default to 1. Use weights of 0 to mask values.
+
+    Args:
+        :param Tensor labels: A `Tensor` of ground truth labels of type `int32` or `int64`.
+        :param Tensor predictions: A `Tensor` of prediction results for semantic labels,
+            of type `int32` or `int64`.
+        :param int num_classes: The possible number of labels the prediction task can have.
+            This value must be provided, since a confusion matrix of
+            dimension = [num_classes, num_classes] will be allocated.
+        :param Tensor weights: Optional `Tensor` whose rank is either 0, or the same rank
+            as `labels`, and must be broadcastable to `labels` (i.e., all dimensions must
+            be either `1`, or the same as the corresponding `labels` dimension).
+        :param name: Optional `string` which indicates name of the metric.
+                If None or empty string, it defaults to the name of the class.
+
+    Returns:
+        dice_coefficient: A `Tensor` representing the dice coefficient.
+
+    Raises:
+        ValueError: If `predictions` and `labels` have mismatched shapes, or if
+            `weights` is not `None` and its shape doesn't match `predictions`
+    """
+
     def __init__(self, num_classes, name: Optional[str] = None):
         self.num_classes = num_classes
         super().__init__(name=name)
@@ -151,7 +140,7 @@ class PipelineDiceCoefficientMetric(CBMetric):
         )
 
 
-class WSDiceCoefficientMetric(CBMetric):
+class _WSDiceCoefficientMetric(CBMetric):
     def __init__(self, num_classes, name: Optional[str] = None):
         self.num_classes = num_classes
         super().__init__(name=name)
@@ -205,3 +194,10 @@ class WSDiceCoefficientMetric(CBMetric):
         return {
             "confusion_matrix": self.confusion_matrix,
         }
+
+
+# Create a factory for creating a metric depending on execution strategy.
+DiceCoefficientMetric = CBMetric.create_metric_impl_factory(
+    pipeline_metric_cls=_PipelineDiceCoefficientMetric,
+    ws_metric_cls=_WSDiceCoefficientMetric,
+)

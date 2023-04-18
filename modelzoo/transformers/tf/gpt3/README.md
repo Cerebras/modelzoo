@@ -50,12 +50,12 @@ The Cerebras Wafer Scale Engine supports two different execution modes:
 
 This GPT3 implementation supports only weight streaming execution mode.
 
-For more details on Cerebras execution modes, see [this explanation](https://docs.cerebras.net/en/latest/cerebras-basics/cerebras-execution-modes.html).
+For more details on Cerebras execution modes, see [this explanation](https://docs.cerebras.net/en/latest/wsc/cerebras-basics/cerebras-execution-modes.html).
 
 ## Structure of the code
 
 - `configs/`: YAML configuration files.
-- `run-appliance.py`: Training script. Performs training and validation.
+- `run.py`: Training script. Performs training and validation.
 
 **NOTE:** In out current implementation, we use the code from [GPT2 implementation](../gpt2/), so the bare minimal files needed to run the model and configs are only provided in this directory.
 
@@ -91,7 +91,7 @@ The label tensor of shape `(batch_size,)`. Carries the next token labels.
 
 ### Input pipeline with sharding
 
-In addition, the above-created TFRecords are used by the `GptTfRecordsProcessor` class to create a sharded dataset, using the `shard_dataset.py` utility. This allows multiple workers to stream data at once without repeating samples. For a detailed explanation of sharding, see <a href="https://docs.cerebras.net/en/latest/tensorflow-docs/preparing-tf-input/sharding-for-cs.html" class="external-link">Sharding For the Cerebras System</a>.
+In addition, the above-created TFRecords are used by the `GptTfRecordsProcessor` class to create a sharded dataset, using the `shard_dataset.py` utility. This allows multiple workers to stream data at once without repeating samples.
 
 ## How to run
 
@@ -113,31 +113,23 @@ In the following example run commands, we use `/path/to/yaml`, `/path/to/model_d
 
 ## To compile/validate, run train and eval on Cerebras System
 
-Please follow the instructions on our Developer Docs at:
-https://docs.cerebras.net/en/latest/getting-started/tensorflow/index.html
+Please follow the instructions on our [quickstart in the Developer Docs](https://docs.cerebras.net/en/latest/wsc/getting-started/cs-appliance.html).
 
 ## To run train and eval on GPU/CPU
 
 If running on a cpu or gpu, activate the environment from [Python GPU Environment setup](../../../../PYTHON-SETUP.md), and simply run:
 
 ```
-python run.py --mode train --params /path/to/yaml --model_dir /path/to/model_dir
+python run.py {CPU,GPU} --mode train --params /path/to/yaml --model_dir /path/to/model_dir
 ```
 
 Note that our model implementation and run scripts are compatible to run on GPU, however handling any GPU cluster related programming is up-to the user.
 
 ## Configs included for this model
 
-For convenience, we provide different configurations of common model setups designed to give examples of models of different sizes intended for execution in either [weight streaming mode](https://docs.cerebras.net/en/latest/cerebras-basics/cerebras-execution-modes.html). 
+For convenience, we provide different configurations of common model setups designed to give examples of models of different sizes intended for execution in [weight streaming mode](https://docs.cerebras.net/en/latest/wsc/cerebras-basics/cerebras-execution-modes.html). 
 
 Following are the convergent configs:
-
-- [params_gpt3_xl_ws.yaml](./configs/params_gpt3_xl.yaml): A 1.3B parameter GPT-3 model designed to converge to the state-of-the-art. It uses hyperparameters as suggested in  [Chinchilla](https://arxiv.org/abs/2112.11446) and [Gopher](https://arxiv.org/abs/2112.11446). And, it uses 20 tokens per parameter as per the recommendation in Chinchilla. 
-
-- [params_gpt3_2p7b_ws.yaml](./configs/params_gpt3_2p7b.yaml): A 6.7B parameter GPT-3 model designed to converge to the state-of-the-art. It uses hyperparameters as suggested in  Chinchilla and Gopher. And, it uses 20 tokens per parameter as per the recommendation in Chinchilla.
-- [params_gpt3_6p7b_ws.yaml](./configs/params_gpt3_6p7b.yaml): A 6.7B parameter GPT-3 model designed to converge to the state-of-the-art. It uses hyperparameters as suggested in  Chinchilla and Gopher. And, it uses 20 tokens per parameter as per the recommendation in Chinchilla.
-- [params_gpt3_13b_ws.yaml](./configs/params_gpt3_13b.yaml): A 13B parameter GPT-3 model designed to converge to the state-of-the-art. IIt uses hyperparameters as suggested in  Chinchilla and Gopher. And, it uses 20 tokens per parameter as per the recommendation in Chinchilla.
-- [params_gpt3_20B_ws.yaml](./configs/params_gpt3_20B.yaml): A 20B parameter GPT-3 model designed to converge to the state-of-the-art. It uses hyperparameters as suggested in  Chinchilla and Gopher. And, it uses 20 tokens per parameter as per the recommendation in Chinchilla.
 
 - [params_gpt3_xl.yaml](./configs/params_gpt3_xl.yaml): A 1.3B parameter GPT-2 model designed to match the configuration of the GPT-3 XL.
 - [params_gpt3_xl_grad_accum.yaml](./configs/params_gpt3_xl_grad_accum.yaml): A 1.3B parameter GPT-2 model designed to match the configuration of the GPT-3 XL, with gradient accumulation enabled on CS2 to support larger batch sizes.
@@ -145,7 +137,6 @@ Following are the convergent configs:
 - [params_gpt3_13b.yaml](./configs/params_gpt3_13b.yaml): A 13B parameter GPT-2 model designed to match the configuration of the GPT-3 13B model. Available as an early limited access.
 - [params_gpt3_20b.yaml](./configs/params_gpt3_20b.yaml): A 20B parameter GPT-2 model designed to match the configuration of the GPT-NeoX. Available as an early limited access.
 
-All configs are meant for running in Weight Streaming mode with Appliance mode and Kubernetes.
 
 **NOTE**: In absence of banded sparse attention feature, the GPT3 small, medium and large models are equivalent to the corresponding GPT2 variants available in [gpt2 configs](../gpt2/configs/) directory.
 

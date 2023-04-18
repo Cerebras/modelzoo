@@ -34,6 +34,10 @@ def set_defaults(params):
     params["optimizer"]["loss_scaling_factor"] = params["optimizer"].get(
         "loss_scaling_factor", "dynamic"
     )
+    params["optimizer"]["log_summaries"] = params["optimizer"].get(
+        "log_summaries", False
+    )
+
     params["train_input"]["dynamic_loss_weight"] = (
         params["model"].get("mlm_loss_scaling", "batch_size")
         == "precomputed_num_masked"

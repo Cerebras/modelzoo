@@ -17,12 +17,18 @@ import math
 import torch
 import torch.nn as nn
 
-from modelzoo.common.pytorch.layers.utils import apply_loss_reduction
+from modelzoo.common.pytorch.layers.utils import (
+    apply_loss_reduction,
+    autogen_loss,
+)
 
 
 # Adapted from https://github.com/pytorch/pytorch/blob/b136f3f310aa01a8b3c1e63dc0bfda8fd2234b06/torch/nn/functional.py#L2765
+@autogen_loss
 class GaussianNLLLoss(nn.Module):
-    def __init__(self, full=False, eps=1e-6, reduction='mean'):
+    def __init__(
+        self, full=False, eps=1e-6, reduction='mean',
+    ):
         super(GaussianNLLLoss, self).__init__()
         self.full = full
         self.eps = eps

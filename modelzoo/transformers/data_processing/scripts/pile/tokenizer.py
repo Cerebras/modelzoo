@@ -100,14 +100,20 @@ def get_tokenizer(args):
 
     tokenizer_type = args.tokenizer_type.lower()
     if tokenizer_type == "gpt2tokenizer":
-        assert args.vocab_file is not None
-        assert args.encoder_file is not None
+        assert (
+            args.vocab_file is not None
+        ), "`vocab_file` is missing, please provide it using `args.vocab_file`."
+        assert (
+            args.encoder_file is not None
+        ), "`encoder_file` is missing, please provide it using `args.encoder_file`."
         tokenizer = BPETokenizer(args.vocab_file, args.encoder_file)
         eos_id = args.eos_id
         pad_id = args.pad_id
     elif tokenizer_type == "neoxtokenizer":
-        assert args.vocab_file is not None
-        tokenizer = HFTokenizer(args.vocab_file)
+        assert (
+            args.encoder_file is not None
+        ), "`encoder_file` is missing, please provide it using `args.encoder_file`."
+        tokenizer = HFTokenizer(args.encoder_file)
         eos_id = tokenizer.eos
         pad_id = tokenizer.pad
     else:

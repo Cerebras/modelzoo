@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
 import warnings
 
 import torch.nn as nn
@@ -98,7 +99,9 @@ class UNetBlock(nn.Module):
                 kernel_size = 1
             else:
                 raise ValueError(f"Unsupported convolution type: {conv_type}")
-
+            _norm_kwargs = copy.copy(norm_kwargs)
+            if (norm_layer == "group") and (norm_kwargs['num_groups'] == "all"):
+                _norm_kwargs['num_groups'] = conv_out_chs
             layers.append(
                 ConvNormActBlock(
                     in_channels=conv_in_chs,
@@ -106,7 +109,7 @@ class UNetBlock(nn.Module):
                     kernel_size=kernel_size,
                     stride=stride,
                     norm_layer=norm_layer,
-                    norm_kwargs=norm_kwargs,
+                    norm_kwargs=_norm_kwargs,
                     groups=groups,
                     padding="same",
                     bias=bias,

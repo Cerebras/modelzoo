@@ -16,11 +16,13 @@ import torch.nn as nn
 import torchvision.ops as ops
 
 from modelzoo.vision.pytorch.layers.BatchChannelNorm import BatchChannelNorm2D
+from modelzoo.vision.pytorch.layers.GroupInstanceNorm import GroupInstanceNorm
 
 NORM2CLS = {
     "batchnorm1d": nn.BatchNorm1d,
     "batchnorm2d": nn.BatchNorm2d,
     "batchnorm3d": nn.BatchNorm3d,
+    "group_instance": GroupInstanceNorm,  # used to emulate instance norm with group norm
     "instance1d": nn.InstanceNorm1d,
     "instance2d": nn.InstanceNorm2d,
     "instance3d": nn.InstanceNorm3d,

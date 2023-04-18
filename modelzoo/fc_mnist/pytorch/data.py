@@ -30,8 +30,7 @@ def get_train_dataloader(params):
     - "drop_last_batch" (bool): whether to drop the last batch or not
     """
     input_params = params["train_input"]
-    use_cs = cm.use_cs()
-    is_appliance = cm.is_appliance()
+    use_cs = cm.use_cs() or cm.is_appliance()
 
     batch_size = input_params.get("batch_size")
     to_float16 = input_params.get("to_float16", True)
@@ -44,21 +43,16 @@ def get_train_dataloader(params):
             data=(
                 torch.zeros(batch_size, 1, 28, 28, dtype=dtype),
                 torch.zeros(
-                    batch_size,
-                    dtype=torch.int32
-                    if use_cs or is_appliance
-                    else torch.int64,
+                    batch_size, dtype=torch.int32 if use_cs else torch.int64
                 ),
             ),
             sample_count=60000 // batch_size // num_streamers,
         )
     else:
-        if use_cs and not cm.is_master_ordinal():
-            cm.rendezvous("download_dataset_only_once")
         train_dataset = datasets.MNIST(
             input_params["data_dir"],
             train=True,
-            download=True,
+            download=cm.is_master_ordinal(),
             transform=transforms.Compose(
                 [
                     transforms.ToTensor(),
@@ -74,8 +68,6 @@ def get_train_dataloader(params):
             if use_cs
             else None,
         )
-        if use_cs and cm.is_master_ordinal():
-            cm.rendezvous("download_dataset_only_once")
 
         train_sampler = None
         if use_cs and cm.num_streamers() > 1 and cm.is_streamer():
@@ -100,8 +92,7 @@ def get_train_dataloader(params):
 
 def get_eval_dataloader(params):
     input_params = params["eval_input"]
-    use_cs = cm.use_cs()
-    is_appliance = cm.is_appliance()
+    use_cs = cm.use_cs() or cm.is_appliance()
 
     batch_size = input_params.get("batch_size")
     to_float16 = input_params.get("to_float16", True)
@@ -113,21 +104,16 @@ def get_eval_dataloader(params):
             data=(
                 torch.zeros(batch_size, 1, 28, 28, dtype=dtype),
                 torch.zeros(
-                    batch_size,
-                    dtype=torch.int32
-                    if use_cs or is_appliance
-                    else torch.int64,
+                    batch_size, dtype=torch.int32 if use_cs else torch.int64
                 ),
             ),
             sample_count=10000 // batch_size // num_streamers,
         )
     else:
-        if use_cs and not cm.is_master_ordinal():
-            cm.rendezvous("download_dataset_only_once")
         eval_dataset = datasets.MNIST(
             input_params["data_dir"],
             train=False,
-            download=True,
+            download=cm.is_master_ordinal(),
             transform=transforms.Compose(
                 [
                     transforms.ToTensor(),
@@ -143,8 +129,6 @@ def get_eval_dataloader(params):
             if use_cs
             else None,
         )
-        if use_cs and cm.is_master_ordinal():
-            cm.rendezvous("download_dataset_only_once")
 
         eval_loader = torch.utils.data.DataLoader(
             eval_dataset,

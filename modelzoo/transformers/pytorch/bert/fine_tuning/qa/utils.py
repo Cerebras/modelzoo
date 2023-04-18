@@ -24,3 +24,6 @@ def set_defaults(params, mode=None):
     params["model"]["layer_norm_epsilon"] = params["model"].get(
         "layer_norm_epsilon", 1.0e-5
     )
+    params["optimizer"]["log_summaries"] = params["optimizer"].get(
+        "log_summaries", False
+    )

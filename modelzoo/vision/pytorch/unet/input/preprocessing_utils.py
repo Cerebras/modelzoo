@@ -23,6 +23,7 @@ def normalize_tensor_transform(img, normalize_data_method):
     :params normalize_data_method: One of 
         "zero_centered"
         "zero_one"
+        "standard_score"
     """
     if normalize_data_method is None:
         pass
@@ -30,6 +31,8 @@ def normalize_tensor_transform(img, normalize_data_method):
         img = torch.div(img, 127.5) - 1
     elif normalize_data_method == "zero_one":
         img = torch.div(img, 255.0)
+    elif normalize_data_method == "standard_score":
+        img = (img - img.mean()) / img.std()
     else:
         raise ValueError(
             f"Invalid arg={normalize_data_method} passed to `normalize_data_method`"

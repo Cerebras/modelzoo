@@ -12,10 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 from modelzoo.common.pytorch import cb_model as cm
 
 
-def set_custom_stack_params(params):
+def set_custom_stack_params():
     if cm.use_cs():
         from modelzoo.common.pytorch import AP_DISABLED, cbtorch
 
@@ -23,6 +24,34 @@ def set_custom_stack_params(params):
         state.full_config.matching.kernel.inc_pwt_estimate = True
         state.full_config.matching.kernel.enable_pipelined_mlm_loss = True
         state.full_config.matching.autogen_policy = AP_DISABLED
+
+
+def set_attention_kernel(params):
+    '''
+    Set attention kernel related params
+    :param params: model_params
+    :return:
+    '''
+
+    # POL0 : fused-attention
+    # POL1/2 : opitmized-attention
+    attention_kernel_type = params["model"].get(
+        "attention_kernel", "optimized_beta"
+    )
+    if params["model"]["precision_opt_level"] == 0:
+        attention_kernel_type = params["model"].get(
+            "attention_kernel", "default"
+        )
+    params["model"]["attention_kernel"] = attention_kernel_type
+
+    # Attention softmax is fp32 by default.
+    params["model"]["attention_softmax_fp32"] = True
+
+    if (
+        params["model"]["precision_opt_level"] == 1
+        and params["model"]["attention_kernel"] == "default"
+    ) or params["model"].get("precision_opt_level", 1) == 2:
+        params["model"]["attention_softmax_fp32"] = False
 
 
 def set_defaults(params):
@@ -36,3 +65,10 @@ def set_defaults(params):
     params["optimizer"]["loss_scaling_factor"] = params["optimizer"].get(
         "loss_scaling_factor", 1.0
     )
+    params["optimizer"]["log_summaries"] = params["optimizer"].get(
+        "log_summaries", False
+    )
+    params["model"]["precision_opt_level"] = params["model"].get(
+        "precision_opt_level", 1
+    )
+    set_attention_kernel(params)

@@ -14,7 +14,7 @@
 
 """
 F Beta Score metric for PyTorch.
-Confusion matrix calculation in Pytorch referenced from: 
+Confusion matrix calculation in Pytorch referenced from:
 https://github.com/pytorch/ignite/blob/master/ignite/metrics/confusion_matrix.py
 
 """
@@ -27,24 +27,24 @@ from modelzoo.common.pytorch.metrics.cb_metric import CBMetric
 from modelzoo.common.pytorch.metrics.metric_utils import divide_no_nan
 
 
-class FBetaScoreMetric(CBMetric):
+class _PipelineFBetaScoreMetric(CBMetric):
     """Calculates F Score from labels and predictions.
-    
+
         fbeta = (1 + beta^2) * (precision*recall) / ((beta^2 * precision) + recall)
 
-    Where beta is some positive real factor. 
+    Where beta is some positive real factor.
     Args:
-        num_classes: Number of classes. 
+        num_classes: Number of classes.
         beta: Beta coefficient in the F measure.
-        average_type: Defines the reduction that is applied. Should be one 
+        average_type: Defines the reduction that is applied. Should be one
             of the following:
-            - 'micro' [default]: Calculate the metric globally, across all 
+            - 'micro' [default]: Calculate the metric globally, across all
                 samples and classes.
-            - 'macro': Calculate the metric for each class separately, and 
-                average the metrics across classes (with equal weights for 
+            - 'macro': Calculate the metric for each class separately, and
+                average the metrics across classes (with equal weights for
                 each class). This does not take label imbalance into account.
         ignore_labels: Integer specifying a target classes to ignore.
-        name: Name of the metric 
+        name: Name of the metric
 
     Raises:
         ValueError: If average_type is none of "micro", "macro".
@@ -127,19 +127,19 @@ def _compute_fbeta(
     ignore_labels: Optional[List] = None,
 ) -> float:
     """
-    Computes f_beta metric from: confusion matrix for labels excluding 
+    Computes f_beta metric from: confusion matrix for labels excluding
     "ignore_labels"
 
     Args:
         total_confusion_matrix: Confusion matrix of size [num_classes, num_classes]
-        num_classes: Number of classes. 
+        num_classes: Number of classes.
         beta: Beta coefficient in the F measure.
-        average_type: Defines the reduction that is applied. Should be one 
+        average_type: Defines the reduction that is applied. Should be one
         of the following:
-            - 'micro' [default]: Calculate the metric globally, across all 
+            - 'micro' [default]: Calculate the metric globally, across all
                 samples and classes.
-            - 'macro': Calculate the metric for each class separately, and 
-                average the metrics across classes (with equal weights for 
+            - 'macro': Calculate the metric for each class separately, and
+                average the metrics across classes (with equal weights for
                 each class). This does not take label imbalance into account.
         ignore_labels: Integer specifying a target classes to ignore.
     """
@@ -181,3 +181,9 @@ def _compute_fbeta(
         fbeta = (fbeta_per_class * mask).sum() / num_labels_to_consider
 
     return float(fbeta)
+
+
+# Create a factory for creating a metric depending on execution strategy
+FBetaScoreMetric = CBMetric.create_metric_impl_factory(
+    pipeline_metric_cls=_PipelineFBetaScoreMetric, ws_metric_cls=None,
+)

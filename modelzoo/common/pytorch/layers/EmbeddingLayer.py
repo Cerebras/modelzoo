@@ -107,6 +107,9 @@ class EmbeddingLayer(nn.Module):
                     device=device,
                 )
             elif position_embedding_type == "fixed":
+                assert (
+                    max_position_embeddings > 1
+                ), "Max position embeddings of length 1 currently unsupported."
                 self.position_embeddings = self.create_fix_pos_embedding(
                     max_position_embeddings,
                     positional_embedding_size,

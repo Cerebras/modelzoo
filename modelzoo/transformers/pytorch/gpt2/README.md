@@ -56,8 +56,8 @@ In order to run any of the models in this directory, you must go through the fol
 - Run training for your desired model (see [Run pre-training](#run-pre-training))
 
 ## Key features from CSoft platform used in this reference implementation
-GPT2 model configs are supported in the [Layer Pipelined mode](https://docs.cerebras.net/en/latest/cerebras-basics/cerebras-execution-modes.html#layer-pipelined-mode).
-For more details on Cerebras execution modes, see [this explanation](https://docs.cerebras.net/en/latest/cerebras-basics/cerebras-execution-modes.html).
+GPT2 model configs are supported in the Weight Streaming and Layer Pipelined modes. 
+For more details on Cerebras execution modes, see [this explanation](https://docs.cerebras.net/en/latest/wsc/cerebras-basics/cerebras-execution-modes.html).
 
 ## Structure of the code
 
@@ -89,8 +89,8 @@ and manually download the `tar.xz` file from that location to your preferred loc
 You need to download your raw data and create preprocessed dataloader using [`create_hdf5_dataset.py`](input/scripts/create_hdf5_dataset.py).
 
 Example:<br />
-`singularity shell /path/to/cbcore_image/cbcore.sif`<br />
-`singularity cbcore.sif:~> python create_hdf5_dataset.py --metadata_files /path/to/meta_file/train_512k.txt --vocab_file /path/to/vocab_file/vocab.bpe --encoder_file /path/to/encode_file/encoder.json --output_dir /path/to/output_dir`
+`source venv_cerebras_pt/bin/activate`<br />
+`venv_cerebras_pt:~> python create_hdf5_dataset.py --metadata_files /path/to/meta_file/train_512k.txt --vocab_file /path/to/vocab_file/vocab.bpe --encoder_file /path/to/encode_file/encoder.json --output_dir /path/to/output_dir`
 
 #### GPT-2 DataProcessor output
   The `GptHDF5DataProcessor` class in [`GptHDF5DataProcessor.py`](input/GptHDF5DataProcessor.py) creates `example_dict` iterative from the `self.features_list` which is returned on the call iteratively.
@@ -135,36 +135,32 @@ In the following example run commands, we use `/path/to/yaml`, `/path/to/model_d
 
 ## To compile/validate, run train and eval on Cerebras System
 
-Please follow the instructions on our Developer Docs at:
-https://docs.cerebras.net/en/latest/getting-started/pytorch/index.html
+Please follow the instructions on our [quickstart in the Developer Docs](https://docs.cerebras.net/en/latest/wsc/getting-started/cs-appliance.html).
 
 ## To run train and eval on GPU/CPU
 
 If running on a cpu or gpu, activate the environment from [Python GPU Environment setup](../../../../PYTHON-SETUP.md), and simply run:
 
 ```
-python run.py --mode train --params /path/to/yaml --model_dir /path/to/model_dir
+python run.py {CPU,GPU} --mode train --params /path/to/yaml --model_dir /path/to/model_dir
 ```
 
 ## Configurations included for this model
 
 In order to train the model, you need to provide a yaml config file. Some popular yaml [configs](configs/) files are listed below for reference. Also, feel free to create your own following these examples:
 
-Configs below are meant to be run on Pipeline mode using Appliance mode and Kubernetes flow. Slurm workflow is available as a legacy support.
-**YAML config file differences**:
+Configs below are meant to be run on [Pipeline mode](https://docs.cerebras.net/en/latest/wsc/cerebras-basics/cerebras-execution-modes.html#layer-pipelined-mode)
 
 - [params_gpt2_small.yaml](./configs/params_gpt2_small.yaml): A 117M parameter 
 model with the standard gpt2-base config with `hidden_size=768`, 
 `num_hidden_layers=12`, `num_heads=12`.
 - [params_gpt2_medium.yaml](./configs/params_gpt2_medium.yaml): A 345M parameter model with the standard gpt2-medium config with `hidden_size=1024`, `num_hidden_layers=24`, `num_heads=16`.
-- [params_gpt2_large.yaml](./configs/params_gpt2_large.yaml): A 774M parameter model with the standard gpt2-large config with `hidden_size=1280`, `num_hidden_layers=36`, `num_heads=20`.
 
-Following configs are meant for running in Weight Streaming mode with Appliance mode and Kubernetes:
+Following configs are meant for running in [Weight Streaming mode](https://docs.cerebras.net/en/latest/wsc/cerebras-basics/cerebras-execution-modes.html#weight-streaming-mode):
 
 - [params_gpt2_small_ws.yaml](./configs/params_gpt2_small_ws.yaml) have the standard gpt2-base config with `hidden_size=768`, `num_hidden_layers=12`, `num_heads=12`, for Weight Streaming mode.
-- [params_gpt2_large.yaml](./configs/params_gpt2_large.yaml) have the standard gpt2-large config with `hidden_size=1280`, `num_hidden_layers=36`, `num_heads=20`, for Weight Streaming mode.
-- [params_gpt2_xl.yaml](./configs/params_gpt2_xl.yaml) have the standard gpt2-xl config with `hidden_size=1600`, `num_hidden_layers=48`, `num_heads=16`, for Weight Streaming mode.
-
+- [params_gpt2_large.yaml](./configs/params_gpt2_large.yaml): A 774M parameter model with the standard gpt2-large config with `hidden_size=1280`, `num_hidden_layers=36`, `num_heads=20`.
+- [params_gpt2_xl.yaml](./configs/params_gpt2_xl.yaml): A 1.3B parameter model with the standard gpt2-xl config with `hidden_size=1600`, `num_hidden_layers=48`, `num_heads=16`.
 
 ## References
 

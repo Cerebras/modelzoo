@@ -2,8 +2,8 @@
 train_input:
     data_processor: "NerDataProcessor"
     data_dir: "./language/datasets/blurb/ner/bc5cdr-chem-pubmed_fulltext_uncased_vocab/bc5cdr-chem/train"
-    vocab_file: "./vocab/Pubmed_fulltext_vocab.txt"
-    label_vocab_file: "./vocab/Pubmed_fulltext_vocab.txt"
+    vocab_file: "../../../../vocab/Pubmed_fulltext_vocab.txt"
+    label_vocab_file: "./language/datasets/blurb/ner/bc5cdr-chem-pubmed_fulltext_uncased_vocab/bc5cdr-chem/train/label2id.json"
     max_sequence_length: 128
     max_predictions_per_seq: 20
     batch_size: 8
@@ -12,8 +12,8 @@ train_input:
 eval_input:
     data_processor: "NerDataProcessor"
     data_dir: "./language/datasets/blurb/ner/bc5cdr-chem-pubmed_fulltext_uncased_vocab/bc5cdr-chem/dev"
-    vocab_file: "./vocab/Pubmed_fulltext_vocab.txt"
-    label_vocab_file: "./vocab/Pubmed_fulltext_vocab.txt"
+    vocab_file: "../../../../vocab/Pubmed_fulltext_vocab.txt"
+    label_vocab_file: "./language/datasets/blurb/ner/bc5cdr-chem-pubmed_fulltext_uncased_vocab/bc5cdr-chem/train/label2id.json"
     max_sequence_length: 128
     max_predictions_per_seq: 20
     batch_size: 8
@@ -25,8 +25,8 @@ predict_input:
     # or else data points will be dropped.
     data_processor: "NerDataProcessor"
     data_dir: "./language/datasets/blurb/ner/bc5cdr-chem-pubmed_fulltext_uncased_vocab/bc5cdr-chem/test"
-    vocab_file: "./vocab/Pubmed_fulltext_vocab.txt"
-    label_vocab_file: "./vocab/Pubmed_fulltext_vocab.txt"
+    vocab_file: "../../../../vocab/Pubmed_fulltext_vocab.txt"
+    label_vocab_file: "./language/datasets/blurb/ner/bc5cdr-chem-pubmed_fulltext_uncased_vocab/bc5cdr-chem/train/label2id.json"
     batch_size: 1
 
 model:
@@ -61,5 +61,7 @@ optimizer:
 runconfig:
     max_steps: 15080 # 20 epochs
     eval_steps: 0 # eval_steps <= 0 means we use all of the eval data
+    save_checkpoints_steps: 1500
+    save_summary_steps: 1000
     keep_checkpoint_max: 5
     enable_distributed: False

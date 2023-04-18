@@ -37,7 +37,6 @@
 import torch
 import torch.nn as nn
 
-from modelzoo.common.pytorch.run_utils import half_dtype_instance
 from modelzoo.transformers.pytorch.transformer_utils import smooth_loss
 
 
@@ -81,13 +80,13 @@ class BertPretrainModelLoss(nn.Module):
         if mlm_loss_scale is None:
             mlm_loss *= self.mlm_loss_weight
 
-        total_loss = mlm_loss.to(half_dtype_instance.half_dtype)
+        total_loss = mlm_loss.to(mlm_logits.dtype)
 
         if not self.disable_nsp:
             nsp_loss_fn = nn.CrossEntropyLoss()
             nsp_loss = nsp_loss_fn(
                 nsp_logits.view(-1, 2), nsp_labels.view(-1).long(),
             )
-            total_loss += nsp_loss.to(half_dtype_instance.half_dtype)
+            total_loss += nsp_loss.to(nsp_logits.dtype)
 
         return total_loss

@@ -61,6 +61,7 @@ elif CSOFT_PACKAGE == CSoftPackage.NONE:
         num_receivers=lambda: 1,
         num_streamers=lambda: 1,
         step_closure=lambda f: f,
+        set_rng_state=lambda seed: None,
         to_cpu=to_cpu,
         to_device=lambda tensor, device: tensor.to(device),
     )
@@ -70,6 +71,7 @@ elif CSOFT_PACKAGE == CSoftPackage.NONE:
         EVAL = "eval"
         TRAIN_AND_EVAL = "train_and_eval"
         INFERENCE = "inference"
+        EVAL_ALL = "eval_all"
 
         @staticmethod
         def get_modes():
@@ -78,6 +80,7 @@ elif CSOFT_PACKAGE == CSoftPackage.NONE:
                 modes.EVAL,
                 modes.TRAIN_AND_EVAL,
                 modes.INFERENCE,
+                modes.EVAL_ALL,
             )
 
         @staticmethod

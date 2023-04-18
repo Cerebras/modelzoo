@@ -95,15 +95,14 @@ To start pre-training from [EleutherAI](https://www.eleuther.ai/)'s weights, the
 
 ## To compile/validate, run train and eval on Cerebras System
 
-Please follow the instructions on our Developer Docs at:
-https://docs.cerebras.net/en/latest/getting-started/tensorflow/index.html
+Please follow the instructions on our [quickstart in the Developer Docs](https://docs.cerebras.net/en/latest/wsc/getting-started/cs-appliance.html).
 
 ## To run train and eval on GPU/CPU
 
 If running on a cpu or gpu, activate the environment from [Python GPU Environment setup](../../../../PYTHON-SETUP.md), and simply run:
 
 ```bash
-python run.py --mode train --params /path/to/yaml --model_dir /path/to/model_dir
+python run.py {CPU,GPU} --mode train --params /path/to/yaml --model_dir /path/to/model_dir
 ```
 
 Note that our model implementation and run scripts are compatible to run on GPU, however handling any GPU cluster related programming is up-to the user.
@@ -114,8 +113,7 @@ We provide the following config file for pre-training the `6B` GPT-J [[1]](https
 * [params_gptj_6B.yaml](configs/params_gptj_6B.yaml): GPT-J model with `hidden_size=4096`, `num_hidden_layers=28`, `num_heads=16` and the gpt2 tokenizer.
 * [params_gpt_neox_20B.yaml](configs/params_gpt_neox_20B.yaml): GPT-Neox model with GPT-Neox model with `hidden_size=6144`, `num_hidden_layers=44`, `num_heads=64` and the neox tokenizer.
 
-All configs are meant for running in Weight Streaming mode with Appliance mode and Kubernetes.
-
+All configs are meant for running in [Weight Streaming mode](https://docs.cerebras.net/en/latest/wsc/cerebras-basics/cerebras-execution-modes.html#weight-streaming-mode)
 To enable gradient accumulation on a single CS2 system runs, please check the `gpt3_xl_grad_accum` config [here](../gpt3/configs/) as an example.
 
 ## Citations

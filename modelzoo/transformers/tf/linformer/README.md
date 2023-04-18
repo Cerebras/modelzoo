@@ -259,15 +259,14 @@ We use [BertMlmOnlyTfRecordsDynamicMaskProcessor.py](../bert/input/BertMlmOnlyTf
 
 ## To compile/validate, run train and eval on Cerebras System
 
-Please follow the instructions on our Developer Docs at:
-https://docs.cerebras.net/en/latest/getting-started/tensorflow/index.html
+Please follow the instructions on our [quickstart in the Developer Docs](https://docs.cerebras.net/en/latest/wsc/getting-started/cs-appliance.html).
 
 ## To run train and eval on GPU/CPU
 
 If running on a cpu or gpu, activate the environment from [Python GPU Environment setup](../../../../PYTHON-SETUP.md), and simply run:
 
 ```
-python run.py --mode train --params <path/to/yaml> --model_dir </path/to/model_dir>
+python run.py {CPU,GPU} --mode train --params <path/to/yaml> --model_dir </path/to/model_dir>
 ```
 
 For each of these commands
@@ -287,6 +286,6 @@ All configs are meant for running in Pipeline mode with Appliance mode and Kuber
 
 [2] [VTS Conceptual Explanation Blog](https://www.cerebras.net/software/increasing-model-throughput-with-variable-tensor-shape-computations/)
 
-[3] [Pipeline Execution Mode](https://docs.cerebras.net/en/latest/cerebras-basics/cerebras-execution-modes.html#layer-pipelined-mode)
+[3] [Pipeline Execution Mode](https://docs.cerebras.net/en/latest/wsc/cerebras-basics/cerebras-execution-modes.html#layer-pipelined-mode)
 
 [4] [BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding by Jacob Devlin, et al.](https://arxiv.org/pdf/1810.04805.pdf)

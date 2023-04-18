@@ -31,7 +31,7 @@ def input_fn(params, mode=tf.estimator.ModeKeys.TRAIN):
     """
     :param <dict> params: dict containing input parameters for creating dataset.
     Expects the following fields:
-    
+
     - "data_dir" (string): path to the data files to use.
     - "batch_size" (int): batch size
     - "to_float16" (bool): whether to convert to float16 or not
@@ -57,6 +57,7 @@ def input_fn(params, mode=tf.estimator.ModeKeys.TRAIN):
     ds = data["train"] if training else data["test"]
 
     if training and input_params["shuffle"]:
+        # pylint: disable=no-member
         ds = ds.shuffle(info.splits["train"].num_examples)
     if training:
         ds = ds.repeat()
@@ -73,8 +74,10 @@ def input_fn(params, mode=tf.estimator.ModeKeys.TRAIN):
 
 
 def train_input_fn(params):
+    """Generate train dataloader"""
     return input_fn(params, mode=tf.estimator.ModeKeys.TRAIN)
 
 
 def eval_input_fn(params):
+    """Generate eval dataloader"""
     return input_fn(params, mode=tf.estimator.ModeKeys.EVAL)

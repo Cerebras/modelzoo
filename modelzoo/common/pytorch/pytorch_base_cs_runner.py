@@ -106,10 +106,6 @@ class PyTorchBaseCSRunner(PyTorchBaseRunner, metaclass=abc.ABCMeta):
         """Return the directory to use for saving performance metrics."""
         return os.path.join(self._model_dir, "performance")
 
-    @property
-    def world_global_step(self):
-        return self._global_step * cm.num_receivers()
-
     def _increment_global_step(self):
         self._global_step += cm.get_run_step() - self._run_step
 
@@ -137,10 +133,25 @@ class PyTorchBaseCSRunner(PyTorchBaseRunner, metaclass=abc.ABCMeta):
         cm.print_update(
             self._device,
             global_step,
-            loss.item(),
+            loss.to("cpu").item(),
             self._active_mode,
             summary_writer=self._writer,
         )
+
+    @cm.step_closure
+    def _log_throughput(self, step):
+        if self._writer:
+            # pylint: disable=protected-access
+            rate, global_rate, batch_size = cm._extract_tracker_details(step)
+            self._writer.add_scalar(
+                'local_samples_per_sec', rate, self._global_step
+            )
+            self._writer.add_scalar(
+                'avg_samples_per_sec', global_rate, self._global_step
+            )
+            self._writer.add_scalar(
+                'avg_steps_per_sec', global_rate / batch_size, self._global_step
+            )
 
     @cm.step_closure
     def _save_checkpoint(self, step):  # pylint: disable=arguments-differ
@@ -166,3 +177,5 @@ class PyTorchBaseCSRunner(PyTorchBaseRunner, metaclass=abc.ABCMeta):
             post_transfer_callback=post_transfer_callback,
         )
         logging.info(f"Saved checkpoint at global step: {step}")
+
+        self.on_checkpoint_saved(file_name, step)

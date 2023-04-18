@@ -28,7 +28,7 @@ from modelzoo.common.pytorch.metrics.cb_metric import CBMetric
 from modelzoo.transformers.data_processing.Tokenization import FullTokenizer
 
 
-class RougeScoreMetric(CBMetric):
+class _PipelineRougeScoreMetric(CBMetric):
     """Custom evaluation metric for calculating rouge score when performing
     text summarization.
 
@@ -211,7 +211,7 @@ def extract_text_words_given_cls_indices(
         cls_weights: Tensor of shape (batch_size, max_cls_tokens).
         input_ids: Tensor of shape (batch_size, max_sequence_length).
         tokenizer: Tokenizer to be used.
-    
+
     Returns:
         extracted_words: Tensor with extracted words.
     """
@@ -241,7 +241,7 @@ def extract_text_tokens_given_cls_indices(
     Example:
         [[CLS, label=1] Dogs, like, cats, [CLS, label=0], Cats, like, dogs]
         -> [Dogs, like, cats].
-    
+
     Args:
         labels: Numpy array of shape (max_cls_tokens,).
         cls_indices: Numpy array of shape (max_cls_tokens).
@@ -285,8 +285,8 @@ def extract_text_words_by_token_ids(input_ids, tokenizer, max_sequence_length):
         tokenizer: Tokenizer object which contains functions to
             convert words to token and vice versa.
         max_sequence_length: int, maximum length of the sequence.
-    Returns: 
-        words_padded: Numpy array with computed words padded 
+    Returns:
+        words_padded: Numpy array with computed words padded
         to max seq length.
     """
     extracted_text_tokens = tokenizer.convert_ids_to_tokens(input_ids)
@@ -299,3 +299,9 @@ def extract_text_words_by_token_ids(input_ids, tokenizer, max_sequence_length):
     words = text.split(" ")
     words_padded = _pad_input_sequence(words, max_sequence_length)
     return words_padded
+
+
+# Create a factory for creating a metric depending on execution strategy
+RougeScoreMetric = CBMetric.create_metric_impl_factory(
+    pipeline_metric_cls=_PipelineRougeScoreMetric, ws_metric_cls=None
+)

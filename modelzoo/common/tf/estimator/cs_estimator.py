@@ -12,35 +12,37 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+""" CSEstimator Wrapper
+
+Wrapper for allowing users with different environments to run the
+CSEstimator in Modelzoo scripts.
+"""
+
 import inspect
 
 import tensorflow as tf
 
+from modelzoo import CSOFT_PACKAGE, CSoftPackage
 from modelzoo.common.tf.estimator.utils import (
     host_call_to_eval_metric_ops,
     validate_host_call,
 )
-from modelzoo.common.tf.run_utils import ExecutionMode, get_execution_mode
 
-try:
-    # We have two versions of estimator internally depending on whether we are
-    # running weight streaming or pipeline. Being able to import tfwse is a
-    # good canary for this as it's only possible in the weight streaming
-    # environment
-    try:
-        import tfwse  # noqa
-        from cerebras.tf.ws.cs_estimator_ws import (
-            CerebrasEstimator as estimator,
-        )
-    except ImportError:
-        from cerebras.tf.cs_estimator import CerebrasEstimator as estimator
-except ImportError:
+if CSOFT_PACKAGE == CSoftPackage.WHEEL:
+    from cerebras_tensorflow.cs_estimator_app import (
+        CerebrasAppEstimator as estimator,
+    )
+elif CSOFT_PACKAGE == CSoftPackage.NONE:
     from tensorflow_estimator.python.estimator.estimator import (
         Estimator as estimator,
     )
+else:
+    assert False, f"Invalid value for `CSOFT_PACKAGE {CSOFT_PACKAGE}"
 
 
 class CerebrasEstimator(estimator):
+    """ Wrapper class for Modelzoo Estimator. """
+
     def __init__(
         self,
         model_fn,
@@ -52,7 +54,7 @@ class CerebrasEstimator(estimator):
     ):
         kwargs = dict()
         self._orig_model_fn = model_fn
-        if estimator.__name__ == "CerebrasEstimator":
+        if CSOFT_PACKAGE is not CSoftPackage.NONE:
             kwargs["compile_dir"] = compile_dir
         else:
             model_fn = self._wrapper_model_fn
@@ -69,13 +71,14 @@ class CerebrasEstimator(estimator):
     def compile(
         self, input_fn, validate_only=False, mode=tf.estimator.ModeKeys.TRAIN
     ):
-        if estimator.__name__ == "CerebrasEstimator":
-            super().compile(input_fn, validate_only, mode)
-        else:
-            tf.compat.v1.logging.warning(
-                "Running outside the Cerebras Container, so compile will not take"
-                " place. Please use Cerebras Container to compile for the Cerebras System."
-            )
+        if CSOFT_PACKAGE is not CSoftPackage.NONE:
+            return super().compile(input_fn, validate_only, mode)
+
+        tf.compat.v1.logging.warning(
+            "Running outside the Cerebras Container, so compile will not take"
+            " place. Please use Cerebras Container to compile for the Cerebras System."
+        )
+        return None
 
     def train(
         self,
@@ -88,18 +91,16 @@ class CerebrasEstimator(estimator):
         sparsifier=None,
     ):
         kwargs = dict()
-        if estimator.__name__ == "CerebrasEstimator":
+        if CSOFT_PACKAGE is not CSoftPackage.NONE:
             kwargs["use_cs"] = use_cs
-
-            if get_execution_mode() == ExecutionMode.WeightStreaming:
-                kwargs["sparsifier"] = sparsifier
-
-        if sparsifier is not None and "sparsifier" not in kwargs:
-            tf.compat.v1.logging.warning(
-                "Running outside weight streaming, so sparse runs and sparsifiers are not"
-                "supported. Please use Cerebras Container + weight streaming. Defaulting "
-                "to no op for sparsifier."
-            )
+        if CSOFT_PACKAGE is not CSoftPackage.WHEEL:
+            if sparsifier is not None:
+                tf.compat.v1.logging.warning(
+                    "Running outside Cerebras container, so sparse runs and"
+                    " sparsifiers are not supported. Please use Cerebras"
+                    " Container + weight streaming. Defaulting "
+                    "to no op for sparsifier."
+                )
 
         return super(CerebrasEstimator, self).train(
             input_fn=input_fn,
@@ -120,7 +121,7 @@ class CerebrasEstimator(estimator):
         use_cs=False,
     ):
         kwargs = dict()
-        if estimator.__name__ == "CerebrasEstimator":
+        if CSOFT_PACKAGE is not CSoftPackage.NONE:
             kwargs["use_cs"] = use_cs
 
         return super(CerebrasEstimator, self).evaluate(
@@ -143,7 +144,7 @@ class CerebrasEstimator(estimator):
         use_cs=False,
     ):
         kwargs = dict()
-        if estimator.__name__ == "CerebrasEstimator":
+        if CSOFT_PACKAGE is not CSoftPackage.NONE:
             kwargs["use_cs"] = use_cs
             kwargs["num_samples"] = num_samples
 
@@ -184,7 +185,7 @@ class CerebrasEstimator(estimator):
                 eval_metric_ops = None
 
         # Create a new EstimatorSpec with host_call turned into eval_metric_ops
-        spec_args = inspect.getargspec(tf.estimator.EstimatorSpec)
+        spec_args = inspect.getfullargspec(tf.estimator.EstimatorSpec)
         new_spec_args = {}
         for arg in spec_args.args:
             if arg in ["eval_metric_ops"]:
