@@ -66,7 +66,7 @@ def to_minhash(chunks):
             output_name = f"{dataset_name}/{file_name}"
 
         m = MinHash(num_perm=128)
-        [m.update(x.encode('utf8')) for x in get_features(text, width)]
+        m.update_batch(map(lambda x: x.encode('utf8'), get_features(text, width)))
         buckets.append(
             {"file_name": output_name, "doc_id": doc_id, "hash": m,}
         )
