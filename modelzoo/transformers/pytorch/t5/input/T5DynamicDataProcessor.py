@@ -24,7 +24,10 @@ from functools import partial
 import numpy as np
 import torch
 
-from modelzoo.common.pytorch.input_utils import bucketed_batch
+from modelzoo.common.pytorch.input_utils import (
+    bucketed_batch,
+    get_streaming_batch_size,
+)
 from modelzoo.transformers.pytorch.bert.input.utils import build_vocab
 from modelzoo.transformers.pytorch.input_utils import (
     get_data_for_task,
@@ -111,7 +114,7 @@ class T5DynamicDataProcessor(torch.utils.data.IterableDataset):
         self.meta_data_values_cum_sum = np.cumsum([0] + self.meta_data_values)
 
         self.num_examples = sum(map(int, self.meta_data.values()))
-        self.batch_size = params["batch_size"]
+        self.batch_size = get_streaming_batch_size(params["batch_size"])
 
         self.num_batches = self.num_examples // self.batch_size
 
@@ -410,7 +413,7 @@ class T5DynamicDataProcessor(torch.utils.data.IterableDataset):
         if self.shuffle:
             self.rng.shuffle(self.text_files_per_task_per_worker)
 
-    def create_dataloader(self, is_training=True):
+    def create_dataloader(self):
         """
         Classmethod to create the dataloader object.
         """

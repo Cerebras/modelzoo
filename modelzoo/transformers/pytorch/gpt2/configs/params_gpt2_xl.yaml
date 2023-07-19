@@ -18,22 +18,19 @@
 train_input:
     data_processor: "GptHDF5DataProcessor"
     data_dir: "./language/datasets/owt_pretraining_gpt_hdf5/train_8M_msl1024/"
-    vocab_size: 50257
-    max_sequence_length: 1024
     # For high utilization in weight streaming, we estimate batch size >95 seqs
+    # The effective batch size, which is evenly divided across "num_csx" systems used for the run
     batch_size: 95
     shuffle: True
     shuffle_seed: 1337
     num_workers: 8
     prefetch_factor: 10
     persistent_workers: True # Important to avoid seeding at each epoch
-    repeat: True
 
 eval_input:
     data_processor: "GptHDF5DataProcessor"
     data_dir: "./language/datasets/owt_pretraining_gpt_hdf5/val_msl1024/"
-    vocab_size: 50257
-    max_sequence_length: 1024
+    # The effective batch size, which is evenly divided across "num_csx" systems used for the run
     batch_size: 95
     shuffle: False
     num_workers: 8
@@ -97,7 +94,6 @@ model:
 
     # Cerebras parameters
     mixed_precision: True
-    precision_opt_level: 1
 
 optimizer:
     optimizer_type: "AdamW"

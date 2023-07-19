@@ -27,7 +27,7 @@ from modelzoo.common.pytorch.model_utils.checkpoint_converters.base_converter im
     ConfigConversionError,
     ConversionRule,
     EquivalentSubkey,
-    converter_notes,
+    FormatVersions,
 )
 
 
@@ -59,8 +59,8 @@ class Converter_BertLayerNorm_HF_CS(BaseCheckpointConverter_HF_CS):
         ]
 
     @staticmethod
-    def formats() -> Tuple[str, str]:
-        return ("hf", "cs")
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs"))
 
     @staticmethod
     def get_config_converter_class() -> BaseConfigConverter:
@@ -240,8 +240,8 @@ class Converter_BertModel_CS16_CS17(BaseCheckpointConverter_PT_PT):
             ).expand((1, -1))
 
     @staticmethod
-    def formats() -> Tuple[str, str]:
-        return ("cs-1.6", "cs-1.7")
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("cs-1.6"), FormatVersions("cs-1.7"))
 
     @staticmethod
     def get_config_converter_class() -> BaseConfigConverter:
@@ -257,8 +257,8 @@ class ConfigConverter_Bert_CS16_CS17(BaseConfigConverter_CS_CS):
         ]
 
     @staticmethod
-    def formats() -> Tuple[str, str]:
-        return ("cs-1.6", "cs-1.7")
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("cs-1.6"), FormatVersions("cs-1.7"))
 
 
 class Converter_BertModel_CS16_CS18(BaseCheckpointConverter_PT_PT):
@@ -278,8 +278,8 @@ class Converter_BertModel_CS16_CS18(BaseCheckpointConverter_PT_PT):
         ]
 
     @staticmethod
-    def formats() -> Tuple[str, str]:
-        return ("cs-1.6", "cs-1.8")
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("cs-1.6"), FormatVersions("cs-1.8", "cs-1.9"))
 
     @staticmethod
     def get_config_converter_class() -> BaseConfigConverter:
@@ -340,8 +340,8 @@ class ConfigConverter_Bert_CS16_CS18(ConfigConverter_Bert_CS16_CS17):
         )
 
     @staticmethod
-    def formats() -> Tuple[str, str]:
-        return ("cs-1.6", "cs-1.8")
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("cs-1.6"), FormatVersions("cs-1.8", "cs-1.9"))
 
 
 class Converter_Bert_CS17_CS18(BaseCheckpointConverter_PT_PT):
@@ -353,14 +353,15 @@ class Converter_Bert_CS17_CS18(BaseCheckpointConverter_PT_PT):
         ]
 
     @staticmethod
-    @converter_notes(
-        notes="""
-    CS 1.7 <-> CS 1.8 for 
-    BertForPreTraining, BertForSequenceClassification,
-    BertForQuestionAnswering, and BertForSummarization classes"""
-    )
-    def formats() -> Tuple[str, str]:
-        return ("cs-1.7", "cs-1.8")
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("cs-1.7"), FormatVersions("cs-1.8", "cs-1.9"))
+
+    @classmethod
+    def converter_note(cls) -> str:
+        return (
+            "BertForPreTraining, BertForSequenceClassification, "
+            "BertForQuestionAnswering, and BertForSummarization classes"
+        )
 
     @staticmethod
     def get_config_converter_class() -> BaseConfigConverter:
@@ -374,8 +375,8 @@ class ConfigConverter_Bert_CS17_CS18(ConfigConverter_Bert_CS16_CS18):
         super().__init__()
 
     @staticmethod
-    def formats() -> Tuple[str, str]:
-        return ("cs-1.7", "cs-1.8")
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("cs-1.7"), FormatVersions("cs-1.8", "cs-1.9"))
 
 
 class Converter_BertModel_HF_CS17(
@@ -414,8 +415,8 @@ class Converter_BertModel_HF_CS17(
         )
 
     @staticmethod
-    def formats() -> Tuple[str, str]:
-        return ("hf", "cs-1.7")
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-1.7"))
 
     @staticmethod
     def get_config_converter_class() -> BaseConfigConverter:
@@ -436,8 +437,8 @@ class Converter_BertModel_HF_CS18(BaseCheckpointConverter_HF_CS):
         ]
 
     @staticmethod
-    def formats() -> Tuple[str, str]:
-        return ("hf", "cs-1.8")
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-1.8", "cs-1.9"))
 
     @staticmethod
     def get_config_converter_class() -> BaseConfigConverter:
@@ -549,9 +550,12 @@ class Converter_BertPretrainModel_CS16_CS17(BaseCheckpointConverter_PT_PT):
         return {"model": checkpoint["model"]}
 
     @staticmethod
-    @converter_notes(notes="CS 1.6 <-> CS 1.7 BertPretrainModel")
-    def formats() -> Tuple[str, str]:
-        return ("cs-1.6", "cs-1.7")
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("cs-1.6"), FormatVersions("cs-1.7"))
+
+    @classmethod
+    def converter_note(cls) -> str:
+        return "BertPretrainModel class"
 
     @staticmethod
     def get_config_converter_class() -> BaseConfigConverter:
@@ -588,9 +592,12 @@ class Converter_BertPretrainModel_CS16_CS18(BaseCheckpointConverter_PT_PT):
         return {"model": checkpoint["model"]}
 
     @staticmethod
-    @converter_notes(notes="CS 1.6 <-> CS 1.8 BertPretrainModel")
-    def formats() -> Tuple[str, str]:
-        return ("cs-1.6", "cs-1.8")
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("cs-1.6"), FormatVersions("cs-1.8", "cs-1.9"))
+
+    @classmethod
+    def converter_note(cls) -> str:
+        return "BertPretrainModel class"
 
     @staticmethod
     def get_config_converter_class() -> BaseConfigConverter:
@@ -633,9 +640,14 @@ class Converter_BertPretrainModel_HF_CS17(
         )
 
     @staticmethod
-    @converter_notes(notes="HF <-> CS 1.7 for BertForPreTraining")
-    def formats() -> Tuple[str, str]:
-        return ("hf", "cs-1.7")
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-1.7"))
+
+    @classmethod
+    def converter_note(cls) -> str:
+        return "{} <-> {} for BertForPreTraining".format(
+            cls.formats()[0], cls.formats()[1]
+        )
 
     @staticmethod
     def get_config_converter_class() -> BaseConfigConverter:
@@ -661,9 +673,14 @@ class Converter_BertPretrainModel_HF_CS18(Converter_BertPretrainModel_HF_CS17):
         ]
 
     @staticmethod
-    @converter_notes(notes="HF <-> CS for 1.8 BertForPreTraining")
-    def formats() -> Tuple[str, str]:
-        return ("hf", "cs-1.8")
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-1.8", "cs-1.9"))
+
+    @classmethod
+    def converter_note(cls) -> str:
+        return "{} <-> {} for BertForPreTraining".format(
+            cls.formats()[0], cls.formats()[1]
+        )
 
     @staticmethod
     def get_config_converter_class() -> BaseConfigConverter:
@@ -887,8 +904,8 @@ class ConfigConverter_Bert_HF_CS17(BaseConfigConverter_HF_CS):
         )
 
     @staticmethod
-    def formats() -> Tuple[str, str]:
-        return ("hf", "cs-1.7")
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-1.7"))
 
 
 class ConfigConverter_Bert_HF_CS18(ConfigConverter_Bert_HF_CS17):
@@ -896,8 +913,8 @@ class ConfigConverter_Bert_HF_CS18(ConfigConverter_Bert_HF_CS17):
         super().__init__()
 
     @staticmethod
-    def formats() -> Tuple[str, str]:
-        return ("hf", "cs-1.8")
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-1.8", "cs-1.9"))
 
     def pre_config_convert(
         self, config, from_index,

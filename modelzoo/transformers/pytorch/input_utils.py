@@ -19,6 +19,7 @@ from typing import Iterator, Sized
 import numpy as np
 import torch
 
+from cerebras_pytorch.distributed.cluster_resolver import ClusterSpec, TaskSpec
 from modelzoo.common.pytorch import cb_model as cm
 
 
@@ -150,6 +151,47 @@ def num_tasks():
         return 1
 
 
+def cluster_config():
+    """
+    Returns (ClusterSpec, TaskSpec). The TaskSpec contians the following fields:
+        - rank: the global rank of the current worker
+        - local_rank: the rank of the current worker among workers who feed
+            the same system as the current worker
+        - wse_id: the index of the system that the current worker is
+            associated with
+    The ClusterSpec contains the following fields:
+        - tasks: a list of TaskSpecs for each task running on the cluster
+        - rank: the rank of the curent process's task in the cluster
+        - num_csx: the number of CSX systems in the cluster
+        - num_workers_per_csx: the number of worker tasks per CSX
+    If the current job is running on GPU instead of CS system, then
+    the ranks and world sizes in the returned TaskSpec will be set to the GPU
+    rank and world size.
+
+    """
+    if cm.use_cs() and cm.is_streamer():
+        cluster_spec = cm.service_resolver().cluster_spec
+        task_spec = cluster_spec.task()
+        return cluster_spec, task_spec
+    elif is_distributed():
+        task_spec = TaskSpec(
+            rank=dist.get_rank(),
+            local_rank=dist.get_rank(),
+            wse_id=0,
+            node_name="unknown",
+        )
+        cluster_spec = ClusterSpec(
+            [task_spec], dist.get_rank(), 1, dist.get_world_size(),
+        )
+        return cluster_spec, task_spec
+    else:
+        task_spec = TaskSpec(
+            rank=0, local_rank=0, wse_id=0, node_name="unknown",
+        )
+        cluster_spec = ClusterSpec([task_spec], 0, 1, 1)
+        return cluster_spec, task_spec
+
+
 class ShardedSampler(torch.utils.data.Sampler):
     """
     Modified from:
@@ -160,7 +202,6 @@ class ShardedSampler(torch.utils.data.Sampler):
 
     Args:
         dataset (torch.utils.data.Dataset): Dataset used for sampling.
-        mode (modes): Instance of `modes` to indicate train or eval mode.
         shuffle (bool, optional): If `True` (default), sampler will shuffle 
             the indices.
         seed (int, optional): Random seed used to shuffle the sampler if
@@ -172,12 +213,11 @@ class ShardedSampler(torch.utils.data.Sampler):
             the data evenly divisible across the replicas. Default: `False`.
     """
 
-    def __init__(self, dataset, mode, shuffle=True, seed=None, drop_last=False):
+    def __init__(self, dataset, shuffle=True, seed=None, drop_last=False):
         self.num_tasks = num_tasks()
         self.task_id = task_id()
         self.dataset = dataset
         self.dataset_len = len(self.dataset)
-        self.mode = mode
         self.drop_last = drop_last
 
         if cm.use_cs() and not self.drop_last:
@@ -273,7 +313,7 @@ def check_sharding_sanity(
             f"Maximum number of samples generated in dataloader workers of "
             f"task {task_id()} is {max_examples}. Since {max_examples} is less "
             f"than batch size {batch_size} and `drop_last` is True, this task "
-            f"will end up not producing any samples. Please spceify a fewer "
+            f"will end up not producing any samples. Please specify a fewer "
             f"number of workers or tasks."
         )
 
@@ -291,7 +331,7 @@ def shard_list_contiguous(input_list, worker_id, num_workers):
             num_workers (int): number of shards to create
 
         Returns:
-            A sublist of contigous elements (`worker_id`'s shard)
+            A sublist of contiguous elements (`worker_id`'s shard)
     """
 
     assert num_workers <= len(input_list), (

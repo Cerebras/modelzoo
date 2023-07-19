@@ -12,24 +12,31 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
+# isort: off
 import sys
+import os
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "../../../../"))
-
-from modelzoo.common.pytorch.run_utils import run
-from modelzoo.vision.pytorch.unet.data import (
-    eval_input_dataloader,
-    train_input_dataloader,
-)
-from modelzoo.vision.pytorch.unet.model import UNetModel
-from modelzoo.vision.pytorch.unet.utils import set_defaults
+# isort: on
+from modelzoo.common.run_utils.cli_pytorch import get_params_from_args
 
 
 def main():
+    params = get_params_from_args()
 
-    run(
-        UNetModel, train_input_dataloader, eval_input_dataloader, set_defaults,
+    from modelzoo.vision.pytorch.unet.utils import set_defaults
+
+    set_defaults(params)
+
+    from modelzoo.common.pytorch.run_utils import main
+    from modelzoo.vision.pytorch.unet.data import (
+        eval_input_dataloader,
+        train_input_dataloader,
+    )
+    from modelzoo.vision.pytorch.unet.model import UNetModel
+
+    main(
+        params, UNetModel, train_input_dataloader, eval_input_dataloader,
     )
 
 

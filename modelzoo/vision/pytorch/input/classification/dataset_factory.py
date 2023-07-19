@@ -19,6 +19,7 @@ from torch.utils.data import Subset
 from torch.utils.data.dataloader import default_collate
 from torchvision.datasets.vision import StandardTransform
 
+from modelzoo.common.pytorch.input_utils import get_streaming_batch_size
 from modelzoo.vision.pytorch.input.classification.mixup import (
     RandomCutmix,
     RandomMixup,
@@ -33,7 +34,7 @@ from modelzoo.vision.pytorch.input.classification.utils import (
     create_preprocessing_params_with_defaults,
 )
 from modelzoo.vision.pytorch.input.transforms import LambdaWithParam
-from modelzoo.vision.pytorch.input.utils import is_gpu_distributed
+from modelzoo.vision.pytorch.input.utils import is_gpu_distributed, task_id
 
 
 class Processor:
@@ -48,9 +49,13 @@ class Processor:
         self.pp_params = create_preprocessing_params_with_defaults(params)
 
         # params for data loader
-        self.batch_size = params.get("batch_size", 128)
+        self.batch_size = get_streaming_batch_size(
+            params.get("batch_size", 128)
+        )
         self.shuffle = params.get("shuffle", True)
-        self.shuffle_seed = params.get("shuffle_seed", 0)
+        self.shuffle_seed = params.get("shuffle_seed", None)
+        if self.shuffle_seed is not None:
+            torch.manual_seed(self.shuffle_seed)
         self.drop_last = params.get("drop_last", True)
 
         # multi-processing params.
@@ -88,6 +93,10 @@ class Processor:
             collate_fn = lambda batch: mixup_fn(*default_collate(batch))
 
         if self.distributed:
+            # distributed samplers require a seed
+            if self.shuffle_seed is None:
+                self.shuffle_seed = 0
+
             if self.sampler == "repeated-aug":
                 data_sampler = RepeatedAugSampler(
                     dataset,
@@ -102,7 +111,9 @@ class Processor:
                 )
         else:
             if shuffle:
-                data_sampler = torch.utils.data.RandomSampler(dataset)
+                data_sampler = torch.utils.data.RandomSampler(
+                    dataset, generator=self._generator_fn()
+                )
             else:
                 data_sampler = torch.utils.data.SequentialSampler(dataset)
 
@@ -115,6 +126,7 @@ class Processor:
             drop_last=self.drop_last,
             prefetch_factor=self.prefetch_factor,
             persistent_workers=self.persistent_workers,
+            worker_init_fn=self._worker_init_fn,
         )
         return dataloader
 
@@ -167,6 +179,23 @@ class Processor:
         shuffled_idx = np.arange(num_sample)
         rng.shuffle(shuffled_idx)
         return shuffled_idx
+
+    def _worker_init_fn(self, worker_id):
+        worker_info = torch.utils.data.get_worker_info()
+        worker_id = worker_info.id if worker_info is not None else 0
+
+        if self.shuffle_seed is not None:
+            np.random.seed(self.shuffle_seed + worker_id)
+
+    def _generator_fn(self):
+        generator_fn = None
+
+        if self.shuffle_seed is not None:
+            seed = self.shuffle_seed + task_id()
+            generator_fn = torch.Generator(device="cpu")
+            generator_fn.manual_seed(seed)
+
+        return generator_fn
 
 
 class VisionSubset(Subset):

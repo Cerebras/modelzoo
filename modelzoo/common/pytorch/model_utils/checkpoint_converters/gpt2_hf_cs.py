@@ -25,7 +25,7 @@ from modelzoo.common.pytorch.model_utils.checkpoint_converters.base_converter im
     ConfigConversionError,
     ConversionRule,
     EquivalentSubkey,
-    converter_notes,
+    FormatVersions,
 )
 
 
@@ -71,8 +71,8 @@ class Converter_GPT2_Attention_HF_CS17(BaseCheckpointConverter_HF_CS):
         ]
 
     @staticmethod
-    def formats() -> Tuple[str, str]:
-        return ("hf", "cs-1.7")
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-1.7"))
 
     @staticmethod
     def get_config_converter_class() -> BaseConfigConverter:
@@ -314,8 +314,10 @@ class Converter_GPT2Model_HF_CS17(BaseCheckpointConverter_HF_CS):
     ):
         if from_index == 0:
             logging.warning(
-                "CS-1.7 GPT2 has a language model head (lm_head) "
-                "while HF GPT2Model does not. Initializing lm_head to default."
+                "{} GPT2 has a language model head (lm_head) "
+                "while {} GPT2Model does not. Initializing lm_head to default.".format(
+                    self.formats()[1], self.formats()[0]
+                )
             )
         # Manually tie weights
         if from_index == 1 and configs[1]["model"]["share_embedding_weights"]:
@@ -338,24 +340,37 @@ class Converter_GPT2Model_HF_CS17(BaseCheckpointConverter_HF_CS):
         if from_index == 0:
             # We are converting from HF GPT2Model (which is headless) -> CS GPT2LMHeadModel
             # We need to create 'lm_head' and init to default values
+            hf_config = configs[0]
             cs_config = configs[1]
+            use_bias_in_output = cs_config["model"].get(
+                "use_bias_in_output", False
+            )
             vocab_size = cs_config["model"]["vocab_size"]
             embed_dim = cs_config["model"]["hidden_size"]
-            lm_head_weight = torch.zeros((vocab_size, embed_dim))
-            lm_head_weight.normal_(mean=0.0, std=0.02)
+            if hf_config["tie_word_embeddings"]:
+                lm_head_weight = old_state_dict['wte.weight']
+            else:
+                lm_head_weight = torch.zeros((vocab_size, embed_dim))
+                lm_head_weight.normal_(mean=0.0, std=0.02)
             new_state_dict["lm_head.weight"] = lm_head_weight
+            if use_bias_in_output:
+                lm_head_bias = torch.zeros(vocab_size)
+                new_state_dict["lm_head.bias"] = lm_head_bias
 
     @staticmethod
-    @converter_notes(
-        notes="""HF GPT2Model <-> CS 1.7 GPT2LMHeadModel
-    The HF model doesn't contain a language model head while the CS one does.
-    When converting to CS, the exported checkpoint will contain a language model
-    head initialized to default random values. When converting to HF, the
-    language model head will be dropped.
-    """
-    )
-    def formats() -> Tuple[str, str]:
-        return ("hf", "cs-1.7")
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-1.7"))
+
+    @classmethod
+    def converter_note(cls) -> str:
+        return (
+            "{} GPT2Model <-> {} GPT2LMHeadModel\n"
+            "The HF model doesn't contain a language model head while the CS "
+            "one does. When converting to CS, the exported checkpoint will "
+            "contain a language model head initialized to default random "
+            "values. When converting to HF, the language model head will be "
+            "dropped."
+        ).format(cls.formats()[0], cls.formats()[1])
 
     @staticmethod
     def get_config_converter_class() -> BaseConfigConverter:
@@ -379,16 +394,19 @@ class Converter_GPT2Model_HF_CS18(Converter_GPT2Model_HF_CS17):
         ]
 
     @staticmethod
-    @converter_notes(
-        notes="""HF GPT2Model <-> CS 1.8 GPT2LMHeadModel
-    The HF model doesn't contain a language model head while the CS one does.
-    When converting to CS, the exported checkpoint will contain a language model
-    head initialized to default random values. When converting to HF, the
-    language model head will be dropped.
-    """
-    )
-    def formats() -> Tuple[str, str]:
-        return ("hf", "cs-1.8")
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-1.8", "cs-1.9"))
+
+    @classmethod
+    def converter_note(cls) -> str:
+        return (
+            "{} GPT2Model <-> {} GPT2LMHeadModel\n"
+            "The HF model doesn't contain a language model head while the CS "
+            "one does. When converting to CS, the exported checkpoint will "
+            "contain a language model head initialized to default random "
+            "values. When converting to HF, the language model head will be "
+            "dropped."
+        ).format(cls.formats()[0], cls.formats()[1])
 
     @staticmethod
     def get_config_converter_class() -> BaseConfigConverter:
@@ -564,8 +582,8 @@ class ConfigConverter_GPT2Model_HF_CS17(BaseConfigConverter_HF_CS):
         return config
 
     @staticmethod
-    def formats() -> Tuple[str, str]:
-        return ("hf", "cs-1.7")
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-1.7"))
 
 
 class ConfigConverter_GPT2Model_HF_CS18(ConfigConverter_GPT2Model_HF_CS17):
@@ -573,8 +591,8 @@ class ConfigConverter_GPT2Model_HF_CS18(ConfigConverter_GPT2Model_HF_CS17):
         super().__init__()
 
     @staticmethod
-    def formats() -> Tuple[str, str]:
-        return ("hf", "cs-1.8")
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-1.8", "cs-1.9"))
 
 
 class Converter_GPT2LMHeadModel_HF_CS17(BaseCheckpointConverter_HF_CS):
@@ -612,9 +630,14 @@ class Converter_GPT2LMHeadModel_HF_CS17(BaseCheckpointConverter_HF_CS):
                 ] = old_state_dict["lm_head.weight"]
 
     @staticmethod
-    @converter_notes(notes="HF GPT2LMHeadModel <-> CS 1.7 GPT2LMHeadModel")
-    def formats() -> Tuple[str, str]:
-        return ("hf", "cs-1.7")
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-1.7"))
+
+    @classmethod
+    def converter_note(cls) -> str:
+        return "{} GPT2LMHeadModel <-> {} GPT2LMHeadModel".format(
+            cls.formats()[0], cls.formats()[1]
+        )
 
     @staticmethod
     def get_config_converter_class() -> BaseConfigConverter:
@@ -640,9 +663,14 @@ class Converter_GPT2LMHeadModel_HF_CS18(BaseCheckpointConverter_HF_CS):
         ]
 
     @staticmethod
-    @converter_notes(notes="HF GPT2LMHeadModel <-> CS 1.8 GPT2LMHeadModel")
-    def formats() -> Tuple[str, str]:
-        return ("hf", "cs-1.8")
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-1.8", "cs-1.9"))
+
+    @classmethod
+    def converter_note(cls) -> str:
+        return "{} GPT2LMHeadModel <-> {} GPT2LMHeadModel".format(
+            cls.formats()[0], cls.formats()[1]
+        )
 
     @staticmethod
     def get_config_converter_class() -> BaseConfigConverter:

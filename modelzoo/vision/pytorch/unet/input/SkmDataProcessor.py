@@ -25,15 +25,15 @@ import torch
 from torchvision import transforms
 
 from modelzoo.vision.pytorch.input.transforms import create_transform
-from modelzoo.vision.pytorch.unet.input.Hdf5BaseDataProcessor import (
-    Hdf5BaseDataProcessor,
+from modelzoo.vision.pytorch.unet.input.Hdf5BaseIterDataProcessor import (
+    Hdf5BaseIterDataProcessor,
 )
 from modelzoo.vision.pytorch.unet.input.preprocessing_utils import (
     normalize_tensor_transform,
 )
 
 
-class SkmDataProcessor(Hdf5BaseDataProcessor):
+class SkmDataProcessor(Hdf5BaseIterDataProcessor):
     """
     A SKM-TEA MRI DICOM Track (Stanford MRI Dataset) Data Processor class for U-Net Segmentation.
     This class includes data preprocessing and transforms that are necessary for utilizing the

@@ -14,6 +14,7 @@
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from modelzoo.common.pytorch.run_utils import half_dtype_instance
 
@@ -28,6 +29,7 @@ class Dice:
         use_argmax: bool = False,
         include_background: bool = False,
         input_shape=None,
+        use_native_onehot: bool = True,
     ):
         self.num_classes = num_classes
         self.include_background = include_background
@@ -35,6 +37,7 @@ class Dice:
         self.to_onehot_x = to_onehot_x
         self.use_softmax = use_softmax
         self.use_argmax = use_argmax
+        self.use_native_onehot = use_native_onehot
         self.smooth_nr = 0.0
         self.smooth_dr = 1e-6
         self.include_background = include_background
@@ -78,14 +81,24 @@ class Dice:
             prediction = torch.argmax(prediction, dim=channel_axis)
 
         if self.to_onehot_y:
-            target = to_one_hot(target, channel_axis, self.num_classes)
+            target = to_one_hot(
+                target, channel_axis, self.num_classes, self.use_native_onehot
+            )
         if self.to_onehot_x:
-            prediction = to_one_hot(prediction, channel_axis, self.num_classes)
+            prediction = to_one_hot(
+                prediction,
+                channel_axis,
+                self.num_classes,
+                self.use_native_onehot,
+            )
 
         if not self.include_background:
             if self.bg_mask is None:
                 self.bg_mask = self._create_background_mask(
-                    target.device, torch.float16, self.input_shape, channel_axis
+                    target.device,
+                    prediction.dtype,
+                    self.input_shape,
+                    channel_axis,
                 )
             assert (
                 num_pred_ch > 1
@@ -107,16 +120,19 @@ class Dice:
         return res
 
 
-def to_one_hot(array, channel_axis, num_classes):
+def to_one_hot(array, channel_axis, num_classes, use_native_onehot):
     if len(array.shape) >= 5:
         array = torch.squeeze(array, dim=channel_axis)
-    init = torch.zeros(
-        array.shape + (num_classes,),
-        device=array.device,
-        dtype=half_dtype_instance.half_dtype,
-    )
-    array = init.scatter_(-1, array.long().unsqueeze(-1), 1.0).float()
-    array = array.permute(0, 4, 1, 2, 3).float()
+    if use_native_onehot:
+        array = F.one_hot(array.long(), num_classes).float()
+    else:
+        init = torch.zeros(
+            array.shape + (num_classes,),
+            device=array.device,
+            dtype=half_dtype_instance.half_dtype,
+        )
+        array = init.scatter_(-1, array.long().unsqueeze(-1), 1.0).float()
+    array = array.permute(0, 4, 1, 2, 3)
     return array
 
 

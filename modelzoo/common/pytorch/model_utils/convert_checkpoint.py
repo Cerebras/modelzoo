@@ -19,6 +19,7 @@ import argparse
 import logging
 import os
 import sys
+import textwrap
 
 from tabulate import tabulate
 
@@ -58,6 +59,10 @@ from modelzoo.common.pytorch.model_utils.checkpoint_converters.gptj_hf_cs import
     Converter_GPTJ_LMHeadModel_HF_CS17,
     Converter_GPTJ_LMHeadModel_HF_CS18,
 )
+from modelzoo.common.pytorch.model_utils.checkpoint_converters.llama import (  # To CS 1.9
+    Converter_LlamaForCausalLM_HF_CS19,
+    Converter_LlamaModel_HF_CS19,
+)
 from modelzoo.common.pytorch.model_utils.checkpoint_converters.salesforce_codegen_hf_cs import (  # To CS 1.7; To CS 1.8
     Converter_Codegen_Headless_HF_CS17,
     Converter_Codegen_Headless_HF_CS18,
@@ -72,84 +77,94 @@ from modelzoo.common.pytorch.model_utils.checkpoint_converters.t5 import (  # To
     Converter_T5_HF_CS18,
 )
 
+from modelzoo.common.pytorch.model_utils.checkpoint_converters.falcon import (  # noqa
+    Converter_Falcon_Headless_HF_CS19,
+    Converter_Falcon_HF_CS19,
+)
+
+
 converters = {
-    "bert": {
-        Converter_BertPretrainModel_HF_CS17.formats(): Converter_BertPretrainModel_HF_CS17,
-        Converter_BertPretrainModel_HF_CS18.formats(): Converter_BertPretrainModel_HF_CS18,
-        Converter_BertPretrainModel_CS16_CS17.formats(): Converter_BertPretrainModel_CS16_CS17,
-        Converter_BertPretrainModel_CS16_CS18.formats(): Converter_BertPretrainModel_CS16_CS18,
-        Converter_Bert_CS17_CS18.formats(): Converter_Bert_CS17_CS18,
-    },
-    "bert-sequence-classifier": {
-        Converter_BertFinetuneModel_CS16_CS17.formats(): Converter_BertFinetuneModel_CS16_CS17,
-        Converter_BertFinetuneModel_CS16_CS18.formats(): Converter_BertFinetuneModel_CS16_CS18,
-        Converter_Bert_CS17_CS18.formats(): Converter_Bert_CS17_CS18,
-        Converter_BertForSequenceClassification_HF_CS17.formats(): Converter_BertForSequenceClassification_HF_CS17,
-        Converter_BertForSequenceClassification_HF_CS18.formats(): Converter_BertForSequenceClassification_HF_CS18,
-    },
-    "bert-token-classifier": {
-        Converter_BertFinetuneModel_CS16_CS17.formats(): Converter_BertFinetuneModel_CS16_CS17,
-        Converter_BertFinetuneModel_CS16_CS18.formats(): Converter_BertFinetuneModel_CS16_CS18,
-        Converter_Bert_CS17_CS18.formats(): Converter_Bert_CS17_CS18,
-        Converter_BertForTokenClassification_HF_CS17.formats(): Converter_BertForTokenClassification_HF_CS17,
-        Converter_BertForTokenClassification_HF_CS18.formats(): Converter_BertForTokenClassification_HF_CS18,
-    },
-    "bert-summarization": {
-        Converter_BertFinetuneModel_CS16_CS17.formats(): Converter_BertFinetuneModel_CS16_CS17,
-        Converter_BertFinetuneModel_CS16_CS18.formats(): Converter_BertFinetuneModel_CS16_CS18,
-        Converter_Bert_CS17_CS18.formats(): Converter_Bert_CS17_CS18,
-    },
-    "bert-q&a": {
-        Converter_BertFinetuneModel_CS16_CS17.formats(): Converter_BertFinetuneModel_CS16_CS17,
-        Converter_BertFinetuneModel_CS16_CS18.formats(): Converter_BertFinetuneModel_CS16_CS18,
-        Converter_Bert_CS17_CS18.formats(): Converter_Bert_CS17_CS18,
-        Converter_BertForQuestionAnswering_HF_CS17.formats(): Converter_BertForQuestionAnswering_HF_CS17,
-        Converter_BertForQuestionAnswering_HF_CS18.formats(): Converter_BertForQuestionAnswering_HF_CS18,
-    },
-    "codegen": {
-        Converter_Codegen_LMHeadModel_HF_CS17.formats(): Converter_Codegen_LMHeadModel_HF_CS17,
-        Converter_Codegen_LMHeadModel_HF_CS18.formats(): Converter_Codegen_LMHeadModel_HF_CS18,
-    },
-    "codegen-headless": {
-        Converter_Codegen_Headless_HF_CS17.formats(): Converter_Codegen_Headless_HF_CS17,
-        Converter_Codegen_Headless_HF_CS18.formats(): Converter_Codegen_Headless_HF_CS18,
-    },
-    "gpt2": {
-        Converter_GPT2LMHeadModel_HF_CS17.formats(): Converter_GPT2LMHeadModel_HF_CS17,
-        Converter_GPT2LMHeadModel_HF_CS18.formats(): Converter_GPT2LMHeadModel_HF_CS18,
-    },
-    "gpt2-headless": {
-        Converter_GPT2Model_HF_CS17.formats(): Converter_GPT2Model_HF_CS17,
-        Converter_GPT2Model_HF_CS18.formats(): Converter_GPT2Model_HF_CS18,
-    },
-    "gptj": {
-        Converter_GPTJ_LMHeadModel_HF_CS17.formats(): Converter_GPTJ_LMHeadModel_HF_CS17,
-        Converter_GPTJ_LMHeadModel_HF_CS18.formats(): Converter_GPTJ_LMHeadModel_HF_CS18,
-    },
-    "gptj-headless": {
-        Converter_GPTJ_Headless_HF_CS17.formats(): Converter_GPTJ_Headless_HF_CS17,
-        Converter_GPTJ_Headless_HF_CS18.formats(): Converter_GPTJ_Headless_HF_CS18,
-    },
-    "gpt-neox": {
-        Converter_GPT_Neox_LMHeadModel_HF_CS17.formats(): Converter_GPT_Neox_LMHeadModel_HF_CS17,
-        Converter_GPT_Neox_LMHeadModel_HF_CS18.formats(): Converter_GPT_Neox_LMHeadModel_HF_CS18,
-    },
-    "gpt-neox-headless": {
-        Converter_GPT_Neox_Headless_HF_CS17.formats(): Converter_GPT_Neox_Headless_HF_CS17,
-        Converter_GPT_Neox_Headless_HF_CS18.formats(): Converter_GPT_Neox_Headless_HF_CS18,
-    },
-    "t5": {
-        Converter_T5_CS16_CS17.formats(): Converter_T5_CS16_CS17,
-        Converter_T5_CS16_CS18.formats(): Converter_T5_CS16_CS18,
-        Converter_T5_CS17_CS18.formats(): Converter_T5_CS17_CS18,
-        Converter_T5_HF_CS17.formats(): Converter_T5_HF_CS17,
-        Converter_T5_HF_CS18.formats(): Converter_T5_HF_CS18,
-    },
-    "transformer": {  # Transformer model shares same codebase as T5
-        Converter_T5_CS16_CS17.formats(): Converter_T5_CS16_CS17,
-        Converter_T5_CS16_CS18.formats(): Converter_T5_CS16_CS18,
-        Converter_T5_CS17_CS18.formats(): Converter_T5_CS17_CS18,
-    },
+    "bert": [
+        Converter_BertPretrainModel_HF_CS17,
+        Converter_BertPretrainModel_HF_CS18,
+        Converter_BertPretrainModel_CS16_CS17,
+        Converter_BertPretrainModel_CS16_CS18,
+        Converter_Bert_CS17_CS18,
+    ],
+    "bert-sequence-classifier": [
+        Converter_BertFinetuneModel_CS16_CS17,
+        Converter_BertFinetuneModel_CS16_CS18,
+        Converter_Bert_CS17_CS18,
+        Converter_BertForSequenceClassification_HF_CS17,
+        Converter_BertForSequenceClassification_HF_CS18,
+    ],
+    "bert-token-classifier": [
+        Converter_BertFinetuneModel_CS16_CS17,
+        Converter_BertFinetuneModel_CS16_CS18,
+        Converter_Bert_CS17_CS18,
+        Converter_BertForTokenClassification_HF_CS17,
+        Converter_BertForTokenClassification_HF_CS18,
+    ],
+    "bert-summarization": [
+        Converter_BertFinetuneModel_CS16_CS17,
+        Converter_BertFinetuneModel_CS16_CS18,
+        Converter_Bert_CS17_CS18,
+    ],
+    "bert-q&a": [
+        Converter_BertFinetuneModel_CS16_CS17,
+        Converter_BertFinetuneModel_CS16_CS18,
+        Converter_Bert_CS17_CS18,
+        Converter_BertForQuestionAnswering_HF_CS17,
+        Converter_BertForQuestionAnswering_HF_CS18,
+    ],
+    "codegen": [
+        Converter_Codegen_LMHeadModel_HF_CS17,
+        Converter_Codegen_LMHeadModel_HF_CS18,
+    ],
+    "codegen-headless": [
+        Converter_Codegen_Headless_HF_CS17,
+        Converter_Codegen_Headless_HF_CS18,
+    ],
+    "gpt2": [
+        Converter_GPT2LMHeadModel_HF_CS17,
+        Converter_GPT2LMHeadModel_HF_CS18,
+    ],
+    "gpt2-headless": [
+        Converter_GPT2Model_HF_CS17,
+        Converter_GPT2Model_HF_CS18,
+    ],
+    "gptj": [
+        Converter_GPTJ_LMHeadModel_HF_CS17,
+        Converter_GPTJ_LMHeadModel_HF_CS18,
+    ],
+    "gptj-headless": [
+        Converter_GPTJ_Headless_HF_CS17,
+        Converter_GPTJ_Headless_HF_CS18,
+    ],
+    "gpt-neox": [
+        Converter_GPT_Neox_LMHeadModel_HF_CS17,
+        Converter_GPT_Neox_LMHeadModel_HF_CS18,
+    ],
+    "gpt-neox-headless": [
+        Converter_GPT_Neox_Headless_HF_CS17,
+        Converter_GPT_Neox_Headless_HF_CS18,
+    ],
+    "llama": [Converter_LlamaForCausalLM_HF_CS19,],
+    "llama-headless": [Converter_LlamaModel_HF_CS19,],
+    "t5": [
+        Converter_T5_CS16_CS17,
+        Converter_T5_CS16_CS18,
+        Converter_T5_CS17_CS18,
+        Converter_T5_HF_CS17,
+        Converter_T5_HF_CS18,
+    ],
+    "transformer": [  # Transformer model shares same codebase as T5
+        Converter_T5_CS16_CS17,
+        Converter_T5_CS16_CS18,
+        Converter_T5_CS17_CS18,
+    ],
+    "falcon": [Converter_Falcon_HF_CS19],
+    "falcon-headless": [Converter_Falcon_Headless_HF_CS19],
 }
 
 
@@ -164,9 +179,12 @@ def _print_supported_models():
     )
 
 
-def _get_converter_notes(converter_class):
-    if hasattr(converter_class.formats, "notes"):
-        return converter_class.formats.notes
+def _get_converter_notes(converter_class, width=None):
+    if hasattr(converter_class, "converter_note"):
+        note = converter_class.converter_note()
+        if width is not None:
+            note = textwrap.fill(note, width=width)
+        return note
     else:
         return ""
 
@@ -176,14 +194,14 @@ def _print_supported_models_converters(model=None, hide_notes=False):
     table = []
 
     def _add_model_converters(table, model):
-        for key, converter in converters[model].items():
+        for converter in converters[model]:
             row = [
                 model,
-                "{}\n{}".format(key[0], key[1]),
-                "{}\n{}".format(key[1], key[0]),
+                "{}\n{}".format(converter.formats()[0], converter.formats()[1]),
+                "{}\n{}".format(converter.formats()[1], converter.formats()[0]),
             ]
             if not hide_notes:
-                row.append(_get_converter_notes(converter))
+                row.append(_get_converter_notes(converter, width=70))
             table += [row]
 
     if model is None:
@@ -199,10 +217,9 @@ def _print_supported_models_converters(model=None, hide_notes=False):
 
 
 def _get_model_converter(model, src_fmt, tgt_fmt):
-    if (src_fmt, tgt_fmt) in converters[model]:
-        return converters[model][(src_fmt, tgt_fmt)]
-    elif (tgt_fmt, src_fmt) in converters[model]:
-        return converters[model][(tgt_fmt, src_fmt)]
+    for converter in converters[model]:
+        if converter.supports_conversion(src_fmt, tgt_fmt):
+            return converter
     return None
 
 
@@ -212,6 +229,7 @@ def _select_model_and_config_converter(model, src_fmt, tgt_fmt):
         return None, None, None, None
     converter_class = _get_model_converter(model, src_fmt, tgt_fmt)
     if converter_class is None:
+        print("Cannot convert from ", src_fmt, "to", tgt_fmt)
         _print_supported_models_converters(model)
         return None, None, None, None
 
@@ -458,6 +476,152 @@ def convert_config(
     return new_config
 
 
+TENSOR_CMP_SUPPORTED_OPS = ["equal", "allclose"]
+
+
+def diff_checkpoints_from_file(
+    file_left, file_right, tensor_comparison_op="equal"
+):
+    """
+    Compare two checkpoints (left and right). Returns True if the dicts are the
+    same.
+    """
+    file_left_exists, file_right_exists = (
+        os.path.exists(file_left),
+        os.path.exists(file_right),
+    )
+    if not file_left_exists:
+        print("No such file: {}".format(file_left))
+        return False
+    if not file_right_exists:
+        print("No such file: {}".format(file_right))
+        return False
+    if file_left_exists and file_right_exists:
+        from modelzoo.common.pytorch import cbtorch
+
+        print("Loading checkpoints...")
+        checkpoint_left = cbtorch.load(file_left)
+        checkpoint_right = cbtorch.load(file_right)
+        print("Comparing checkpoints...")
+        return diff_checkpoints(
+            checkpoint_left,
+            checkpoint_right,
+            tensor_comparison_op=tensor_comparison_op,
+        )
+
+
+def diff_checkpoints(
+    checkpoint_left, checkpoint_right, tensor_comparison_op="equal"
+):
+    """
+    Compare state dictionaries of two checkpoints (left and right). Returns True
+    if the dicts are the same. Tensors can be compared via the "equal" or
+    "allclose" operators. All other types are compared for strict equality.
+    """
+    import torch
+
+    def format_keys(key_path):
+        return ".".join([str(e) for e in key_path])
+
+    def diff_dict(dict_left, dict_right, prefix=[]):
+        different = False
+        keys_in_left_not_right = set(dict_left.keys()) - set(dict_right.keys())
+        if len(keys_in_left_not_right) != 0:
+            print(
+                "The following keys are in the left checkpoint but not right:"
+            )
+            print(
+                [
+                    format_keys(prefix + [missing_key])
+                    for missing_key in keys_in_left_not_right
+                ]
+            )
+            different = True
+        keys_in_right_not_left = set(dict_right.keys()) - set(dict_left.keys())
+        if len(keys_in_right_not_left) != 0:
+            print(
+                "The following keys are in the right checkpoint but not left:"
+            )
+            print(
+                [
+                    format_keys(prefix + [missing_key])
+                    for missing_key in keys_in_right_not_left
+                ]
+            )
+            different = True
+        keys_in_left_and_right = set(dict_left.keys()) & set(dict_right.keys())
+
+        for key in keys_in_left_and_right:
+            full_key_formatted = format_keys(prefix + [key])
+            if isinstance(dict_left[key], dict) and isinstance(
+                dict_right[key], dict
+            ):
+                subdict_is_different = diff_dict(
+                    dict_left[key], dict_right[key], prefix=prefix + [key]
+                )
+                different = different or subdict_is_different
+            elif type(dict_left[key]) != type(dict_right[key]):
+                print(
+                    "{} has type {} in left and type {} in right".format(
+                        full_key_formatted,
+                        type(dict_left[key]),
+                        type(dict_right[key]),
+                    )
+                )
+                different = True
+            elif isinstance(dict_left[key], torch.Tensor):
+                if dict_left[key].shape != dict_right[key].shape:
+                    print(
+                        "{} left tensor has shape {} while right has shape {}".format(
+                            full_key_formatted,
+                            dict_left[key].shape,
+                            dict_right[key].shape,
+                        )
+                    )
+                    different = True
+                elif tensor_comparison_op == "equal":
+                    if not torch.equal(dict_left[key], dict_right[key]):
+                        print(
+                            "{} left tensor is not equal to right".format(
+                                full_key_formatted
+                            )
+                        )
+                        different = True
+                elif tensor_comparison_op == "close":
+                    if not torch.allclose(dict_left[key], dict_right[key]):
+                        print(
+                            "{} left tensor is not close to right".format(
+                                full_key_formatted
+                            )
+                        )
+                        different = True
+            else:
+                if dict_left[key] != dict_right[key]:
+                    print(
+                        "{} is {} in left and {} in right".format(
+                            full_key_formatted, dict_left[key], dict_right[key]
+                        )
+                    )
+                    different = True
+        return different
+
+    assert (
+        tensor_comparison_op in TENSOR_CMP_SUPPORTED_OPS
+    ), "{} is not a supported tensor comparison operation. Please select one of the following: {}".format(
+        tensor_comparison_op, TENSOR_CMP_SUPPORTED_OPS
+    )
+    assert isinstance(
+        checkpoint_left, dict
+    ), "Expecting left checkpoint to be a state dict"
+    assert isinstance(
+        checkpoint_right, dict
+    ), "Expecting right checkpoint to be a state dict"
+    different = diff_dict(checkpoint_left, checkpoint_right)
+    print()
+    print("Checkpoints {}".format("differ" if different else "are the same "))
+    return not different
+
+
 class CheckpointConverterCLI(object):
     def __init__(self):
         parser = argparse.ArgumentParser(
@@ -468,6 +632,7 @@ The following commands are supported:
    convert          Convert a checkpoint & config
    convert-config   Convert a model config file only
    list             List supported checkpoint conversion formats
+   diff             Compare two checkpoints
 ''',
         )
         parser.add_argument('command', help='Subcommand to run')
@@ -634,6 +799,27 @@ The following commands are supported:
             print("The model {} is not supported.".format(args.model))
             _print_supported_models()
             sys.exit(1)
+
+    def _diff(self):
+        parser = argparse.ArgumentParser(description='Compare two checkpoints')
+        parser.add_argument(
+            'left_checkpoint', type=str, help="Path to left checkpoint",
+        )
+        parser.add_argument(
+            'right_checkpoint', type=str, help="Path to right checkpoint",
+        )
+        parser.add_argument(
+            '--tensor_comparison_op',
+            choices=TENSOR_CMP_SUPPORTED_OPS,
+            default=TENSOR_CMP_SUPPORTED_OPS[0],
+        )
+
+        args = parser.parse_args(sys.argv[2:])
+        diff_checkpoints_from_file(
+            args.left_checkpoint,
+            args.right_checkpoint,
+            tensor_comparison_op=args.tensor_comparison_op,
+        )
 
 
 if __name__ == '__main__':

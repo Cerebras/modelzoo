@@ -17,6 +17,8 @@ import random
 import torch
 from torch.utils.data import DataLoader, Dataset
 
+from modelzoo.common.pytorch.input_utils import get_streaming_batch_size
+
 # vocabulary that represents the English alphabet a to z
 VOCABS = [i for i in range(26)]
 
@@ -50,7 +52,7 @@ def train_input_dataloader(params):
     input_params = params["train_input"]
     num_samples = input_params["num_samples"]
     seq_length = input_params["seq_length"]
-    batch_size = input_params["batch_size"]
+    batch_size = get_streaming_batch_size(input_params["batch_size"])
     train_data = []
     for _ in range(num_samples):
         start_index = random.randint(0, len(VOCABS) - seq_length - 1)

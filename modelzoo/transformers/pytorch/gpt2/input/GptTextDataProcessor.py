@@ -16,8 +16,9 @@ import random
 
 import torch
 
+from modelzoo.common.pytorch.input_utils import get_streaming_batch_size
 from modelzoo.common.pytorch.utils import BufferedShuffleDataset
-from modelzoo.transformers.pytorch.gpt2.input.data_processor_utils import (
+from modelzoo.transformers.pytorch.gpt2.input.scripts.data_processor_utils import (
     training_data_generator,
 )
 from modelzoo.transformers.pytorch.input_utils import (
@@ -74,7 +75,7 @@ class GptTextDataProcessor(torch.utils.data.IterableDataset):
         self.metadata_files = params["metadata_files"]
         self.vocab_file = params["vocab_file"]
         self.encoder_file = params["encoder_file"]
-        self.batch_size = params["batch_size"]
+        self.batch_size = get_streaming_batch_size(params["batch_size"])
         self.max_sequence_length = params["max_sequence_length"]
 
         self.short_sequence_prob = params.get("short_sequence_prob", 0)
@@ -157,7 +158,7 @@ class GptTextDataProcessor(torch.utils.data.IterableDataset):
             self.input_files_in_this_task, worker_id, num_workers
         )
 
-    def create_dataloader(self, is_training=True):
+    def create_dataloader(self):
         """
         Classmethod to create the dataloader object.
         """

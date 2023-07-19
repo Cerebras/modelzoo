@@ -17,7 +17,7 @@ Script to write HDF5 files for UNet datasets.
 
 Usage:
     # For help:
-    python-pt create_hdf5_files.py -h
+    python create_hdf5_files.py -h
 
     # Step-1:
     Set image shape to desired shape in 
@@ -26,7 +26,7 @@ Usage:
     /path_to_modelzoo/vision/pytorch/unet/configs/params_severstal_binary.yaml
 
     # Step-2: Run the script 
-    python-pt modelzoo/vision/pytorch/unet/input/scripts/create_hdf5_files.py --params=/path_to_modelzoo/vision/pytorch/unet/configs/params_severstal_binary.yaml --output_dir=/path_to_outdir/severstal_binary_classid_3_hdf --num_output_files=10 --num_processes=5
+    python modelzoo/vision/pytorch/unet/input/scripts/create_hdf5_files.py --params=/path_to_modelzoo/vision/pytorch/unet/configs/params_severstal_binary.yaml --output_dir=/path_to_outdir/severstal_binary_classid_3_hdf --num_output_files=10 --num_processes=5
 
 """
 import argparse
@@ -41,7 +41,9 @@ from multiprocessing import Pool, cpu_count
 import h5py
 from tqdm import tqdm
 
+# isort: off
 sys.path.append(os.path.join(os.path.dirname(__file__), "../../../../../.."))
+# isort: on
 from modelzoo.common.input.utils import check_and_create_output_dirs
 from modelzoo.common.run_utils.cli_parser import read_params_file
 from modelzoo.transformers.data_processing.utils import split_list

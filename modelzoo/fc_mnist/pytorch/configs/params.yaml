@@ -1,12 +1,15 @@
 train_input:
-    data_dir: "./data/mnist/train"
-    batch_size: 128
+    data_dir: "./mnist"
+    # The effective batch size, which is evenly divided across "num_csx" systems used for the run
+    batch_size: 4
     drop_last_batch: True
+    to_float16: True
     shuffle: True
 
 eval_input:
-    data_dir: "./data/mnist/val"
-    batch_size: 128
+    data_dir: "./mnist"
+    # The effective batch size, which is evenly divided across "num_csx" systems used for the run
+    batch_size: 4
     drop_last_batch: True
     shuffle: False
 
@@ -17,16 +20,25 @@ model:
     hidden_size: 50
     dropout: 0.0
     activation_fn: "relu"
+    to_float16: False
 
 optimizer:
     optimizer_type: "SGD"
     learning_rate: 0.001
-    momentum: 0.9
+    momentum: 0.0
     loss_scaling_factor: 1.0
 
 runconfig:
+    num_epochs: 1
+    steps_per_epoch: 1000
     max_steps: 10000
-    checkpoint_steps: 2000
     log_steps: 50
+    checkpoint_steps: 10000000
     seed: 1
+    model_dir: "./model_dir"
+    show_debug_metrics: False
     save_losses: True
+
+csconfig:
+    use_cbfloat16: False
+    

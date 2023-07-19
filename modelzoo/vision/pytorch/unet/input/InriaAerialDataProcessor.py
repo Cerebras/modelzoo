@@ -22,6 +22,7 @@ from torchvision import transforms
 from torchvision.datasets import VisionDataset
 
 from modelzoo.common.pytorch import cb_model as cm
+from modelzoo.common.pytorch.input_utils import get_streaming_batch_size
 from modelzoo.vision.pytorch.input.classification.dataset_factory import (
     VisionSubset,
 )
@@ -119,7 +120,7 @@ class InriaAerialDataProcessor:
             torch.manual_seed(self.shuffle_seed)
 
         self.augment_data = params.get("augment_data", True)
-        self.batch_size = params["batch_size"]
+        self.batch_size = get_streaming_batch_size(params["batch_size"])
         self.shuffle = params.get("shuffle", True)
 
         # Multi-processing params.

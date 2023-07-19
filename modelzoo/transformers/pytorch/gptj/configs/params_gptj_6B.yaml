@@ -14,8 +14,7 @@ train_input:
         - "./language/datasets/pile_original/hdf5_dataset/train_msl2048/7/"
         - "./language/datasets/pile_original/hdf5_dataset/train_msl2048/8/"
         - "./language/datasets/pile_original/hdf5_dataset/train_msl2048/9/"
-    vocab_size: 50257
-    max_sequence_length: 2048
+    # The effective batch size, which is evenly divided across "num_csx" systems used for the run
     batch_size: 65
     shuffle: True
     shuffle_seed: 1337
@@ -26,8 +25,7 @@ train_input:
 eval_input:
     data_processor: "GptHDF5DataProcessor"
     data_dir: "./language/datasets/pile_original/hdf5_dataset/val_msl2048/"
-    vocab_size: 50257
-    max_sequence_length: 2048
+    # The effective batch size, which is evenly divided across "num_csx" systems used for the run
     batch_size: 65
     shuffle: False
     num_workers: 8
@@ -117,4 +115,5 @@ runconfig:
     max_steps: 2756923 # 350000 * 512 / 65
     log_steps: 100
     checkpoint_steps: 10000
+    use_cs_grad_accum: True
     seed: 1

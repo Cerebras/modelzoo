@@ -42,12 +42,15 @@ class UNetModel(torch.nn.Module):
                 )
             if "mIOU" in self.eval_metrics:
                 self.eval_metrics_objs["mIOU"] = MeanIOUMetric(
-                    name="eval/mean_iou", num_classes=self.model.num_classes
+                    name="eval/mean_iou",
+                    num_classes=self.model.num_classes,
+                    ignore_classes=self.eval_ignore_classes,
                 )
             if "DSC" in self.eval_metrics:
                 self.eval_metrics_objs["DSC"] = DiceCoefficientMetric(
                     name="eval/dice_coefficient",
                     num_classes=self.model.num_classes,
+                    ignore_classes=self.eval_ignore_classes,
                 )
 
     def build_model(self, model_params):
@@ -55,7 +58,7 @@ class UNetModel(torch.nn.Module):
         self.loss_fn = model.loss_fn
         return model
 
-    def __call__(self, data):
+    def forward(self, data):
         inputs, labels = data
         outputs = self.model(inputs)
 
@@ -67,10 +70,8 @@ class UNetModel(torch.nn.Module):
         if not self.model.training and self.compute_eval_metrics:
             eval_labels = labels.clone()
             if self.model.num_output_channels > 1:
-                predictions = (
-                    outputs.to(half_dtype_instance.half_dtype)
-                    .argmax(dim=1)
-                    .to(torch.int16)
+                predictions = outputs.argmax(dim=1).to(
+                    half_dtype_instance.half_dtype
                 )
             else:
                 predictions = torch.where(
@@ -97,25 +98,7 @@ class UNetModel(torch.nn.Module):
                     eval_labels.to(half_dtype_instance.half_dtype), dim=1
                 ).to(torch.int16)
 
-            # Build weights
-            weights = None
-            if self.eval_ignore_classes is not None:
-                weights = torch.zeros(
-                    eval_labels.shape,
-                    dtype=torch.bool,
-                    device=eval_labels.device,
-                )
-
-                for eval_cls in self.eval_ignore_classes:
-                    weights = torch.logical_or(
-                        weights, (eval_labels == eval_cls)
-                    )
-
-                weights = torch.logical_not(weights).to(dtype=torch.int32)
-
             for _metric_name, metric_obj in self.eval_metrics_objs.items():
-                metric_obj(
-                    labels=eval_labels, predictions=predictions, weights=weights
-                )
+                metric_obj(labels=eval_labels, predictions=predictions)
 
         return loss

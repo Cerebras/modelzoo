@@ -25,7 +25,9 @@ import torch
 from nltk import ngrams
 
 from modelzoo.common.pytorch.metrics.cb_metric import CBMetric
-from modelzoo.transformers.data_processing.Tokenization import FullTokenizer
+from modelzoo.transformers.data_processing.tokenizers.Tokenization import (
+    FullTokenizer,
+)
 
 
 class _PipelineRougeScoreMetric(CBMetric):

@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """Determine where Cerebras Software package resides and set CSOFT_PACKAGE"""
-import importlib
+import importlib.util
 from enum import Enum
 
 

@@ -84,8 +84,7 @@ class BertForPreTrainingModel(torch.nn.Module):
 
         model = BertPretrainModel(
             disable_nsp=self.disable_nsp,
-            mlm_loss_weight=self.mlm_loss_weight,
-            label_smoothing=self.label_smoothing,
+            num_classes=model_params.pop("num_classes", 2),
             vocab_size=self.vocab_size,
             max_position_embeddings=model_params.pop("max_position_embeddings"),
             position_embedding_type=position_embedding_type,
@@ -162,7 +161,7 @@ class BertForPreTrainingModel(torch.nn.Module):
             loss = loss * weights.view(-1)
         return loss.sum()
 
-    def __call__(self, data):
+    def forward(self, data):
 
         if self.vts and not self.model.training:
             self.vts = None
@@ -193,30 +192,40 @@ class BertForPreTrainingModel(torch.nn.Module):
                 for name in inputs:
                     data[name] = self.vts(data[name], mask_tensor)
 
+        next_sentence_label = data.pop("next_sentence_label", None)
         # MLM Needs a half precision "weights" tensor; use binary mask for now.
-        data["masked_lm_weights"] = data.pop("masked_lm_mask")
+        masked_lm_weights = data.pop("masked_lm_mask")
+        should_calc_loss = data.pop("should_calc_loss", True)
+        mlm_loss_scale = data.pop("mlm_loss_scale", None)
+        labels = data.pop("labels")
+
+        _, len_labels = list(labels.size())
+        seq_len = data["input_ids"].shape[1]
+        should_gather_mlm_labels = len_labels != seq_len
+        data["should_gather_mlm_labels"] = should_gather_mlm_labels
+
         mlm_logits, nsp_logits, _, _ = self.model(**data)
-        data["masked_lm_weights"] = data["masked_lm_weights"].to(
-            mlm_logits.dtype
-        )
-        total_loss = None
-        mlm_loss_scale = data.get("mlm_loss_scale", None)
+
         if mlm_loss_scale is not None:
             mlm_loss_scale = mlm_loss_scale.to(mlm_logits.dtype)
-        if data.get("should_calc_loss", True):
+
+        masked_lm_weights = masked_lm_weights.to(mlm_logits.dtype)
+
+        total_loss = None
+        if should_calc_loss:
             total_loss = self.loss_fn(
                 mlm_logits,
                 self.vocab_size,
-                data["labels"],
+                labels,
                 nsp_logits,
-                data.get("next_sentence_label", None),
-                data["masked_lm_weights"],
+                next_sentence_label,
+                masked_lm_weights,
                 mlm_loss_scale,
             )
         if not self.model.training and self.compute_eval_metrics:
             if not self.disable_nsp:
 
-                nsp_label = data["next_sentence_label"].clone()
+                nsp_label = next_sentence_label.clone()
                 nsp_pred = nsp_logits.argmax(-1).int()
                 # eval/accuracy_cls
                 self.accuracy_metric_cls(
@@ -227,8 +236,8 @@ class BertForPreTrainingModel(torch.nn.Module):
 
             mlm_preds = mlm_logits.argmax(-1).int()
 
-            mlm_labels = data["labels"].clone()
-            mlm_weights = data["masked_lm_weights"].clone()
+            mlm_labels = labels.clone()
+            mlm_weights = masked_lm_weights.clone()
             mlm_xentr = self.mlm_xentropy_loss(
                 mlm_labels, mlm_logits, mlm_weights
             )

@@ -17,7 +17,7 @@
 train_input:
     data_processor: "GptHDF5DataProcessor"
     data_dir: "./language/datasets/owt_pretraining_gpt_hdf5/train_8M_msl1024/"
-    max_sequence_length: 1024
+    # The effective batch size, which is evenly divided across "num_csx" systems used for the run
     batch_size: 32
     shuffle: True
     shuffle_seed: 1337
@@ -28,7 +28,7 @@ train_input:
 eval_input:
     data_processor: "GptHDF5DataProcessor"
     data_dir: "./language/datasets/owt_pretraining_gpt_hdf5/val_msl1024/"
-    max_sequence_length: 1024
+    # The effective batch size, which is evenly divided across "num_csx" systems used for the run
     batch_size: 32
     shuffle: False
     num_workers: 8
@@ -66,8 +66,6 @@ model:
 
     # Cerebras parameters
     mixed_precision: True
-    allow_multireplica: False
-
 
 optimizer:
     optimizer_type: "AdamW"

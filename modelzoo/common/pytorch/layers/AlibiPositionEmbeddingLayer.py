@@ -17,22 +17,26 @@ import math
 import torch
 import torch.nn as nn
 
+from modelzoo.common.pytorch.layers.RelativePositionEmbeddingLayer import (
+    RelativePositionEmbeddingLayer,
+)
 from modelzoo.common.pytorch.model_utils.create_initializer import (
     create_initializer,
 )
 
 
 class AlibiPositionEmbeddingLayer(nn.Module):
-    """Alibi Position Embedding Layer
+    """Alibi Position Embedding Layer, Symmetric case with bidirectional supported
+
     alibi bias as in paper: https://arxiv.org/abs/2108.12409
+
     Args:
         num_heads (int): number of attention heads.
         slopes (Tensor): slope values to use for alibi heads. Shape: [num_heads, 1]. Default to `None`.
         alibi_trainable_slopes (bool): whether the alibi slopes are trainable parameters.
-        bidirectional_relative_attention (bool): whether alibi attention is bidirectional.
         slopes_initializer (str): initializer for alibi slopes if it's trainable. Defaults to ``xavier_uniform``.
         alibi_implementation (str): variant name for alibi implementation. Currently
-            accepts ``embedding`` and ``expand``. Defaults to ``embedding``.
+            accepts ``embedding`` and ``expand``. Defaults to ``expand``.
     Returns:
         position_bias (Tensor): Relative position bias, to be used in attention masking
     """
@@ -42,20 +46,16 @@ class AlibiPositionEmbeddingLayer(nn.Module):
         num_heads,
         slopes=None,
         alibi_trainable_slopes=False,
-        bidirectional_relative_attention=False,
         slopes_initializer="xavier_uniform",
-        alibi_implementation="embedding",
+        alibi_implementation="expand",
     ):
         super(AlibiPositionEmbeddingLayer, self).__init__()
-
-        assert (
-            not bidirectional_relative_attention
-        ), "We only support unidirectional alibi attention for now."
 
         _SUPPORTED_ALIBI_IMPLEMENTATIONS = ["embedding", "expand"]
         assert (
             alibi_implementation in _SUPPORTED_ALIBI_IMPLEMENTATIONS
         ), f"Alibi implementation {alibi_implementation} is not supported."
+        assert slopes is None, "Customized slope is not supported yet."
 
         self.num_heads = num_heads
         self.alibi_trainable_slopes = alibi_trainable_slopes
@@ -88,6 +88,15 @@ class AlibiPositionEmbeddingLayer(nn.Module):
     def forward(
         self, seq_length, key_length, past_kv=None,
     ):
+        """Return the position bias based on the alibi slopes.
+
+        Args:
+            seq_length (int): the length of query tokens.
+            key_length (int): the length of key tokens.
+
+        Returns:
+            Position bias tensor with shape [num_heads, query_length, key_length]
+        """
         position_bias = self._compute_alibi_bias(seq_length, key_length)
         # if key and values are already calculated we want only
         # the last query position bias
@@ -126,21 +135,19 @@ class AlibiPositionEmbeddingLayer(nn.Module):
 
         # Compute bias for each head: slopes[head_index] * [0, 1, ... key_length - 1]
         # Shape: (key_length, num_heads)
-        bias = slopes.permute([1, 0]) * range_k.unsqueeze(-1)
+        bias = slopes.permute([1, 0]) * range_k.unsqueeze(-1) * -1.0
 
-        # Because the softmax operation in AttentionLayer is shift-invariant, here we only need to
-        # broadcast to the sequence dimension, instead of shifting the bias value for each sequence.
-        # Note: Due to limited broadcasting support, here we broadcast bias to 3D in the same way as
-        # RelativePositionEmbeddingLayer.
-
-        # Construct the broadcasting indices by broadcasting [0, 1, ... key_length - 1]
-        # to a new dimension of size seq_length.
+        # Construct the broadcasting with compute_raw_relative_positions from RelativePositionEmbedding
         # Shape: (seq_length, key_length)
-        indices = range_k.unsqueeze(0).expand(seq_length, -1)
+        relative_position = RelativePositionEmbeddingLayer.compute_raw_relative_positions(
+            seq_length, key_length, device=slopes.device
+        )
+        # casting to int32 to bypass the wgt kernel gather limitation
+        relative_position = torch.abs(relative_position).to(torch.int32)
 
         # Use embedding as a 2D to 3D broadcast.
         # Shape: (seq_length, key_length, num_heads)
-        bias = nn.functional.embedding(indices, bias)
+        bias = nn.functional.embedding(relative_position, bias)
 
         # Transpose to the expected output order.
         # Shape: (num_heads, seq_length, key_length)
@@ -148,15 +155,21 @@ class AlibiPositionEmbeddingLayer(nn.Module):
         return bias
 
     def _alibi_implementation_expand(self, seq_length, key_length, slopes):
-        alibi = slopes.expand(-1, seq_length).view(-1, 1) * torch.arange(
-            key_length, device=slopes.device
-        ).unsqueeze(0)
-        alibi = alibi.view(self.num_heads, seq_length, key_length)
+        relative_position = RelativePositionEmbeddingLayer.compute_raw_relative_positions(
+            seq_length, key_length, device=slopes.device
+        )
+        relative_position = (
+            torch.abs(relative_position)
+            .unsqueeze(0)
+            .expand(self.num_heads, -1, -1)
+        )
+        alibi = (slopes * -1.0).unsqueeze(1) * relative_position
         return alibi
 
     def _compute_alibi_bias(self, seq_length, key_length, slopes=None):
         if slopes is None:
             slopes = self.slopes
+
         if self.use_embedding_implementation:
             return self._alibi_implementation_embedding(
                 seq_length, key_length, slopes

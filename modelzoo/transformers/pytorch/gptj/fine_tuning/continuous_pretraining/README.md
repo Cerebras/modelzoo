@@ -8,7 +8,7 @@
     - [Data preparation](#data-preparation)
   - [Input function](#input-function)
     - [Features Dictionary](#features-dictionary)
-  - [Using pretrained checkpoints from HuggingFace](#using-pretrained-checkpoints-from-huggingface)
+  - [Using pretrained checkpoints and configs from HuggingFace](#using-pretrained-checkpoints-and-configs-from-huggingface)
   - [To compile/validate, run train and eval on Cerebras System](#to-compilevalidate-run-train-and-eval-on-cerebras-system)
     - [Passing the pretrained checkpoint](#passing-the-pretrained-checkpoint)
     - [Run continuous-pretraining on GPU and CPU](#run-continuous-pretraining-on-gpu-and-cpu)

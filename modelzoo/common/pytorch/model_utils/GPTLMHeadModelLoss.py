@@ -26,6 +26,7 @@ class GPTLMHeadModelLoss(nn.Module):
         self.vocab_size = vocab_size
         self.loss_weight = loss_weight
         self.loss_scaling = loss_scaling
+
         assert (
             self.loss_scaling == "num_tokens"
             or self.loss_scaling == "batch_size"

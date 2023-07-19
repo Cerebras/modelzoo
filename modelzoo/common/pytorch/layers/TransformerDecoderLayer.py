@@ -61,6 +61,7 @@ class TransformerDecoderLayer(nn.Module):
         use_projection_bias_in_attention: Add bias to Q,K,V projections
             in the Attention layer. Defaults to False.
         attention_type: Should be in ["scaled_dot_product", "dot_product"]
+        scale_qk_dot_by_d (bool): If ``True`` scales QK^T dot product by d(=hidden/d_head) instead of sqrt(d).
         attention_inner_dim (int):  Number of output units in attention query/key/value projection. Defaults to d_model
         add_cross_attention: If ``True``, adds cross-attention layer between encoder/decoder,
             otherwise, only self-attention is used in the decoder (GPT-style models should set to ``False``)
@@ -97,13 +98,15 @@ class TransformerDecoderLayer(nn.Module):
         batch_first: bool = True,
         norm_layer: Type[nn.Module] = LayerNorm,
         norm_first: bool = False,
-        attention_module_str="aiayn_attention",
+        attention_module: Union[str, nn.Module] = "aiayn_attention",
         extra_attention_params={},
         device=None,
         add_cross_attention: bool = True,
         attention_dropout_rate: Optional[float] = None,
         attention_softmax_fp32: Optional[bool] = True,
         attention_type="scaled_dot_product",
+        scale_qk_dot_by_d=False,
+        ffn_scale_glu_initialization=False,
         attention_inner_dim=None,
         use_projection_bias_in_attention=False,
         use_ffn_bias_in_attention=False,
@@ -124,7 +127,7 @@ class TransformerDecoderLayer(nn.Module):
         if attention_dropout_rate is None:
             attention_dropout_rate = dropout
         AttentionModule = get_attention_module(
-            attention_module_str, extra_attention_params
+            attention_module, extra_attention_params
         )
         self.self_attn = AttentionModule(
             d_model,
@@ -133,6 +136,7 @@ class TransformerDecoderLayer(nn.Module):
             dropout=attention_dropout_rate,
             batch_first=batch_first,
             attention_type=attention_type,
+            scale_qk_dot_by_d=scale_qk_dot_by_d,
             softmax_dtype_fp32=attention_softmax_fp32,
             use_projection_bias=use_projection_bias_in_attention,
             use_ffn_bias=use_ffn_bias_in_attention,
@@ -182,6 +186,7 @@ class TransformerDecoderLayer(nn.Module):
             use_bias=use_ffn_bias,
             kernel_initializer=ffn_initializer,
             output_layer_initializer=ffn_output_layer_initializer,
+            scale_glu_initialization=ffn_scale_glu_initialization,
             bias_initializer="zeros",
             device=device,
         )
@@ -232,6 +237,8 @@ class TransformerDecoderLayer(nn.Module):
             memory_mask: the mask for the memory sequence (optional).
             tgt_key_padding_mask: the mask for the tgt keys per batch (optional).
             memory_key_padding_mask: the mask for the memory keys per batch (optional).
+            rotary_position_embedding_helper (Optional[RotaryPositionEmbeddingHelper]): 
+                A helper class to apply rotary embedding on the input tensor.
             past_kv: Past keys and values for self attention and (if applicable) cross
                 attention modules. Key/value tensors have shape
                 ``[batch_size, num_heads, seq_length, embed_dim / num_heads]``. (optional).
@@ -239,6 +246,8 @@ class TransformerDecoderLayer(nn.Module):
                 must be cached and returned. Needed to speed up the
                 computations when the decoder is called within an
                 autoregressive loop. (optional).
+            self_attn_position_bias: the tensor containing position bias to apply in self-attention, 
+                can be obtained from relative or alibi position embeddings.
 
         Shape:
             see the docs in Transformer class.

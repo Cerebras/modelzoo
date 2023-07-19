@@ -11,11 +11,9 @@ train_input:
        - ./language/datasets/pile_original/hdf5_dataset/train_shuffled_msl2048/7/
        - ./language/datasets/pile_original/hdf5_dataset/train_shuffled_msl2048/8/
        - ./language/datasets/pile_original/hdf5_dataset/train_shuffled_msl2048/9/
-    vocab_size: 50257
-    max_sequence_length: 2048
     shuffle: True
     shuffle_seed: 256
-    repeat: True
+    # The effective batch size, which is evenly divided across "num_csx" systems used for the run
     batch_size: 45
     use_multiple_workers: False  # Set to True when using multiple workers on CS-1.
     mixed_precision: True
@@ -24,8 +22,7 @@ eval_input:
     data_processor: "GptHDF5DataProcessor"
     data_dir: "./language/datasets/pile_original/hdf5_dataset/val_msl2048/"
     shuffle: False
-    vocab_size: 50257
-    max_sequence_length: 2048
+    # The effective batch size, which is evenly divided across "num_csx" systems used for the run
     batch_size: 45
     mixed_precision: True
 
@@ -102,7 +99,6 @@ optimizer:
        initial_learning_rate: 4.5e-5
        end_learning_rate: 4.5e-6
        steps: 262000
-       steps: 34000
     loss_scaling_factor: "dynamic"
     initial_loss_scale: 2147483648.0
     max_loss_scale: 2147483648.0
@@ -120,5 +116,6 @@ runconfig:
   save_initial_checkpoint: True
   seed: 0
   enable_distributed: False # Change to True on GPU
+  use_cs_grad_accum: True
   num_workers_per_csx: 1
   num_wgt_servers: 24

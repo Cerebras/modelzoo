@@ -14,12 +14,13 @@
 
 import logging
 import os
-import warnings
+from collections import UserDict
+from contextlib import nullcontext
 from datetime import datetime
 from typing import Optional, Union
 
 import torch
-from torch.cuda.amp import GradScaler, autocast
+from torch.cuda.amp import GradScaler
 
 from modelzoo.common.pytorch.pytorch_base_runner import PyTorchBaseRunner
 from modelzoo.common.pytorch.sparsity.finalizer import finalize_cs2_sparsity
@@ -41,18 +42,23 @@ class PyTorchRunner(PyTorchBaseRunner):
             "steps_per_increase", 2000
         )
 
-        if (
-            params["model"]["mixed_precision"]
-            and device is not None
-            and device.type != "cuda"
-        ):
-            warnings.warn(
-                "Mixed-Precision training is only supported on GPU... "
-                "Autocast has no effect!"
-            )
-        self.use_bfloat16 = params["model"].get("use_bfloat16", False)
-
         super().__init__(model=model, params=params)
+
+        if self._mixed_precision:
+            use_bfloat16 = params["model"].get("use_bfloat16", False)
+            dev_type = self._device.type if self._device is not None else "cuda"
+
+            if dev_type == "cpu" and not use_bfloat16:
+                raise ValueError(
+                    "Mixed precision on CPU is only supported with bfloat16. "
+                    "Please set use_bfloat16 to True in the model config."
+                )
+
+            dtype = torch.bfloat16 if use_bfloat16 else torch.float16
+
+            self._autocast_ctx = torch.autocast(dev_type, dtype=dtype)
+        else:
+            self._autocast_ctx = nullcontext()
 
     ##################################################################
     #                         Training Hooks                         #
@@ -83,20 +89,12 @@ class PyTorchRunner(PyTorchBaseRunner):
         return self._to_device(data)
 
     def train_forward(self, data):
-
-        with autocast(
-            dtype=torch.bfloat16 if self.use_bfloat16 else torch.float16,
-            enabled=self._mixed_precision,
-        ):
+        with self._autocast_ctx:
             # Normalize loss to account for gradient accumulation
             return super().train_forward(data) / self._grad_accum_steps
 
     def eval_forward(self, data):
-
-        with autocast(
-            dtype=torch.bfloat16 if self.use_bfloat16 else torch.float16,
-            enabled=self._mixed_precision,
-        ):
+        with self._autocast_ctx:
             return super().eval_forward(data)
 
     ##################################################################
@@ -131,7 +129,7 @@ class PyTorchRunner(PyTorchBaseRunner):
     def _maybe_load_checkpoint(self, checkpoint_path: Optional[str], mode: str):
         state_dict = super()._maybe_load_checkpoint(checkpoint_path, mode)
         if state_dict:
-            if self._params.get("sparsity", {}):
+            if self._params.get("sparsity", {}).get("type") == "sideband":
                 # CS2 training sideband sparsity represents pruned weights with
                 # NaN. Set those all to zero after loading a checkpoint.
                 logging.warning(
@@ -155,9 +153,11 @@ class PyTorchRunner(PyTorchBaseRunner):
 
         self.on_checkpoint_saved(file_name, step)
 
-    def _to_device(self, data: Union[dict, list, tuple], non_blocking=False):
+    def _to_device(
+        self, data: Union[dict, UserDict, list, tuple], non_blocking=False
+    ):
         device_data = None
-        if isinstance(data, dict):
+        if isinstance(data, (dict, UserDict)):
             device_data = {
                 name: tensor.to(device=self._device, non_blocking=non_blocking)
                 for name, tensor in data.items()

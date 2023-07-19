@@ -1,0 +1,9 @@
+lm-dataformat
+ftfy
+tokenizers
+h5py
+six
+keras_preprocessing
+pyyaml
+regex
+tqdm

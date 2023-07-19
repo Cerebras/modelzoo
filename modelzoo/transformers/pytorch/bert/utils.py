@@ -15,9 +15,6 @@
 import logging
 import os
 
-from modelzoo.common.pytorch import cb_model as cm
-from modelzoo.common.pytorch import modes
-
 
 def set_defaults(params):
     """
@@ -59,13 +56,14 @@ def set_defaults(params):
     # Attention softmax is fp32 by default.
     params["model"]["attention_softmax_fp32"] = True
 
-    # Only WS configs have precision_opt_level setting.
     # Attention softmax is bf16 for precision_opt_level: 2
-    if params["model"].get("precision_opt_level", 1) == 2:
+    if params["runconfig"].get("precision_opt_level", 1) == 2:
         params["model"]["attention_softmax_fp32"] = False
 
 
 def set_custom_stack_params(params):
+    from modelzoo.common.pytorch import cb_model as cm
+
     if cm.use_cs():
         from modelzoo.common.pytorch import cbtorch
 
@@ -75,20 +73,14 @@ def set_custom_stack_params(params):
             state.full_config.matching.kernel.no_dcache_spill_splits = True
 
         runconfig_params = params["runconfig"]
+        from modelzoo.common.pytorch import modes
+
         if runconfig_params["mode"] == modes.EVAL:
             state.full_config.matching.add_pack_and_unpack.max_egress_per_pack = (
                 1
             )
             state.full_config.placement.prep_recolor_kernels.wrap_pack_kernel = (
                 True
-            )
-
-        if runconfig_params.get("multireplica", False):
-            reshape_filter = (
-                "reshape*,core/in_splits[-1]:!1,core/out_splits[-1]:!1;"
-            )
-            state.full_config.placement.place.custom_split_filter = (
-                reshape_filter
             )
 
 

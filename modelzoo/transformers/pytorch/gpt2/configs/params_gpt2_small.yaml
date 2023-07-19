@@ -14,38 +14,43 @@
 
 # GPT-2 small model (117M parameters)
 # Based on: https://huggingface.co/gpt2/resolve/main/config.json
+
 train_input:
     data_processor: "GptHDF5DataProcessor"
-    data_dir: "./language/datasets/owt_pretraining_gpt_hdf5/train_8M_msl1024/"
-    max_sequence_length: 1024
-    batch_size: 32  # 4 for GPU
-    shuffle: True
-    shuffle_seed: 1337
+    data_dir: "./language/datasets/owt_pretraining_gpt_hdf5/train_8M_msl2048"
+    # The effective batch size, which is evenly divided across "num_csx" systems used for the run
+    batch_size: 112
+    shuffle: True  # Set this to False to make run deterministic
+    shuffle_seed: 256
     num_workers: 8
     prefetch_factor: 10
     persistent_workers: True # Important to avoid seeding at each epoch
 
 eval_input:
     data_processor: "GptHDF5DataProcessor"
-    data_dir: "./language/datasets/owt_pretraining_gpt_hdf5/val_msl1024/"
-    max_sequence_length: 1024
-    batch_size: 32 # 4 for GPU
+    data_dir: "./language/datasets/owt_pretraining_gpt_hdf5/val_msl2048"
+    # The effective batch size, which is evenly divided across "num_csx" systems used for the run
+    batch_size: 112 # 8, if run on 4 GPUs
     shuffle: False
     num_workers: 8
 
+
+### Model
 model:
     # Embedding
-    vocab_size: 50257
     hidden_size: 768
+    vocab_size: 50257
     use_position_embedding: True
     position_embedding_type: "learned"
     share_embedding_weights: True
-    max_position_embeddings: 1024
+    max_position_embeddings: 2048
 
     # Encoder
     num_hidden_layers: 12
     dropout_rate: 0.1
     layer_norm_epsilon: 1.0e-5
+    loss_scaling: "batch_size"
+    loss_weight: 0.00048828125
 
     # Encoder - Attention
     num_heads: 12
@@ -61,31 +66,39 @@ model:
 
     # Task-specific
     use_bias_in_output: False
-    loss_scaling: "batch_size"
-    loss_weight: 0.0009765625
 
     # Cerebras parameters
     mixed_precision: True
-    allow_multireplica: False
 
+
+### Optimization
 optimizer:
-    optimizer_type: "AdamW"
-    correct_bias: True
-    disable_lr_steps_reset: False
-    weight_decay_rate: 0.01
+    optimizer_type: "adamw"
+    beta1: 0.9
+    beta2: 0.95
+    epsilon: 1.0e-8
+    max_gradient_norm: 1.0
     learning_rate:
-        - scheduler: "Linear"
-          initial_learning_rate: 0.0
-          end_learning_rate: 1.0e-4
-          steps: 2000
-        - scheduler: "Linear"
-          initial_learning_rate: 1.0e-4
-          end_learning_rate: 0.0
-          steps: 998000
-    # grad_accum_steps: 8 # Should be set for GPU
+      ## GPT-3 schedule warms up over 375M tokens
+      - scheduler: "Linear"
+        initial_learning_rate: 0.0
+        end_learning_rate: 0.0006
+        steps: 1600
+      ## GPT-3 schedule decays over 300B tokens, but we shorten
+      ## to 34B (150k steps at BS=112)
+      - scheduler: "Linear" # Cosine not supported
+        initial_learning_rate: 0.0006
+        end_learning_rate: 0.0
+        alpha: 0.1 # Decay by 10x
+        steps: 150000
+    weight_decay_rate: 0.01
+    use_bias_correction: True
+    initial_loss_scale: 2147483648.0
+    max_loss_scale: 2147483648.0
 
+### Cerebras parameters
 runconfig:
-    max_steps: 1000000
+    max_steps: 151600
     log_steps: 100
     checkpoint_steps: 10000
     save_initial_checkpoint: True
@@ -93,4 +106,5 @@ runconfig:
     model_dir: "./model_dir"
     show_debug_metrics: False
     save_losses: True
-    eval_steps: 233
+    eval_steps: 32
+

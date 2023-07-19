@@ -8,6 +8,7 @@ train_input: &train_input
     augment_data: True
     shuffle: True
     train_test_split: 0.85
+    # The effective batch size, which is evenly divided across "num_csx" systems used for the run
     batch_size: 1
     num_classes: 2
     num_workers: 4
@@ -20,6 +21,7 @@ eval_input:
     <<: *train_input
     augment_data: False
     shuffle: False
+    # The effective batch size, which is evenly divided across "num_csx" systems used for the run
     batch_size: 1
     num_workers: 2
 
@@ -64,3 +66,4 @@ runconfig:
     num_act_servers: 4
     num_wgt_servers: 1
     num_workers_per_csx: 16
+    compile_crd_memory_gi: 90

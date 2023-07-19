@@ -15,11 +15,14 @@
 import argparse
 import os
 import random
-import sys
 
 from PIL import Image
 
+# isort: off
+import sys
+
 sys.path.append(os.path.join(os.path.dirname(__file__), "../../../../../.."))
+# isort: on
 
 
 def _resize_and_save(

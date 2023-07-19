@@ -1,1 +1,4 @@
 -r requirements_cb.txt
+transformers==4.28.1
+tokenizers==0.13.2
+datasets==2.11.0

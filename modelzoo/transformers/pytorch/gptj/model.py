@@ -93,10 +93,11 @@ class GptjModel(torch.nn.Module):
             "loss_scaling", "num_tokens"
         ).lower()
         if self.loss_weight != 1.0 and self.loss_scaling == "num_tokens":
-            self.loss_scaling = "batch_size"
             logging.warning(
-                "loss_weight and loss_scaling don't match, fall back to using 'batch_size' for loss_scaling"
+                f"loss_weight cannot be {self.loss_weight} for num_tokens "
+                f"loss_scaling. Setting loss_weight to 1.0."
             )
+            self.loss_weight = 1.0
 
         model = GPTJModel(
             hidden_size=model_params.pop("hidden_size"),
@@ -117,6 +118,7 @@ class GptjModel(torch.nn.Module):
             filter_size=model_params.pop("filter_size"),
             dropout_rate=model_params.pop("residual_dropout_rate", 0.1),
             nonlinearity=model_params.pop("nonlinearity", "gelu"),
+            use_biasless_norm=model_params.pop("use_biasless_norm", False),
             layer_norm_epsilon=float(
                 model_params.pop("layer_norm_epsilon", 1.0e-5)
             ),
@@ -126,6 +128,12 @@ class GptjModel(torch.nn.Module):
             ),
             # Attention params
             num_heads=model_params.pop("num_heads"),
+            attention_module=model_params.pop(
+                "attention_module", "aiayn_attention"
+            ),
+            extra_attention_params=model_params.pop(
+                "extra_attention_params", {}
+            ),
             attention_type=attention_type,
             attention_dropout_rate=model_params.pop(
                 "attention_dropout_rate", 0.1
@@ -166,11 +174,23 @@ class GptjModel(torch.nn.Module):
                 "The following model params are unused: "
                 + ", ".join(unused_params)
             )
-        logging.root.setLevel(logging.INFO)
         return model
 
-    def __call__(self, data):
-        lm_logits = self.model(**data)
+    def forward(self, data):
+        assert (
+            "input_ids" in data
+            and "attention_mask" in data
+            and "labels" in data
+        ), "GPT-J model expects these data fields: input_ids, attention_mask, labels"
+        assert (
+            data["input_ids"].dtype == torch.int32
+            and data["attention_mask"].dtype == torch.int32
+            and data["labels"].dtype == torch.int32
+        ), "The dtype for all inputs should be torch.int32"
+
+        lm_logits = self.model(
+            input_ids=data["input_ids"], attention_mask=data["attention_mask"],
+        )
         loss = self.loss_fn(lm_logits, data["labels"], data["attention_mask"],)
 
         # Calculate eval metrics if not training

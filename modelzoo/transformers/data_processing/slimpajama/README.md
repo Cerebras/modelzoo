@@ -16,7 +16,7 @@ This directory contains scripts to pre-process SlimPajama end-to-end. Our datase
 
 
 # Environment Setup
-The file [requirements.txt](./requirements.txt) contains the pre-requisites that needed to enable a clean run of the scripts. Below is how to setup the environment:
+The file [requirements.txt](./requirements.txt) contains the pre-requisites that are needed to enable a clean run of the scripts. Below is how to setup the environment:
 ```bash
 virtualenv <env_name>
 source <env_name>/bin/activate
@@ -153,11 +153,21 @@ done
 Steps [5](#step-5-split-dataset-into-train-and-holdout) & [6](#step-6-deduplicate-train-against-holdout) can be further applied to split holdout set into test and eval. 
 For SlimPajama, decontaminated train, validation, and test sets are already available in our HuggingFace repo: [SlimPajama-627B](https://huggingface.co/datasets/cerebras/SlimPajama-627B). 
 
+# Splitting SlimPajama dataset based on its sources
+SlimPajama consists of documents that comes from 7 different sources: `ArXiv`, `Book`, `C4`, `CommonCrawl`, `Github`, `StackExchange`, and `Wikipedia`. If you want to experiment with with different ratios for each data source, then you can either perform the steps in [Step-by-step Guide](#step-by-step-guide) with modifying [Step 4](#step-4-interleave--shuffle) to only deduplicate the dataset without interleaving the different data sources, or you can perform a post-processing on [SlimPajama](https://huggingface.co/datasets/cerebras/SlimPajama-627B) with the script [split_dataset.py](./split_dataset.py) using the following command:
+```bash
+python split_dataset.py --input_dir <prefix_path>/SlimPajama/train --output_dir <prefix_path>/SlimPajama_split/train --processes <n_processes>
+```
+This will create a sub-directory for each data source in the output directory contains documents from this specific source.
+
+> NOTE: total number of processes that will be created is `<n_processes>` + `7`, where `7` is the number of consumer processes for each data source and `<n_processes>` is the number of producer processes that needs to be at least `1`.
+
+
 # Contributing to SlimPajama
 We believe that open source diverse high-quality datasets are the key contributors towards successful training of LLM and further AI democratization. We are 
 welcoming the community to contribute and expand our SlimPajama corpus with additional data sources.
 First thing to do is to [open an issue](https://github.com/Cerebras/modelzoo/issues/). Your issue should include a description of the dataset, its size (bytes or tokens), what language(s) it is in, a link to the data, and any other relevant information.
-We are working on making the contribution process more streamlined, feel free to reach out to us via email to support@cerebras.net or join our [discord](https://discord.gg/PK2FFPVS) 
+We are working on making the contribution process more streamlined, feel free to reach out to us via email to support@cerebras.net or join our [discord](https://discord.gg/ZqvYS2e2rY) 
 to express your wish to contribute.
 
 # Future Work 

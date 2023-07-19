@@ -20,8 +20,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
+from modelzoo.common.pytorch import cb_model as cm
 from modelzoo.common.pytorch import cbtorch
 
+from .AlibiPositionEmbeddingLayer import AlibiPositionEmbeddingLayer
 from .RelativePositionEmbeddingLayer import RelativePositionEmbeddingLayer
 
 LOSS_SCOPE = "loss"
@@ -53,7 +55,10 @@ def apply_loss_reduction(loss, reduction):
 
 def apply_position_bias(embedding_helper, seq_length, key_length, past_kv=None):
     self_attn_position_bias = None
-    if isinstance(embedding_helper, (RelativePositionEmbeddingLayer,),):
+    if isinstance(
+        embedding_helper,
+        (RelativePositionEmbeddingLayer, AlibiPositionEmbeddingLayer,),
+    ):
         self_attn_position_bias = embedding_helper(
             seq_length, key_length, past_kv=past_kv
         )
@@ -84,11 +89,11 @@ def autogen_loss(loss_cls):
     def autogen_init(self, *args, **kwargs):
         self.autogen_enabled = kwargs.pop("use_autogen", False)
         self._old_init(*args, **kwargs)
-        if self.autogen_enabled:
+        if self.autogen_enabled and cm.use_cs():
             self.mark_with_autogen = cbtorch.nn.Scope(scope_name=LOSS_SCOPE)
 
     def autogen_forward(self, *args, **kwargs):
-        if self.autogen_enabled:
+        if self.autogen_enabled and cm.use_cs():
             args = [self.mark_with_autogen(arg) for arg in args]
             kwargs = {k: self.mark_with_autogen(v) for k, v in kwargs.items()}
             loss = self._old_forward(*args, **kwargs)

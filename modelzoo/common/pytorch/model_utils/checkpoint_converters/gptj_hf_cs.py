@@ -25,7 +25,7 @@ from modelzoo.common.pytorch.model_utils.checkpoint_converters.base_converter im
     ConfigConversionError,
     ConversionRule,
     EquivalentSubkey,
-    converter_notes,
+    FormatVersions,
 )
 
 
@@ -67,8 +67,8 @@ class Converter_GPTJ_Attention_HF_CS17(BaseCheckpointConverter_HF_CS):
         ]
 
     @staticmethod
-    def formats() -> Tuple[str, str]:
-        return ("hf", "cs-1.7")
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-1.7"))
 
     @staticmethod
     def get_config_converter_class() -> BaseConfigConverter:
@@ -195,8 +195,8 @@ class Converter_GPTJ_Headless_HF_CS17(BaseCheckpointConverter_HF_CS):
     ):
         if from_index == 0:
             logging.warning(
-                "CS-1.7 GPTJ has a language model head (lm_head) "
-                "while HF GPTJModel does not. Initializing lm_head to default."
+                "{} GPTJ has a language model head (lm_head) "
+                "while {} GPTJModel does not. Initializing lm_head to default."
             )
 
         # Manually tie weights
@@ -220,27 +220,37 @@ class Converter_GPTJ_Headless_HF_CS17(BaseCheckpointConverter_HF_CS):
         if from_index == 0:
             # We are converting from HF GPTJModel (which is headless) -> CS GPTJModel (which has a head)
             # We need to create 'lm_head' and init to default values
-            vocab_size, embed_dim = new_state_dict[
-                "embedding_layer.word_embeddings.weight"
-            ].shape
-            lm_head_weight = torch.zeros((vocab_size, embed_dim))
-            lm_head_weight.normal_(mean=0.0, std=0.02)
+            hf_config = configs[0]
+            cs_config = configs[1]
+            use_bias_in_output = cs_config["model"].get(
+                "use_bias_in_output", False
+            )
+            vocab_size = cs_config["model"]["vocab_size"]
+            embed_dim = cs_config["model"]["hidden_size"]
+            if hf_config["tie_word_embeddings"]:
+                lm_head_weight = old_state_dict['wte.weight']
+            else:
+                lm_head_weight = torch.zeros((vocab_size, embed_dim))
+                lm_head_weight.normal_(mean=0.0, std=0.02)
             new_state_dict["lm_head.weight"] = lm_head_weight
-            if configs[1]["model"]["use_bias_in_output"]:
+            if use_bias_in_output:
                 lm_head_bias = torch.zeros(vocab_size)
                 new_state_dict["lm_head.bias"] = lm_head_bias
 
     @staticmethod
-    @converter_notes(
-        notes="""HF GPTJModel <-> CS 1.7 GPTJModel(with head)
-    The HF model doesn't contain a language model head while the CS one does.
-    When converting to CS, the exported checkpoint will contain a language model
-    head initialized to default random values. When converting to HF, the
-    language model head will be dropped.
-    """
-    )
-    def formats() -> Tuple[str, str]:
-        return ("hf", "cs-1.7")
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-1.7"))
+
+    @classmethod
+    def converter_note(cls) -> str:
+        return (
+            "{} GPTJModel <-> {} GPTJModel(with head)\n"
+            "The HF model doesn't contain a language model head while the CS "
+            "one does. When converting to CS, the exported checkpoint will "
+            "contain a language model head initialized to default random "
+            "values. When converting to HF, the language model head will be "
+            "dropped."
+        ).format(cls.formats()[0], cls.formats()[1])
 
     @staticmethod
     def get_config_converter_class() -> BaseConfigConverter:
@@ -264,16 +274,19 @@ class Converter_GPTJ_Headless_HF_CS18(Converter_GPTJ_Headless_HF_CS17):
         ]
 
     @staticmethod
-    @converter_notes(
-        notes="""HF GPTJModel <-> CS 1.8 GPTJModel(with head)
-    The HF model doesn't contain a language model head while the CS one does.
-    When converting to CS, the exported checkpoint will contain a language model
-    head initialized to default random values. When converting to HF, the
-    language model head will be dropped.
-    """
-    )
-    def formats() -> Tuple[str, str]:
-        return ("hf", "cs-1.8")
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-1.8", "cs-1.9"))
+
+    @classmethod
+    def converter_note(cls) -> str:
+        return (
+            "{} GPTJModel <-> {} GPTJModel(with head)\n"
+            "The HF model doesn't contain a language model head while the CS "
+            "one does. When converting to CS, the exported checkpoint will "
+            "contain a language model head initialized to default random "
+            "values. When converting to HF, the language model head will be "
+            "dropped."
+        ).format(cls.formats()[0], cls.formats()[1])
 
     @staticmethod
     def get_config_converter_class() -> BaseConfigConverter:
@@ -315,9 +328,14 @@ class Converter_GPTJ_LMHeadModel_HF_CS17(BaseCheckpointConverter_HF_CS):
                 ] = old_state_dict["lm_head.weight"]
 
     @staticmethod
-    @converter_notes(notes="HF GPTJForCausalLM <-> CS 1.7 GPTJModel(with head)")
-    def formats() -> Tuple[str, str]:
-        return ("hf", "cs-1.7")
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-1.7"))
+
+    @classmethod
+    def converter_note(cls) -> str:
+        return "{} GPTJForCausalLM <-> {} GPTJModel(with head)".format(
+            cls.formats()[0], cls.formats()[1]
+        )
 
     @staticmethod
     def get_config_converter_class() -> BaseConfigConverter:
@@ -343,9 +361,14 @@ class Converter_GPTJ_LMHeadModel_HF_CS18(BaseCheckpointConverter_HF_CS):
         ]
 
     @staticmethod
-    @converter_notes(notes="HF GPTJForCausalLM <-> CS 1.8 GPTJModel(with head)")
-    def formats() -> Tuple[str, str]:
-        return ("hf", "cs-1.8")
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-1.8", "cs-1.9"))
+
+    @classmethod
+    def converter_note(cls) -> str:
+        return "{} GPTJForCausalLM <-> {} GPTJModel(with head)".format(
+            cls.formats()[0], cls.formats()[1]
+        )
 
     @staticmethod
     def get_config_converter_class() -> BaseConfigConverter:
@@ -583,8 +606,8 @@ class ConfigConverter_GPTJModel_HF_CS17(BaseConfigConverter_HF_CS):
         )
 
     @staticmethod
-    def formats() -> Tuple[str, str]:
-        return ("hf", "cs-1.7")
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-1.7"))
 
 
 class ConfigConverter_GPTJModel_HF_CS18(ConfigConverter_GPTJModel_HF_CS17):
@@ -592,5 +615,5 @@ class ConfigConverter_GPTJModel_HF_CS18(ConfigConverter_GPTJModel_HF_CS17):
         super().__init__()
 
     @staticmethod
-    def formats() -> Tuple[str, str]:
-        return ("hf", "cs-1.8")
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-1.8", "cs-1.9"))

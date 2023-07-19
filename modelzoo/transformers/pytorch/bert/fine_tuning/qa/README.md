@@ -1,21 +1,19 @@
 # PyTorch BERT fine-tuning model for SQuAD v1.1
 
 - [Model overview](#model-overview)
-- [Sequence of the steps to perform](#Sequence-of-the-steps-to-perform)
-- [Key features from CSoft platform used in this reference implementation](#Key-features-from-CSoft-platform-used-in-this-reference-implementation)
+- [Sequence of the steps to perform](#sequence-of-the-steps-to-perform)
 - [Code structure](#code-structure)
 - [Dataset preparations](#dataset-preparations)
   - [Data download](#data-download)
-  - [Data preprocessing](#Data-preprocessing)
+  - [Data preprocessing](#data-preprocessing)
 - [Input function pipeline](#input-function-pipeline)
-  - [Features labels dictionary](#Features-labels-dictionary)
-- [How to run](#How-to-run)
-  - [Training on GPU and CPU](#Training-on-GPU-and-CPU)
-  - [Prediction on GPU and CPU](#Prediction-on-GPU-and-CPU)
-  - [Evaluation on GPU and CPU](#Evaluation-on-GPU-and-CPU)
-  - [How to compile and validate](#How-to-compile-and-validate)
-  - [How to run training on Cerebras System](#How-to-run-training-on-Cerebras-System)
-- [Configs included for this model](#Configs-included-for-this-model)
+  - [Features labels dictionary](#features-labels-dictionary)
+- [How to run](#how-to-run)
+  - [Training on GPU and CPU](#training-on-gpu-and-cpu)
+  - [Prediction on GPU and CPU](#prediction-on-gpu-and-cpu)
+  - [Evaluation on GPU and CPU](#evaluation-on-gpu-and-cpu)
+  - [To compile/validate, run train and eval on Cerebras System](#to-compilevalidate-run-train-and-eval-on-cerebras-system)
+- [Configs included for this model](#configs-included-for-this-model)
 
 # Model overview 
 This model uses the [BERT](https://arxiv.org/abs/1810.04805) architecture to solve a question answering task.
@@ -46,9 +44,6 @@ The following block diagram shows a high-level view of the sequence of steps you
 Fig.1 - Flow Chart of steps to fine-tune Q/A model.
 </p>
 
-
-# Key features from CSoft platform used in this reference implementation
-Fine-tuning classification model configs are supported in the [Layer Pipelined mode](https://docs.cerebras.net/en/latest/cerebras-basics/cerebras-execution-modes.html#layer-pipelined-mode).
 
 # Code structure
 * `configs/`: YAML configuration files.

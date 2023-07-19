@@ -62,6 +62,8 @@ def set_defaults(params):
         if params["train_input"].get("image_shape")
         else "input_shape"
     )
+    if input_mode == "eval_all":
+        input_mode = "eval"
     params["model"]["image_shape"] = params[f"{input_mode}_input"].get(
         shape_key
     )
@@ -115,7 +117,7 @@ def set_defaults(params):
 
     # Param defaults for metrics
     params["model"]["eval_ignore_classes"] = params["model"].get(
-        "eval_ignore_classes", None
+        "eval_ignore_classes", []
     )
     params["model"]["compute_eval_metrics"] = params["model"].get(
         "compute_eval_metrics", True
@@ -125,14 +127,10 @@ def set_defaults(params):
     )
     params["model"]["use_bfloat16"] = params["model"].get("use_bfloat16", False)
 
-    if params["model"]["use_conv3d"] and params["model"]["use_bfloat16"]:
-        raise ValueError(
-            f"use_bloat16=True not supported for UNet3D model. "
-            f"Please set `use_bfloat16` to False"
-        )
-
     if params["model"]["use_bfloat16"]:
         params["optimizer"]["loss_scaling_factor"] = 1.0
+
+    params["model"]["shuffle_seed"] = params["train_input"].get("shuffle_seed")
 
     downscale_method = params["model"]["downscale_method"]
     convs_per_block = params["model"]["convs_per_block"]

@@ -17,22 +17,27 @@ import sys
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "../../../.."))
 
-from modelzoo.common.pytorch.run_utils import run
-from modelzoo.transformers.pytorch.bert.data import (
-    eval_input_dataloader,
-    train_input_dataloader,
-)
-from modelzoo.transformers.pytorch.bert.model import BertForPreTrainingModel
-from modelzoo.transformers.pytorch.bert.utils import set_defaults
+from modelzoo.common.run_utils.cli_pytorch import get_params_from_args
 
 
 def main():
+    params = get_params_from_args()
+    from modelzoo.transformers.pytorch.bert.utils import set_defaults
 
-    run(
+    set_defaults(params)
+
+    from modelzoo.common.pytorch.run_utils import main
+    from modelzoo.transformers.pytorch.bert.data import (
+        eval_input_dataloader,
+        train_input_dataloader,
+    )
+    from modelzoo.transformers.pytorch.bert.model import BertForPreTrainingModel
+
+    main(
+        params,
         BertForPreTrainingModel,
         train_input_dataloader,
         eval_input_dataloader,
-        set_defaults,
     )
 
 

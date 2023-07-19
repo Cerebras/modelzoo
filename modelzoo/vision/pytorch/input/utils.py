@@ -231,14 +231,21 @@ def create_worker_cache(src_dir: str, force_overwrite: bool = False):
             "Ensure that create_worker_cache is called only for a worker node."
         )
     dest_dir = _get_worker_cache_dir(src_dir)
-    with FileLock(f"{dest_dir}.lock"):
+    # Provide read/write permissions for the lock for all users
+    with FileLock(f"{dest_dir}.lock", mode=0o666):
         if _same_dirs_shallow(src_dir, dest_dir) and not force_overwrite:
             print(f"WORKER CACHE HIT: Skipping overwrite")
         else:
-            if cm.hit_worker_cache_limit(src_dir, dest_dir):
+            (
+                is_limit_hit,
+                dir_size,
+                available_space_for_copy,
+            ) = cm.hit_worker_cache_limit(src_dir, dest_dir)
+            if is_limit_hit:
                 raise RuntimeError(
-                    "Copy will exceed allocated size for worker cache, "
-                    "please cleanup the cache using csctl"
+                    f"Failed when copying the directory to the worker cache: {src_dir},"
+                    f" directory size: {dir_size} exceeds the available space on worker cache: {available_space_for_copy}."
+                    f"Please contact your system administrator to clear the worker cache."
                 )
             if os.path.exists(dest_dir):
                 shutil.rmtree(dest_dir)

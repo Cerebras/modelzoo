@@ -27,14 +27,6 @@ See the following diagram:
 
 ![Diagram](../images/torch_fcmnist.png)
 
-# Key features from CSoft platform used in this reference implementation
-FC MNIST model configs are supported in the [Layer Pipelined mode](https://docs.cerebras.net/en/latest/wsc/cerebras-basics/cerebras-execution-modes.html#layer-pipelined-mode).
-
-## Multi-Replica data parallel training
-When training on the Cerebras System, the `--multireplica` flag can be used to perform data-parallel training
-across multiple copies of the model at the same time. For more details about this feature, please refer
-to [Multi-Replica Data Parallel Training](https://docs.cerebras.net/en/latest/wsc/general/multi-replica-data-parallel-training.html) documentation page.
-
 # Structure of the code
 * `data.py`: Simple data input pipeline loading the [TorchVision MNIST dataset](https://pytorch.org/vision/stable/datasets.html).
 * `model.py`: Model implementation. 

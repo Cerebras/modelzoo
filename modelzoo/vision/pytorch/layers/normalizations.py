@@ -15,6 +15,7 @@
 import torch.nn as nn
 import torchvision.ops as ops
 
+from modelzoo.vision.pytorch.layers.AdaLayerNorm import AdaLayerNorm
 from modelzoo.vision.pytorch.layers.BatchChannelNorm import BatchChannelNorm2D
 from modelzoo.vision.pytorch.layers.GroupInstanceNorm import GroupInstanceNorm
 
@@ -27,6 +28,7 @@ NORM2CLS = {
     "instance2d": nn.InstanceNorm2d,
     "instance3d": nn.InstanceNorm3d,
     "group": nn.GroupNorm,
+    "adalayer": AdaLayerNorm,
     "layer": nn.LayerNorm,
     "batchchannel2d": BatchChannelNorm2D,
     "frozenbatchnorm2d": ops.FrozenBatchNorm2d,

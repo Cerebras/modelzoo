@@ -14,10 +14,9 @@
 
 #!/usr/bin/env python
 """
-The preview release of sparse training on CS2 uses an inband representation for
-pruned weights which needs to be finalized before running training or inference
-on another device. This module exposes a helper script for finalizing the
-sparsity.
+Sideband sparse training on CS2 uses an inband representation for pruned weights
+which needs to be finalized before running training or inference on another
+device. This module exposes a helper script for finalizing the sparsity.
 """
 
 from typing import Optional
@@ -30,7 +29,7 @@ def finalize_cs2_sparsity(
     model: torch.nn.Module, optimizer: Optional[torch.optim.Optimizer] = None,
 ) -> dict:
     """
-    Given a module loaded from a checkpoint trained on CS2 with weight
+    Given a module loaded from a checkpoint trained on CS2 with sideband
     sparsity, finalize the sparsity into the model's parameters as zeros and
     return the mask representing the sparsity pattern for each sparse parameter.
 
@@ -63,7 +62,7 @@ def finalize_cs2_sparsity(
 
 def finalize_cs2_sparsity_checkpoint(state_dict: dict):
     """
-    Given a state_dict trained on CS2 with weight sparsity, finalize the
+    Given a state_dict trained on CS2 with sideband sparsity, finalize the
     sparsity of all tensors, both weights and optimizer state by replacing the
     inband pruned weight representation with zeros for use in dense training or
     evaluation.
@@ -91,7 +90,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(
         description="""
-        Given a checkpoint trained on CS2 with weight sparsity, finalize the
+        Given a checkpoint trained on CS2 with sideband sparsity, finalize the
         sparsity of all tensors, both weights and optimizer state by replacing
         the inband pruned weight representation with zeros for use in dense
         training or evaluation.

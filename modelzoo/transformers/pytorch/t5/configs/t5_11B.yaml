@@ -8,7 +8,7 @@ train_input:
     shuffle: True
     shuffle_seed: 1
     shuffle_buffer: 16384 # large buffer size allows batches to contain samples from multiple documents
-    batch_size: 220 # this is more than 2**16 tokens per batch (ref batch size = 216) for perf reasons on CS system
+    batch_size: 310 # this is more than 2**16 tokens per batch (ref batch size = 216) for perf reasons on CS system
     num_workers: 8
     prefetch_factor: 10
     persistent_workers: True
@@ -22,7 +22,7 @@ eval_input:
     tgt_max_sequence_length: 114
     shuffle: False
     shuffle_seed: 1 # also for deterministic masking
-    batch_size: 220
+    batch_size: 310
     num_workers: 8
     prefetch_factor: 10
     persistent_workers: True
@@ -53,8 +53,8 @@ model:
     # Encoder -- ffn
     d_ff: 65536 # Size of the intermediate feed forward layer in t5 blocks.
     d_model: 1024  # Size of the encoder layers and the pooler layer.
-    encoder_nonlinearity: "relu" # {"gelu", "relu", "gated-gelu"}
-    decoder_nonlinearity: "relu" # {"gelu", "relu", "gated-gelu"}
+    encoder_nonlinearity: "relu" # {"gelu", "relu", "geglu"}
+    decoder_nonlinearity: "relu" # {"gelu", "relu", "geglu"}
     layer_norm_epsilon: 1.0e-5
 
     ## Decoder
@@ -72,12 +72,12 @@ optimizer:
     disable_lr_steps_reset: True
     learning_rate:
     - scheduler: "InverseSquareRootDecay"
-      warmup_steps: 8307
+      warmup_steps: 6967
       scale: 1.0
     loss_scaling_factor: 1
 
 runconfig:
-    max_steps: 514755 # 524288 * 216 / 220
+    max_steps: 365310 # 524288 * 216 / 310
     log_steps: 100
     checkpoint_steps: 10000
     eval_steps: 2084
@@ -85,3 +85,4 @@ runconfig:
     model_dir: "./model_dir"
     show_debug_metrics: False
     save_losses: True
+    compile_crd_memory_gi: 85  # 2023-04 - requires ~80Gi

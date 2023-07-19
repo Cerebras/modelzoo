@@ -26,7 +26,7 @@ from collections import defaultdict
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "../../../../../.."))
 from modelzoo.common.input.utils import check_and_create_output_dirs
-from modelzoo.transformers.data_processing.dynamic_processor import (
+from modelzoo.transformers.data_processing.bert.dynamic_processor import (
     data_generator,
 )
 from modelzoo.transformers.data_processing.utils import (

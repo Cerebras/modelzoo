@@ -86,7 +86,7 @@ class TransformerEncoderLayer(nn.Module):
         batch_first: bool = True,
         norm_layer: Type[nn.Module] = LayerNorm,
         norm_first: bool = False,
-        attention_module_str="aiayn_attention",
+        attention_module: Union[str, nn.Module] = "aiayn_attention",
         extra_attention_params={},
         device=None,
         attention_dropout_rate: Optional[float] = None,
@@ -111,7 +111,7 @@ class TransformerEncoderLayer(nn.Module):
             attention_dropout_rate = dropout
 
         AttentionModule = get_attention_module(
-            attention_module_str, extra_attention_params
+            attention_module, extra_attention_params
         )
 
         self.self_attn = AttentionModule(
@@ -161,12 +161,14 @@ class TransformerEncoderLayer(nn.Module):
     def __reset_parameters(self):
         self.self_attn.reset_parameters()
         self.ffn.reset_parameters()
-        if hasattr(self.norm1, 'bias'):
+        if hasattr(self.norm1, 'bias') and hasattr(self.norm1.bias, "data"):
             self.norm1.bias.data.zero_()
-        self.norm1.weight.data.fill_(1.0)
-        if hasattr(self.norm2, 'bias'):
+        if hasattr(self.norm1, 'weight') and hasattr(self.norm1.weight, "data"):
+            self.norm1.weight.data.fill_(1.0)
+        if hasattr(self.norm2, 'bias') and hasattr(self.norm2.bias, "data"):
             self.norm2.bias.data.zero_()
-        self.norm2.weight.data.fill_(1.0)
+        if hasattr(self.norm2, 'weight') and hasattr(self.norm1.weight, "data"):
+            self.norm2.weight.data.fill_(1.0)
 
     def forward(
         self,
@@ -182,6 +184,8 @@ class TransformerEncoderLayer(nn.Module):
             src: the sequence to the encoder layer (required).
             src_mask: the mask for the src sequence (optional).
             src_key_padding_mask: the mask for the src keys per batch (optional).
+            self_attn_position_bias: the tensor containing position bias to apply in self-attention,
+                can be obtained from relative or alibi position embeddings.
 
         Shape:
             see the docs in Transformer class.

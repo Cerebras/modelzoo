@@ -112,7 +112,7 @@ def compute_confusion_matrix(
         device=predictions.device,
         dtype=torch.float32,
     )
-    index = labels * num_classes + predictions
+    index = labels * num_classes + predictions.int()
 
     if weights is None:
         weights = torch.ones_like(
@@ -129,3 +129,12 @@ def compute_confusion_matrix(
         confusion_matrix, [num_classes, num_classes]
     )
     return confusion_matrix
+
+
+def compute_mask(num_classes, ignore_classes):
+    mask = torch.ones(num_classes, dtype=torch.float)
+    if ignore_classes:
+        index = torch.tensor(ignore_classes, dtype=torch.long)
+        src = -torch.ones_like(mask, dtype=torch.float)
+        mask.scatter_add_(0, index, src)
+    return mask

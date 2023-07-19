@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-""" PyTorch CLI Utilities"""
+""" CLI Utilities"""
 import argparse
 import collections
 import logging
@@ -22,7 +22,7 @@ from typing import Callable, List, Optional
 
 import yaml
 
-from modelzoo.common.run_utils.utils import DeviceType, ExecutionStrategy
+from modelzoo.common.run_utils.utils import DeviceType
 
 
 def read_params_file(params_file: str) -> dict:
@@ -56,53 +56,52 @@ def get_all_args(
     parser = get_parser(
         first_parse=False, extra_args_parser_fn=extra_args_parser_fn
     )
-    cpu_args = parser.parse_args([DeviceType.CPU, "-m", "train"])
-    gpu_args = parser.parse_args([DeviceType.GPU, "-m", "train"])
-    pipeline_args = parser.parse_args(
-        [DeviceType.CSX, ExecutionStrategy.pipeline, "-m", "train"]
-    )
-    ws_args = parser.parse_args(
-        [DeviceType.CSX, ExecutionStrategy.weight_streaming, "-m", "train"]
-    )
 
-    return cpu_args, gpu_args, pipeline_args, ws_args
+    # Only the top level parser is exposed when get_parser() is called.
+    # All subparsers will inherit the extra_arg_parser, so we can use the CPU
+    # parser to get the required args to grab the required args and make
+    # un-required.
+    # parser._action_groups[0]._actions[1].choices["CPU"] accesses the CPU subparser
+    # doing (CPU subparser)._action_groups[0]._actions gets a list of all args
+    for arg in (
+        parser._action_groups[0]
+        ._actions[1]
+        .choices["CPU"]
+        ._action_groups[0]
+        ._actions
+    ):
+        if arg.required:
+            arg.required = False
+
+    cpu_args = parser.parse_args([DeviceType.CPU])
+    gpu_args = parser.parse_args([DeviceType.GPU])
+    csx_args = parser.parse_args([DeviceType.CSX])
+
+    return cpu_args, gpu_args, csx_args
 
 
 def discard_params(
     device: str,
-    exec_strat: Optional[ExecutionStrategy],
     extra_args_parser_fn: Optional[
         Callable[[], List[argparse.ArgumentParser]]
     ] = None,
 ):
-    """ External utility for determing
+    """ External utility for determining
     invalid parameters for the current device type. """
 
-    cpu_args, gpu_args, pipeline_args, ws_args = get_all_args(
-        extra_args_parser_fn
-    )
+    cpu_args, gpu_args, csx_args = get_all_args(extra_args_parser_fn)
 
     if device == DeviceType.CPU:
         curr_device_args = vars(cpu_args).keys()
     elif device == DeviceType.GPU:
         curr_device_args = vars(gpu_args).keys()
-    elif device == DeviceType.CSX and exec_strat == ExecutionStrategy.pipeline:
-        curr_device_args = vars(pipeline_args).keys()
-    elif (
-        device == DeviceType.CSX
-        and exec_strat == ExecutionStrategy.weight_streaming
-    ):
-        curr_device_args = vars(ws_args).keys()
+    elif device == DeviceType.CSX:
+        curr_device_args = vars(csx_args).keys()
     else:
-        raise ValueError(
-            f"Invalid entry for device {device} and/or execution strategy {exec_strat}"
-        )
+        raise ValueError(f"Invalid entry for device {device}.")
 
     all_params = (
-        vars(cpu_args).keys()
-        | vars(gpu_args).keys()
-        | vars(pipeline_args).keys()
-        | vars(ws_args).keys()
+        vars(cpu_args).keys() | vars(gpu_args).keys() | vars(csx_args).keys()
     )
     discard_params_list = set(all_params) - (set(curr_device_args))
 
@@ -119,15 +118,12 @@ def assemble_disallowlist(
     # cpu parser does not currently contain any additional information
     # or parameters but will parse through its elements as well just
     # in case that changes in the future.
-    cpu_args, gpu_args, pipeline_args, ws_args = get_all_args(
-        extra_args_parser_fn
-    )
+    cpu_args, gpu_args, csx_args = get_all_args(extra_args_parser_fn)
 
     all_params_template = {
         **vars(cpu_args),
         **vars(gpu_args),
-        **vars(pipeline_args),
-        **vars(ws_args),
+        **vars(csx_args),
     }
     unacceptable_params = set(all_params_template.keys()).difference(
         set(params.keys())
@@ -282,7 +278,7 @@ def add_csx_arguments(
         nargs="+",
         help="A list of paths to be exported into PYTHONPATH for worker containers. "
         "It should generally contain path to the directory containing the "
-        "Cerebras modelzoo, as well as any external python packages needed by input workers.",
+        "Cerebras modelzoo, as well as any external python packages needed.",
     )
     optional_arguments.add_argument(
         "--credentials_path",
@@ -306,25 +302,9 @@ def add_csx_arguments(
     optional_arguments.add_argument(
         "--disable_version_check",
         action="store_true",
+        default=None,
         help="Disable version check for local experimentation and debugging",
     )
-
-    return
-
-
-def add_ws_arguments(
-    ws_parser: argparse.ArgumentParser, first_parse: bool = True,
-):
-    """ Injects weightstreaming specific parser arguments.
-
-    Args:
-        ws_parser: Parser into which the arguments are being added.
-    """
-    add_csx_arguments(ws_parser, first_parse)
-    optional_arguments = ws_parser.add_argument_group(
-        "Optional Arguments, Weightstreaming Execution Strategy"
-    )
-    # Weightstreaming-only arguments
     optional_arguments.add_argument(
         "--num_csx",
         default=None if first_parse else 1,
@@ -343,29 +323,6 @@ def add_ws_arguments(
         default=None if first_parse else 1,
         type=int,
         help="Number of ACT server per device. Defaults to 1.",
-    )
-
-    return
-
-
-def add_pipeline_arguments(
-    pipeline_parser: argparse.ArgumentParser, first_parse: bool = True,
-):
-    """ Injects pipeline specific parser arguments.
-
-    Args:
-        pipeline_parser: Parser into which the arguments are being added.
-    """
-    add_csx_arguments(pipeline_parser, first_parse)
-    optional_arguments = pipeline_parser.add_argument_group(
-        "Optional Arguments, Pipeline Execution Strategy"
-    )
-    # Pipeline-only argument(s)
-    optional_arguments.add_argument(
-        "--multireplica",
-        action="store_true",
-        default=None,
-        help="Enables multireplica mode. Defaults to None.",
     )
 
     return
@@ -441,6 +398,7 @@ def get_parser(
     extra_args = {}
     if extra_args_parser_fn:
         extra_args = extra_args_parser_fn()
+
         if isinstance(extra_args, argparse.ArgumentParser):
             # pylint: disable=protected-access
             extra_args._action_groups[
@@ -464,11 +422,10 @@ def get_parser(
 
     parser = argparse.ArgumentParser(
         epilog=(
-            "Please run 'python run.py {CPU,GPU} -h' or 'python run.py CSX {pipeline,weight_streaming} -h' \n"
-            "to list available subcommands. \n \n"
+            "Please run 'python run.py {CPU,GPU,CSX} -h'. \n \n"
             "Here are some example commands for running on different devices: \n \n"
-            "    python run.py CPU --params /path/to/params.yaml --mode train \n \n"
-            "    python run.py CSX weight_streaming --params /path/to/params.yaml --mode eval --num_csx 1 \n \n"
+            "    python run.py CSX --params /path/to/params --mode train --num_csx 1 \n \n"
+            "    python run.py CPU --params /path/to/params --mode eval --checkpoint_path /path/to/checkpoint \n \n"
         ),
         formatter_class=argparse.RawTextHelpFormatter,
     )
@@ -491,50 +448,20 @@ def get_parser(
     csx_parser = sp.add_parser(
         DeviceType.CSX,
         help="Run on Cerebras System",
+        parents=[parent] + extra_args.get(DeviceType.CSX, []),
         epilog=(
-            "To see a complete list of all available arguments for your chosen execution strategy, \n"
-            "please run 'python run.py CSX {pipeline,weight_streaming} -h'. \n\n"
-            "Here are some example commands for running with different execution strategies: \n \n"
-            "    python run.py CSX weight_streaming --params /path/to/params.yaml --mode eval --num_csx 1 \n \n"
-            "    python run.py CSX pipeline --params /path/to/params.yaml --mode train --multireplica \n \n"
-            "When running from the Cerebras Modelzoo, you generally specify --python_paths and \n"
-            "--mount_dirs. This can be done here or in the params under the 'runconfig' section \n"
+            "To see a complete list of all available arguments for \n"
+            "please run 'python run.py CSX -h'. \n\n"
+            "Here is an example command for running with CSX: \n \n"
+            "    python run.py CSX --params /path/to/params --mode train --num_csx 1 \n \n"
+            "When running from the Cerebras Model Zoo, you generally specify --python_paths and \n"
+            "--mount_dirs. This can be done here or in your params.yaml under the 'runconfig' section. \n"
             "Both should at least include a path \n"
-            "to the directory in which the Cerebras Modelzoo resides. \n"
+            "to the directory in which the Cerebras Model Zoo resides. \n"
         ),
         formatter_class=argparse.RawTextHelpFormatter,
     )
-    execution_strategy_parser = csx_parser.add_subparsers(
-        title="Execution Strategy", dest="execution_strategy"
-    )
-    execution_strategy_parser.required = True
-
-    # PIPELINED EXECUTION MODE
-    pipeline_parser = execution_strategy_parser.add_parser(
-        ExecutionStrategy.pipeline,
-        usage=(
-            "CSX pipeline ... --params /path/to/params.yaml --mode {mode} --python_paths /path/to/modelzoo"
-            "{paths to other python packages needed by dataloader ...}  --mount_dirs "
-            "/path/to/modelzoo {path to directories needed by dataloader ...}"
-        ),
-        parents=[parent] + extra_args.get(ExecutionStrategy.pipeline, []),
-        help="Run the pipeline execution strategy on the Cerebras System.",
-    )
-    add_pipeline_arguments(pipeline_parser, first_parse)
-
-    # WEIGHTSTREAMING EXECUTION MODE
-    ws_parser = execution_strategy_parser.add_parser(
-        ExecutionStrategy.weight_streaming,
-        usage=(
-            "CSX weight_streaming ... --params /path/to/params.yaml --mode {mode} --python_paths "
-            "/path/to/modelzoo {paths to other python packages needed by dataloader ...} "
-            "--mount_dirs /path/to/modelzoo {path to directories needed by dataloader ...}"
-        ),
-        parents=[parent]
-        + extra_args.get(ExecutionStrategy.weight_streaming, []),
-        help="Run the weight-streaming execution strategy on the Cerebras System.",
-    )
-    add_ws_arguments(ws_parser, first_parse)
+    add_csx_arguments(csx_parser, first_parse)
 
     return parser
 
@@ -608,21 +535,33 @@ def update_params_from_args(
                 else (params.get(k) or sysadmin_params.get(k))
             )
 
-    if params.get("is_pretrained_checkpoint") and not params.get(
-        "checkpoint_path"
+    mode = params.get("mode")
+    if (
+        params.get("is_pretrained_checkpoint")
+        and not params.get("checkpoint_path")
+        and mode == "train"
     ):
         raise RuntimeError(
             "'--is_pretrained_checkpoint' can only be used if a "
             "'--checkpoint_path' is provided."
         )
 
-    mode = params.get("mode")
-    if mode != "train" and params.get("multireplica"):
-        logging.warning(
-            f"Multireplica is only supported in `train` mode. "
-            f"Disabling it for {mode} mode."
-        )
-        params["multireplica"] = None
+    # Nice to have warning for users to understand behavior for
+    # --is_pretrained_checkpoint and --checkpoint_path
+    if mode == "train" and params.get("checkpoint_path"):
+        if params.get("is_pretrained_checkpoint"):
+            logging.info(
+                "A checkpoint path is provided, and '--is_pretrained_checkpoint' "
+                "is set. This will load the model weights from the checkpoint, "
+                "reset the optimizer states and start training from step 0."
+            )
+        else:
+            logging.info(
+                "A checkpoint path is provided, and '--is_pretrained_checkpoint' "
+                "is not set. This will load the model weights and optimizer  "
+                "states from the checkpoint and resume training from the last "
+                "saved step."
+            )
 
     model_dir = params["model_dir"]
     os.makedirs(model_dir, exist_ok=True)
@@ -684,6 +623,7 @@ def get_params_from_args(
         argv: The args to be parse. Defaults to sys.argv if not provided
     """
     parser = get_parser(run_dir, extra_args_parser_fn=extra_args_parser_fn)
+
     args = parser.parse_args(argv if argv else sys.argv[1:])
 
     params_template, invalid_params = assemble_disallowlist(

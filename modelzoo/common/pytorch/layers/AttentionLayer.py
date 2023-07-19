@@ -17,6 +17,7 @@ from typing import Optional
 import torch
 import torch.nn as nn
 
+from modelzoo.common.pytorch import cb_model as cm
 from modelzoo.common.pytorch import cbtorch
 from modelzoo.common.pytorch.model_utils.create_initializer import (
     create_initializer,
@@ -53,11 +54,13 @@ class MultiheadAttention(nn.Module):
         attention_type (str): The attention variant to execute. Currently
             accepts ``dot_product`` and ``scaled_dot_product``. Defaults to
             ``scaled_dot_product``.
+        scale_qk_dot_by_d (bool): If ``True`` scales QK^T dot product by d(=hidden/d_head) instead of sqrt(d).
         softmax_dtype_fp32 (bool): Use an FP32 softmax implementation.
-        attention_kernel (str | None): Kernel to use. Defaults to None - compiler selects the kernel.
+        attention_kernel (str | None): Kernel to use. Uses ``default`` if None.
             See accepted values below.
-                ``default`` - Default implementation.
-                ``optimized_beta`` - Optimized implementation. Beta feature, support is limited.
+                ``default`` - Optimized implementation.
+                ``compatible`` - Non-optimized but most compatible implementation.
+        device (optional): Device to create the model parameters on, can be a cuda device or CS device.
     """
 
     def __init__(
@@ -78,6 +81,7 @@ class MultiheadAttention(nn.Module):
         output_layer_initializer=None,
         bias_initializer="zeros",
         attention_type="scaled_dot_product",
+        scale_qk_dot_by_d=False,
         softmax_dtype_fp32=True,
         attention_kernel: Optional[str] = None,
         device=None,
@@ -143,16 +147,17 @@ class MultiheadAttention(nn.Module):
             output_initializer = output_layer_initializer
 
         self.initializer = attention_initializer
-        self.query_initalizer = self.initializer
+        self.query_initializer = self.initializer
         if attention_q_initializer is not None:
-            self.query_initalizer = attention_q_initializer
+            self.query_initializer = attention_q_initializer
         self.output_initializer = output_initializer
         self.bias_initializer = bias_initializer
         self.softmax_dtype_fp32 = softmax_dtype_fp32
 
         self._scope = None
-        if attention_kernel:
+        if attention_kernel and cm.use_cs():
             self._scope = cbtorch.nn.Scope(attention_kernel.upper())
+        self.scale_qk_dot_by_d = scale_qk_dot_by_d
 
         self.__reset_parameters()
 
@@ -170,7 +175,7 @@ class MultiheadAttention(nn.Module):
             bias_initializer(self.proj_output_dense_layer.bias.data)
 
         # q projection
-        weight_initializer = create_initializer(self.query_initalizer)
+        weight_initializer = create_initializer(self.query_initializer)
         weight_initializer(self.proj_q_dense_layer.weight.data)
 
         # k, v projections
@@ -224,15 +229,15 @@ class MultiheadAttention(nn.Module):
                 computations when the decoder is called within an
                 autoregressive loop. Defaults to ``False``.
             past_kv_self_attn (bool): Specifies whether the past keys & values should be
-                used for self-attention (true) of cross-attention (false). Ignored if
+                used for self-attention (true) or cross-attention (false). Ignored if
                 past_kv is not provided. Default: True
-            position_bias (Tensor): Tensor containing position bias to apply in attention.
-            rotary_position_embedding_helper (Optional[RotaryPositionEmbeddingHelper]): 
+            position_bias (Tensor): Tensor containing position bias to apply in attention
+                with shape ``[num_heads, query_length, key_length]``.
+            rotary_position_embedding_helper (Optional[RotaryPositionEmbeddingHelper]):
                 A helper class to apply rotary embedding on the input tensor.
 
         Returns:
-            If ``cache_present_kv`` is ``False``, no entry for present keys and values
-            is provided.
+            Attention output tensor with shape ``[batch_size, seq_length, embed_dim]``.
         """
         if self._scope:
             q = self._scope(q)
@@ -271,6 +276,11 @@ class MultiheadAttention(nn.Module):
         offset_length, real_seq_length = self.get_sequence_length(
             past_kv, real_seq_length
         )
+
+        # Scale k for muP transfer before Transpose to get around the compile issue
+        if self.scale_qk_dot_by_d and self.scale_dot_product:
+            depth = self.embed_dim // self.num_heads
+            k *= torch.tensor(1 / float(depth) ** 0.5, dtype=k.dtype)
 
         # rotary embedding helper
         k = self.apply_rotary_position_embedding(

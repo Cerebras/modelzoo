@@ -12,21 +12,30 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# isort: off
 import os
 import sys
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "../../.."))
-from modelzoo.common.pytorch.run_utils import run
-from modelzoo.fc_mnist.pytorch.data import (
-    get_eval_dataloader,
-    get_train_dataloader,
-)
-from modelzoo.fc_mnist.pytorch.model import MNISTModel
-from modelzoo.fc_mnist.pytorch.utils import set_defaults
+# isort: on
+
+from modelzoo.common.run_utils.cli_pytorch import get_params_from_args
 
 
 def main():
-    run(MNISTModel, get_train_dataloader, get_eval_dataloader, set_defaults)
+    params = get_params_from_args()
+    from modelzoo.fc_mnist.pytorch.utils import set_defaults
+
+    set_defaults(params)
+
+    from modelzoo.common.pytorch.run_utils import main
+    from modelzoo.fc_mnist.pytorch.data import (
+        get_eval_dataloader,
+        get_train_dataloader,
+    )
+    from modelzoo.fc_mnist.pytorch.model import MNISTModel
+
+    main(params, MNISTModel, get_train_dataloader, get_eval_dataloader)
 
 
 if __name__ == '__main__':

@@ -33,7 +33,6 @@ python run.py CSX {pipeline,weight_streaming} --checkpoint_path /path/to/checkpo
 | Cerebras-GPT muP | 1.3B muP   | [cerebras-gpt-dense-1p3b-mup-checkpoint_final.mdl](https://cerebras-public.s3.us-west-2.amazonaws.com/cerebras-gpt-checkpoints/dense/1.3B/mup/cerebras-gpt-dense-1p3b-mup-checkpoint_final.mdl) |
 | Cerebras-GPT muP | 2.7B muP   | [cerebras-gpt-dense-2p7b-mup-checkpoint_final.mdl](https://cerebras-public.s3.us-west-2.amazonaws.com/cerebras-gpt-checkpoints/dense/2.7B/mup/cerebras-gpt-dense-2p7b-mup-checkpoint_final.mdl) |
 
-
 ## Model Description
 
 The Cerebras-GPT family is released to facilitate research into LLM scaling laws using open architectures and data sets and demonstrate the simplicity of and scalability of training LLMs on the Cerebras software and hardware stack. All Cerebras-GPT models are available on Hugging Face.
@@ -63,7 +62,6 @@ Cerebras systems checkpoints for pre-training and fine tuning are available in t
 **Contact**: To ask questions about Cerebras-GPT models, join the Cerebras Discord, and post them in **#scaling-laws-release.**
 
 *NOTE:* The `muP` configs will be available in the later Model Zoo release.
-
 <br><br>
 
 | Model         | Parameters | Layers | d_model | Heads | d_head | d_ffn  | LR       | BS (seq) | BS (tokens)     |

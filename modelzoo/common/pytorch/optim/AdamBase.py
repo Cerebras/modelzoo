@@ -54,6 +54,7 @@ class AdamBase(CSOptimizer):
             )
         if not 0.0 <= eps:
             raise ValueError(f"Invalid epsilon value: {eps} - should be >= 0.0")
+
         defaults = dict(
             lr=lr,
             betas=betas,
@@ -163,7 +164,6 @@ class AdamBase(CSOptimizer):
                 if group["weight_decay"] > 0.0:
                     update.add_(p, alpha=group["weight_decay"])
 
-                # Scale the update by the learning rate.
                 update *= group["lr"]
 
                 # Finally, update the weight data.
@@ -264,6 +264,7 @@ class AdamW(AdamBase):
         correct_bias: bool = True,
         amsgrad: bool = False,
     ):
+
         super(AdamW, self).__init__(
             params=params,
             lr=lr,

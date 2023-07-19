@@ -57,13 +57,11 @@ class BertForQuestionAnsweringModel(torch.nn.Module):
 
         check_unused_model_params(model_params)
 
-    def __call__(self, data):
+    def forward(self, data):
         logits, start_logits, end_logits = self.model(
             input_ids=data["input_ids"],
             token_type_ids=data["token_type_ids"],
             attention_mask=data["attention_mask"],
-            labels=data["labels"],
-            label_weights=data["label_weights"],
         )
         loss = self.loss_fn(logits, data["labels"], data["label_weights"])
 

@@ -12,21 +12,39 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Union
+
+import torch.nn as nn
+
 from .AttentionLayer import MultiheadAttention
+from .MultiQueryAttentionLayer import MultiQueryAttention
 
 ATTENTION_TYPE_DICT = {
     "aiayn_attention": MultiheadAttention,
+    "multiquery_attention": MultiQueryAttention,
 }
 
 
-def get_attention_module(attn_type: str, extra_params):
+def get_attention_module(attn_module: Union[str, nn.Module], extra_params):
     """
-        This function retrieves the attention module according to `attn_type` and 
-        checks if provided extra_params is correctly related to the attention module
+        This function retrieves the attention module according to 
+        `attn_module`. If the input is a string, the function lookups
+        the corresponding attention class and checks if provided extra_params is
+        correctly related to the attention module. If the input is a nn.Module,
+        it returns the input (and ensures that the extra_params are correct if
+        applicable)
     """
+    # attn_module is a nn.Module:
+    if isinstance(attn_module, nn.Module):
+        if hasattr(attn_module, "check_extra_params"):
+            attn_module.check_extra_params(extra_params)
+        return attn_module
+
+    # attn_module is a string:
+    attn_module = attn_module.lower()
     assert (
-        attn_type in ATTENTION_TYPE_DICT
-    ), f"Attention {attn_type} not supported"
-    attn_module = ATTENTION_TYPE_DICT[attn_type.lower()]
-    attn_module.check_extra_params(extra_params)
-    return attn_module
+        attn_module in ATTENTION_TYPE_DICT
+    ), f"Attention {attn_module} not supported"
+    attn_class = ATTENTION_TYPE_DICT[attn_module]
+    attn_class.check_extra_params(extra_params)
+    return attn_class

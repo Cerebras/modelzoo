@@ -24,7 +24,7 @@ from modelzoo.common.pytorch.model_utils.checkpoint_converters.base_converter im
     ConfigConversionError,
     ConversionRule,
     EquivalentSubkey,
-    converter_notes,
+    FormatVersions,
 )
 
 
@@ -222,6 +222,31 @@ class Converter_T5_CS16_CS17(BaseCheckpointConverter_PT_PT):
                     EquivalentSubkey("block", "layers"),
                     "\.\d+\.",
                     EquivalentSubkey(
+                        "layer.1.DenseReluDense.wi_0",
+                        "ffn.ffn.0.linear_layer_for_glu",
+                    ),
+                    "\.(?:weight|bias)",
+                ],
+                action=self.convert_dense_layer,
+            ),
+            ConversionRule(
+                [
+                    "(?:encoder|decoder)\.",
+                    EquivalentSubkey("block", "layers"),
+                    "\.\d+\.",
+                    EquivalentSubkey(
+                        "layer.1.DenseReluDense.wi_1", "ffn.ffn.0.linear_layer"
+                    ),
+                    "\.(?:weight|bias)",
+                ],
+                action=self.convert_dense_layer,
+            ),
+            ConversionRule(
+                [
+                    "(?:encoder|decoder)\.",
+                    EquivalentSubkey("block", "layers"),
+                    "\.\d+\.",
+                    EquivalentSubkey(
                         "layer.1.DenseReluDense.wo", "ffn.ffn.1.linear_layer"
                     ),
                     "\.(?:weight|bias)",
@@ -239,6 +264,31 @@ class Converter_T5_CS16_CS17(BaseCheckpointConverter_PT_PT):
                     "\.(?:weight|bias)",
                 ],
                 action=self.replaceKey,
+            ),
+            ConversionRule(
+                [
+                    "(?:encoder|decoder)\.",
+                    EquivalentSubkey("block", "layers"),
+                    "\.\d+\.",
+                    EquivalentSubkey(
+                        "layer.2.DenseReluDense.wi_0",
+                        "ffn.ffn.0.linear_layer_for_glu",
+                    ),
+                    "\.(?:weight|bias)",
+                ],
+                action=self.convert_dense_layer,
+            ),
+            ConversionRule(
+                [
+                    "(?:encoder|decoder)\.",
+                    EquivalentSubkey("block", "layers"),
+                    "\.\d+\.",
+                    EquivalentSubkey(
+                        "layer.2.DenseReluDense.wi_1", "ffn.ffn.0.linear_layer"
+                    ),
+                    "\.(?:weight|bias)",
+                ],
+                action=self.convert_dense_layer,
             ),
             ConversionRule(
                 [
@@ -293,6 +343,17 @@ class Converter_T5_CS16_CS17(BaseCheckpointConverter_PT_PT):
                 layer_names = new_key.split(".")
                 layer_names[layer_names.index("layer") + 1] = "2"
                 new_key = '.'.join(layer_names)
+
+            # The ".linear_layer" needs to be mapped differently if we are using
+            # a gated attention:
+            if action_fn_args["configs"][0].get("is_gated_act", False):
+                wi_position = new_key.find(".wi.")
+                if wi_position != -1:
+                    new_key = (
+                        new_key[:wi_position]
+                        + ".wi_1."
+                        + new_key[wi_position + len(".wi.") :]
+                    )
 
             new_state_dict[new_key] = old_state_dict[old_key]
 
@@ -367,9 +428,12 @@ class Converter_T5_CS16_CS17(BaseCheckpointConverter_PT_PT):
         return {"model": checkpoint["model"]}
 
     @staticmethod
-    @converter_notes(notes="CS 1.6 <-> CS 1.7 T5ForConditionalGeneration")
-    def formats() -> Tuple[str, str]:
-        return ("cs-1.6", "cs-1.7")
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("cs-1.6"), FormatVersions("cs-1.7"))
+
+    @classmethod
+    def converter_note(cls) -> str:
+        return "T5ForConditionalGeneration class"
 
     @staticmethod
     def get_config_converter_class() -> BaseConfigConverter:
@@ -389,9 +453,12 @@ class Converter_T5_CS17_CS18(BaseCheckpointConverter_PT_PT):
         ]
 
     @staticmethod
-    @converter_notes(notes="CS 1.7 <-> CS 1.8 T5ForConditionalGeneration")
-    def formats() -> Tuple[str, str]:
-        return ("cs-1.7", "cs-1.8")
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("cs-1.7"), FormatVersions("cs-1.8", "cs-1.9"))
+
+    @classmethod
+    def converter_note(cls) -> str:
+        return "T5ForConditionalGeneration class"
 
     @staticmethod
     def get_config_converter_class() -> BaseConfigConverter:
@@ -423,9 +490,12 @@ class Converter_T5_CS16_CS18(BaseCheckpointConverter_PT_PT):
         return {"model": checkpoint["model"]}
 
     @staticmethod
-    @converter_notes(notes="CS 1.6 <-> CS 1.8 T5ForConditionalGeneration")
-    def formats() -> Tuple[str, str]:
-        return ("cs-1.6", "cs-1.8")
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("cs-1.6"), FormatVersions("cs-1.8", "cs-1.9"))
+
+    @classmethod
+    def converter_note(cls) -> str:
+        return "T5ForConditionalGeneration class"
 
     @staticmethod
     def get_config_converter_class() -> BaseConfigConverter:
@@ -441,8 +511,8 @@ class ConfigConverter_T5_CS16_CS17(BaseConfigConverter_CS_CS):
         ]
 
     @staticmethod
-    def formats() -> Tuple[str, str]:
-        return ("cs-1.6", "cs-1.7")
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("cs-1.6"), FormatVersions("cs-1.7"))
 
 
 class ConfigConverter_T5_CS17_CS18(BaseConfigConverter_CS_CS):
@@ -471,8 +541,8 @@ class ConfigConverter_T5_CS17_CS18(BaseConfigConverter_CS_CS):
         new_state_dict[new_key] = not old_state_dict[old_key]
 
     @staticmethod
-    def formats() -> Tuple[str, str]:
-        return ("cs-1.7", "cs-1.8")
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("cs-1.7"), FormatVersions("cs-1.8", "cs-1.9"))
 
 
 class ConfigConverter_T5_CS16_CS18(ConfigConverter_T5_CS16_CS17,):
@@ -487,8 +557,8 @@ class ConfigConverter_T5_CS16_CS18(ConfigConverter_T5_CS16_CS17,):
         ]
 
     @staticmethod
-    def formats() -> Tuple[str, str]:
-        return ("cs-1.6", "cs-1.8")
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("cs-1.6"), FormatVersions("cs-1.8", "cs-1.9"))
 
 
 ### T5ForConditional Generation HF <-> CS1.7
@@ -628,9 +698,14 @@ class Converter_T5_HF_CS17(
         )
 
     @staticmethod
-    @converter_notes(notes="HF <-> CS 1.7 T5ForConditionalGeneration")
-    def formats() -> Tuple[str, str]:
-        return ("hf", "cs-1.7")
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-1.7"))
+
+    @classmethod
+    def converter_note(cls) -> str:
+        return "{} <-> {} T5ForConditionalGeneration".format(
+            cls.formats()[0], cls.formats()[1]
+        )
 
     @staticmethod
     def get_config_converter_class() -> BaseConfigConverter:
@@ -651,9 +726,14 @@ class Converter_T5_HF_CS18(BaseCheckpointConverter_HF_CS):
         ]
 
     @staticmethod
-    @converter_notes(notes="HF <-> CS 1.8 T5ForConditionalGeneration")
-    def formats() -> Tuple[str, str]:
-        return ("hf", "cs-1.8")
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-1.8", "cs-1.9"))
+
+    @classmethod
+    def converter_note(cls) -> str:
+        return "{} <-> {} T5ForConditionalGeneration".format(
+            cls.formats()[0], cls.formats()[1]
+        )
 
     @staticmethod
     def get_config_converter_class() -> BaseConfigConverter:
@@ -771,9 +851,24 @@ class ConfigConverter_T5_HF_CS17(BaseConfigConverter_HF_CS):
         from_index,
         action_fn_args,
     ):
-        new_state_dict[new_key] = old_state_dict[old_key]
+        activation = old_state_dict[old_key]
+        is_gated = False
+        if from_index == 0 and old_state_dict.get("is_gated_act", False):
+            is_gated = True
+            gated_hf2cs = {"silu": "swiglu", "relu": "reglu", "gelu": "geglu"}
+            assert activation in gated_hf2cs.keys()
+            activation = gated_hf2cs[activation]
+        elif from_index == 1 and activation.endswith("glu"):
+            is_gated = True
+            gated_cs2hf = {"swiglu": "silu", "reglu": "relu", "geglu": "gelu"}
+            assert activation in gated_cs2hf.keys()
+            activation = gated_cs2hf[activation]
+
+        new_state_dict[new_key] = activation
         if from_index == 0:
-            new_state_dict["decoder_nonlinearity"] = old_state_dict[old_key]
+            new_state_dict["decoder_nonlinearity"] = activation
+        else:
+            new_state_dict["is_gated_act"] = is_gated
 
     def assert_decoder_nonlinearity(
         self,
@@ -793,8 +888,8 @@ class ConfigConverter_T5_HF_CS17(BaseConfigConverter_HF_CS):
             )
 
     @staticmethod
-    def formats() -> Tuple[str, str]:
-        return ("hf", "cs-1.7")
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-1.7"))
 
     def pre_config_convert(
         self, config, from_index,
@@ -902,5 +997,5 @@ class ConfigConverter_T5_HF_CS18(ConfigConverter_T5_HF_CS17):
         return super().pre_config_convert(config, from_index)
 
     @staticmethod
-    def formats() -> Tuple[str, str]:
-        return ("hf", "cs-1.8")
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-1.8", "cs-1.9"))

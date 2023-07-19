@@ -106,12 +106,7 @@ class BertForSequenceClassification(nn.Module):
             self.classifier.bias.data.zero_()
 
     def forward(
-        self,
-        input_ids=None,
-        token_type_ids=None,
-        attention_mask=None,
-        position_ids=None,
-        labels=None,
+        self, input_ids=None, token_type_ids=None, attention_mask=None,
     ):
 
         _, pooled_outputs = self.bert(
@@ -162,12 +157,7 @@ class BertForQuestionAnswering(nn.Module):
             self.classifier.bias.data.zero_()
 
     def forward(
-        self,
-        input_ids=None,
-        attention_mask=None,
-        token_type_ids=None,
-        labels=None,
-        label_weights=None,
+        self, input_ids=None, attention_mask=None, token_type_ids=None,
     ):
         encoded_outputs, _ = self.bert(
             input_ids,
@@ -244,12 +234,7 @@ class BertForTokenClassification(nn.Module):
             self.classifier.bias.data.zero_()
 
     def forward(
-        self,
-        input_ids=None,
-        attention_mask=None,
-        token_type_ids=None,
-        loss_mask=None,
-        labels=None,
+        self, input_ids=None, attention_mask=None, token_type_ids=None,
     ):
         encoded_outputs, _ = self.bert(
             input_ids,
@@ -316,9 +301,7 @@ class BertForSummarization(nn.Module):
         input_ids=None,
         attention_mask=None,
         token_type_ids=None,
-        labels=None,
         cls_tokens_positions=None,
-        cls_label_weights=None,
     ):
         encoded_outputs, _ = self.bert(
             input_ids,

@@ -107,10 +107,7 @@ class LossSaver:
         return sum(vals) / len(vals)
 
 
-if CSOFT_PACKAGE == CSoftPackage.SRC:
-    # pylint: disable=unused-import
-    from cerebras.framework.torch.utils import extract_loss
-elif CSOFT_PACKAGE == CSoftPackage.WHEEL:
+if CSOFT_PACKAGE in (CSoftPackage.SRC, CSoftPackage.WHEEL):
     # pylint: disable=unused-import
     from cerebras_pytorch.utils import extract_loss
 elif CSOFT_PACKAGE == CSoftPackage.NONE:

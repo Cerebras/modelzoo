@@ -1,25 +1,21 @@
 # Summarization task
 
 - [Model overview](#model-overview)
-  - [Rouge metric](#Rouge-metric)
+  - [Rouge metric](#rouge-metric)
 - [Sequence of steps to perform](#sequence-of-steps-to-perform)
-- [Key features from Cerebras](#key-features-from-cerebras)
 - [Structure of the code](#structure-of-the-code)
 - [Download and prepare the dataset](#download-and-prepare-the-dataset)
-	- [BERT Summarization input](#BERT-Summarization-Input)
-		- [BERT Summarization features dictionary](#BERT-Summarization-features-dictionary)
-      - [Prepare input format](#Prepare-input-format) 
+  - [BERT Summarization input](#bert-summarization-input)
+    - [BERT Summarization features dictionary](#bert-summarization-features-dictionary)
+    - [Prepare input format](#prepare-input-format)
 - [Input function pipeline](#input-function-pipeline)
-- [Compile model](#compile-model)
-  - [Validate only](#validate-only)
-  - [Compile only](#compile-only)
 - [Run fine-tuning](#run-fine-tuning)
-	- [Run fine-tuning on Cerebras System](#run-fine-tuning-on-the-cerebras-system)
-	- [Run fine-tuning on GPU](#run-fine-tuning-on-gpu)
+- [To compile/validate, run train and eval on Cerebras System](#to-compilevalidate-run-train-and-eval-on-cerebras-system)
+- [To run train and eval on GPU/CPU](#to-run-train-and-eval-on-gpucpu)
 - [Configs included for this model](#configs-included-for-this-model)
 - [References](#references)
 
-## Model overview <a name="model-overview"></a>
+## Model overview
 
 A summarizaion task is the task of automatically generating a shorter version of the 
 document while retaining its most important information.
@@ -42,7 +38,6 @@ This percentage can be later on evaluated in terms of `f1-score`, `precition` an
 <img src="images/bertsum-rouge.png" width="1000">
 
 
-
 ## Sequence of steps to perform
 
 The following block diagram shows a high-level view of the sequence of steps you will perform in this example.
@@ -53,11 +48,6 @@ The following block diagram shows a high-level view of the sequence of steps you
 <p align = "center">
 Fig.1 - Flow Chart of steps to fine-tune BERT summarization model
 </p>
-
-
-## Key features from Cerebras
-BERT for extractive summarization is pipeline mode enabled, in this mode, during the runtime all the layers of the network are loaded altogether onto the Cerebras WSE. Training data is streamed into the WSE continuously. Weights are updated on the WSE and remain in the memory on the WSE within the layer to which they belong. For more details, see [[3]](https://docs.cerebras.net/en/latest/cerebras-basics/cerebras-execution-modes.html#layer-pipelined-mode).
-
 
 ## Structure of the code
 

@@ -61,9 +61,12 @@ class TransformerEncoder(nn.Module):
         for layer in self.layers:
             layer.reset_parameters()
         if self.norm:
-            if hasattr(self.norm, 'bias'):
+            if hasattr(self.norm, 'bias') and hasattr(self.norm.bias, "data"):
                 self.norm.bias.data.zero_()
-            self.norm.weight.data.fill_(1.0)
+            if hasattr(self.norm, 'weight') and hasattr(
+                self.norm.weight, "data"
+            ):
+                self.norm.weight.data.fill_(1.0)
 
     def forward(
         self,
@@ -79,6 +82,8 @@ class TransformerEncoder(nn.Module):
             src: the sequence to the encoder (required).
             mask: the mask for the src sequence (optional).
             src_key_padding_mask: the mask for the src keys per batch (optional).
+            self_attn_position_bias: the tensor containing position bias to apply in self-attention,
+                can be obtained from relative or alibi position embeddings.
 
         Shape:
             see the docs in Transformer class.

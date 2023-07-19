@@ -8,6 +8,7 @@ train_input:
     shuffle: True
     shuffle_seed: 1
     shuffle_buffer: 16384 # large buffer size allows batches to contain samples from multiple documents
+    # The effective batch size, which is evenly divided across "num_csx" systems used for the run
     batch_size: 216 # this gives roughly 2**16 tokens per batch
                     # for GPU(16GB) set batch_size: 8
                     # 8 * 27 = 216 with grad_accum_steps: 27
@@ -24,6 +25,7 @@ eval_input:
     tgt_max_sequence_length: 114
     shuffle: False
     shuffle_seed: 1 # also for deterministic masking
+    # The effective batch size, which is evenly divided across "num_csx" systems used for the run
     batch_size: 216
     num_workers: 8
     prefetch_factor: 10
@@ -55,8 +57,8 @@ model:
     # Encoder -- ffn
     d_ff: 3072 # Size of the intermediate feed forward layer in t5 blocks.
     d_model: 768  # Size of the encoder layers and the pooler layer.
-    encoder_nonlinearity: "relu" # {"gelu", "relu", "gated-gelu"}
-    decoder_nonlinearity: "relu" # {"gelu", "relu", "gated-gelu"}
+    encoder_nonlinearity: "relu" # {"gelu", "relu", "geglu"}
+    decoder_nonlinearity: "relu" # {"gelu", "relu", "geglu"}
     layer_norm_epsilon: 1.0e-5
 
     ## Decoder
@@ -70,7 +72,7 @@ model:
 
     # Cerebras configs.
     mixed_precision: True
-    enable_vts: True
+    use_bfloat16: True
 
 optimizer:
     optimizer_type: "AdamW" # in the paper AdaFactor is used, but AdamW should be a good alternative.

@@ -17,19 +17,26 @@ import sys
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "../../../.."))
 
-from modelzoo.common.pytorch.run_utils import run
-from modelzoo.transformers.pytorch.gptj.data import (
-    eval_input_dataloader,
-    train_input_dataloader,
-)
-from modelzoo.transformers.pytorch.gptj.model import GptjModel
-from modelzoo.transformers.pytorch.gptj.utils import set_defaults
+from modelzoo.common.run_utils.cli_pytorch import get_params_from_args
 
 
 def main():
 
-    run(
-        GptjModel, train_input_dataloader, eval_input_dataloader, set_defaults,
+    params = get_params_from_args()
+
+    from modelzoo.transformers.pytorch.gptj.utils import set_defaults
+
+    set_defaults(params)
+
+    from modelzoo.common.pytorch.run_utils import main
+    from modelzoo.transformers.pytorch.gpt2.data import (
+        eval_input_dataloader,
+        train_input_dataloader,
+    )
+    from modelzoo.transformers.pytorch.gptj.model import GptjModel
+
+    main(
+        params, GptjModel, train_input_dataloader, eval_input_dataloader,
     )
 
 

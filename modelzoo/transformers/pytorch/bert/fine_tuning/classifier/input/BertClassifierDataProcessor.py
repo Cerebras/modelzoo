@@ -23,8 +23,10 @@ import os
 import numpy as np
 import torch
 
-from modelzoo.common.pytorch import modes
-from modelzoo.transformers.data_processing.Tokenization import FullTokenizer
+from modelzoo.common.pytorch.input_utils import get_streaming_batch_size
+from modelzoo.transformers.data_processing.tokenizers.Tokenization import (
+    FullTokenizer,
+)
 from modelzoo.transformers.pytorch.bert.input.utils import build_vocab
 from modelzoo.transformers.pytorch.input_utils import ShardedSampler
 
@@ -42,7 +44,7 @@ class ClassifierDataset(torch.utils.data.Dataset):
     """
 
     def __init__(self, params, is_training):
-        self.batch_size = params["batch_size"]
+        self.batch_size = get_streaming_batch_size(params["batch_size"])
         self.data_dir = params["data_dir"]
         self.is_training = is_training
 
@@ -86,8 +88,8 @@ class ClassifierDataset(torch.utils.data.Dataset):
         Args:
             text1 (str): First text to encode.
             text2 (str): Second text to encode or `None`.
-        
-        Returns: 
+
+        Returns:
             A list for `input_ids`, `segment_ids` and `attention_mask`.
             - input_ids (np.array[int.32]): Numpy array with input token indices.
                 Shape: (`max_sequence_length`).
@@ -191,7 +193,7 @@ class SST2Dataset(ClassifierDataset):
                 token_type_ids:  np.array[int32] segment ids
                     shape: (max_sequence_length, )
                 labels: int32 scalar indicating the sentiment
-        
+
         Returns:
             A dict with features.
         """
@@ -273,7 +275,7 @@ class MNLIDataset(ClassifierDataset):
                 token_type_ids:  np.array[int32] segment ids
                     shape: (max_sequence_length, )
                 labels: int32 scalar indicating the sentiment
-        
+
         Returns:
             A dict with features.
         """
@@ -327,7 +329,7 @@ class DataProcessor(abc.ABC):
     def __init__(self, data_params, model_params) -> None:
         self.data_params = data_params
         self.model_params = model_params
-        self.batch_size = data_params["batch_size"]
+        self.batch_size = get_streaming_batch_size(data_params["batch_size"])
         self.shuffle = data_params.get("shuffle", True)
         self.shuffle_seed = data_params.get("shuffle_seed", None)
         self.num_workers = data_params.get("num_workers", 0)
@@ -343,11 +345,10 @@ class DataProcessor(abc.ABC):
         )
 
     def create_dataloader(self, is_training=True):
-        self.create_dataset(is_training)
+        self.create_dataset(is_training=is_training)
         assert self.dataset, "Unexpected error, dataset is None."
-        mode = modes.TRAIN if is_training else modes.EVAL
         sharded_sampler = ShardedSampler(
-            self.dataset, mode, self.shuffle, self.shuffle_seed, self.drop_last,
+            self.dataset, self.shuffle, self.shuffle_seed, self.drop_last,
         )
         if self.num_workers:
             # prefetch factor only allowed with `num_workers > 0`

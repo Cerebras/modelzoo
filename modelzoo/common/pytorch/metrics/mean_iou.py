@@ -16,7 +16,7 @@
 mean Intersection-Over-Union (mIOU) metric for PyTorch.
 Calculate per-step mean Intersection-Over-Union (mIOU).
 """
-from typing import Optional
+from typing import List, Optional
 
 import torch
 
@@ -24,12 +24,14 @@ from modelzoo.common.pytorch import cb_model as cm
 from modelzoo.common.pytorch.metrics.cb_metric import CBMetric, DeviceOutputs
 from modelzoo.common.pytorch.metrics.metric_utils import (
     compute_confusion_matrix,
+    compute_mask,
     divide_no_nan,
 )
 
 
-def compute_helper(confusion_matrix):
+def compute_helper(confusion_matrix, mask):
     """Returns the meanIOU"""
+    mask = cm.make_constant(mask)
 
     sum_over_row = torch.sum(confusion_matrix, 0, dtype=torch.float)
     sum_over_col = torch.sum(confusion_matrix, 1, dtype=torch.float)
@@ -39,8 +41,10 @@ def compute_helper(confusion_matrix):
     wgth_id = torch.eye(
         confusion_matrix.shape[0], device=confusion_matrix.device
     )
-    cm_diag = (wgth_id * confusion_matrix).sum(axis=-1, dtype=torch.float)
-    denominator = sum_over_row + sum_over_col - cm_diag
+    cm_diag = (wgth_id * confusion_matrix).sum(
+        axis=-1, dtype=torch.float
+    ) * mask
+    denominator = (sum_over_row + sum_over_col - cm_diag) * mask
 
     # The mean is only computed over classes that appear in the
     # label or prediction tensor. If the denominator is 0, we need to
@@ -85,6 +89,7 @@ class _PipelineMeanIOUMetric(CBMetric):
         num_classes: The possible number of labels the prediction task can
             have. This value must be provided, since a confusion matrix of
             dimension = [num_classes, num_classes] will be allocated.
+        ignore_classes: The class ids to be ignored during metric computation.
         weights: Optional `Tensor` whose rank is either 0, or the same rank as
             `labels`, and must be broadcastable to `labels` (i.e., all dimensions must
             be either `1`, or the same as the corresponding `labels` dimension).
@@ -99,8 +104,14 @@ class _PipelineMeanIOUMetric(CBMetric):
                 `weights` is not `None` and its shape doesn't match `predictions`
     """
 
-    def __init__(self, num_classes, name: Optional[str] = None):
+    def __init__(
+        self,
+        num_classes,
+        ignore_classes: Optional[List[int]] = None,
+        name: Optional[str] = None,
+    ):
         self.num_classes = num_classes
+        self.mask = compute_mask(num_classes, ignore_classes)
         super().__init__(name=name)
 
     def init_state(self):
@@ -141,12 +152,18 @@ class _PipelineMeanIOUMetric(CBMetric):
 
     def compute(self):
         """Returns the meanIOU as a float."""
-        return float(compute_helper(self.confusion_matrix))
+        return float(compute_helper(self.confusion_matrix, self.mask))
 
 
 class _WSMeanIOUMetric(CBMetric):
-    def __init__(self, num_classes, name: Optional[str] = None):
+    def __init__(
+        self,
+        num_classes,
+        ignore_classes: Optional[List[int]] = None,
+        name: Optional[str] = None,
+    ):
         self.num_classes = num_classes
+        self.mask = compute_mask(num_classes, ignore_classes)
         super().__init__(name=name)
 
     def init_state(self):
@@ -177,8 +194,8 @@ class _WSMeanIOUMetric(CBMetric):
             on_device=True,
         )
         self.confusion_matrix.add_(confusion_matrix)
-        mean_iou = compute_helper(self.confusion_matrix)
-        return DeviceOutputs(args=[mean_iou.to(torch.float16)])
+        mean_iou = compute_helper(self.confusion_matrix, self.mask)
+        return DeviceOutputs(args=[mean_iou.to(predictions.dtype)])
 
     def update_on_host(self, result):
         self.result = result
@@ -193,9 +210,7 @@ class _WSMeanIOUMetric(CBMetric):
         ).to(cm.device())
 
     def on_device_state_dict(self):
-        return {
-            "confusion_matrix": self.confusion_matrix,
-        }
+        return {"confusion_matrix": self.confusion_matrix}
 
 
 # Create a factory for creating a metric depending on execution strategy.

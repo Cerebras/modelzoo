@@ -86,7 +86,7 @@ Here is the example of the WordPiece algorithm at work:
 In this example we used vocabulary with tokens `[..., "!", "##e", "##s", "am", "converting", "i", "into", "sentence", "this", "token", "word", ...]`, and you can see the input is transformed from words into tokens.
 As in our previous example with BPE, we can see a specail token `"##"` added to identify the word boundaries.
 
-You can find our own reference implementation at [monolith/src/models/transformers/data_processing/Tokenization.py#L302](./Tokenization.py#L302).
+You can find our own reference implementation at [monolith/src/models/transformers/data_processing/tokenizers/Tokenization.py#L302](./Tokenization.py#L302).
 In order to use it, please provide the next list of params:
 ```
 :param str vocab_file: File containing vocabulary, each token in new line;
@@ -97,7 +97,7 @@ In order to use it, please provide the next list of params:
 In this section, you can see where and how you can add your own tokenizer, following examples from the 
 previous sections in this documentation. 
 
-The easiest way to add a new tokenizer is to add another class in this file [monolith/src/models/transformers/data_processing/Tokenization.py](./Tokenization.py), and inherit it from [`BaseTokenizer`](./Tokenization.py#L37).
+The easiest way to add a new tokenizer is to add another class in this file [monolith/src/models/transformers/data_processing/tokenizers/Tokenization.py](./Tokenization.py), and inherit it from [`BaseTokenizer`](./tokenizers/Tokenization.py#L37).
 If you want to change the tokenizer class for your models, you need to update which tokenization class you're calling 
 in the dataloader script. For example, for [BERT](../tf/bert) these lines would need to be replaced with a call of a different 
 class: [TfRecordsDynamicMaskProcessor.py#L47](../tf/bert/input/BertMlmOnlyTfRecordsDynamicMaskProcessor.py#L47).
@@ -107,18 +107,18 @@ grammar filtering on the raw bulk of text. By inheriting, you don't have to impl
 scratch. However, there are a few methods that still need to be created: tokenization method, and a method to convert 
 tokens to the indices. 
 
-By default `BaseTokenizer` provides you with the [tokenize](./Tokenization.py#L207)
+By default `BaseTokenizer` provides you with the [tokenize](./tokenizers/Tokenization.py#L207)
 method that accepts a text as an input, and tokenizes it into tokens. If this method requires any changes for 
 your tokenization algorithm, please overwrite it inside your own tokenizer. 
 
 By default `BaseTokenizer` does not provide any method to convert your input tokens into the indices that can be 
-fed into the model. You need to create you own following an example provided in the `FullTokenizer`: [convert_tokens_to_ids](./Tokenization.py#L321).
+fed into the model. You need to create you own following an example provided in the `FullTokenizer`: [convert_tokens_to_ids](./tokenizers/Tokenization.py#L321).
 
 Below we are going to create an example of your own tokenizer, given `BaseTokenizer` as a base class: 
 
 ```python
 from collections import defaultdict 
-from Tokenization import BaseTokenizer
+from tokenizers.Tokenization import BaseTokenizer
 
 class MyOwnTokenizer(BaseTokenizer):
     def __init__(self):

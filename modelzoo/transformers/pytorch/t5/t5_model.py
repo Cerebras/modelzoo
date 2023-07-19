@@ -37,8 +37,8 @@ import torch
 import torch.nn as nn
 
 from modelzoo.common.pytorch.layers import (
-    BiaslessLayerNorm,
     EmbeddingLayer,
+    RMSNorm,
     TransformerDecoder,
     TransformerDecoderLayer,
     TransformerEncoder,
@@ -89,11 +89,11 @@ class T5ForConditionalGeneration(nn.Module):
             A factor for initializing all weight matrices (should be kept to 1, used internally for initialization
             testing).
         encoder_nonlinearity (:obj:`string`, `optional`, defaults to :obj:`"relu"`):
-             Type of feed forward layer to be used in encoder. Should be one of :obj:`"relu"` or :obj:`"gated-gelu"` or
-              :obj:`"gelu"`. T5v1.1 uses the :obj:`"gated-gelu"` feed forward projection. Original T5 uses :obj:`"relu"`.
+             Type of feed forward layer to be used in encoder. Should be one of :obj:`"relu"` or :obj:`"geglu"` or
+              :obj:`"gelu"`. T5v1.1 uses the :obj:`"geglu"` feed forward projection. Original T5 uses :obj:`"relu"`.
         decoder_nonlinearity (:obj:`string`, `optional`, defaults to :obj:`"relu"`):
-             Type of feed forward layer to be used in decoder. Should be one of :obj:`"relu"` or :obj:`"gated-gelu"` or
-             :obj:`"gelu"`. T5v1.1 uses the :obj:`"gated-gelu"` feed forward projection. Original T5 uses :obj:`"relu"`.
+             Type of feed forward layer to be used in decoder. Should be one of :obj:`"relu"` or :obj:`"geglu"` or
+             :obj:`"gelu"`. T5v1.1 uses the :obj:`"geglu"` feed forward projection. Original T5 uses :obj:`"relu"`.
         use_cache (:obj:`bool`, `optional`, defaults to :obj:`True`):
             Whether or not the model should return the last key/values attentions (not used by all models).
         position_embedding_type (:obj: `string`, `optional`, defaults to :obj:`"relative"`):
@@ -163,6 +163,7 @@ class T5ForConditionalGeneration(nn.Module):
         decoder_nonlinearity="relu",
         use_projection_bias_in_attention=False,
         attention_softmax_fp32=True,
+        attention_kernel=None,
         use_cache=False,
         decoder_start_token_id=None,
         pad_token_id=0,
@@ -176,9 +177,7 @@ class T5ForConditionalGeneration(nn.Module):
         use_pre_encoder_decoder_dropout=False,
         use_pre_encoder_decoder_layer_norm=True,
         use_ffn_bias=False,
-        lm_loss_weight=1.0,
         label_smoothing=0.0,
-        mlm_loss_scaling="batch_size",
         use_transformer_initialization=False,
         **kwargs,
     ):
@@ -292,12 +291,18 @@ class T5ForConditionalGeneration(nn.Module):
         assert encoder_nonlinearity in [
             "relu",
             "gelu",
+            "reglu",
+            "geglu",
+            "swiglu",
         ], "T5/Transformer doesn't support encoder_nonlinearity {}".format(
             encoder_nonlinearity
         )
         assert decoder_nonlinearity in [
             "relu",
             "gelu",
+            "reglu",
+            "geglu",
+            "swiglu",
         ], "T5/Transformer doesn't support decoder_nonlinearity {}".format(
             decoder_nonlinearity
         )
@@ -316,10 +321,11 @@ class T5ForConditionalGeneration(nn.Module):
             dim_feedforward=d_ff,
             dropout=dropout_rate,
             activation=encoder_nonlinearity,
-            norm_layer=BiaslessLayerNorm if use_t5_layer_norm else nn.LayerNorm,
+            norm_layer=RMSNorm if use_t5_layer_norm else nn.LayerNorm,
             layer_norm_eps=layer_norm_epsilon,
             norm_first=use_pre_encoder_decoder_layer_norm,
             batch_first=True,
+            extra_attention_params={"attention_kernel": attention_kernel},
             attention_type="scaled_dot_product"
             if use_transformer_initialization
             else "dot_product",
@@ -372,9 +378,7 @@ class T5ForConditionalGeneration(nn.Module):
         )
 
         if use_t5_layer_norm:
-            encoder_final_layer_norm = BiaslessLayerNorm(
-                d_model, eps=layer_norm_epsilon
-            )
+            encoder_final_layer_norm = RMSNorm(d_model, eps=layer_norm_epsilon)
         else:
             encoder_final_layer_norm = torch.nn.LayerNorm(
                 d_model, eps=layer_norm_epsilon
@@ -396,10 +400,11 @@ class T5ForConditionalGeneration(nn.Module):
             dim_feedforward=d_ff,
             dropout=dropout_rate,
             activation=encoder_nonlinearity,
-            norm_layer=BiaslessLayerNorm if use_t5_layer_norm else nn.LayerNorm,
+            norm_layer=RMSNorm if use_t5_layer_norm else nn.LayerNorm,
             layer_norm_eps=layer_norm_epsilon,
             norm_first=use_pre_encoder_decoder_layer_norm,
             batch_first=True,
+            extra_attention_params={"attention_kernel": attention_kernel},
             attention_type="scaled_dot_product"
             if use_transformer_initialization
             else "dot_product",
@@ -451,9 +456,7 @@ class T5ForConditionalGeneration(nn.Module):
         )
 
         if use_t5_layer_norm:
-            decoder_final_layer_norm = BiaslessLayerNorm(
-                d_model, eps=layer_norm_epsilon
-            )
+            decoder_final_layer_norm = RMSNorm(d_model, eps=layer_norm_epsilon)
         else:
             decoder_final_layer_norm = torch.nn.LayerNorm(
                 d_model, eps=layer_norm_epsilon
@@ -496,7 +499,10 @@ class T5ForConditionalGeneration(nn.Module):
                 mean=0.0, std=self.initializer_factor * 1.0
             )
 
-    def forward(
+    # Helper function `forward` for computing everything up to (but not
+    # including) the model head. This is helpful for models that inherit from
+    # T5 that apply a different head at the end of the model
+    def compute_sequence_output(
         self,
         input_ids=None,
         attention_mask=None,
@@ -506,36 +512,7 @@ class T5ForConditionalGeneration(nn.Module):
         past_key_values=None,
         labels=None,
         use_cache=None,
-        loss_weight=None,
     ):
-        r"""
-        labels (:obj:`torch.LongTensor` of shape :obj:`(batch_size,)`, `optional`):
-            Labels for computing the sequence classification/regression loss. Indices should be in :obj:`[-100, 0, ...,
-            config.vocab_size - 1]`. All labels set to ``-100`` are ignored (masked), the loss is only computed for
-            labels in ``[0, ..., config.vocab_size]``
-
-        Returns:
-
-        Examples::
-
-            >>> from transformers import T5Tokenizer, T5ForConditionalGeneration
-
-            >>> tokenizer = T5Tokenizer.from_pretrained('t5-small')
-            >>> model = T5ForConditionalGeneration.from_pretrained('t5-small')
-
-            >>> # training
-            >>> input_ids = tokenizer('The <extra_id_0> walks in <extra_id_1> park', return_tensors='pt').input_ids
-            >>> labels = tokenizer('<extra_id_0> cute dog <extra_id_1> the <extra_id_2>', return_tensors='pt').input_ids
-            >>> outputs = model(input_ids=input_ids, labels=labels)
-            >>> loss = outputs.loss
-            >>> logits = outputs.logits
-
-            >>> # inference
-            >>> input_ids = tokenizer("summarize: studies have shown that owning a dog is good for you", return_tensors="pt").input_ids  # Batch size 1
-            >>> outputs = model.generate(input_ids)
-            >>> print(tokenizer.decode(outputs[0], skip_special_tokens=True))
-            >>> # studies have shown that owning a dog is good for you.
-        """
 
         assert (
             past_key_values is None
@@ -640,6 +617,59 @@ class T5ForConditionalGeneration(nn.Module):
             sequence_output = decoder_outputs
         if self.dropout_after_decoder:
             sequence_output = self.dropout_after_decoder(sequence_output)
+
+        return sequence_output
+
+    def forward(
+        self,
+        input_ids=None,
+        attention_mask=None,
+        decoder_input_ids=None,
+        decoder_attention_mask=None,
+        encoder_outputs=None,
+        past_key_values=None,
+        labels=None,
+        use_cache=None,
+    ):
+        r"""
+        labels (:obj:`torch.LongTensor` of shape :obj:`(batch_size,)`, `optional`):
+            Labels for computing the sequence classification/regression loss. Indices should be in :obj:`[-100, 0, ...,
+            config.vocab_size - 1]`. All labels set to ``-100`` are ignored (masked), the loss is only computed for
+            labels in ``[0, ..., config.vocab_size]``
+
+        Returns:
+
+        Examples::
+
+            >>> from transformers import T5Tokenizer, T5ForConditionalGeneration
+
+            >>> tokenizer = T5Tokenizer.from_pretrained('t5-small')
+            >>> model = T5ForConditionalGeneration.from_pretrained('t5-small')
+
+            >>> # training
+            >>> input_ids = tokenizer('The <extra_id_0> walks in <extra_id_1> park', return_tensors='pt').input_ids
+            >>> labels = tokenizer('<extra_id_0> cute dog <extra_id_1> the <extra_id_2>', return_tensors='pt').input_ids
+            >>> outputs = model(input_ids=input_ids, labels=labels)
+            >>> loss = outputs.loss
+            >>> logits = outputs.logits
+
+            >>> # inference
+            >>> input_ids = tokenizer("summarize: studies have shown that owning a dog is good for you", return_tensors="pt").input_ids  # Batch size 1
+            >>> outputs = model.generate(input_ids)
+            >>> print(tokenizer.decode(outputs[0], skip_special_tokens=True))
+            >>> # studies have shown that owning a dog is good for you.
+        """
+
+        sequence_output = self.compute_sequence_output(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            decoder_input_ids=decoder_input_ids,
+            decoder_attention_mask=decoder_attention_mask,
+            encoder_outputs=encoder_outputs,
+            past_key_values=past_key_values,
+            labels=labels,
+            use_cache=use_cache,
+        )
 
         if self.tie_word_embeddings:
             # Rescale output before projecting on vocab

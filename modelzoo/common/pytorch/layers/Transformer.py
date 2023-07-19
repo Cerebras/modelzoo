@@ -56,6 +56,16 @@ class Transformer(nn.Module):
             as (batch, seq, feature). Default: ``False`` (seq, batch, feature).
         norm_first: if ``True``, encoder and decoder layers will perform LayerNorms before
             other attention and feedforward operations, otherwise after. Default: ``False`` (after).
+        attention_type: Should be in ["scaled_dot_product", "dot_product"].
+        use_projection_bias_in_attention: Add bias to Q,K,V projections
+            in the Attention layer. Defaults to False.
+        use_ffn_bias_in_attention: Add bias in the concluding FFN
+            in the Attention layer. Defaults to False.
+        use_ffn_bias: Add bias in all dense layers of the decoder's ffn sublayer.
+        attention_initializer: Attention layer initializer. Defaults to "xavier_uniform".
+        ffn_initializer: FFN layer initializer. Defaults to "xavier_uniform".
+        device (optional): Device to create the model parameters on, can be a cuda device or CS device.
+
 
     Examples::
         >>> transformer_model = nn.Transformer(nhead=16, num_encoder_layers=12)

@@ -12,23 +12,32 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
+# isort: off
 import sys
+import os
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "../../../.."))
-from modelzoo.common.pytorch.run_utils import run
-from modelzoo.transformers.pytorch.layers_api_demo.data import (
-    eval_input_dataloader,
-    train_input_dataloader,
-)
-from modelzoo.transformers.pytorch.layers_api_demo.model import (
-    TransformerBaseModel,
-)
+# isort: on
+from modelzoo.common.run_utils.cli_pytorch import get_params_from_args
 
 
 def main():
-    run(
-        TransformerBaseModel, train_input_dataloader, eval_input_dataloader,
+
+    params = get_params_from_args()
+    from modelzoo.common.pytorch.run_utils import main
+    from modelzoo.transformers.pytorch.layers_api_demo.data import (
+        eval_input_dataloader,
+        train_input_dataloader,
+    )
+    from modelzoo.transformers.pytorch.layers_api_demo.model import (
+        TransformerBaseModel,
+    )
+
+    main(
+        params,
+        TransformerBaseModel,
+        train_input_dataloader,
+        eval_input_dataloader,
     )
 
 

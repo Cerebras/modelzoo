@@ -94,13 +94,11 @@ class BertForTokenClassificationModel(torch.nn.Module):
             )
         check_unused_model_params(model_params)
 
-    def __call__(self, data):
+    def forward(self, data):
         logits = self.model(
             input_ids=data["input_ids"],
             attention_mask=data["attention_mask"],
             token_type_ids=data["token_type_ids"],
-            loss_mask=data["loss_mask"],
-            labels=data["labels"],
         )
         loss = self.loss_fn(logits, data["labels"], data["loss_mask"])
         if not self.model.training and self.compute_eval_metrics:

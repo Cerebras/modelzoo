@@ -12,9 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import torch.nn as nn
+from typing import Callable, List, Optional, Union
 
-from modelzoo.common.pytorch.model_utils.activations import get_activation
+import torch.nn as nn
+from torch import Tensor
+
+from modelzoo.common.pytorch.model_utils.activations import (
+    get_activation,
+    is_glu_activation,
+)
 from modelzoo.common.pytorch.model_utils.create_initializer import (
     create_initializer,
 )
@@ -27,11 +33,11 @@ class SingleFeedForwardLayer(nn.Module):
 
     def __init__(
         self,
-        in_features,
-        out_features,
-        use_bias=False,
-        activation=None,
-        dropout=None,
+        in_features: int,
+        out_features: int,
+        use_bias: bool = False,
+        activation: Optional[Union[str, Callable[[Tensor], Tensor]]] = None,
+        dropout: Optional[float] = None,
         device=None,
     ):
         super(SingleFeedForwardLayer, self).__init__()
@@ -39,6 +45,12 @@ class SingleFeedForwardLayer(nn.Module):
         self.linear_layer = nn.Linear(
             in_features, out_features, bias=use_bias, device=device,
         )
+
+        self.is_glu_activation = is_glu_activation(activation)
+        if self.is_glu_activation:
+            self.linear_layer_for_glu = nn.Linear(
+                in_features, out_features, bias=use_bias, device=device,
+            )
 
         if activation:
             self.act_layer = get_activation(activation)
@@ -51,9 +63,14 @@ class SingleFeedForwardLayer(nn.Module):
             self.dropout_layer = None
 
     def forward(self, inputs):
-        outputs = self.linear_layer(inputs)
-        if self.act_layer:
-            outputs = self.act_layer(outputs)
+        if self.is_glu_activation:
+            glu_component_1 = self.linear_layer(inputs)
+            glu_component_2 = self.linear_layer_for_glu(inputs)
+            outputs = self.act_layer(glu_component_1, glu_component_2)
+        else:
+            outputs = self.linear_layer(inputs)
+            if self.act_layer:
+                outputs = self.act_layer(outputs)
         if self.dropout_layer:
             outputs = self.dropout_layer(outputs)
         return outputs
@@ -67,9 +84,9 @@ class FeedForwardNetwork(nn.Module):
 
     Args:
         input_unit (int): integer for number of in_features of input.
-        layers_units (int): List of units for each layer.
-        layers_activation (str): List of activation types (str) for each layer.
-        layers_dropout_rates (float): List of dropout rates (float) for each
+        layers_units (list[int]): List of units for each layer.
+        layers_activation (list[str]): List of activation types (str) for each layer.
+        layers_dropout_rates (list[float]): List of dropout rates (float) for each
             layer.
         use_bias (bool): If `True`, use bias throughout all layers.
         kernel_initializer: Kernel initializer. Defaults to
@@ -77,18 +94,22 @@ class FeedForwardNetwork(nn.Module):
         bias_initializer: Bias initializer. Defaults to `"zeros"`.
         output_layer_initializer: If not None, initialize the last projection
             layer with this initializer. Defaults to None.
+        device (optional): Device to create the model parameters on, can be a cuda device or CS device.
     """
 
     def __init__(
         self,
-        input_unit,
-        layers_units,
-        layers_activation=None,
-        layers_dropout_rates=None,
-        use_bias=False,
-        kernel_initializer="xavier_uniform",
-        bias_initializer="zeros",
-        output_layer_initializer=None,
+        input_unit: int,
+        layers_units: List[int],
+        layers_activation: Optional[
+            List[Union[str, Callable[[Tensor], Tensor]]]
+        ] = None,
+        layers_dropout_rates: Optional[List[float]] = None,
+        use_bias: bool = False,
+        kernel_initializer: str = "xavier_uniform",
+        bias_initializer: str = "zeros",
+        output_layer_initializer: Optional[str] = None,
+        scale_glu_initialization=False,
         device=None,
     ):
         """
@@ -105,6 +126,7 @@ class FeedForwardNetwork(nn.Module):
 
         self.use_bias = use_bias
         self.kernel_initializer = kernel_initializer
+        self.scale_glu_initialization = scale_glu_initialization
         self.bias_initializer = bias_initializer
         self.device = device
 
@@ -171,6 +193,14 @@ class FeedForwardNetwork(nn.Module):
                 weight_initializer = create_initializer(
                     self.output_layer_initializer
                 )
+            else:
+                # Scale the initialization of linear layer weights associated with the
+                # 'GLU' type activation function by 1/sqrt(d)
+                if self.scale_glu_initialization:
+                    if hasattr(linear_layer_module, 'linear_layer_for_glu'):
+                        weight_initializer(
+                            linear_layer_module.linear_layer_for_glu.weight.data
+                        )
 
             weight_initializer(linear_layer_module.linear_layer.weight.data)
             if self.use_bias:

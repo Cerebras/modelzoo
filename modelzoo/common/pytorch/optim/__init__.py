@@ -20,6 +20,7 @@ from modelzoo.common.pytorch.optim.AdamBase import Adam, AdamW
 from modelzoo.common.pytorch.optim.ASGD import ASGD
 from modelzoo.common.pytorch.optim.CSOptimizer import CSOptimizer
 from modelzoo.common.pytorch.optim.Lamb import Lamb
+from modelzoo.common.pytorch.optim.Lion import Lion
 from modelzoo.common.pytorch.optim.NAdam import NAdam
 from modelzoo.common.pytorch.optim.RAdam import RAdam
 from modelzoo.common.pytorch.optim.RMSprop import RMSprop

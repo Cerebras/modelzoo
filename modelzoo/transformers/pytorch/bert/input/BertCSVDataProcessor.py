@@ -21,7 +21,10 @@ import random
 import numpy as np
 import torch
 
-from modelzoo.common.pytorch.input_utils import bucketed_batch
+from modelzoo.common.pytorch.input_utils import (
+    bucketed_batch,
+    get_streaming_batch_size,
+)
 from modelzoo.transformers.pytorch.bert.input.utils import get_meta_data
 from modelzoo.transformers.pytorch.input_utils import (
     get_data_for_task,
@@ -42,7 +45,6 @@ class BertCSVDataProcessor(torch.utils.data.IterableDataset):
     - "shuffle" (bool): Flag to enable data shuffling.
     - "shuffle_seed" (int): Shuffle seed.
     - "shuffle_buffer" (int): Shuffle buffer size.
-    - "repeat" (bool): Flag to enable data repeat.
     - "dynamic_mlm_scale" (bool): Flag to dynamically scale the loss.
     - "num_workers" (int):  How many subprocesses to use for data loading.
     - "drop_last" (bool): If True and the dataset size is not divisible
@@ -67,7 +69,7 @@ class BertCSVDataProcessor(torch.utils.data.IterableDataset):
 
         self.num_examples = sum(map(int, self.meta_data.values()))
         self.disable_nsp = params.get("disable_nsp", False)
-        self.batch_size = params["batch_size"]
+        self.batch_size = get_streaming_batch_size(params["batch_size"])
 
         self.num_batches = self.num_examples // self.batch_size
         assert (
@@ -255,7 +257,7 @@ class BertCSVDataProcessor(torch.utils.data.IterableDataset):
         if self.shuffle:
             self.rng.shuffle(self.csv_files_per_task_per_worker)
 
-    def create_dataloader(self, is_training=True):
+    def create_dataloader(self):
         """
         Classmethod to create the dataloader object.
         """

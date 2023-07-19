@@ -94,6 +94,12 @@ class TransformerDecoder(nn.Module):
             memory_mask: the mask for the memory sequence (optional).
             tgt_key_padding_mask: the mask for the tgt keys per batch (optional).
             memory_key_padding_mask: the mask for the memory keys per batch (optional).
+            self_attn_position_bias: the tensor containing position bias to apply in self-attention, 
+                can be obtained from relative or alibi position embeddings.
+            cross_attn_position_bias: similar to self_attn_position_bias, 
+                this is the tensor containing position bias to apply in cross-attention.
+            rotary_position_embedding_helper (Optional[RotaryPositionEmbeddingHelper]): 
+                A helper class to apply rotary embedding on the input tensor.
             past_kv: Past keys and values for each of the decoder layers (optional).
             cache_present_kv: Specifies if the present keys and values
                 must be cached and returned. (optional).
