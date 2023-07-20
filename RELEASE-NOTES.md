@@ -37,7 +37,7 @@ alibi_implementation: 'expand' # We support `embedding` and `expand` with defaul
 
 - Some dataloader implementations from Model Zoo require evaluation to be done on a single CS-2 rather than multiple CS-2s. Multi-box evaluation has no explicit limitation, but these dataloaders require the dataset to be sharded in such a way that each worker gets at least one file. Evaluation datasets are often small and not split into many files.
 - All T5 limitations from Release 1.8 remain.
-- Loss scaling by number of tokens is only supported on a single CS-2, not multi-box. It is available with or without gradient accumulation.
+- Loss scaling by number of tokens is not yet fully supported and requires coordination with the Cerebras team.
 - GPT NeoX suffers NaNs when trained with extremely long sequence lengths (30k, 50k).
 - The base, pre-trained Falcon and LLaMA variants are supported. Other variants, such as those with long sequence lengths or different numbers of heads, may not be supported.
 
