@@ -18,6 +18,10 @@ For a list of all supported models, please check [models in this repository](#mo
 
 We support the models developed in [PyTorch](https://pytorch.org/).
 
+## Installation
+
+To install the Cerebras Model Zoo on the CSX system, please follow the instructions in [PYTHON-SETUP.md](./PYTHON-SETUP.md).
+
 ## Basic workflow
 
 When you are targeting the Cerebras Wafer-Scale Cluster for your neural network jobs, please follow the [quick start guide](https://docs.cerebras.net/en/latest/wsc/getting-started/cs-appliance.html) from the developer docs to compile, validate and train the models in this Model Zoo for the framework of your choice.
