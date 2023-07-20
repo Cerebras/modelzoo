@@ -6,7 +6,8 @@ train_input:
     vocab_file: "../../../../vocab/Pubmed_fulltext_vocab.txt"
     label_vocab_file: "./language/datasets/ner-pt/bc5cdr-chem-csv/train/label2id.json"
     max_sequence_length: 128
-    batch_size: 8
+    # The effective batch size, which is evenly divided across "num_csx" systems used for the run
+    batch_size: 4096
     shuffle: True
     num_workers: 1
 
@@ -16,7 +17,8 @@ eval_input:
     vocab_file: "../../../../vocab/Pubmed_fulltext_vocab.txt"
     label_vocab_file: "./language/datasets/ner-pt/bc5cdr-chem-csv/train/label2id.json"
     max_sequence_length: 128
-    batch_size: 8
+    # The effective batch size, which is evenly divided across "num_csx" systems used for the run
+    batch_size: 12
     shuffle: False
     num_workers: 1
 
@@ -27,11 +29,12 @@ model:
     num_heads: 12
     filter_size: 3072
     encoder_nonlinearity: "gelu"
+    pooler_nonlinearity: "tanh"
     max_position_embeddings: 512
     encoder_output_dropout_rate: 0.1
     num_classes: 7
     mixed_precision: True
-    compute_eval_metrics: True
+    compute_eval_metrics: False
     include_padding_in_loss: True
 
 optimizer:
@@ -59,3 +62,4 @@ runconfig:
     save_losses: True
     model_dir: "./model_dir"
     eval_steps: 759
+    use_cs_grad_accum: True

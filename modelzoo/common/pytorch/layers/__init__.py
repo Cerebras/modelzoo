@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from modelzoo.common.pytorch.layers.AlibiPositionEmbeddingLayer import (
+    AlibiPositionEmbeddingLayer,
+)
 from modelzoo.common.pytorch.layers.AttentionLayer import MultiheadAttention
 from modelzoo.common.pytorch.layers.BCELoss import BCELoss
 from modelzoo.common.pytorch.layers.BCEWithLogitsLoss import BCEWithLogitsLoss
@@ -35,11 +38,15 @@ from modelzoo.common.pytorch.layers.MultiLabelSoftMarginLoss import (
     MultiLabelSoftMarginLoss,
 )
 from modelzoo.common.pytorch.layers.MultiMarginLoss import MultiMarginLoss
+from modelzoo.common.pytorch.layers.MultiQueryAttentionLayer import (
+    MultiQueryAttention,
+)
 from modelzoo.common.pytorch.layers.NLLLoss import NLLLoss
 from modelzoo.common.pytorch.layers.PoissonNLLLoss import PoissonNLLLoss
 from modelzoo.common.pytorch.layers.RelativePositionEmbeddingLayer import (
     RelativePositionEmbeddingLayer,
 )
+from modelzoo.common.pytorch.layers.RMSNorm import RMSNorm
 from modelzoo.common.pytorch.layers.SmoothL1Loss import SmoothL1Loss
 from modelzoo.common.pytorch.layers.Transformer import Transformer
 from modelzoo.common.pytorch.layers.TransformerDecoder import TransformerDecoder

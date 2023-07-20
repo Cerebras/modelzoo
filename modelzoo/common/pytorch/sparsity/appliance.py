@@ -86,21 +86,42 @@ def compute_mask(
         # score will only be selected by topk if we are _decreasing_ sparsity.
         if num_pruned:
             score[pruned] = -rng.random(num_pruned, dtype=weight.dtype)
+    elif init_method == "from_zeros":
+        # Result mask is actually independent of requested sparsity level.
+        # In order to be "idempotent", either a pre-existing prune _or_ a zero
+        # count as pruned. However, never regrow.
+        return ~(weight == 0 | pruned), np.zeros_like(pruned)
+
+    out_groups = params.get("out_groups")
+    in_groups = params.get("in_groups")
 
     score_shape = score.shape
-    score = score.reshape(1, -1)
+    if out_groups:
+        # [N*O, I] -> [N, O*I]
+        score = score.reshape(out_groups, -1)
+    elif in_groups:
+        # [O, N*I] -> [N*I, O] -> [N, I*O]
+        score = score.transpose(1, 0).reshape(in_groups, -1)
+    else:
+        score = score.reshape(1, -1)
 
     # Compute the number of elements to keep, rounding toward sparsity
     numel = score.shape[-1]
     keep = numel - int(np.round(sparsity * numel))
-    # Compute the indices of the score to keep
-    keep_index = np.argpartition(score, -keep)[:, -keep:]
+    # Compute the indices of the score to keep (within each group)
+    keep_index = np.argpartition(score, -keep, axis=-1)[:, -keep:]
 
-    # Put True into the kept positions
+    # Put True into the kept positions (within each group)
     mask = np.zeros(score.shape, dtype=np.bool)
-    np.put_along_axis(mask, keep_index, True, axis=-1)
+    np.put_along_axis(mask, keep_index, values=True, axis=-1)
 
-    mask = mask.reshape(score_shape)
+    # Ungroup mask back to shape of score
+    if in_groups:
+        O, I = score_shape
+        # [N, I*O] -> [N*I, O] -> [O, I*N]
+        mask = mask.reshape(I, O).transpose(1, 0)
+    else:
+        mask = mask.reshape(score_shape)
 
     # If a weight is kept now but it was pruned before, we're regrowing.
     regrow = mask & pruned
@@ -202,7 +223,7 @@ def validate_sparsity_params(params: dict):
 
     # validate init_method, sparsity, and seed
     def validate_group(block, context):
-        init_methods = ["random", "topk"]
+        init_methods = ["random", "topk", "from_zeros"]
         init_method = block.get("init_method")
         if init_method is None:
             raise ValueError(
@@ -232,6 +253,25 @@ def validate_sparsity_params(params: dict):
             raise ValueError(
                 f"{context} has invalid `seed`: {seed}, which must be "
                 f"an integer used to seed np.random.seed."
+            )
+
+        if "out_groups" in block and "in_groups" in block:
+            raise ValueError(
+                f"{context} has specified both `out_groups` and `in_groups` "
+                f"which are mutually exclusive."
+            )
+
+        g = block.get("out_groups")
+        if g is not None and (not isinstance(g, int) or g <= 0):
+            raise ValueError(
+                f"{context} has invalid `out_groups`: {g}, which must be a "
+                f"positive integer."
+            )
+        g = block.get("in_groups")
+        if g is not None and (not isinstance(g, int) or g <= 0):
+            raise ValueError(
+                f"{context} has invalid `in_groups`: {g}, which must be a "
+                f"positive integer."
             )
 
     validate_top = True
@@ -380,7 +420,7 @@ def build_sparsify_grouper(
             return None
 
     optimizer = model.get_optimizer()
-    optimizer_state = state_dict["optimizer"]["state"]
+    optimizer_state = state_dict.get("optimizer", {}).get("state", {})
 
     # For printing a single info level summary log statement.
     summary_info = defaultdict(int)
@@ -400,7 +440,11 @@ def build_sparsify_grouper(
         # Go find related optimizer state tensors.
         # Then, find the state_dict key for that tensor.
         opt_state_names = []
-        for state_name, state_tensor in optimizer.state.get(param, {}).items():
+        if optimizer:
+            opt_state = optimizer.state.get(param, {})
+        else:
+            opt_state = {}
+        for state_name, state_tensor in opt_state.items():
             if state_tensor.shape != param.shape:
                 # Only consider optimizer state of same shape as parameter.
                 continue

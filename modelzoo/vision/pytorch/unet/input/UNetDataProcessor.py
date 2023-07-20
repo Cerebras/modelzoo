@@ -16,6 +16,7 @@ import matplotlib.pyplot as plt
 import torch
 from torchvision import transforms
 
+from modelzoo.common.pytorch.input_utils import get_streaming_batch_size
 from modelzoo.vision.pytorch.input.utils import (
     FastDataLoader,
     ShardedSampler,
@@ -44,7 +45,7 @@ class UNetDataProcessor:
             torch.manual_seed(self.shuffle_seed)
 
         self.augment_data = params.get("augment_data", True)
-        self.batch_size = params["batch_size"]
+        self.batch_size = get_streaming_batch_size(params["batch_size"])
         self.shuffle = params.get("shuffle", True)
 
         # Multi-processing params.

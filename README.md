@@ -16,7 +16,11 @@ For a list of all supported models, please check [models in this repository](#mo
 
 ## Supported frameworks
 
-We support the models developed in [PyTorch](https://pytorch.org/) and [TensorFlow](https://www.tensorflow.org/).
+We support the models developed in [PyTorch](https://pytorch.org/).
+
+## Installation
+
+To install the Cerebras Model Zoo on the CSX system, please follow the instructions in [PYTHON-SETUP.md](./PYTHON-SETUP.md).
 
 ## Basic workflow
 
@@ -24,40 +28,29 @@ When you are targeting the Cerebras Wafer-Scale Cluster for your neural network 
 
 For advanced use cases and porting your existing code please refer to the [developer docs](https://docs.cerebras.net/en/latest/wsc/port/index.html).
 
-## Execution modes
-
-On the Cerebras Wafer Scale Cluster you can run neural networks of different model sizes. Cerebras Software supports different execution modes to efficiently run such variety of models.
-
-The execution mode refers to how the Cerebras runtime loads your neural network model onto the Cerebras Wafer Scale Engine (WSE). Two execution modes are supported:
-
-- **Weight streaming**: In this mode one layer of the neural network model is loaded at a time. This layer-by-layer mode is used to run extremely large models (with billions to trillions of parameters).
-- **Layer pipelined**: In this mode all the layers of the network are loaded altogether onto the Cerebras WSE. This mode is selected for neural network models of small to medium sized models (with less than a billion parameters).
-
-You can get more information about this on the developer page section on [Cerebras Execution Modes](https://docs.cerebras.net/en/latest/wsc/cerebras-basics/cerebras-execution-modes.html)
-
 ## Models in this repository
 
-| Model                                       | Layer Pipeline mode                                                                                                                                                               | Weight Streaming mode                                                                                        |
-|---------------------------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------|
-| BERT                                        | [TensorFlow code](./modelzoo/transformers/tf/bert/)<br>[PyTorch code](./modelzoo/transformers/pytorch/bert/)                                                                      | [PyTorch code](./modelzoo/transformers/pytorch/bert/)                                                                                                            |
-| BERT (fine-tuning) Classifier               | [TensorFlow code](./modelzoo/transformers/tf/bert/fine_tuning/classifier/)<br>[PyTorch code](./modelzoo/transformers/pytorch/bert/fine_tuning/classifier/)                        | -                                                                                                            |
-| BERT (fine-tuning) Named Entity Recognition | [TensorFlow code](./modelzoo/transformers/tf/bert/fine_tuning/token_classifier/)<br>[PyTorch code](./modelzoo/transformers/pytorch/bert/fine_tuning/token_classifier/)            | -                                                                                                            |
-| BERT (fine-tuning) Summarization            | [TensorFlow code](./modelzoo/transformers/tf/bert/fine_tuning/extractive_summarization/)<br>[PyTorch code](./modelzoo/transformers/pytorch/bert/fine_tuning/extractive_summarization/) | -                                                                                                            |
-| BERT (fine-tuning) Question Answering       | [TensorFlow code](./modelzoo/transformers/tf/bert/fine_tuning/qa/)<br>[PyTorch code](./modelzoo/transformers/pytorch/bert/fine_tuning/qa/)                                        | -                                                                                                            |
-| GPT-2                                       | [TensorFlow code](./modelzoo/transformers/tf/gpt2/)<br>[PyTorch code](./modelzoo/transformers/pytorch/gpt2/)                                                                      | [TensorFlow code](./modelzoo/transformers/tf/gpt2/)<br>[PyTorch code](./modelzoo/transformers/pytorch/gpt2/) |
-| GPT-3                                       | -                                                                                                                                                                                 | [TensorFlow code](./modelzoo/transformers/tf/gpt3/)<br>[PyTorch code](./modelzoo/transformers/pytorch/gpt3/) |
-| GPT-J                                       | -                                                                                                                                                                                 | [TensorFlow code](./modelzoo/transformers/tf/gptj/) <br>[PyTorch code](./modelzoo/transformers/pytorch/gptj/) |
-| GPT-NeoX                                    | -                                                                                                                                                                                 | [TensorFlow code](./modelzoo/transformers/tf/gptj/) <br>[PyTorch code](./modelzoo/transformers/pytorch/gptj/) |
-| GPT-J (fine-tuning) Summarization           | -                                                                                                                                                                                 | [TensorFlow code](./modelzoo/transformers/tf/gptj/fine_tuning/abstractive_summarization/)                    |
-| Linformer                                   | [TensorFlow code](./modelzoo/transformers/tf/linformer/)                                                                                                                          | -                                                                                                            |
-| RoBERTa                                     | [TensorFlow code](./modelzoo/transformers/tf/bert/)<br>[PyTorch code](./modelzoo/transformers/pytorch/bert/)                                                                      | -                                                                                                            |
-| T5                                          | [TensorFlow code](./modelzoo/transformers/tf/t5/)<br>[PyTorch code](./modelzoo/transformers/pytorch/t5/)                                                                          | [PyTorch code](./modelzoo/transformers/pytorch/t5/)                                                                                                                     |
-| Transformer                                 | [TensorFlow code](./modelzoo/transformers/tf/transformer/)<br>[PyTorch code](./modelzoo/transformers/pytorch/transformer/)                                                        | -                                                                                                            |
-| MNIST (fully connected)                     | [TensorFlow code](./modelzoo/fc_mnist/tf/)<br>[PyTorch code](./modelzoo/fc_mnist/pytorch/)                                                                                        | -                                                                                                            |
-| UNet        | -                                                                                           | [PyTorch code](./modelzoo/vision/pytorch/unet/)                                                                                                               |
+| Model   | Code pointer   |
+|:-------|:-----------------------:|
+| BERT | [Code](./modelzoo/transformers/pytorch/bert/) |
+| BERT (fine-tuning) Classifier | [Code](./modelzoo/transformers/pytorch/bert/fine_tuning/classifier/) |
+| BERT (fine-tuning) Named Entity Recognition | [Code](./modelzoo/transformers/pytorch/bert/fine_tuning/token_classifier/) |
+| BERT (fine-tuning) Summarization | [Code](./modelzoo/transformers/pytorch/bert/fine_tuning/extractive_summarization/) |
+| BERT (fine-tuning) Question Answering | [Code](./modelzoo/transformers/pytorch/bert/fine_tuning/qa/) |
+| BLOOM | [Code](./modelzoo/transformers/pytorch/bloom/) |
+| LLaMA | [Code](./modelzoo/transformers/pytorch/llama/) |
+| GPT-2 | [Code](./modelzoo/transformers/pytorch/gpt2/) |
+| GPT-3 | [Code](./modelzoo/transformers/pytorch/gpt3/) |
+| GPT-J | [Code](./modelzoo/transformers/pytorch/gptj/) |
+| GPT-NeoX | [Code](./modelzoo/transformers/pytorch/gptj/) |
+| GPT-J (fine-tuning) Summarization |[Code](./modelzoo/transformers/pytorch/gptj/fine_tuning/abstractive_summarization/) |
+| Falcon | [Code](./modelzoo/transformers/pytorch/falcon/) |
+| RoBERTa | [Code](./modelzoo/transformers/pytorch/bert/) |
+| T5 | [Code](./modelzoo/transformers/pytorch/t5/) |
+| Transformer | [Code](./modelzoo/transformers/pytorch/transformer/) |
+| MNIST (fully connected) | [Code](./modelzoo/fc_mnist/pytorch/) |
+| UNet | [Code](./modelzoo/vision/pytorch/unet/) |
 
 ## License
 
 [Apache License 2.0](./LICENSE)
-
-

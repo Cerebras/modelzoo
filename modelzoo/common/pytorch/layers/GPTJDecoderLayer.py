@@ -27,6 +27,22 @@ from modelzoo.common.pytorch.model_utils.RotaryPositionEmbeddingHelper import (
 
 
 class GPTJDecoderLayer(TransformerDecoderLayer):
+    """
+    GPTJDecoderLayer is inherited from `TransformerDecoderLayer`, it has 2 modifications:
+
+    1. It uses parallel decoder architecture instead of the sequential one
+
+    2. It supports both gptj and gpt-neox which uses untied_layer_norm
+    
+    Reference: https://www.cerebras.net/blog/how-to-harness-the-predictive-power-of-gpt-j
+
+    Args:
+        d_model: the number of expected features in the input (required).
+        nhead: the number of heads in the multihead-attention models (required).
+        use_untied_layer_norm (bool): whether to use untied layer_norm. Should be False for GPTJ and True for Neox
+        kwargs: the rest of the arguments the same as `TransformerDecoderLayer`
+    """
+
     def __init__(
         self,
         d_model: int,
@@ -56,6 +72,29 @@ class GPTJDecoderLayer(TransformerDecoderLayer):
         cross_attn_position_bias: Optional[Tensor] = None,
     ) -> Tensor:
         """GPTJ layer with rotary position embeddings and parallel decoder architecture
+
+        Args:
+            tgt: the sequence to the decoder layer (required).
+            memory: the sequence from the last layer of the encoder (required).
+            tgt_mask: the mask for the tgt sequence (optional).
+            memory_mask: the mask for the memory sequence (optional).
+            tgt_key_padding_mask: the mask for the tgt keys per batch (optional).
+            memory_key_padding_mask: the mask for the memory keys per batch (optional).
+            rotary_position_embedding_helper (Optional[RotaryPositionEmbeddingHelper]): 
+                A helper class to apply rotary embedding on the input tensor.
+            past_kv: Past keys and values for self attention and (if applicable) cross
+                attention modules. Key/value tensors have shape
+                ``[batch_size, num_heads, seq_length, embed_dim / num_heads]``. (optional).
+            cache_present_kv: Specifies if the present keys and values
+                must be cached and returned. Needed to speed up the
+                computations when the decoder is called within an
+                autoregressive loop. (optional).
+            self_attn_position_bias: the tensor containing position bias to apply in self-attention, 
+                can be obtained from relative or alibi position embeddings.
+
+        Shape:
+            Output tensor with shape 
+
         """
 
         x = tgt

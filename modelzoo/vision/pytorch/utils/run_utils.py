@@ -13,10 +13,8 @@
 # limitations under the License.
 
 import os
-import tempfile
 
-from modelzoo.common.pytorch.utils import get_debug_args
-from modelzoo.common.run_utils.utils import DeviceType
+from modelzoo import CSOFT_PACKAGE, CSoftPackage
 
 
 def get_default_inis():
@@ -27,29 +25,22 @@ def get_default_inis():
         "ws_run_memoize_actv_mem_mapping": True,
         "ws_opt_bidir_act": False,
         "ws_variable_lanes": True,
+        "ws_matmul_half_prec_acc_len": 0,
+        "ws_dmatmul_half_prec_acc_len": 0,
     }
 
 
-def use_cs(params):
-    use_cs = params["runconfig"]["target_device"] == DeviceType.CSX
-    return use_cs
-
-
 def update_runconfig_debug_args_path(params, default_inis_dict):
-    if use_cs(params):
-        from cerebras_appliance.run_utils import write_debug_args
+    if CSOFT_PACKAGE != CSoftPackage.NONE:
+        from cerebras_appliance.run_utils import (
+            DebugArgs,
+            set_ini,
+            write_debug_args,
+        )
 
         if not params["runconfig"].get("debug_args_path"):
-            cwd = os.getcwd()
-
-            with tempfile.TemporaryDirectory(dir=cwd) as ini_dir:
-                # Create and populate debug.ini
-                with open(os.path.join(ini_dir, "debug.ini"), "w") as fp:
-                    for key, val in default_inis_dict.items():
-                        fp.write(f"{key}: {val}\n")
-
-                # Uses debug.ini from current path if it exists
-                debug_args = get_debug_args(None, ini_dir)
+            debug_args = DebugArgs()
+            set_ini(debug_args, **default_inis_dict)
 
             # in the case debug_args_path is not set
             # create a default debug_args file in the debug_args_dir

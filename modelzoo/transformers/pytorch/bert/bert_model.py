@@ -29,12 +29,19 @@ class BertPooler(nn.Module):
     def __init__(
         self,
         hidden_size,
+        pooler_norm=False,
+        layer_norm_epsilon=1.0e-5,
         use_bias=True,
         activation="gelu",
         dropout=None,
         initializer="xavier_uniform",
     ):
         super().__init__()
+
+        self.pooler_norm = None
+        if pooler_norm:
+            self.pooler_norm = nn.LayerNorm(hidden_size, eps=layer_norm_epsilon)
+
         self.pooler = FeedForwardNetwork(
             input_unit=hidden_size,
             layers_units=[hidden_size],
@@ -45,6 +52,10 @@ class BertPooler(nn.Module):
         )
 
     def reset_parameters(self):
+        if self.pooler_norm is not None:
+            self.pooler_norm.weight.data.fill_(1.0)
+            if self.pooler_norm.bias is not None:
+                self.pooler_norm.bias.data.zero_()
         self.pooler.reset_parameters()
 
     def forward(self, hidden_states):
@@ -52,6 +63,8 @@ class BertPooler(nn.Module):
         # corresponding to the first token.
         # shape [batch_size, hidden_size]
         cls_hidden_states = hidden_states[:, 0]
+        if self.pooler_norm is not None:
+            cls_hidden_states = self.pooler_norm(cls_hidden_states)
         pooled_output = self.pooler(cls_hidden_states)
         return pooled_output
 
@@ -132,7 +145,7 @@ class BertModel(nn.Module):
         layer_norm_epsilon=1.0e-5,
         # Encoder Attn
         num_heads=12,
-        attention_module_str="aiayn_attention",
+        attention_module="aiayn_attention",
         extra_attention_params={},
         attention_type="scaled_dot_product",
         attention_softmax_fp32=True,
@@ -146,6 +159,7 @@ class BertModel(nn.Module):
         filter_size=3072,
         use_ffn_bias=True,
         # Task-specific
+        use_final_layer_norm=False,
         initializer_range=0.02,
         num_segments=2,
         default_initializer=None,
@@ -200,7 +214,7 @@ class BertModel(nn.Module):
             dropout=dropout_rate,
             activation=nonlinearity,
             layer_norm_eps=layer_norm_epsilon,
-            attention_module_str=attention_module_str,
+            attention_module=attention_module,
             extra_attention_params=extra_attention_params,
             attention_dropout_rate=attention_dropout_rate,
             attention_type=attention_type,
@@ -214,8 +228,12 @@ class BertModel(nn.Module):
 
         self.embed_ln_f = nn.LayerNorm(hidden_size, eps=layer_norm_epsilon)
 
+        final_ln_f = None
+        if use_final_layer_norm:
+            final_ln_f = nn.LayerNorm(hidden_size, eps=layer_norm_epsilon)
+
         self.transformer_encoder = TransformerEncoder(
-            encoder_layer, num_layers=num_hidden_layers
+            encoder_layer, num_layers=num_hidden_layers, norm=final_ln_f,
         )
 
         if pooler_nonlinearity is None:
@@ -248,11 +266,19 @@ class BertModel(nn.Module):
         self.embed_ln_f.bias.data.zero_()
         self.embed_ln_f.weight.data.fill_(1.0)
 
-    def forward(self, input_ids=None, segment_ids=None, attention_mask=None):
+    def forward(
+        self,
+        input_ids=None,
+        position_ids=None,
+        segment_ids=None,
+        attention_mask=None,
+    ):
         """
         Args:
             input_ids (Tensor): The id of input tokens
                 Can be of shape ```[batch_size, seq_length]`
+            position_ids (Tensor):
+                The position id of input tokens. Can be of shape ``[batch_size, seq_length]``
             segment_ids (Tensor): The segment id of input tokens, indicating which sequence the token belongs to
                 Can be of shape ```[batch_size, seq_length]`
             attention_mask (Tensor):
@@ -262,15 +288,18 @@ class BertModel(nn.Module):
         """
         src_key_padding_mask = None
 
-        hidden_states = self.embedding_layer(input_ids, segment_ids=segment_ids)
+        hidden_states = self.embedding_layer(
+            input_ids, position_ids=position_ids, segment_ids=segment_ids
+        )
         hidden_states = self.embed_ln_f(hidden_states)
         hidden_states = self.dropout_embd(hidden_states)
-        attention_mask = make_key_padding_mask_broadcastable(
-            attention_mask, dtype=hidden_states.dtype
-        )
-        if len(attention_mask.size()) == 2:
-            src_key_padding_mask = attention_mask
-            attention_mask = None
+        if attention_mask is not None:
+            attention_mask = make_key_padding_mask_broadcastable(
+                attention_mask, dtype=hidden_states.dtype
+            )
+            if len(attention_mask.size()) == 2:
+                src_key_padding_mask = attention_mask
+                attention_mask = None
         hidden_states = self.transformer_encoder(
             hidden_states,
             mask=attention_mask,

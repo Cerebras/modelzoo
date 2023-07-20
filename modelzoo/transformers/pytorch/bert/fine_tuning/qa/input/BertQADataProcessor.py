@@ -22,6 +22,7 @@ import numpy as np
 import torch
 
 from modelzoo.common.pytorch import cb_model as cm
+from modelzoo.common.pytorch.input_utils import get_streaming_batch_size
 from modelzoo.transformers.data_processing.utils import convert_str_to_int_list
 from modelzoo.transformers.pytorch.bert.input.utils import (
     get_meta_data,
@@ -64,7 +65,7 @@ class BertQADataProcessor(torch.utils.data.IterableDataset):
         self.meta_data_values_cum_sum = np.cumsum([0] + self.meta_data_values)
 
         self.num_examples = sum(map(int, self.meta_data.values()))
-        self.batch_size = params["batch_size"]
+        self.batch_size = get_streaming_batch_size(params["batch_size"])
 
         self.num_batches = self.num_examples // self.batch_size
         assert (
@@ -114,7 +115,7 @@ class BertQADataProcessor(torch.utils.data.IterableDataset):
 
         self.max_sequence_length = params["max_sequence_length"]
 
-    def create_dataloader(self, is_training=True):
+    def create_dataloader(self):
         """
         Classmethod to create the dataloader object.
         """

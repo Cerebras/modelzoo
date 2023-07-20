@@ -104,12 +104,13 @@ def create_initializer(spec):
             ),
         )
     elif name == "truncated_normal":
+        std = _get_spec_value(spec, "std", 0.05)
         return lambda tensor: INIT2FN[name](
             tensor,
             mean=_get_spec_value(spec, "mean", 0.0),
-            std=_get_spec_value(spec, "std", 0.05),
-            a=_get_spec_value(spec, "a", -0.1),
-            b=_get_spec_value(spec, "b", 0.1),
+            std=std,
+            a=_get_spec_value(spec, "a", -2 * std),
+            b=_get_spec_value(spec, "b", 2 * std),
         )
     elif name == "variance_scaling":
         return lambda tensor: INIT2FN[name](

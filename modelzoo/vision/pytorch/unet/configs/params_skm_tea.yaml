@@ -8,9 +8,11 @@ train_input: &train_input
     image_shape: [160, 512, 512] # (D, H, W)
     normalize_data_method: "standard_score"
     shuffle: True
+    shuffle_seed: 1234
+    # The effective batch size, which is evenly divided across "num_csx" systems used for the run
     batch_size: 1
     num_classes: 5
-    num_workers: 8
+    num_workers: 2
     prefetch_factor: 10
     persistent_workers: True
     use_worker_cache: True
@@ -19,6 +21,7 @@ eval_input:
     <<: *train_input
     augment_data: False
     shuffle: False
+    # The effective batch size, which is evenly divided across "num_csx" systems used for the run
     batch_size: 1
     num_workers: 1
 
@@ -41,10 +44,11 @@ model:
         "name": "glorot_uniform"
         "gain": 1.0
     bias_initializer: "zeros"
-    loss: "ssce"
+    loss: "ssce_dice"
     mixed_precision: True
     eval_ignore_classes: [0] # void classes to ignore in evaluation
     eval_metrics: ["DSC"]
+    use_bfloat16: True
 
 optimizer:
     optimizer_type: "AdamW"
@@ -60,8 +64,8 @@ optimizer:
 
 runconfig:
     max_steps: 10000
-    log_steps: 10
-    checkpoint_steps: 10000
+    log_steps: 1
+    checkpoint_steps: 1000
     seed: 1
     show_debug_metrics: False
     save_losses: True
@@ -69,4 +73,5 @@ runconfig:
     num_csx: 1
     num_act_servers: 1
     num_wgt_servers: 1
-    num_workers_per_csx: 16
+    num_workers_per_csx: 1
+    compile_crd_memory_gi: 90

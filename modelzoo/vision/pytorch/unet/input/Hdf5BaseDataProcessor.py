@@ -13,20 +13,25 @@
 # limitations under the License.
 
 import random
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 
 import torch
 from torchvision import transforms
 
 from modelzoo.common.pytorch import cb_model as cm
-from modelzoo.common.pytorch.utils import BufferedShuffleDataset
-from modelzoo.vision.pytorch.input.utils import create_worker_cache
+from modelzoo.common.pytorch.input_utils import get_streaming_batch_size
+from modelzoo.vision.pytorch.input.utils import (
+    FastDataLoader,
+    create_worker_cache,
+    num_tasks,
+    task_id,
+)
 from modelzoo.vision.pytorch.unet.input.preprocessing_utils import (
     normalize_tensor_transform,
 )
 
 
-class Hdf5BaseDataProcessor(ABC, torch.utils.data.IterableDataset):
+class Hdf5BaseDataProcessor(torch.utils.data.Dataset):
     """
     A HDF5 dataset processor for UNet HDF dataset.
     Performs on-the-fly augmentation of image and labek.
@@ -91,7 +96,7 @@ class Hdf5BaseDataProcessor(ABC, torch.utils.data.IterableDataset):
             torch.manual_seed(self.shuffle_seed)
 
         self.augment_data = params.get("augment_data", True)
-        self.batch_size = params["batch_size"]
+        self.batch_size = get_streaming_batch_size(params["batch_size"])
         self.shuffle = params.get("shuffle", True)
 
         self.shuffle_buffer = params.get("shuffle_buffer", 10 * self.batch_size)
@@ -113,8 +118,16 @@ class Hdf5BaseDataProcessor(ABC, torch.utils.data.IterableDataset):
         self.task_id = cm.get_streaming_rank() if cm.is_streamer() else 0
 
         # set later once processor gets a call to create a dataloader
-        self.num_examples_in_this_task = 0
+        self.num_examples = 0
         self.files_in_this_task = []
+
+        self.use_fast_dataloader = params.get("use_fast_dataloader", False)
+
+        # Each activation worker can access entire dataset when True
+        self.duplicate_act_worker_data = params.get(
+            "duplicate_act_worker_data", False
+        )
+        self.disable_sharding = False
 
     @abstractmethod
     def _shard_files(self, is_training=False):
@@ -125,7 +138,7 @@ class Hdf5BaseDataProcessor(ABC, torch.utils.data.IterableDataset):
         pass
 
     @abstractmethod
-    def __iter__(self):
+    def __getitem__(self):
         pass
 
     @abstractmethod
@@ -136,7 +149,7 @@ class Hdf5BaseDataProcessor(ABC, torch.utils.data.IterableDataset):
         """
         Returns the len of dataset on the task process
         """
-        return self.num_examples_in_this_task
+        return self.num_examples
 
     def _worker_init_fn(self, worker_id):
         worker_info = torch.utils.data.get_worker_info()
@@ -149,28 +162,44 @@ class Hdf5BaseDataProcessor(ABC, torch.utils.data.IterableDataset):
             worker_id = 0
             num_workers = 1
 
-        if self.shuffle_seed:
-            # Use a unique seed for each worker.
-            random.seed(self.shuffle_seed + worker_id)
-
-        self.data_partitions = self._shard_dataset(worker_id, num_workers)
+        self.data_partitions = self._maybe_shard_dataset(num_workers)
 
     def create_dataloader(self, is_training=True):
         """
         Classmethod to create the dataloader object.
         """
         self._shard_files(is_training)
+        generator_fn = torch.Generator(device="cpu")
+
+        if self.batch_size > self.num_examples // num_tasks():
+            print(
+                f"Dataset size: {len(self)} too small for num_tasks: {num_tasks()} and batch_size: {self.batch_size}, using duplicate data for activation workers..."
+            )
+            self.disable_sharding = True
 
         if self.shuffle:
-            random.seed(self.shuffle_seed)
-            random.shuffle(self.files_in_this_task)
-
-        data_loader = torch.utils.data.DataLoader(
-            BufferedShuffleDataset(
-                dataset=self, buffer_size=self.shuffle_buffer
+            if self.duplicate_act_worker_data or self.disable_sharding:
+                if self.shuffle_seed is None:
+                    seed = task_id()
+                else:
+                    seed = self.shuffle_seed + task_id()
+                random.seed(seed)
+                random.shuffle(self.files_in_this_task)
+                generator_fn.manual_seed(seed)
+            data_sampler = torch.utils.data.RandomSampler(
+                self, generator=generator_fn
             )
-            if self.shuffle
-            else self,
+        else:
+            data_sampler = torch.utils.data.SequentialSampler(self)
+
+        if self.use_fast_dataloader:
+            dataloader_fn = FastDataLoader
+            print("-- Using FastDataLoader -- ")
+        else:
+            dataloader_fn = torch.utils.data.DataLoader
+
+        data_loader = dataloader_fn(
+            self,
             batch_size=self.batch_size,
             drop_last=self.drop_last,
             num_workers=self.num_workers,
@@ -179,6 +208,7 @@ class Hdf5BaseDataProcessor(ABC, torch.utils.data.IterableDataset):
             if self.num_workers > 0
             else False,
             worker_init_fn=self._worker_init_fn,
+            sampler=data_sampler,
         )
         # set self.data_partitions in case self.num_workers == 0
         if self.num_workers == 0:

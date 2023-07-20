@@ -24,6 +24,7 @@ from modelzoo.common.pytorch.model_utils.RotaryPositionEmbeddingHelper import (
     RotaryPositionEmbeddingHelper,
 )
 
+from .AlibiPositionEmbeddingLayer import AlibiPositionEmbeddingLayer
 from .RelativePositionEmbeddingLayer import RelativePositionEmbeddingLayer
 
 
@@ -55,6 +56,7 @@ class EmbeddingLayer(nn.Module):
         layer is not created.
     :param Optional[str,Callable] segment_embeddings_initializer: Segment
         embeddings initializer. Defaults to "uniform".
+    :param device (optional): Device to create the model parameters on, can be a cuda device or CS device.
     """
 
     def __init__(
@@ -119,6 +121,7 @@ class EmbeddingLayer(nn.Module):
             elif (
                 position_embedding_type == "relative"
                 or position_embedding_type == "rotary"
+                or position_embedding_type == "alibi"
             ):
                 self.position_embeddings = None
             else:
@@ -178,6 +181,10 @@ class EmbeddingLayer(nn.Module):
         initializer="xavier_uniform",
         # rotary
         rotary_dim=None,
+        # alibi
+        alibi_slopes=None,
+        alibi_trainable_slopes=False,
+        alibi_implementation="expand",
     ):
         embedding_helper = None
         if self.position_embedding_type == "rotary":
@@ -199,6 +206,18 @@ class EmbeddingLayer(nn.Module):
                 num_relative_attention_buckets=num_relative_attention_buckets,
                 bidirectional_relative_attention=bidirectional,
                 relative_attn_bias_initializer=initializer,
+            )
+        elif self.position_embedding_type == "alibi":
+            assert (
+                num_heads is not None
+            ), "AlibiPositionEmbeddingLayer requires num_heads"
+
+            embedding_helper = AlibiPositionEmbeddingLayer(
+                num_heads,
+                slopes=alibi_slopes,
+                alibi_trainable_slopes=alibi_trainable_slopes,
+                slopes_initializer=initializer,
+                alibi_implementation=alibi_implementation,
             )
 
         return embedding_helper
@@ -242,12 +261,23 @@ class EmbeddingLayer(nn.Module):
         self.word_embeddings = new_embeddings
 
     def forward(
-        self, input_ids, segment_ids=None, past_length=0,
+        self, input_ids, position_ids=None, segment_ids=None, past_length=0,
     ):
+        """ Convert input_ids to token embeddings according to the embedding type.
+            Word embeddings (required), segment embeddings (optional) and position embeddings (optional).
+
+        Args:
+            input_ids (Tensor): input token ids with shape ``[batch_size, seq_length]``.
+            position_ids (Tensor): position ids with shape ``[batch_size, seq_length]``.
+            segment_ids (Tensor): input segment ids with shape ``[batch_size, seq_length]``.
+
+        Returns:
+            Token embedding output with shape ``[batch_size, seq_length, embedding_size]``.
+        """
         embeddings = self.compute_token_embeddings(input_ids)
         if self.position_embeddings is not None:
             embeddings += self.compute_positional_embeddings(
-                input_ids, past_length, embeddings.dtype
+                input_ids, position_ids, past_length, embeddings.dtype
             )
         if segment_ids is not None and self.segment_embeddings is not None:
             embeddings += self.compute_segment_embeddings(segment_ids)
@@ -260,7 +290,7 @@ class EmbeddingLayer(nn.Module):
         return embeddings
 
     def compute_positional_embeddings(
-        self, input_ids, past_length=0, dtype=None
+        self, input_ids, position_ids=None, past_length=0, dtype=None
     ):
         input_shape = input_ids.size()
         batch_size = input_ids.shape[0]
@@ -269,17 +299,28 @@ class EmbeddingLayer(nn.Module):
             self.word_embeddings.weight.dtype if dtype is None else dtype
         )
 
+        if position_ids is not None:
+            assert (
+                position_ids.size() == input_shape
+            ), "position_ids must have shape [batch_size, seq_length]"
+
         position_embeddings = None
         if self.position_embedding_type == "learned":
-            position_ids = torch.arange(
-                past_length, input_shape[-1] + past_length, device=device,
-            ).expand((batch_size, -1))
+            if position_ids is None:
+                position_ids = torch.arange(
+                    past_length, input_shape[-1] + past_length, device=device,
+                ).expand((batch_size, -1))
             position_embeddings = self.position_embeddings(position_ids)
         elif self.position_embedding_type == "fixed":
             position_embeddings = self.position_embeddings.to(dtype=embed_dtype)
-            length = input_shape[-1]
-            if length != position_embeddings.size(dim=0):
-                position_embeddings = position_embeddings[:length]
+            if position_ids is None:
+                length = input_shape[-1]
+                if length != position_embeddings.size(dim=0):
+                    position_embeddings = position_embeddings[:length]
+            else:
+                position_ids = position_ids.to(torch.long)
+                position_embeddings = position_embeddings[position_ids]
+
         return position_embeddings
 
     def compute_segment_embeddings(self, segment_ids):

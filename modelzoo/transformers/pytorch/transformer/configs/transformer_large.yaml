@@ -10,7 +10,8 @@ train_input:
     tgt_data_dir: "./transformer/wmt16_en_de/pytorch/train.tok.clean.bpe.32000.de"
     src_max_sequence_length: 256
     tgt_max_sequence_length: 256
-    batch_size: 2048
+    # The effective batch size, which is evenly divided across "num_csx" systems used for the run
+    batch_size: 1024
     shuffle: True
     shuffle_seed: 1
     num_workers: 8
@@ -27,11 +28,12 @@ eval_input:
     tgt_max_sequence_length: 256
     shuffle: False
     shuffle_seed: 1 # also for deterministic masking
-    batch_size: 1 # avoid dropping eval samples for CS runs
+    # The effective batch size, which is evenly divided across "num_csx" systems used for the run
+    batch_size: 4 # avoid dropping eval samples for CS runs
     # suggested batching settings for GPU (16GB) runs:
     # batch_size: 32
     # drop_last: False
-    num_workers: 8
+    num_workers: 4
     prefetch_factor: 10
     persistent_workers: True
 
@@ -65,8 +67,8 @@ model:
     # Encoder -- ffn
     d_ff: 4096 # Size of the intermediate feed forward layer in t5 blocks.
     d_model: 1024  # Size of the encoder layers and the pooler layer.
-    encoder_nonlinearity: "relu" # {"gelu", "relu", "gated-gelu"}
-    decoder_nonlinearity: "relu" # {"gelu", "relu", "gated-gelu"}
+    encoder_nonlinearity: "relu" # {"gelu", "relu", "geglu"}
+    decoder_nonlinearity: "relu" # {"gelu", "relu", "geglu"}
     layer_norm_epsilon: 1.0e-5
     use_ffn_bias: True
 
@@ -182,3 +184,4 @@ runconfig:
     show_debug_metrics: False
     save_losses: True
     eval_steps: 3001 # comment out this line for GPU eval
+    use_cs_grad_accum: True

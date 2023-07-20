@@ -1,21 +1,32 @@
+# Copyright 2022 Cerebras Systems.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import argparse
 import gc
 import os
 import pickle
 import re
 import string
-import sys
 from itertools import repeat
 from multiprocessing import Pool, cpu_count
 
 import jsonlines
 from datasketch import MinHash
+from lm_dataformat import Reader
 from more_itertools import chunked
 from nltk import ngrams
 from tqdm import tqdm
-
-sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
-from lm_dataformat.lm_dataformat import Reader
 
 
 def get_features(s, width):

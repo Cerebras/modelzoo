@@ -66,7 +66,7 @@ class BertForSequenceClassificationModel(torch.nn.Module):
         self.compute_eval_metrics = model_params.pop(
             "compute_eval_metrics", False
         )
-        # Below flag helps create two more accuray objects for
+        # Below flag helps create two more accuracy objects for
         # matched and mismatched partitions
         self.is_mnli_dataset = model_params.pop("is_mnli_dataset", False)
 
@@ -89,12 +89,11 @@ class BertForSequenceClassificationModel(torch.nn.Module):
                     name="eval/accuracy_mismatched"
                 )
 
-    def __call__(self, data):
+    def forward(self, data):
         logits = self.model(
             input_ids=data["input_ids"],
             token_type_ids=data["token_type_ids"],
             attention_mask=data["attention_mask"],
-            labels=data["labels"],
         )
         loss = self.loss_fn(data["labels"], logits)
         if not self.model.training and self.compute_eval_metrics:

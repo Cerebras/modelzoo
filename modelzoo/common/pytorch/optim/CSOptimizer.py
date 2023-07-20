@@ -16,9 +16,13 @@
 Abstract base class for Cerebras Optimizers.
 """
 from abc import ABC, abstractmethod
+from collections import defaultdict
 
 import torch
 from torch.optim import Optimizer
+
+from modelzoo.common.pytorch import cb_model as cm
+from modelzoo.common.pytorch import cbtorch
 
 
 class CSOptimizer(Optimizer, ABC):
@@ -36,7 +40,51 @@ class CSOptimizer(Optimizer, ABC):
         """
         super(CSOptimizer, self).__init__(params, defaults)
 
+        if cm.use_cs():
+            # Add progress updates for optimizer state initialization
+            progress = cbtorch.state().progress_tracker
+            if progress is not None:
+                progress.set_description(
+                    f"Initializing {self.__class__.__name__} optimizer"
+                )
+                progress.set_postfix(note="Preinitializing optimizer state")
+                progress.update()
+
+                param_num = 0
+
+                class LoggedDict(dict):
+                    def __init__(self, *args, **kwargs):
+                        nonlocal param_num
+
+                        super().__init__(*args, **kwargs)
+
+                        self.param_num = param_num
+                        param_num += 1
+
+                    def __setitem__(self, name, value):
+                        progress.set_postfix(
+                            note=f"Initialized optimizer.state.{self.param_num}.{name}"
+                        )
+                        progress.update()
+
+                        return super().__setitem__(name, value)
+
+                    def update(self, *args, **kwargs):
+                        for k, v in dict(*args, **kwargs).items():
+                            self[k] = v
+
+                self.state = defaultdict(LoggedDict)
+
         self.preinitialize()
+
+        # Need to change state back into a normal dict
+        # so that it can be saved to a checkpoint
+        if cm.use_cs() and progress is not None:
+            progress.update()
+
+            for group in self.param_groups:
+                for p in group['params']:
+                    self.state[p] = dict(self.state[p])
 
         if enable_global_step:
             for group in self.param_groups:

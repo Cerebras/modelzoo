@@ -22,7 +22,7 @@ from modelzoo.common.pytorch.model_utils.checkpoint_converters.base_converter im
     ConfigConversionError,
     ConversionRule,
     EquivalentSubkey,
-    converter_notes,
+    FormatVersions,
 )
 from modelzoo.common.pytorch.model_utils.checkpoint_converters.bert import (
     ConfigConverter_Bert_CS16_CS17,
@@ -55,13 +55,15 @@ class Converter_BertFinetuneModel_CS16_CS17(BaseCheckpointConverter_PT_PT):
         return {"model": checkpoint["model"]}
 
     @staticmethod
-    @converter_notes(
-        notes="""
-    BertForSequenceClassification, BertForTokenClassification,
-    BertForQuestionAnswering, and BertForSummarization classes"""
-    )
-    def formats() -> Tuple[str, str]:
-        return ("cs-1.6", "cs-1.7")
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("cs-1.6"), FormatVersions("cs-1.7"))
+
+    @classmethod
+    def converter_note(cls) -> str:
+        return (
+            "BertForSequenceClassification, BertForTokenClassification, "
+            "BertForQuestionAnswering, and BertForSummarization classes"
+        )
 
     @staticmethod
     def get_config_converter_class() -> BaseConfigConverter:
@@ -98,13 +100,15 @@ class Converter_BertFinetuneModel_CS16_CS18(BaseCheckpointConverter_PT_PT):
         return {"model": checkpoint["model"]}
 
     @staticmethod
-    @converter_notes(
-        notes="""
-    BertForSequenceClassification, BertForTokenClassificationLoss,
-    BertForQuestionAnswering, and BertForSummarization classes"""
-    )
-    def formats() -> Tuple[str, str]:
-        return ("cs-1.6", "cs-1.8")
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("cs-1.6"), FormatVersions("cs-1.8", "cs-1.9"))
+
+    @classmethod
+    def converter_note(cls) -> str:
+        return (
+            "BertForSequenceClassification, BertForTokenClassification, "
+            "BertForQuestionAnswering, and BertForSummarization classes"
+        )
 
     @staticmethod
     def get_config_converter_class() -> BaseConfigConverter:
@@ -125,9 +129,14 @@ class Converter_BertForSequenceClassification_HF_CS17(
         )
 
     @staticmethod
-    @converter_notes(notes="HF <-> CS 1.7 for BertForSequenceClassification")
-    def formats() -> Tuple[str, str]:
-        return ("hf", "cs-1.7")
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-1.7"))
+
+    @classmethod
+    def converter_note(cls) -> str:
+        return "{} <-> {} for BertForSequenceClassification".format(
+            cls.formats()[0], cls.formats()[1]
+        )
 
     @staticmethod
     def get_config_converter_class() -> BaseConfigConverter:
@@ -156,9 +165,14 @@ class Converter_BertForSequenceClassification_HF_CS18(
         ]
 
     @staticmethod
-    @converter_notes(notes="HF <-> CS 1.8 for BertForSequenceClassification")
-    def formats() -> Tuple[str, str]:
-        return ("hf", "cs-1.8")
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-1.8", "cs-1.9"))
+
+    @classmethod
+    def converter_note(cls) -> str:
+        return "{} <-> {} for BertForSequenceClassification".format(
+            cls.formats()[0], cls.formats()[1]
+        )
 
     @staticmethod
     def get_config_converter_class() -> BaseConfigConverter:
@@ -210,8 +224,8 @@ class ConfigConverter_BertForSequenceClassification_HF_CS17(
         return config
 
     @staticmethod
-    def formats() -> Tuple[str, str]:
-        return ("hf", "cs-1.7")
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-1.7"))
 
 
 class ConfigConverter_BertForSequenceClassification_HF_CS18(
@@ -222,8 +236,8 @@ class ConfigConverter_BertForSequenceClassification_HF_CS18(
         super().__init__()
 
     @staticmethod
-    def formats() -> Tuple[str, str]:
-        return ("hf", "cs-1.8")
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-1.8", "cs-1.9"))
 
 
 class Converter_BertForTokenClassification_HF_CS17(
@@ -240,9 +254,14 @@ class Converter_BertForTokenClassification_HF_CS17(
         )
 
     @staticmethod
-    @converter_notes(notes="HF <-> CS 1.7 for BertForTokenClassification")
-    def formats() -> Tuple[str, str]:
-        return ("hf", "cs-1.7")
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-1.7"))
+
+    @classmethod
+    def converter_note(cls) -> str:
+        return "{} <-> {} for BertForTokenClassification".format(
+            cls.formats()[0], cls.formats()[1]
+        )
 
     @staticmethod
     def get_config_converter_class() -> BaseConfigConverter:
@@ -270,9 +289,14 @@ class Converter_BertForTokenClassification_HF_CS18(
         ]
 
     @staticmethod
-    @converter_notes(notes="HF <-> CS 1.8 for BertForTokenClassification")
-    def formats() -> Tuple[str, str]:
-        return ("hf", "cs-1.8")
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-1.8", "cs-1.9"))
+
+    @classmethod
+    def converter_note(cls) -> str:
+        return "{} <-> {} for BertForTokenClassification".format(
+            cls.formats()[0], cls.formats()[1]
+        )
 
     @staticmethod
     def get_config_converter_class() -> BaseConfigConverter:
@@ -344,8 +368,8 @@ class ConfigConverter_BertForTokenClassification_HF_CS17(
         )
 
     @staticmethod
-    def formats() -> Tuple[str, str]:
-        return ("hf", "cs-1.7")
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-1.7"))
 
 
 class ConfigConverter_BertForTokenClassification_HF_CS18(
@@ -356,8 +380,8 @@ class ConfigConverter_BertForTokenClassification_HF_CS18(
         super().__init__()
 
     @staticmethod
-    def formats() -> Tuple[str, str]:
-        return ("hf", "cs-1.8")
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-1.8", "cs-1.9"))
 
 
 class Converter_BertForQuestionAnswering_HF_CS17(BaseCheckpointConverter_HF_CS):
@@ -375,9 +399,14 @@ class Converter_BertForQuestionAnswering_HF_CS17(BaseCheckpointConverter_HF_CS):
         ]
 
     @staticmethod
-    @converter_notes(notes="HF <-> CS 1.7 for BertForQuestionAnswering")
-    def formats() -> Tuple[str, str]:
-        return ("hf", "cs-1.7")
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-1.7"))
+
+    @classmethod
+    def converter_note(cls) -> str:
+        return "{} <-> {} for BertForQuestionAnswering".format(
+            cls.formats()[0], cls.formats()[1]
+        )
 
     @staticmethod
     def get_config_converter_class() -> BaseConfigConverter:
@@ -403,9 +432,14 @@ class Converter_BertForQuestionAnswering_HF_CS18(BaseCheckpointConverter_HF_CS):
         ]
 
     @staticmethod
-    @converter_notes(notes="HF <-> CS 1.8 for BertForQuestionAnswering")
-    def formats() -> Tuple[str, str]:
-        return ("hf", "cs-1.8")
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-1.8", "cs-1.9"))
+
+    @classmethod
+    def converter_note(cls) -> str:
+        return "{} <-> {} for BertForQuestionAnswering".format(
+            cls.formats()[0], cls.formats()[1]
+        )
 
     @staticmethod
     def get_config_converter_class() -> BaseConfigConverter:
@@ -463,8 +497,8 @@ class ConfigConverter_BertForQuestionAnswering_HF_CS17(
         )
 
     @staticmethod
-    def formats() -> Tuple[str, str]:
-        return ("hf", "cs-1.7")
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-1.7"))
 
 
 class ConfigConverter_BertForQuestionAnswering_HF_CS18(
@@ -475,5 +509,5 @@ class ConfigConverter_BertForQuestionAnswering_HF_CS18(
         super().__init__()
 
     @staticmethod
-    def formats() -> Tuple[str, str]:
-        return ("hf", "cs-1.8")
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-1.8", "cs-1.9"))

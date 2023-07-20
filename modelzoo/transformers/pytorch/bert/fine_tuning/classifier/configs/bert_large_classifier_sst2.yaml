@@ -6,7 +6,8 @@ train_input:
     vocab_file: "../../../../vocab/google_research_uncased_L-12_H-768_A-12.txt"
     max_sequence_length: 72
     do_lower: True
-    batch_size: 12
+    # The effective batch size, which is evenly divided across "num_csx" systems used for the run
+    batch_size: 2048
     num_workers: 8
     shuffle: True
     shuffle_seed: 1
@@ -17,6 +18,7 @@ eval_input:
     vocab_file: "../../../../vocab/google_research_uncased_L-12_H-768_A-12.txt"
     max_sequence_length: 72
     do_lower: True
+    # The effective batch size, which is evenly divided across "num_csx" systems used for the run
     batch_size: 12
     num_workers: 1
     shuffle: False
@@ -29,6 +31,7 @@ model:
     num_heads: 16
     filter_size: 4096
     encoder_nonlinearity: "gelu" # {"gelu", "relu", "silu", "gelu_new"}
+    pooler_nonlinearity: "tanh"
     dropout_rate: 0.1
     attention_dropout_rate: 0.1
     max_position_embeddings: 512
@@ -36,7 +39,7 @@ model:
     problem_type: "single_label_classification"
     num_labels: 2
     mixed_precision: True
-    compute_eval_metrics: True
+    compute_eval_metrics: False
 
 optimizer:
     optimizer_type: "AdamW"
@@ -62,3 +65,4 @@ runconfig:
     model_dir: "./model_dir"
     save_initial_checkpoint: True
     eval_steps: 71
+    use_cs_grad_accum: True

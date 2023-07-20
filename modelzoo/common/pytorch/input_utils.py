@@ -12,10 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 import random
 
 import numpy as np
 from torch.utils.data._utils.collate import default_collate
+
+from modelzoo.common.pytorch import cb_model as cm
 
 
 def bucketed_batch(
@@ -122,3 +125,31 @@ def bucketed_batch(
         raise ValueError(
             "buckets must be None or a list of boundaries. " f"Got {buckets}."
         )
+
+
+def get_streaming_batch_size(effective_batch_size: int) -> int:
+    """Returns the streaming batch size of the current task.
+
+    In a Wafer-Scaler Cluster setup with more than 1 CS-X node, the batch size
+    used in compile and specified by user is the effective batch size at
+    which gradient updates are done. However, each worker node streams a local
+    batch of data to a given CS-X node to enable data parallel training.
+
+    This helper method returns the local batch size that the current task should
+    use given the effective batch size.
+
+    Args:
+        effective_batch_size: The effective batch size of the model.
+    Returns:
+        The local batch size to be streamed by this task. If queried on the
+        user node (used when compiling the model), this returns the original
+        effective batch size as passed in the argument.
+    """
+    streaming_batch_size = cm.get_streaming_batch_size(effective_batch_size)
+
+    msg = f"Effective batch size is {effective_batch_size}."
+    if (cm.use_cs() or cm.is_appliance()) and cm.is_streamer():
+        msg += f" Using batch size {streaming_batch_size} for streaming."
+    logging.info(msg)
+
+    return streaming_batch_size

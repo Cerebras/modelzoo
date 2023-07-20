@@ -19,17 +19,11 @@ import torch
 
 from modelzoo import CSOFT_PACKAGE, CSoftPackage
 
-if CSOFT_PACKAGE == CSoftPackage.SRC:
-    import cerebras.framework.torch as cbtorch
-    from cerebras.framework.torch import amp
-    from cerebras.framework.torch.core import cb_model, modes, name_scope
-    from cerebras.pb.stack.autogen_pb2 import AP_DISABLED
-elif CSOFT_PACKAGE == CSoftPackage.WHEEL:
+if CSOFT_PACKAGE in (CSoftPackage.SRC, CSoftPackage.WHEEL):
     import cerebras_pytorch as cbtorch
-    from cerebras_pytorch import amp
-    from cerebras_pytorch.core import cb_model, modes, name_scope
-
     from cerebras_appliance.pb.stack.autogen_pb2 import AP_DISABLED
+    from cerebras_pytorch import amp
+    from cerebras_pytorch.core import cb_model, modes
 
     # Import torchvision but disable warnings temporarily
     # to decrease logging verbosity
@@ -38,6 +32,10 @@ elif CSOFT_PACKAGE == CSoftPackage.WHEEL:
         import torchvision
         import torchvision.io.image
 
+    def is_ltc_mlir_mode_enabled() -> bool:
+        return cbtorch.utils.utils.is_ltc_mlir_mode_enabled()
+
+
 elif CSOFT_PACKAGE == CSoftPackage.NONE:
     from types import SimpleNamespace
 
@@ -45,7 +43,13 @@ elif CSOFT_PACKAGE == CSoftPackage.NONE:
 
     amp = SimpleNamespace(get_init_params=lambda: {},)
 
-    cbtorch = SimpleNamespace(load=torch.load, save=torch.save,)
+    cbtorch = SimpleNamespace(
+        load=torch.load,
+        save=torch.save,
+        name_scope=lambda name, raw=False: contextlib.nullcontext(),
+        add_debug_name=lambda module, root_name=None: None,
+        get_debug_name=lambda module: "",
+    )
 
     cb_model = SimpleNamespace(
         use_cs=lambda: False,
@@ -55,6 +59,7 @@ elif CSOFT_PACKAGE == CSoftPackage.NONE:
         is_streamer=lambda: True,
         is_receiver=lambda: True,
         get_streaming_rank=lambda: 0,
+        get_streaming_batch_size=lambda t: t,
         get_ordinal=lambda: 0,
         make_constant=lambda t: t,
         num_tasks=lambda: 1,
@@ -87,9 +92,8 @@ elif CSOFT_PACKAGE == CSoftPackage.NONE:
         def is_valid(mode):
             return mode in modes.get_modes()
 
-    @contextlib.contextmanager
-    def name_scope(name: str):
-        yield None
+    def is_ltc_mlir_mode_enabled() -> bool:
+        return False
 
 
 else:

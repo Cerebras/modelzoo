@@ -181,4 +181,4 @@ sed -i '1i\<pad>\n<unk>\n<s>\n</s>' "${OUTPUT_DIR}/vocab.bpe.32000.en"
 cp "${OUTPUT_DIR}/vocab.bpe.32000" "${OUTPUT_DIR}/vocab.bpe.32000.en"
 cp "${OUTPUT_DIR}/vocab.bpe.32000" "${OUTPUT_DIR}/vocab.bpe.32000.de"
 
-echo "All done."
+echo "All done." 

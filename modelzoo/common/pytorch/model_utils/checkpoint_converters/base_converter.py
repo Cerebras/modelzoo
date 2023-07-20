@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 from abc import ABC, abstractmethod
 from collections import OrderedDict
@@ -45,6 +46,9 @@ class EquivalentSubkey:
         ), "Invalid index into EquivalentSubkey object: {}".format(idx)
         return self.keys[idx]
 
+    def __repr__(self) -> str:
+        return "EquivalentSubkey(\"{}\", \"{}\")".format(*self.keys)
+
 
 class ConversionRule:
     r"""ConversionRule defines a "rule" which:
@@ -61,7 +65,7 @@ class ConversionRule:
     other and should be ignored. Without this behavior, keys that exist in one
     but not the other wouldn't be matched by any conversion rules, causing a failure
     as drop_unmatched_keys is disabled by default.
-    
+
     Example:
     The following describes the conversion rule for mapping HF's layer normalization
     key to CS layer normalization in the GPT2 model.
@@ -139,6 +143,20 @@ class ConversionRule:
         self.exists = exists
         self.action = action
         self.validate_segments()
+
+    def __repr__(self) -> str:
+        single_line = len(self.segments) < 2
+        out = "ConversionRule(["
+        if not single_line:
+            out += "\n"
+        for i in range(len(self.segments)):
+            mod_str = repr(self.segments[i])
+            if not single_line:
+                mod_str = _addindent(mod_str, 4) + ",\n"
+            out += mod_str
+        action_name = "self." + self.action.__name__ if self.action else "None"
+        out += "], action={})".format(action_name)
+        return out
 
     @staticmethod
     def segment_is_converter(
@@ -251,11 +269,22 @@ class ConversionRule:
         )
 
 
+class FormatVersions(list):
+    def __init__(self, *versions) -> None:
+        self.formats = [*versions]
+
+    def __contains__(self, key):
+        return key in self.formats
+
+    def __str__(self) -> str:
+        return ", ".join(self.formats)
+
+
 class BaseDictionaryConverter(ABC):
     r"""A dictionary converter represents a pair of two dictionary formats that
         can be converted between each other. The converter object defines a list
         of conversion rules which should be applied when converting one dict
-        format to the other (and vice-versa). 
+        format to the other (and vice-versa).
 
         In order to make your own dictionary converter, simply:
         1. Create a new converter class which inherits from BaseDictionaryConverter
@@ -267,14 +296,21 @@ class BaseDictionaryConverter(ABC):
     def __init__(self, pbar_desc=None):
         self.pbar_desc = pbar_desc
 
+    def __repr__(self) -> str:
+        out = "BaseDictionaryConverter([\n"
+        for i in range(len(self.rules)):
+            out += _addindent(repr(self.rules[i]), 4) + ",\n"
+        out += "])"
+        return out
+
     @staticmethod
     @abstractmethod
-    def formats() -> Tuple[str, str]:
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
         pass
 
     @classmethod
     def supports_conversion(cls, src_fmt, tgt_fmt):
-        return cls.get_from_index(cls, src_fmt, tgt_fmt) is not None
+        return cls.get_from_index(src_fmt, tgt_fmt) is not None
 
     @classmethod
     def get_from_index(cls, src_fmt, tgt_fmt):
@@ -284,9 +320,9 @@ class BaseDictionaryConverter(ABC):
         ), "Class {} hasn't provided formats() which is required.".format(
             cls.__name__
         )
-        if src_fmt == formats[0] and tgt_fmt == formats[1]:
+        if src_fmt in formats[0] and tgt_fmt in formats[1]:
             return 0
-        elif src_fmt == formats[1] and tgt_fmt == formats[0]:
+        elif src_fmt in formats[1] and tgt_fmt in formats[0]:
             return 1
         else:
             return None
@@ -488,7 +524,7 @@ class BaseCheckpointConverter(BaseDictionaryConverter, ABC):
         drop_unmatched_keys: bool,
     ):
         r"""
-        Hook executes right before model conversion. 
+        Hook executes right before model conversion.
         """
 
     def post_model_convert(
@@ -500,14 +536,14 @@ class BaseCheckpointConverter(BaseDictionaryConverter, ABC):
         drop_unmatched_keys: bool,
     ):
         r"""
-        Hook executes right after model conversion. 
+        Hook executes right after model conversion.
         """
 
     def pre_checkpoint_convert(
         self, checkpoint, configs: Tuple[dict, dict], from_index: int,
     ):
         r"""
-        Hook executes before checkpoint conversion. 
+        Hook executes before checkpoint conversion.
         """
         return checkpoint
 
@@ -515,7 +551,7 @@ class BaseCheckpointConverter(BaseDictionaryConverter, ABC):
         self, checkpoint, from_index: int,
     ):
         r"""
-        Hook executes after checkpoint conversion. 
+        Hook executes after checkpoint conversion.
         """
         return checkpoint
 
@@ -530,7 +566,23 @@ class BaseCheckpointConverter_PT_PT(BaseCheckpointConverter):
 
     @classmethod
     def load(cls, file: str, from_index: int,) -> OrderedDict:
-        return cbtorch.load(file)
+        if file.endswith(".index.json"):
+            # HF style sharded checkpoint
+            print("Detected HF sharded checkpoint")
+            index_dir = os.path.dirname(file)
+            with open(file, "r") as f:
+                index = json.load(f)
+                files = set(index["weight_map"].values())
+                combined_checkpoint = {}
+                for bin_file in files:
+                    print("Reading", bin_file)
+                    combined_checkpoint.update(
+                        cbtorch.load(os.path.join(index_dir, bin_file))
+                    )
+            return combined_checkpoint
+        else:
+            # Any other type of checkpoint
+            return cbtorch.load(file)
 
     @classmethod
     def save(
@@ -573,7 +625,7 @@ class BaseCheckpointConverter_HF_CS(BaseCheckpointConverter_PT_PT):
                 "Finalzing sparsity. The output checkpoint will be dense."
             )
             cs_config = configs[from_index]
-            if cs_config.get("sparsity", {}):
+            if cs_config.get("sparsity", {}).get("type") == "sideband":
                 for weight in checkpoint["model"].values():
                     weight[weight.isnan()] = 0
         return checkpoint
@@ -803,11 +855,8 @@ class BaseConfigConverter_CS_CS(BaseConfigConverter):
         return final_config
 
 
-# Decorator for adding notes to converter functions. This will be visible
-# in the table printed by `python3 convert_checkpoint.py list`
-def converter_notes(notes):
-    def attach_notes(func):
-        setattr(func, "notes", notes)
-        return func
-
-    return attach_notes
+def _addindent(s_, numSpaces):
+    s = s_.split('\n')
+    s = [(numSpaces * ' ') + line for line in s]
+    s = '\n'.join(s)
+    return s

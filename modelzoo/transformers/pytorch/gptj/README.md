@@ -1,13 +1,14 @@
 # GPT-J, GPT-Neox
 
-- [GPT-J, GPT-Neox](#running-gpt-j)
   - [Introduction](#introduction)
+      - [GPT-J:](#gpt-j)
+      - [GPT-Neox:](#gpt-neox)
   - [Structure of the code](#structure-of-the-code)
   - [Data Preparation](#data-preparation)
-    - [Download and Process the Pile Dataset](#download-and-process-the-pile-dataset)
-    - [Run with Data Processors](#run-with-data-processors)
+      - [Download and Process the Pile Dataset:](#download-and-process-the-pile-dataset)
+      - [Run with Data Processors:](#run-with-data-processors)
   - [Input Function](#input-function)
-    - [Features Dictionary](#features-dictionary)
+      - [Features Dictionary](#features-dictionary)
   - [Configuration files included for this model](#configuration-files-included-for-this-model)
   - [How to run](#how-to-run)
     - [To compile/validate, run train and eval on Cerebras System](#to-compilevalidate-run-train-and-eval-on-cerebras-system)
@@ -86,7 +87,7 @@ The features dictionary of a GPT-J (Neox) model has the following key/values:
 
 ## Configuration files included for this model
 
-We provide the following config file for pre-training the GPT-J and GPT-Neox models, located under the [configs](configs) directory. These configurations use [Weight Streaming execution](https://docs.cerebras.net/en/wsc/latest/cerebras-basics/cerebras-execution-modes.html).
+We provide the following config file for pre-training the GPT-J and GPT-Neox models, located under the [configs](configs) directory.
 
 * [params_gptj_6B.yaml](configs/params_gptj_6B.yaml): GPT-J model with `hidden_size=4096`, `num_hidden_layers=28`, `num_heads=16` and the gpt2 tokenizer.
 * [params_gpt_neox_small.yaml](configs/params_gpt_neox_small.yaml): GPT-Neox model with `hidden_size=768`, `num_hidden_layers=12`, `num_heads=12` and the neox tokenizer.

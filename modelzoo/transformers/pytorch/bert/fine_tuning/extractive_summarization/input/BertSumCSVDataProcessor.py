@@ -20,6 +20,7 @@ import csv
 import numpy as np
 import torch
 
+from modelzoo.common.pytorch.input_utils import get_streaming_batch_size
 from modelzoo.transformers.data_processing.utils import (
     convert_str_to_int_list,
     pad_input_sequence,
@@ -56,7 +57,7 @@ class BertSumCSVDataProcessor(torch.utils.data.IterableDataset):
         self.meta_data_values_cum_sum = np.cumsum([0] + self.meta_data_values)
 
         self.num_examples = sum(map(int, self.meta_data.values()))
-        self.batch_size = params["batch_size"]
+        self.batch_size = get_streaming_batch_size(params["batch_size"])
 
         self.num_batches = self.num_examples // self.batch_size
         assert (
@@ -81,7 +82,6 @@ class BertSumCSVDataProcessor(torch.utils.data.IterableDataset):
         self.shuffle = params.get("shuffle", True)
         self.shuffle_seed = params.get("shuffle_seed", None)
         self.shuffle_buffer = params.get("shuffle_buffer", 10 * self.batch_size)
-        self.repeat = params.get("repeat", False)
         self.mask_whole_word = params.get("mask_whole_word", False)
         self.do_lower = params.get("do_lower", False)
 
@@ -140,7 +140,7 @@ class BertSumCSVDataProcessor(torch.utils.data.IterableDataset):
         self.csv_files_per_task_per_worker = []
         self.processed_buffers = 0
 
-    def create_dataloader(self, is_training=True):
+    def create_dataloader(self):
         """
         Classmethod to create the dataloader object.
         """

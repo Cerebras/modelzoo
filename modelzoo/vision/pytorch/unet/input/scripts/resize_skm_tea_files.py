@@ -16,14 +16,17 @@ import argparse
 import glob
 import json
 import os
-import sys
 
 import h5py
 import torch
 import torch.nn as nn
 from tqdm import tqdm
 
+# isort: off
+import sys
+
 sys.path.append(os.path.join(os.path.dirname(__file__), "../../../../../.."))
+# isort: on
 
 from modelzoo.common.input.utils import check_and_create_output_dirs
 

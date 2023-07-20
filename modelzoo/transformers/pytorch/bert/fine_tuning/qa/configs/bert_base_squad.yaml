@@ -5,6 +5,7 @@ train_input:
     data_dir: "./language/datasets/squad_csv/train/"
     vocab_file: "../../../../vocab/google_research_uncased_L-12_H-768_A-12.txt"
     max_sequence_length: 384
+    # The effective batch size, which is evenly divided across "num_csx" systems used for the run
     batch_size: 32
     shuffle: True
     shuffle_seed: 1
@@ -17,6 +18,7 @@ eval_input:
     data_dir: "./language/datasets/squad_csv/dev/"
     vocab_file: "../../../../vocab/google_research_uncased_L-12_H-768_A-12.txt"
     max_sequence_length: 384
+    # The effective batch size, which is evenly divided across "num_csx" systems used for the run
     batch_size: 32
     shuffle: True
     shuffle_seed: 1
@@ -29,6 +31,7 @@ predict_input:
     data_dir: "./language/datasets/squad_csv/dev/"
     vocab_file: "../../../../vocab/google_research_uncased_L-12_H-768_A-12.txt"
     max_sequence_length: 384
+    # The effective batch size, which is evenly divided across "num_csx" systems used for the run
     batch_size: 1
     shuffle: True
     shuffle_seed: 1
@@ -43,6 +46,7 @@ model:
     num_heads: 12
     filter_size: 3072
     encoder_nonlinearity: "gelu"
+    pooler_nonlinearity: "tanh"
     dropout_rate: 0.1
     attention_dropout_rate: 0.1
     max_position_embeddings: 512
@@ -71,3 +75,4 @@ runconfig:
     seed: 1
     show_debug_metrics: False
     save_losses: True
+    use_cs_grad_accum: True

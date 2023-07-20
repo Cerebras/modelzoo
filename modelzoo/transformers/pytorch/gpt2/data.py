@@ -14,11 +14,28 @@
 
 import sys
 
+from modelzoo.transformers.pytorch.gpt2.input.HuggingFaceDataProcessorEli5 import (  # noqa
+    HuggingFaceDataProcessorEli5,
+)
+from modelzoo.transformers.pytorch.gpt2.input.HuggingFaceIterableDataProcessorEli5 import (  # noqa
+    HuggingFaceIterableDataProcessorEli5,
+)
+
+from modelzoo.transformers.pytorch.gpt2.input.DummyDataProcessor import (  # noqa
+    DummyDataProcessor,
+)
+from modelzoo.transformers.pytorch.gpt2.input.DummyIterableDataProcessor import (  # noqa
+    DummyIterableDataProcessor,
+)
+
 from modelzoo.transformers.pytorch.gpt2.input.GptHDF5DataProcessor import (  # noqa
     GptHDF5DataProcessor,
 )
 from modelzoo.transformers.pytorch.gpt2.input.GptTextDataProcessor import (  # noqa
     GptTextDataProcessor,
+)
+from modelzoo.transformers.pytorch.gpt2.input.GptHDF5MapDataProcessor import (  # noqa
+    GptHDF5MapDataProcessor,
 )
 
 
@@ -27,13 +44,13 @@ def train_input_dataloader_fn(params):
         params['train_input'].update({'cerebras': params.get('cerebras', {})})
     return getattr(
         sys.modules[__name__], params["train_input"]["data_processor"]
-    )(params["train_input"]).create_dataloader(is_training=True)
+    )(params["train_input"]).create_dataloader()
 
 
 def eval_input_dataloader_fn(params):
     return getattr(
         sys.modules[__name__], params["eval_input"]["data_processor"]
-    )(params["eval_input"]).create_dataloader(is_training=False)
+    )(params["eval_input"]).create_dataloader()
 
 
 def train_input_dataloader(params):

@@ -157,7 +157,7 @@ class BertPretrainModel(nn.Module):
         layer_norm_epsilon=1.0e-5,
         # Encoder Attn
         num_heads=12,
-        attention_module_str="aiayn_attention",
+        attention_module="aiayn_attention",
         extra_attention_params={},
         attention_type="scaled_dot_product",
         attention_softmax_fp32=True,
@@ -206,7 +206,7 @@ class BertPretrainModel(nn.Module):
             layer_norm_epsilon=layer_norm_epsilon,
             # Encoder Attn
             num_heads=num_heads,
-            attention_module_str=attention_module_str,
+            attention_module=attention_module,
             extra_attention_params=extra_attention_params,
             attention_type=attention_type,
             attention_softmax_fp32=attention_softmax_fp32,
@@ -297,13 +297,10 @@ class BertPretrainModel(nn.Module):
         self,
         input_ids=None,
         attention_mask=None,
+        position_ids=None,
         token_type_ids=None,
-        labels=None,
-        next_sentence_label=None,
-        masked_lm_weights=None,
         masked_lm_positions=None,
-        mlm_loss_scale=None,
-        should_calc_loss=True,
+        should_gather_mlm_labels=False,
     ):
         """
         Args:
@@ -313,26 +310,21 @@ class BertPretrainModel(nn.Module):
                 Can be 2D of shape ``[batch_size, seq_length]``,
                 or 3D of shape ``[batch, query_length, seq_length]``,
                 or 4D of shape ``[batch, num_heads, query_length, seq_length]``.
+            position_ids (Tensor):
+                The position id of input tokens. Can be of shape ``[batch_size, seq_length]``
             token_type_ids (Tensor):
                 The segment id of input tokens, indicating which sequence the token belongs to.
                 Can be of shape ```[batch_size, seq_length]`
-            labels (Tensor):
-                Labels for computing the masked language modeling loss. Shape ``[batch_size, max_predictions_per_seq]``
-            next_sentence_label (Tensor):
-                Labels for computing the next sentence prediction loss. Shape ``[batch_size, 1]``
-            masked_lm_weights (Tensor):
-                Weights for mlm logits. Shape ``[batch_size, max_predictions_per_seq]``
             masked_lm_positions (Tensor):
                 Position ids of mlm tokens. Shape ``[batch_size, max_predictions_per_seq]``
         """
         mlm_hidden_states, pooled_hidden_states = self.bert_encoder(
             input_ids,
+            position_ids=position_ids,
             segment_ids=token_type_ids,
             attention_mask=attention_mask,
         )
         batch_size, seq_len, hidden_size = list(mlm_hidden_states.size())
-        _, len_labels = list(labels.size())
-        should_gather_mlm_labels = len_labels != seq_len
 
         focused_mlm_hidden_states = mlm_hidden_states
         if should_gather_mlm_labels:

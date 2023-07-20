@@ -19,7 +19,7 @@ import logging
 import os
 from collections import defaultdict, namedtuple
 
-from modelzoo.transformers.data_processing.bertsum_data_processor import (
+from modelzoo.transformers.data_processing.bert.bertsum_data_processor import (
     BertData,
     RougeBasedLabelsFormatter,
 )

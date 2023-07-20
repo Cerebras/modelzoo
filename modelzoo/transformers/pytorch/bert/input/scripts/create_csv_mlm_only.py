@@ -22,12 +22,15 @@ import json
 import logging
 import os
 import subprocess as sp
+
+# isort: off
 import sys
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "../../../../../.."))
+# isort: on
 
 from modelzoo.common.input.utils import check_and_create_output_dirs
-from modelzoo.transformers.data_processing.mlm_only_processor import (
+from modelzoo.transformers.data_processing.bert.mlm_only_processor import (
     data_generator,
 )
 from modelzoo.transformers.data_processing.utils import (

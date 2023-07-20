@@ -33,14 +33,17 @@ class RotaryPositionEmbeddingHelper:
         self.rotary_dim = rotary_dim
         self.sin_cached = None
         self.cos_cached = None
+        self.offset = 0
 
-    def create_fixed_pos_emb(self, device, dtype):
+    def create_fixed_pos_emb(self, x, offset):
         if self.sin_cached is not None and self.cos_cached is not None:
-            return self.sin_cached, self.cos_cached
+            if self.offset == offset:
+                return self.sin_cached, self.cos_cached
+        self.offset = offset
 
         from modelzoo.common.pytorch import cb_model as cm
 
-        device = "cpu" if cm.use_cs() else device
+        device = "cpu" if cm.use_cs() else x.device
 
         inv_freq = 1.0 / (
             10000
@@ -55,11 +58,21 @@ class RotaryPositionEmbeddingHelper:
             inv_freq,
         )
         sin, cos = (
-            torch.sin(sinusoid_inp).to(dtype),
-            torch.cos(sinusoid_inp).to(dtype),
+            torch.sin(sinusoid_inp).to(x.dtype),
+            torch.cos(sinusoid_inp).to(x.dtype),
         )
 
         sin, cos = map(_duplicate_interleave, (sin, cos))
+
+        def slice_at_offset(t):
+            return t[None, offset : x.shape[1] + offset, None, :]
+
+        assert (
+            self.max_position_embeddings >= x.shape[1] + offset
+        ), "RoPE requires max position embeddings ({}) >= sequence length ({}) + offset ({})".format(
+            self.max_position_embeddings, x.shape[1], offset,
+        )
+        sin, cos = map(slice_at_offset, (sin, cos))
 
         # For cs runs, wrap the sin and cos matrices in xla_literal so that
         # constant folding is performed.
@@ -75,11 +88,7 @@ class RotaryPositionEmbeddingHelper:
             # in einsum notation: rearrange(x, '... d j -> ... (d j)')
             return x.flatten(-2)
 
-        def slice_at_offset(t):
-            return t[None, offset : x.shape[1] + offset, None, :]
-
-        sin, cos = self.create_fixed_pos_emb(x.device, x.dtype)
-        sin, cos = map(slice_at_offset, (sin, cos))
+        sin, cos = self.create_fixed_pos_emb(x, offset)
 
         # einsum notation for lambda t: repeat(t[offset:x.shape[1]+offset,:], "n d -> () n () (d j)", j=2)
         return (x * cos) + (rotate_every_two(x) * sin)

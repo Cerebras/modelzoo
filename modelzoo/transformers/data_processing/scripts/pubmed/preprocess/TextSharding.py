@@ -97,11 +97,11 @@ class Sharding:
 
     def segment_articles_into_sentences(self, segmenter):
         print(f"Start: Sentence Segmentation")
-        if len(self.articles) is 0:
+        if len(self.articles) == 0:
             self.load_articles()
 
         assert (
-            len(self.articles) is not 0
+            len(self.articles) != 0
         ), 'Please check that input files are present and contain data.'
 
         use_multiprocessing = 'serial'
@@ -163,12 +163,12 @@ class Sharding:
     def init_output_files(self):
         print(f"Start: Init Output Files")
         assert (
-            len(self.output_training_files) is 0
+            len(self.output_training_files) == 0
         ), 'Internal storage \
             self.output_files already contains data. This function is \
                 intended to be used by the constructor only.'
         assert (
-            len(self.output_test_files) is 0
+            len(self.output_test_files) == 0
         ), 'Internal storage \
             self.output_files already contains data. \
                 This function is intended to be used by the constructor only.'
@@ -328,7 +328,7 @@ class Sharding:
 
                 if (
                     nominal_next_article_size not in sentence_counts
-                    or nominal_next_article_size is 0
+                    or nominal_next_article_size == 0
                     or training_counts[fidx] > training_median
                 ):
                     continue
@@ -365,7 +365,7 @@ class Sharding:
 
                 if (
                     nominal_next_article_size not in sentence_counts
-                    or nominal_next_article_size is 0
+                    or nominal_next_article_size == 0
                     or test_counts[fidx] > test_median
                 ):
                     continue

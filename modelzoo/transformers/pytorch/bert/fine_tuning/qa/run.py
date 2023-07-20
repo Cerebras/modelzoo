@@ -12,27 +12,40 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
+# isort: off
 import sys
+import os
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "../../../../../.."))
-from modelzoo.common.pytorch.run_utils import run
-from modelzoo.transformers.pytorch.bert.fine_tuning.qa.data import (
-    eval_input_dataloader,
-    train_input_dataloader,
-)
-from modelzoo.transformers.pytorch.bert.fine_tuning.qa.model import (
-    BertForQuestionAnsweringModel,
-)
-from modelzoo.transformers.pytorch.bert.fine_tuning.qa.utils import set_defaults
+# isort: on
+
+
+from modelzoo.common.run_utils.cli_pytorch import get_params_from_args
 
 
 def main():
-    run(
+
+    params = get_params_from_args()
+    from modelzoo.transformers.pytorch.bert.fine_tuning.qa.utils import (
+        set_defaults,
+    )
+
+    set_defaults(params)
+
+    from modelzoo.common.pytorch.run_utils import main
+    from modelzoo.transformers.pytorch.bert.fine_tuning.qa.data import (
+        eval_input_dataloader,
+        train_input_dataloader,
+    )
+    from modelzoo.transformers.pytorch.bert.fine_tuning.qa.model import (
+        BertForQuestionAnsweringModel,
+    )
+
+    main(
+        params,
         BertForQuestionAnsweringModel,
         train_input_dataloader,
         eval_input_dataloader,
-        default_params_fn=set_defaults,
     )
 
 

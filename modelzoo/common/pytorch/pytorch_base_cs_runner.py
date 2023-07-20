@@ -56,6 +56,21 @@ class PyTorchBaseCSRunner(PyTorchBaseRunner, metaclass=abc.ABCMeta):
         else:
             cm.set_target_num_replicas(num_replicas)
 
+    def get_input_fn_params(self):
+        """ Construct the input function params using params dictionary """
+
+        cerebras_params = {
+            "num_epochs": None,  # If dataloader contents mismatch with len default to steps
+            "num_steps": self._total_steps,
+            "checkpoint_steps": self._checkpoint_steps,
+            # pylint: disable=protected-access
+            "num_workers_per_csx": self._runconfig["num_workers_per_csx"],
+        }
+        if "cerebras" in self._params:
+            cerebras_params["cerebras"] = self._params.get("cerebras")
+
+        return ([self._params], {"__cerebras_params": cerebras_params})
+
     ##################################################################
     #                   Override Abstract Methods                    #
     ##################################################################
@@ -80,24 +95,26 @@ class PyTorchBaseCSRunner(PyTorchBaseRunner, metaclass=abc.ABCMeta):
     def on_train_end(self, early_exit: bool):
         rate_tracker = cbtorch.state().rate_tracker
         if rate_tracker is None:
-            logging.info(f"Training Complete.")
+            logging.info(f"Training completed successfully!")
             return
 
         pd = perf_utils.collect_perf_data(rate_tracker)
         logging.info(
-            f"Training Complete. Completed {int(pd.total_samples)} sample(s)"
+            f"Training completed successfully! "
+            f"Processed {int(pd.total_samples)} sample(s)"
             f" in {pd.total_time} seconds."
         )
 
     def on_eval_end(self, early_exit: bool):
         rate_tracker = cbtorch.state().rate_tracker
         if rate_tracker is None:
-            logging.info(f"Evaluation Complete.")
+            logging.info(f"Evaluation completed successfully!")
             return
 
         pd = perf_utils.collect_perf_data(rate_tracker)
         logging.info(
-            f"Evaluation Complete. Completed {int(pd.total_samples)} sample(s)"
+            f"Evaluation completed successfully! "
+            f"Processed {int(pd.total_samples)} sample(s)"
             f" in {pd.total_time} seconds."
         )
 

@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from modelzoo.common.pytorch import cb_model as cm
-
 
 def set_defaults(params):
     """
@@ -45,6 +43,8 @@ def set_defaults(params):
 
 
 def set_custom_stack_params(params):
+    from modelzoo.common.pytorch import cb_model as cm
+
     if cm.use_cs():
         from modelzoo.common.pytorch import cbtorch
 

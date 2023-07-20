@@ -58,7 +58,7 @@ class TransformerBaseModel(torch.nn.Module):
         self.loss_fn = GPTLMHeadModelLoss(self.ntokens, 1.0 / self.ntokens,)
         return model
 
-    def __call__(self, data):
+    def forward(self, data):
         input_ids = data["input_ids"]
         target_ids = data["target_ids"]
         attention_mask = data["attention_mask"]

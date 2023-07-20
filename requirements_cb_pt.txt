@@ -1,1 +1,10 @@
 -r requirements_cb.txt
+transformers==4.28.1
+tokenizers==0.13.2
+datasets==2.11.0
+lm-dataformat @ git+https://github.com/leogao2/lm_dataformat.git@ac85cb7dae49ce25e9973a128ebd9167deaf64dd
+more-itertools==9.1.0
+datasketch==1.5.9
+ftfy==6.1.1
+networkit==10.1
+Keras-Preprocessing==1.1.2

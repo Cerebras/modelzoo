@@ -125,6 +125,7 @@ class T5ForConditionalGenerationModel(nn.Module):
             "attention_softmax_fp32": model_params.pop(
                 "attention_softmax_fp32", True
             ),
+            "attention_kernel": model_params.pop("attention_kernel", None),
         }
 
         # Updating input and model params to account extra ids
@@ -195,7 +196,7 @@ class T5ForConditionalGenerationModel(nn.Module):
             loss = loss * weights.view(-1)
         return loss.sum()
 
-    def __call__(self, data):
+    def forward(self, data):
         if self.enable_vts and not self.model.training:
             self.enable_vts = False
             logging.info(
@@ -218,7 +219,6 @@ class T5ForConditionalGenerationModel(nn.Module):
             "decoder_input_ids": data["decoder_input_ids"],
             "decoder_attention_mask": data["decoder_attention_mask"],
             "labels": data["labels"],
-            "loss_weight": data.get("loss_weight", None),
         }
         logits = self.model(**kwargs)
         loss = None

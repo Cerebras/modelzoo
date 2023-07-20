@@ -8,11 +8,10 @@ This directory contains the Pytorch ML reference for GPT-2 model.
   - [Overview of the model](#overview-of-the-model)
     - [GPT-2](#gpt-2)
   - [Steps for running model training](#steps-for-running-model-training)
-  - [Key features from CSoft platform used in this reference implementation](#key-features-from-csoft-platform-used-in-this-reference-implementation)
   - [Structure of the code](#structure-of-the-code)
-  - [Download and prepare the dataset](#download-and-prepare-the-dataset)
-    - [Download](#download)
-      - [OpenWebText dataset](#openwebtext-dataset)
+- [Download and prepare the dataset](#download-and-prepare-the-dataset)
+  - [Download](#download)
+    - [OpenWebText dataset](#openwebtext-dataset)
       - [GPT-2 DataProcessor output](#gpt-2-dataprocessor-output)
   - [GPT-2 input function](#gpt-2-input-function)
       - [GPT-2 features dictionary](#gpt-2-features-dictionary)
@@ -55,10 +54,6 @@ In order to run any of the models in this directory, you must go through the fol
 - Download and preprocess the data (see [Prepare the data](#prepare-the-data) for more details)
 - Run training for your desired model (see [Run pre-training](#run-pre-training))
 
-## Key features from CSoft platform used in this reference implementation
-GPT2 model configs are supported in the Weight Streaming and Layer Pipelined modes. 
-For more details on Cerebras execution modes, see [this explanation](https://docs.cerebras.net/en/latest/wsc/cerebras-basics/cerebras-execution-modes.html).
-
 ## Structure of the code
 
 -   `configs/`: YAML configuration files.
@@ -92,14 +87,22 @@ Example:<br />
 `source venv_cerebras_pt/bin/activate`<br />
 `venv_cerebras_pt:~> python create_hdf5_dataset.py --metadata_files /path/to/meta_file/train_512k.txt --vocab_file /path/to/vocab_file/vocab.bpe --encoder_file /path/to/encode_file/encoder.json --output_dir /path/to/output_dir`
 
-#### GPT-2 DataProcessor output
-  The `GptHDF5DataProcessor` class in [`GptHDF5DataProcessor.py`](input/GptHDF5DataProcessor.py) creates `example_dict` iterative from the `self.features_list` which is returned on the call iteratively.
 
 ## GPT-2 input function
 
 If you want to use your own data loader with this example code, then this section describes the input data format expected by `Gpt2Model` class defined in [model.py](./model.py). The `Gpt2Model` supports GPT-2.
 
 When you create your own custom GPT input function, you must ensure that your GPT input function produces a features dictionary as described in this section.
+
+We recommended using [GptHDF5DataProcessor](./input/GptHDF5DataProcessor.py) for the input function of GPT-2 model (for performance reasons). The instructions to create a HDF5 dataset can be found here: [Creating HDF5 dataset for GPT Models](../scripts/hdf5_preprocessing/README.md). We also support the following Data Processors:
+
+- [GptTextDataProcessor](./input/GptTextDataProcessor.py): A text dataset processor for GPT pre-training; performs on-the-fly processing of data from text.
+- [HuggingFaceDataProcessorEli5](./input/HuggingFaceDataProcessorEli5.py): An example of using HuggingFace Eli5 dataset (Map-Style).
+- [HuggingFaceIterableDataProcessorEli5](./input/HuggingFaceIterableDataProcessorEli5.py): An example of using HuggingFace Eli5 dataset (Iterable).
+- [DummyDataProcessor](./input/DummyDataProcessor.py): An example of using an arbitrary Map-Style PyTorch dataset.
+- [DummyIterableDataProcessor](./input/DummyIterableDataProcessor.py): An example of using an arbitrary Iterable PyTorch dataset.
+
+> **NOTE**: More information on using of HuggingFace datasets can be found in this document: [Using HuggingFace datasets for auto-regressive LM](../../data_processing/huggingface/README.md)
 
 #### GPT-2 features dictionary
 
@@ -151,14 +154,8 @@ In order to train the model, you need to provide a yaml config file. Some popula
 
 Configs below are meant to be run on [Pipeline mode](https://docs.cerebras.net/en/latest/wsc/cerebras-basics/cerebras-execution-modes.html#layer-pipelined-mode)
 
-- [params_gpt2_small.yaml](./configs/params_gpt2_small.yaml): A 117M parameter 
-model with the standard gpt2-base config with `hidden_size=768`, 
-`num_hidden_layers=12`, `num_heads=12`.
+- [params_gpt2_small.yaml](./configs/params_gpt2_small.yaml) have the standard gpt2-base config with `hidden_size=768`, `num_hidden_layers=12`, `num_heads=12`, for Weight Streaming mode.
 - [params_gpt2_medium.yaml](./configs/params_gpt2_medium.yaml): A 345M parameter model with the standard gpt2-medium config with `hidden_size=1024`, `num_hidden_layers=24`, `num_heads=16`.
-
-Following configs are meant for running in [Weight Streaming mode](https://docs.cerebras.net/en/latest/wsc/cerebras-basics/cerebras-execution-modes.html#weight-streaming-mode):
-
-- [params_gpt2_small_ws.yaml](./configs/params_gpt2_small_ws.yaml) have the standard gpt2-base config with `hidden_size=768`, `num_hidden_layers=12`, `num_heads=12`, for Weight Streaming mode.
 - [params_gpt2_large.yaml](./configs/params_gpt2_large.yaml): A 774M parameter model with the standard gpt2-large config with `hidden_size=1280`, `num_hidden_layers=36`, `num_heads=20`.
 - [params_gpt2_xl.yaml](./configs/params_gpt2_xl.yaml): A 1.3B parameter model with the standard gpt2-xl config with `hidden_size=1600`, `num_hidden_layers=48`, `num_heads=16`.
 

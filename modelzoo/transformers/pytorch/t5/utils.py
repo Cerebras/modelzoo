@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from modelzoo.common.pytorch import cb_model as cm
-
 
 def set_defaults(params):
     """
@@ -49,11 +47,16 @@ def set_defaults(params):
 
     # Only WS configs have precision_opt_level setting.
     # Attention softmax is bf16 for precision_opt_level: 2
-    if params["model"].get("precision_opt_level", 1) == 2:
+    if params["runconfig"].get("precision_opt_level", 1) == 2:
         params["model"]["attention_softmax_fp32"] = False
+
+    if params["runconfig"].get("use_cs_grad_accum"):
+        raise RuntimeError("Gradient accumulation is not supported in T5.")
 
 
 def set_custom_stack_params():
+    from modelzoo.common.pytorch import cb_model as cm
+
     if cm.use_cs():
         from modelzoo.common.pytorch import cbtorch
 

@@ -21,7 +21,10 @@ import random
 import numpy as np
 import torch
 
-from modelzoo.common.pytorch.input_utils import bucketed_batch
+from modelzoo.common.pytorch.input_utils import (
+    bucketed_batch,
+    get_streaming_batch_size,
+)
 from modelzoo.transformers.pytorch.bert.input.utils import (
     build_vocab,
     create_masked_lm_predictions,
@@ -48,7 +51,6 @@ class BertCSVDynamicMaskDataProcessor(torch.utils.data.IterableDataset):
     - "shuffle" (bool): Flag to enable data shuffling.
     - "shuffle_seed" (int): Shuffle seed.
     - "shuffle_buffer" (int): Shuffle buffer size.
-    - "repeat" (bool): Flag to enable data repeat.
     - "mask_whole_word" (bool): Flag to whether mask the entire word.
     - "do_lower" (bool): Flag to lower case the texts.
     - "dynamic_mlm_scale" (bool): Flag to dynamically scale the loss.
@@ -83,7 +85,7 @@ class BertCSVDynamicMaskDataProcessor(torch.utils.data.IterableDataset):
 
         self.num_examples = sum(map(int, self.meta_data.values()))
         self.disable_nsp = params.get("disable_nsp", False)
-        self.batch_size = params["batch_size"]
+        self.batch_size = get_streaming_batch_size(params["batch_size"])
 
         self.num_batches = self.num_examples // self.batch_size
         assert (
@@ -110,7 +112,6 @@ class BertCSVDynamicMaskDataProcessor(torch.utils.data.IterableDataset):
         self.shuffle = params.get("shuffle", True)
         self.shuffle_seed = params.get("shuffle_seed", None)
         self.shuffle_buffer = params.get("shuffle_buffer", 10 * self.batch_size)
-        self.repeat = params.get("repeat", False)
         self.mask_whole_word = params.get("mask_whole_word", False)
         self.do_lower = params.get("do_lower", False)
         self.dynamic_mlm_scale = params.get("dynamic_mlm_scale", False)
@@ -380,7 +381,7 @@ class BertCSVDynamicMaskDataProcessor(torch.utils.data.IterableDataset):
         if self.shuffle:
             self.rng.shuffle(self.csv_files_per_task_per_worker)
 
-    def create_dataloader(self, is_training=True):
+    def create_dataloader(self):
         """
         Classmethod to create the dataloader object.
         """

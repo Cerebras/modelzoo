@@ -26,6 +26,8 @@ class RelativePositionEmbeddingLayer(nn.Module):
     r"""Relative Position Embedding Layer
     
     Args:
+
+        num_heads (int): number of attention heads.
         relative_attention_bias (Tensor): Tensor with relative attention weights.
             Shape: [`num_relative_attention_buckets`, `num_heads`]. Defaults set to None.
         num_relative_attention_buckets (int): Number of buckets used to calculate relative
@@ -84,6 +86,16 @@ class RelativePositionEmbeddingLayer(nn.Module):
     def forward(
         self, seq_length, key_length, past_kv=None,
     ):
+        """Return the position bias.
+
+        Args:
+            seq_length (int): the length of query tokens.
+            key_length (int): the length of key tokens.
+
+        Returns:
+            Position bias tensor with shape [num_heads, query_length, key_length]
+        """
+
         position_bias = self._compute_bias(seq_length, key_length)
 
         # if key and values are already calculated we want only
@@ -204,7 +216,7 @@ class RelativePositionEmbeddingLayer(nn.Module):
 
         # shape (query_length, key_length, num_heads)
         values = self.relative_attention_bias(relative_position_bucket)
-        # shape (1, num_heads, query_length, key_length)
+        # shape (num_heads, query_length, key_length)
         values = values.permute([2, 0, 1])
         return values
 

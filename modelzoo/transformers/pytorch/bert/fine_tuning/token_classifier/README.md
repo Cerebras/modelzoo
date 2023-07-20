@@ -3,19 +3,15 @@
 - [PyTorch BERT fine-tuning token classification model](#pytorch-bert-fine-tuning-token-classification-model)
   - [Model overview](#model-overview)
   - [Sequence of steps to perform](#sequence-of-steps-to-perform)
-  - [Key features from CSoft platform used in this reference implementation](#key-features-from-csoft-platform-used-in-this-reference-implementation)
   - [Code structure](#code-structure)
   - [Dataset generation](#dataset-generation)
     - [Data download](#data-download)
     - [Data preparation](#data-preparation)
     - [Input function description](#input-function-description)
       - [Features labels dictionary](#features-labels-dictionary)
-  - [Compile model](#compile-model)
-    - [Validate only](#validate-only)
-    - [Compile only](#compile-only)
   - [Run fine-tuning](#run-fine-tuning)
-    - [Run fine-tuning on Cerebras System](#run-fine-tuning-on-cerebras-system)
-    - [Run fine-tuning on GPU](#run-fine-tuning-on-gpu)
+  - [To compile/validate, run train and eval on Cerebras System](#to-compilevalidate-run-train-and-eval-on-cerebras-system)
+  - [To run train and eval on GPU/CPU](#to-run-train-and-eval-on-gpucpu)
   - [YAML config file description](#yaml-config-file-description)
   - [References](#references)
 
@@ -37,11 +33,6 @@ The following block diagram shows a high-level view of the sequence of steps you
 <p align = "center">
 Fig.1 - Flow Chart of steps to fine-tune token classifier model
 </p>
-
-## Key features from CSoft platform used in this reference implementation
-
-Token classification fine-tuning model configs are supported in the [Layer Pipelined mode](https://docs.cerebras.net/en/latest/cerebras-basics/cerebras-execution-modes.html#layer-pipelined-mode
-).
 
 ## Code structure
 

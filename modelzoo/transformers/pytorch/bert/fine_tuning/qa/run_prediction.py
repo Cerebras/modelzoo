@@ -1,3 +1,17 @@
+# Copyright 2022 Cerebras Systems.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 # This code is adapted from
 # https://github.com/google-research/bert/blob/master/run_squad.py
 #
@@ -22,20 +36,23 @@ import collections
 import json
 import math
 import os
-import sys
 
 import six
 import torch
 import tqdm
 
+# isort: off
+import sys
+
 sys.path.append(os.path.join(os.path.dirname(__file__), "../../../../../.."))
+# isort: on
 from modelzoo.common.input.utils import save_params
 from modelzoo.common.run_utils.cli_parser import get_params
-from modelzoo.transformers.data_processing.qa_utils import (
+from modelzoo.transformers.data_processing.qa.qa_utils import (
     convert_examples_to_features_and_write,
     read_squad_examples,
 )
-from modelzoo.transformers.data_processing.Tokenization import (
+from modelzoo.transformers.data_processing.tokenizers.Tokenization import (
     BaseTokenizer,
     FullTokenizer,
 )
@@ -494,7 +511,7 @@ def write_predictions(
                 )
             )
 
-        # if we didn't inlude the empty option in the n-best, inlcude it
+        # if we didn't include the empty option in the n-best, include it
         if version_2_with_negative:
             if "" not in seen_predictions:
                 nbest.append(
@@ -594,8 +611,8 @@ def get_final_text(
     #
     # What we really want to return is "Steve Smith".
     #
-    # Therefore, we have to apply a semi-complicated alignment heruistic between
-    # `pred_text` and `orig_text` to get a character-to-charcter alignment. This
+    # Therefore, we have to apply a semi-complicated alignment heuristic between
+    # `pred_text` and `orig_text` to get a character-to-character alignment. This
     # can fail in certain cases in which case we just return `orig_text`.
 
     def _strip_spaces(text):

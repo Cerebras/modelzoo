@@ -5,7 +5,8 @@ train_input:
     data_dir: "./language/datasets/glue_data/SST-2"
     vocab_file: "../../../../vocab/google_research_uncased_L-12_H-768_A-12.txt"
     max_sequence_length: 128
-    batch_size: 12
+    # The effective batch size, which is evenly divided across "num_csx" systems used for the run
+    batch_size: 4096
     shuffle: True
     shuffle_seed: 1
     num_workers: 8
@@ -16,6 +17,7 @@ eval_input:
     data_dir: "./language/datasets/glue_data/SST-2"
     vocab_file: "../../../../vocab/google_research_uncased_L-12_H-768_A-12.txt"
     max_sequence_length: 128
+    # The effective batch size, which is evenly divided across "num_csx" systems used for the run
     batch_size: 12
     shuffle: False
     shuffle_seed: 1
@@ -30,13 +32,14 @@ model:
     num_heads: 12
     filter_size: 3072
     encoder_nonlinearity: "gelu" # {"gelu", "relu", "silu", "gelu_new"}
+    pooler_nonlinearity: "tanh"
     dropout_rate: 0.1
     attention_dropout_rate: 0.1
     max_position_embeddings: 512
     task_dropout: 0.1
     problem_type: "single_label_classification"
     num_labels: 2
-    compute_eval_metrics: True
+    compute_eval_metrics: False
 
 optimizer:
     optimizer_type: "AdamW"
@@ -62,3 +65,4 @@ runconfig:
     model_dir: "./model_dir"
     save_initial_checkpoint: True
     eval_steps: 71
+    use_cs_grad_accum: True

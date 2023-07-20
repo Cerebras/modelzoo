@@ -16,7 +16,6 @@
 # pylint: disable=no-self-use, attribute-defined-outside-init
 
 import abc
-import atexit
 import copy
 import logging
 import math
@@ -24,7 +23,7 @@ import os
 import re
 import warnings
 from collections import defaultdict
-from contextlib import ExitStack, contextmanager
+from contextlib import ExitStack, contextmanager, nullcontext
 from inspect import isclass
 from typing import Callable, Optional, Tuple, Union
 
@@ -34,6 +33,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 from modelzoo.common.pytorch import cb_model as cm
 from modelzoo.common.pytorch import cbtorch, modes
+from modelzoo.common.pytorch.dump_context import DumpContext
 from modelzoo.common.pytorch.loss_utils import LossSaver, extract_loss
 from modelzoo.common.pytorch.metrics import (
     compute_all_metrics,
@@ -45,9 +45,9 @@ from modelzoo.common.pytorch.summaries import (
     save_all_summaries,
     scalar_summary,
 )
-from modelzoo.common.pytorch.summary_collection import SummaryCollection
 from modelzoo.common.pytorch.utils import (
     RunConfigParamsValidator,
+    is_mup_run,
     visit_structure,
 )
 from modelzoo.common.run_utils.utils import DeviceType, ExecutionStrategy
@@ -120,16 +120,18 @@ class PyTorchBaseRunner(metaclass=abc.ABCMeta):
         self._initial_step = None
         self._total_steps = None
 
-        if self._runconfig.get("enable_summaries", False):
-            if cm.is_wse_device():
-                raise ValueError(
-                    "Summary collection is not supported in CS workflows"
+        if self._runconfig.get("dump_activations", False):
+            if cm.use_cs():
+                logging.warning(
+                    "Actually dumping activations on CS2 requires setting "
+                    "additional debug arguments. This runconfig option just "
+                    "enables extra debug location info in the compile."
                 )
-            summary_ctx = SummaryCollection(
-                os.path.join(self._model_dir, "summaries"), self._model.model,
+            self._dump_ctx = DumpContext(
+                os.path.join(self._model_dir, "act_dumps"), self._model.model,
             )
-            summary_ctx.__enter__()
-            atexit.register(summary_ctx.__exit__)
+        else:
+            self._dump_ctx = nullcontext()
 
     def _log_summaries_params_norm(self, requires_grad=True):
         """
@@ -686,6 +688,7 @@ class PyTorchBaseRunner(metaclass=abc.ABCMeta):
 
     def optimizer_step(self):
         """Performs the optimizer step"""
+
         if self._scaler:
             # Unscales the gradients of optimizer's assigned params in-place
             self._scaler.unscale_(self._optimizer)
@@ -763,13 +766,14 @@ class PyTorchBaseRunner(metaclass=abc.ABCMeta):
         for epoch_step, data in enumerate(dataloader):
             data = self.on_train_batch_start(data)
 
-            # Only zero out the gradients if on first step or immediately
-            # following an optimizer step
-            if grad_accum_step % self._grad_accum_steps == 0:
-                self.optimizer_zero_grad()
+            with self._dump_ctx:
+                # Only zero out the gradients if on first step or immediately
+                # following an optimizer step
+                if grad_accum_step % self._grad_accum_steps == 0:
+                    self.optimizer_zero_grad()
 
-            loss = self.train_forward(data)
-            self.backward(loss)
+                loss = self.train_forward(data)
+                self.backward(loss)
 
             # accumulate the losses in a way that doesn't unnecessarily add
             # an addition op to the compute graph
@@ -781,7 +785,8 @@ class PyTorchBaseRunner(metaclass=abc.ABCMeta):
                 if self._should_log_extra_summaries:
                     self._log_summaries_params_norm()
 
-                self.optimizer_step()
+                with cbtorch.name_scope("optimizer"):
+                    self.optimizer_step()
 
                 # Learning rate must be summarized before it is stepped for CS-X
                 # and non-CS-X runs to match. This is because stepping it on
@@ -856,8 +861,9 @@ class PyTorchBaseRunner(metaclass=abc.ABCMeta):
         step = 0
         for step, data in enumerate(dataloader):
             data = self.on_eval_batch_start(data)
-            outputs = self.eval_forward(data)
-            loss = extract_loss(outputs)
+            with self._dump_ctx:
+                outputs = self.eval_forward(data)
+                loss = extract_loss(outputs)
             self.on_eval_batch_end(loss, epoch, step)
 
             exit_epoch, _ = self._should_stop(step, modes.EVAL)
@@ -892,7 +898,7 @@ class PyTorchBaseRunner(metaclass=abc.ABCMeta):
         avg_eval_loss = self._loss_saver.average_loss
         if self._writer:
             self._writer.add_scalar("loss", avg_eval_loss, self._global_step)
-        logging.info(f"Avg Eval. Loss = {avg_eval_loss}")
+        logging.info(f"Avg Eval Loss: {avg_eval_loss}")
 
     def train_and_eval(
         self,
@@ -1004,8 +1010,8 @@ class PyTorchBaseRunner(metaclass=abc.ABCMeta):
             self._model.set_state(state_dict)
         else:
             logging.info(
-                f"No checkpoint was provided, model parameters will be "
-                f"initialized randomly"
+                f"No checkpoint was provided, using randomly initialized model "
+                f"parameters."
             )
             state_dict = None
 
@@ -1053,14 +1059,17 @@ class PyTorchBaseRunner(metaclass=abc.ABCMeta):
             ValueError if the loss is either NaN or inf.
         """
         loss = cm.to_cpu(loss.detach())
+
+        msg_postfix = (
+            "This could potentially be due to selected hyperparameters such as "
+            "the learning rate, batch size, etc. or it could due an internal "
+            "error. Please try with different set of hyperparameters and "
+            "contact Cerebras Support if the issue persists."
+        )
         if torch.isnan(loss).any().item():
-            raise ValueError(
-                "NaN loss detected. "
-                "Please try different hyperparameters "
-                "such as the learning rate, batch size, etc."
-            )
+            raise ValueError(f"NaN loss detected. {msg_postfix}")
         if torch.isinf(loss).any().item():
-            raise ValueError("inf loss detected.")
+            raise ValueError(f"inf loss detected. {msg_postfix}")
 
     def _maybe_log_throughput(self, step_offset=0):
         """Conditionally add throughput details to tensorboard"""
@@ -1128,41 +1137,38 @@ class PyTorchBaseRunner(metaclass=abc.ABCMeta):
         """
         runconfig_params = params["runconfig"]
         RunConfigParamsValidator().validate(runconfig_params)
+        if runconfig_params.get("max_checkpoints"):
+            warnings.warn("`max_checkpoints` is only supported using cstorch")
+        if is_mup_run(params):
+            logging.info(f'This is a muP configured run')
 
-        if (
-            runconfig_params["compile_only"]
-            and runconfig_params["validate_only"]
-        ):
-            raise ValueError("Please set one of compile_only and validate_only")
-        validate_only = runconfig_params["validate_only"]
-        compile_only = runconfig_params["compile_only"] or validate_only
-        use_cs = runconfig_params["target_device"] == DeviceType.CSX
-        use_appliance_data = runconfig_params.get("use_appliance_data", True)
+        target_device = runconfig_params["target_device"]
 
-        # The cbtorch backend must be initialized
-        # in order for the run to be configured correctly
-        if use_cs:
-
-            use_cbfloat16 = params.get("csconfig", {}).get(
-                "use_cbfloat16", False
+        if target_device == DeviceType.CSX:
+            from cerebras_appliance import DEFAULT_COMPILE_DIR
+            from modelzoo.common.pytorch.pytorch_cs_appliance import (
+                PyTorchCSAppliance,
             )
 
-            service_workdir = runconfig_params["service_dir"]
-            compile_dir = runconfig_params.get("compile_dir")
-            default_dir = service_workdir
-
-            from cerebras_appliance import DEFAULT_COMPILE_DIR
-
-            default_dir = DEFAULT_COMPILE_DIR
-            compile_dir = compile_dir or default_dir
-
             cbtorch.initialize(
-                service_workdir=service_workdir,
-                compile_dir=compile_dir,
-                compile_only=compile_only,
-                appliance=use_cs,
-                use_appliance_data=use_appliance_data,
-                use_cbfloat16=use_cbfloat16,
+                service_workdir=runconfig_params["service_dir"],
+                compile_dir=(
+                    runconfig_params.get("compile_dir") or DEFAULT_COMPILE_DIR
+                ),
+                compile_only=(
+                    runconfig_params["compile_only"]
+                    or runconfig_params["validate_only"]
+                ),
+                appliance=True,
+                use_appliance_data=runconfig_params.get(
+                    "use_appliance_data", True
+                ),
+                use_cbfloat16=params.get("csconfig", {}).get(
+                    "use_cbfloat16", False
+                ),
+                log_initialization=runconfig_params.get(
+                    "log_initialization", True
+                ),
             )
 
             seed = runconfig_params.get("seed")
@@ -1190,80 +1196,88 @@ class PyTorchBaseRunner(metaclass=abc.ABCMeta):
                 f"Running with {execution_strategy} execution strategy"
             )
 
-            # override model params if needed, before creating the model
-            use_bfloat16 = params["model"].get("use_bfloat16", False)
-
             if not cbtorch.env().weight_streaming_mode:
+                use_bfloat16 = params["model"].get("use_bfloat16", False)
                 if use_bfloat16:
-                    logging.info(
-                        "bfloat16 is not supported in Pipeline mode. Setting"
-                        "`use_bfloat16` to `False`."
+                    warnings.warn(
+                        f"bfloat16 is not supported on Pipeline execution "
+                        f"strategy. Setting use_bfloat16 in model config to "
+                        f"False."
                     )
                 params["model"]["use_bfloat16"] = False
-                use_bfloat16 = False
 
-            # Initialize the model and runner
-            if isclass(model_fn) and issubclass(model_fn, PyTorchBaseModel):
-                # to keep compatibility for if a user inherits from PyTorchBaseModel
-                model = model_fn(params)
-            else:
-                model = PyTorchBaseModel(params, model_fn)
-
-            from modelzoo.common.pytorch.pytorch_cs_appliance import (
-                PyTorchCSAppliance,
-            )
+            model = _base_model_compat(model_fn, params)
 
             return PyTorchCSAppliance(model, params)
-        else:
-            from modelzoo.common.pytorch.pytorch_dist_runner import (
-                PyTorchDistRunner,
-            )
+        elif target_device == DeviceType.CPU:
             from modelzoo.common.pytorch.pytorch_runner import PyTorchRunner
 
-            if (
-                runconfig_params["target_device"] == DeviceType.CPU
-                or not torch.cuda.is_available()
-            ):  # use cpu
-                device = torch.device("cpu")
-                if isclass(model_fn) and issubclass(model_fn, PyTorchBaseModel):
-                    # to keep compatibility for if a user inherits from PyTorchBaseModel
-                    model = model_fn(params)
-                else:
-                    model = PyTorchBaseModel(params, model_fn, device)
-                return PyTorchRunner(device, model, params)
-            else:  # use gpu
-                world_size = torch.cuda.device_count()
-                enable_distributed = params["runconfig"].get(
-                    "enable_distributed", False
+            device = torch.device("cpu")
+
+            if params["model"]["mixed_precision"] and not params["model"].get(
+                "use_bfloat16", False
+            ):
+                warnings.warn(
+                    "Mixed precision on CPU is only supported with bfloat16. "
+                    "Setting use_bfloat16 in model config to True."
                 )
-                if not enable_distributed:  # single gpu
-                    if world_size > 1:
-                        warnings.warn(
-                            "Distributed training was not enabled even though "
-                            "more than 1 GPU is available."
-                        )
-                    device = torch.device("cuda")
-                    if isclass(model_fn) and issubclass(
-                        model_fn, PyTorchBaseModel
-                    ):
-                        # to keep compatibility for if a user inherits from PyTorchBaseModel
-                        model = model_fn(params)
-                    else:
-                        model = PyTorchBaseModel(params, model_fn, device)
-                    return PyTorchRunner(device, model, params)
-                else:  # multi gpu
-                    if world_size == 1:
-                        warnings.warn(
-                            "Distributed training was enabled, but only "
-                            "1 GPU was detected."
-                        )
-                    # model with no device, used to create optimizer and scheduler
-                    # actual models will be created in on_process_start()
-                    if isclass(model_fn) and issubclass(
-                        model_fn, PyTorchBaseModel
-                    ):
-                        # to keep compatibility for if a user inherits from PyTorchBaseModel
-                        model = model_fn(params)
-                    else:
-                        model = PyTorchBaseModel(params, model_fn)
-                    return PyTorchDistRunner(model, params)
+                params["model"]["use_bfloat16"] = True
+
+            model = _base_model_compat(model_fn, params, device)
+
+            return PyTorchRunner(device, model, params)
+        elif target_device == DeviceType.GPU:
+            if not torch.cuda.is_available():
+                raise RuntimeError(
+                    f"{DeviceType.GPU} was specified as the target device, but "
+                    f"CUDA is not available. Please make sure you have a "
+                    f"PyTorch installation with CUDA enabled to run on "
+                    f"{DeviceType.GPU}."
+                )
+
+            world_size = torch.cuda.device_count()
+            enable_distributed = params["runconfig"].get(
+                "enable_distributed", False
+            )
+            if not enable_distributed:  # Single GPU
+                from modelzoo.common.pytorch.pytorch_runner import PyTorchRunner
+
+                if world_size > 1:
+                    warnings.warn(
+                        "Distributed training was not enabled even though "
+                        "more than 1 GPU is available."
+                    )
+                device = torch.device("cuda")
+                model = _base_model_compat(model_fn, params, device)
+
+                return PyTorchRunner(device, model, params)
+            else:  # Distributed GPU
+                from modelzoo.common.pytorch.pytorch_dist_runner import (
+                    PyTorchDistRunner,
+                )
+
+                if world_size == 1:
+                    warnings.warn(
+                        "Distributed training was enabled, but only "
+                        "1 GPU was detected."
+                    )
+                # Model with no device, used to create optimizer and scheduler
+                # actual models will be created in on_process_start()
+                model = _base_model_compat(model_fn, params)
+                return PyTorchDistRunner(model, params)
+        else:
+            raise ValueError(
+                f"Unsupported target device: {target_device}. "
+                f"Supported devices are: {', '.join(DeviceType.devices)}"
+            )
+
+
+def _base_model_compat(model_fn, params, device=None) -> PyTorchBaseModel:
+    # Initialize the model and runner
+    if isclass(model_fn) and issubclass(model_fn, PyTorchBaseModel):
+        # to keep compatibility for if a user inherits from PyTorchBaseModel
+        model = model_fn(params)
+    else:
+        model = PyTorchBaseModel(params, model_fn, device)
+
+    return model

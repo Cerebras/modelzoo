@@ -16,25 +16,29 @@
 Script that generates a dataset in HDF5 format for GPT Models.
 """
 
+import importlib
 import logging
 import os
 import sys
+from multiprocessing import cpu_count
 from pathlib import Path
 
-sys.path.append(os.path.join(os.path.dirname(__file__), "../../../../../.."))
+sys.path.append(os.path.join(os.path.dirname(__file__), "../../../../.."))
 from modelzoo.common.input.utils import check_and_create_output_dirs
 from modelzoo.transformers.data_processing.scripts.hdf5_preprocessing.utils import (
-    create_dataset,
-    create_dataset_mp,
     dump_args,
     dump_result,
-    get_parser,
-    set_defaults,
-    verify_saved_hdf5_files,
+    get_files,
+    get_params,
+    get_verification_args,
+    process_dataset,
     verify_saved_hdf5_files_mp,
-    write_hdf5_files,
 )
-from modelzoo.transformers.data_processing.scripts.utils import get_files
+
+from modelzoo.transformers.data_processing.scripts.hdf5_preprocessing.hdf5_dataset_preprocessors import (  # noqa
+    LMDataPreprocessor,
+    SummarizationPreprocessor,
+)
 
 logging.basicConfig()
 logger = logging.getLogger(__file__)
@@ -43,51 +47,60 @@ logger.setLevel(logging.INFO)
 
 def main():
     """Main function for execution."""
-    parser = get_parser("Create HDF5 dataset for raw text dataset.")
-    args = parser.parse_args()
+    params = get_params(desc="Create HDF5 dataset for language models")
+    args = get_verification_args(params)
 
-    output_dir = args.output_dir
-    if not args.resume_from_checkpoint:
+    output_dir = params["setup"].get("output_dir", "./data_dir/")
+    if not params["processing"].get("resume_from_checkpoint", False):
         check_and_create_output_dirs(output_dir, filetype="h5")
-
-    if args.metadata_files:
-        metadata_files = args.metadata_files.split(",")
-    else:
-        metadata_files = None
-    input_files = get_files(
-        input_dir=args.input_dir, metadata_files=metadata_files
-    )
-
     logger.info(f"\nWriting data to {output_dir}.")
-
-    set_defaults(args)
-
     json_params_file = os.path.join(output_dir, "data_params.json")
-    dump_args(args, json_params_file)
+    dump_args(params, json_params_file)
 
-    if args.processes > 1:
-        results = create_dataset_mp(input_files, args, write_hdf5_files)
+    metadata_files = params["setup"].pop("metadata_files", None)
+    if metadata_files:
+        metadata_files = metadata_files.split(",")
+    input_dir = params["setup"].pop("input_dir", None)
+    input_files = get_files(input_dir=input_dir, metadata_files=metadata_files)
+
+    processes = params["setup"].pop("processes", 0)
+    if processes == 0:
+        processes = cpu_count()
+
+    ds_processor = params["setup"].pop(
+        "dataset_processor", "LMDataPreprocessor"
+    )
+    module_name = params["setup"].pop("module", None)
+    if module_name:
+        module = importlib.import_module(module_name)
+        dataset_processor = getattr(module, ds_processor)(params)
     else:
-        # Run only single process run, with process number set as 0.
-        results = create_dataset((input_files, args, write_hdf5_files, 0))
+        dataset_processor = getattr(sys.modules[__name__], ds_processor)(params)
 
-    if args.mode == "raw_text":
-        dump_result(results, json_params_file)
-    else:
-        dump_result(results, json_params_file, args.eos_id, args.pad_id)
+    unused_params = [
+        key for key in params["setup"].keys() if key != "output_dir"
+    ]
+    if unused_params:
+        logger.warning(
+            "The following setup params are unused: " + ", ".join(unused_params)
+        )
 
+    results = process_dataset(input_files, dataset_processor, processes)
+    dump_result(
+        results,
+        json_params_file,
+        dataset_processor.eos_id,
+        dataset_processor.pad_id,
+        dataset_processor.get_vocab_size(),
+    )
     logger.info(
-        f"\nFinished writing data to {args.output_dir}."
+        f"\nFinished writing data to {output_dir}."
         f" Runtime arguments and outputs can be found at {json_params_file}."
     )
 
     logger.info(f"Verifying the converted dataset at: {output_dir}")
     output_files = list(Path(output_dir).glob("*.h5"))
-    if args.processes > 1:
-        verify_saved_hdf5_files_mp(output_files, args)
-    else:
-        # Run only single process run, with process number set as 0.
-        verify_saved_hdf5_files((output_files, args))
+    verify_saved_hdf5_files_mp(output_files, args)
     logger.info("Done verifying the converted dataset.")
 
 

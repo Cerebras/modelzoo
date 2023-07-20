@@ -3,20 +3,16 @@
 - [PyTorch BERT fine-tuning classification model](#pytorch-bert-fine-tuning-classification-model)
   - [Model overview](#model-overview)
   - [Sequence of steps to perform](#sequence-of-steps-to-perform)
-  - [Key features from CSoft platform used in this reference implementation](#key-features-from-csoft-platform-used-in-this-reference-implementation)
   - [Code structure](#code-structure)
   - [Dataset generation](#dataset-generation)
     - [Download](#download)
     - [Data preparation](#data-preparation)
     - [Input function description](#input-function-description)
       - [Features labels dictionary](#features-labels-dictionary)
-  - [Compile model](#compile-model)
-    - [Validate only](#validate-only)
-    - [Compile only](#compile-only)
   - [Run fine-tuning](#run-fine-tuning)
-    - [Run fine-tuning on Cerebras System](#run-fine-tuning-on-cerebras-system)
-    - [Run fine-tuning on GPU](#run-fine-tuning-on-gpu)
-  - [Configs included for this model](#Configs-included-for-this-model)
+  - [To compile/validate, run train and eval on Cerebras System](#to-compilevalidate-run-train-and-eval-on-cerebras-system)
+  - [To run train and eval on GPU/CPU](#to-run-train-and-eval-on-gpucpu)
+  - [Configs included for this model](#configs-included-for-this-model)
   - [References](#references)
 
 ## Model overview
@@ -40,11 +36,6 @@ The following block diagram shows a high-level view of the sequence of steps you
 <p align = "center">
 Fig.1 - Flow Chart of steps to fine-tune classification model
 </p>
-
-## Key features from CSoft platform used in this reference implementation
-
-Fine-tuning classification model configs are supported in the [Layer Pipelined mode](https://docs.cerebras.net/en/latest/wsc/cerebras-basics/cerebras-execution-modes.html#layer-pipelined-mode
-).
 
 ## Code structure
 

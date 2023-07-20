@@ -2,9 +2,6 @@
 
 - [Overview of the model](#overview-of-the-model)
 - [Sequence of the steps to perform](#sequence-of-the-steps-to-perform)
-  - [Features to improve performance with small BERT models when running in Pipelined Execution mode](#features-to-improve-performance-with-small-bert-models-when-running-in-pipelined-execution-mode)
-  - [Variable Tensor Shape](#variable-tensor-shape)
-  - [Multi-Replica data parallel training](#multi-replica-data-parallel-training)
 - [Structure of the code](#structure-of-the-code)
 - [Before you start](#before-you-start)
 - [Download and prepare the dataset](#download-and-prepare-the-dataset)
@@ -51,23 +48,6 @@ The following block diagram shows a high-level view of the sequence of steps you
 
 <!-- ## Running BERT on the Cerebras System
 <img src="./images/BERT_PT_Workflow.jpg" alt="drawing" width="1800" height="300"/> -->
-
-## Features to improve performance with small BERT models when running in Pipelined Execution mode
-
-In this section, we list CSoft platform specific features which help improve performance for the models listed in this folder.
-All of them are running in the pipeline mode, where all layers of the network are loaded altogether into the Cerebras wafer, for more detailed explanation of this mode, refer to [Layer pipelined mode](https://docs.cerebras.net/en/latest/wsc/cerebras-basics/cerebras-execution-modes.html#layer-pipelined-mode).
-
-## Variable Tensor Shape
-By default, pre-training is configured to use VTS mode when running on the Cerebras System. When running in the VTS mode, the Cerebras System does not perform any computations on the padding tokens. This can potentially result in training speedups. The VTS mode can be disabled by setting `model.enable_vts: False` in the appropriate config file (see [Configs included for this model](#Configs-included-for-this-model) section).
-Regardless of the setting of this flag, VTS is not used for running in the eval mode.
-In order to take full advantage of the potential speedups from the VTS, it is helpful to batch samples such that every sample in a given batch has a similar length.
-Accordingly, for BERT pre-training we bucket samples of similar lengths together before batching. The boundaries between different buckets are defined by `train_input.buckets`.
-For more details about VTS, please refer to [PyTorch Variable Tensor Shape
-](https://docs.cerebras.net/en/latest/wsc/general/sparse-input.html) documentation page.
-
-## Multi-Replica data parallel training  
-When training on the Cerebras System, the `--multireplica` flag can be used to perform data-parallel training
-across multiple copies of the model at the same time. For more details about this feature, please refer to [Multi-Replica Data Parallel Training](https://docs.cerebras.net/en/latest/wsc/general/multi-replica-data-parallel-training.html) documentation page.
 
 # Structure of the code
 * `configs/`: YAML configuration files.
@@ -363,11 +343,6 @@ In order to train the model, you need to provide a yaml config file. Below is th
 - `bert_large_*.yaml` have the standard bert-large config with `hidden_size=1024`, `num_hidden_layers=24`, `num_heads=16`.
 - Files with substrings `MSL***` like `bert_base_MSL128.yaml` contain different maximum sequence length. Popular sequence lengths are `128`, `512`, `1024` provided in our example config files.
 - Files like `roberta_*.yaml` are provided to run RoBERTa model variants [RoBERTa: A Robustly Optimized BERT Pretraining Approach](https://arxiv.org/abs/1907.11692).
-- All the Weight Streaming configs have `_ws.yaml` suffix. Below is the list of available configs for Weight Streaming:
-  - `bert_large_MSL128_ws.yaml`: Same as large model above with MSL 128.
-  - `bert_large_MSL512_ws.yaml`: Same as large model above with MSL 512.
-  - `bert_base_MSL4k_ws.yaml`: Same as base model above with MSL 4k.
-  - `bert_large_MSL10k_ws_preview.yaml`: Same as large model above with MSL 10k. (Available as a preview.)
 
 # Appendix
 

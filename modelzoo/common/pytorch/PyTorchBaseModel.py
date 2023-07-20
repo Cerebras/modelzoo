@@ -37,6 +37,7 @@ from modelzoo.common.pytorch.optim import (
     Adamax,
     AdamW,
     Lamb,
+    Lion,
     NAdam,
     RAdam,
     RMSprop,
@@ -44,8 +45,9 @@ from modelzoo.common.pytorch.optim import (
     lr_scheduler,
 )
 from modelzoo.common.pytorch.utils import (
-    group_optimizer_params,
-    trainable_named_parameters,
+    named_parameters_requiring_grad,
+    partition_params_groups_with_adjusted_lr,
+    partition_params_groups_with_weight_decay,
 )
 
 SUPPORTED_OPTIMIZERS = [
@@ -57,6 +59,7 @@ SUPPORTED_OPTIMIZERS = [
     'Adamax',
     'ASGD',
     'Lamb',
+    'Lion',
     'NAdam',
     'RAdam',
     'RMSprop',
@@ -145,7 +148,21 @@ class PyTorchBaseModel(metaclass=Final):
             "disable_lr_steps_reset": oparams.get(
                 "disable_lr_steps_reset", False
             ),
+            "adjust_learning_rate": oparams.get("adjust_learning_rate"),
         }
+        # learning rate scaling params
+        lr_adjustment_scalars = []
+        lr_adjustment_layers = []
+        if oparams.get("adjust_learning_rate"):
+            for layer_type, adjustment_scalar in oparams.get(
+                "adjust_learning_rate"
+            ).items():
+                lr_adjustment_layers.append(layer_type)
+                lr_adjustment_scalars.append(adjustment_scalar)
+        assert len(lr_adjustment_scalars) == len(
+            lr_adjustment_layers
+        ), "number of keys for layer types should match the number of scalars"
+
         if not isinstance(lr_params["learning_rate"], (float, str, dict, list)):
             raise ValueError(
                 f"Learning rate must be a float, a dict, or a list of dicts. "
@@ -160,7 +177,9 @@ class PyTorchBaseModel(metaclass=Final):
                 ctx = nullcontext()
 
             with ctx:
-                self.optimizer = self._configure_optimizer(oparams)
+                self.optimizer = self._configure_optimizer(
+                    oparams, lr_adjustment_layers, lr_adjustment_scalars
+                )
 
             if cm.use_cs():
                 self.optimizer = cbtorch.optimizer(self.optimizer)
@@ -201,6 +220,12 @@ class PyTorchBaseModel(metaclass=Final):
                 self.model, lambda module: module._buffers.items()
             )
         )
+
+        if cm.use_cs():
+            progress = cbtorch.state().progress_tracker
+            if progress is not None:
+                # We're done initialization so we can now close the progress tracker
+                progress.close()
 
     def train(self):
         """
@@ -268,11 +293,12 @@ class PyTorchBaseModel(metaclass=Final):
         else:
             return mode in self.supported_non_cs_modes
 
-    def trainable_named_parameters(self):
-        """Gather trainable named parameters from model"""
-        return trainable_named_parameters(self.model)
-
-    def _configure_optimizer(self, oparams: dict):
+    def _configure_optimizer(
+        self,
+        oparams: dict,
+        lr_adjustment_layers: list,
+        lr_adjustment_scalars: list,
+    ):
         """
         Configure an optimizer based on the params and return it
         """
@@ -294,12 +320,43 @@ class PyTorchBaseModel(metaclass=Final):
                     "adamw",
                 ], "Only SGD Adafactor, and Adam/AdamW Optimizers are supported in pipeline mode."
 
-        no_decay_layers, param_optimizer = self.trainable_named_parameters()
-        param_optimizer_grouped = group_optimizer_params(
-            param_optimizer,
-            no_decay_layers,
+        # According to muP hyperparameter transfer (https://arxiv.org/abs/2203.03466),
+        # learning rate of non-embedding kernel params need to be scaled by
+        # the adjustment factor based on the hidden size.
+        #
+        # adaptive_lr_layers is a list of these kernel params
+        # to which this scale needs to be applied.
+        param_optimizer = list(named_parameters_requiring_grad(self.model))
+        # default: assemble all params in 1 group
+        param_optimizer_grouped = [{"params": list(param_optimizer)}]
+        # split param_groups in 2 groups: with and without weight decay
+        param_optimizer_grouped = partition_params_groups_with_weight_decay(
+            self.model,
+            param_optimizer_grouped,
             oparams.get("weight_decay_rate", 0.0),
         )
+        # create additional param groups for each layer type with lr adjustment scalar
+        param_optimizer_grouped = partition_params_groups_with_adjusted_lr(
+            self.model,
+            param_optimizer_grouped,
+            lr_adjustment_layers,
+            lr_adjustment_scalars,
+        )
+        # remove param name from the (name, param) tuple as the name was only used for referencing
+        # while grouping params
+        for group_idx in range(len(param_optimizer_grouped)):
+            param_list = []
+            for _, param in param_optimizer_grouped[group_idx]["params"]:
+                param_list.append(param)
+            param_optimizer_grouped[group_idx].pop("params")
+            param_optimizer_grouped[group_idx]["params"] = param_list
+        # ensure number of params before and after group partitioning match
+        num_params_grouped = sum(
+            len(g["params"]) for g in param_optimizer_grouped
+        )
+        assert num_params_grouped == len(
+            param_optimizer
+        ), "number of params before and after group partitioning don't match"
 
         if optimizer_type == "sgd":
             return SGD(
@@ -323,7 +380,7 @@ class PyTorchBaseModel(metaclass=Final):
                 betas=(oparams.get("beta1", 0.9), oparams.get("beta2", 0.999)),
                 eps=oparams.get("eps", 1e-6),
                 weight_decay=oparams.get("weight_decay_rate", 0.0),
-                correct_bias=oparams.get("correct_bias", False),
+                correct_bias=oparams.get("correct_bias", True),
                 amsgrad=oparams.get("amsgrad", False),
             )
         elif optimizer_type == "adamax":
@@ -400,6 +457,15 @@ class PyTorchBaseModel(metaclass=Final):
                 weight_decay=weight_decay,
                 adam=adam,
             )
+        elif optimizer_type == "lion":
+            betas = (oparams.get("beta1", 0.9), oparams.get("beta2", 0.99))
+            weight_decay = oparams.get("weight_decay_rate", 0.0)
+            return Lion(
+                param_optimizer_grouped,
+                lr=learning_rate,
+                betas=betas,
+                weight_decay=weight_decay,
+            )
         elif optimizer_type == "radam":
             eps = oparams.get("eps", 1e-6)
             betas = (oparams.get("beta1", 0.9), oparams.get("beta2", 0.999))
@@ -460,10 +526,6 @@ class PyTorchBaseModel(metaclass=Final):
         """
         learning_rate = lr_params["learning_rate"]
         disable_lr_steps_reset = lr_params["disable_lr_steps_reset"]
-
-        def _set_initial_lr(optimizer, lr):
-            for group in self.optimizer.param_groups:
-                group['lr'] = float(lr)
 
         def _get_scheduler(optimizer, schedule_params):
             """
@@ -751,44 +813,18 @@ class PyTorchBaseModel(metaclass=Final):
             else:
                 raise ValueError(f"Unsupported LR scheduler {scheduler}")
 
+        # convert the learning rate object into list of dictionaries
+        # to make the scheduler handling for uniform and lean
         # handle a constant learning rate
         # scientific notation (e.g. "1e-5") parsed as string in yaml
         if isinstance(learning_rate, (float, str)):
-            _set_initial_lr(self.optimizer, learning_rate)
-
-        # handle a single decay schedule
+            learning_rate_dicts = [
+                {"scheduler": "constant", "learning_rate": float(learning_rate)}
+            ]
         elif isinstance(learning_rate, dict):
-            return _get_scheduler(self.optimizer, learning_rate)
-
+            learning_rate_dicts = [learning_rate]
         elif isinstance(learning_rate, list):
-            if len(learning_rate) == 1:
-                return _get_scheduler(self.optimizer, learning_rate[0])
-            else:
-                for scheduler in learning_rate[:-1]:
-                    assert "steps" in scheduler or "decay_steps" in scheduler, (
-                        "Non final learning rate schedulers must have either "
-                        "the 'steps' or 'decay_steps' parameter given."
-                    )
-
-                schedulers = [
-                    _get_scheduler(self.optimizer, scheduler)
-                    for scheduler in learning_rate
-                ]
-                # pylint: disable=undefined-loop-variable
-                if (
-                    "main_scheduler" in learning_rate[0]
-                    and learning_rate[0]["main_scheduler"] == "chained"
-                ):
-                    return lr_scheduler.ChainedScheduler(schedulers=schedulers,)
-                else:
-                    milestones = [
-                        scheduler.start_step for scheduler in schedulers[1:]
-                    ]
-                    return lr_scheduler.SequentialLR(
-                        self.optimizer,
-                        schedulers=schedulers,
-                        milestones=milestones,
-                    )
+            learning_rate_dicts = learning_rate
         else:
             raise ValueError(
                 f"Unsupported LR scheduler type {type(learning_rate)}"
@@ -796,6 +832,49 @@ class PyTorchBaseModel(metaclass=Final):
                 f" 'PiecewiseConstant', 'Polynomial',"
                 f" 'InverseExponentialTimeDecay']"
             )
+
+        if len(learning_rate_dicts) > 1:
+            for scheduler in learning_rate[:-1]:
+                assert "steps" in scheduler or "decay_steps" in scheduler, (
+                    "Non final learning rate schedulers must have either "
+                    "the 'steps' or 'decay_steps' parameter given."
+                )
+        schedulers = []
+        for learning_rate_ in learning_rate_dicts:
+            # wrap the scheduler in the ScalePerParamLR which
+            # adapts the layerwise learning rates depending upon
+            # the adjust_learning_rate key in the respective param group
+            assert isinstance(
+                learning_rate_, dict
+            ), f'{learning_rate_} should be a dict'
+            schedulers.append(_get_scheduler(self.optimizer, learning_rate_))
+        if len(schedulers) == 1:
+            return lr_scheduler.ScalePerParamLR(
+                self.optimizer,
+                scheduler=schedulers[0],
+                decay_steps=learning_rate_.get("decay_steps", None),
+                disable_lr_steps_reset=disable_lr_steps_reset,
+            )
+        else:
+            if (
+                "main_scheduler" in learning_rate_dicts[0]
+                and learning_rate_dicts[0]["main_scheduler"] == "chained"
+            ):
+                return lr_scheduler.ChainedScheduler(schedulers=schedulers,)
+            else:
+                milestones = [
+                    scheduler.start_step for scheduler in schedulers[1:]
+                ]
+                return lr_scheduler.ScalePerParamLR(
+                    self.optimizer,
+                    scheduler=lr_scheduler.SequentialLR(
+                        self.optimizer,
+                        schedulers=schedulers,
+                        milestones=milestones,
+                    ),
+                    decay_steps=learning_rate_.get("decay_steps", None),
+                    disable_lr_steps_reset=disable_lr_steps_reset,
+                )
 
     def get_lr_scheduler(self):
         """
@@ -861,13 +940,13 @@ class PyTorchBaseModel(metaclass=Final):
         Sets the state of the model and optimizer
         """
         if self.is_pretrained_checkpoint and self.mode != modes.EVAL:
-            # allow loading weights ignoring the mising and unexpected keys
+            # allow loading weights ignoring the missing and unexpected keys
             # except when doing eval
             strict = False
 
         model = self.torch_model
         if hasattr(model, "model") and state.get("state_version", 0.1) == 0.1:
-            # Required for backwards compatibiliity
+            # Required for backwards compatibility
             # older checkpoints of models in the modelzoo
             # will not contain the `model.` prefix
             model = model.model
@@ -883,7 +962,6 @@ class PyTorchBaseModel(metaclass=Final):
             self.optimizer.load_state_dict(state["optimizer"])
             if self.lr_scheduler and "lr_scheduler" in state:
                 self.lr_scheduler.load_state_dict(state["lr_scheduler"])
-
         if (
             self.mixed_precision
             and cm.is_wse_device()

@@ -12,11 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# isort: off
 import os
 import sys
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "../../../../../../.."))
-from modelzoo.transformers.data_processing.bertsum_data_processor import (
+# isort: on
+from modelzoo.transformers.data_processing.bert.bertsum_data_processor import (
     convert_to_json_files,
     create_parser,
     tokenize,

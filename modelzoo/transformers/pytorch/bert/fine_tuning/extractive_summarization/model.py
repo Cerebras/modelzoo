@@ -78,14 +78,12 @@ class BertSummarizationModel(torch.nn.Module):
                 max_n=2, vocab_file=self.vocab_file, name="eval/rouge2"
             )
 
-    def __call__(self, data):
+    def forward(self, data):
         logits = self.model(
             input_ids=data["input_ids"],
             attention_mask=data["attention_mask"],
             token_type_ids=data["token_type_ids"],
-            labels=data["labels"],
             cls_tokens_positions=data["cls_indices"],
-            cls_label_weights=data["cls_weights"],
         )
         loss = self.loss_fn(
             logits, data["labels"], data["cls_weights"].clone().to(logits.dtype)

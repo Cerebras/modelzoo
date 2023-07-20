@@ -3,15 +3,13 @@
 - [Transformer Language Models](#transformer-language-models)
   - [Model overview](#model-overview)
   - [Sequence of the steps to perform](#sequence-of-the-steps-to-perform)
-  - [Key features from CSoft platform](#key-features-from-csoft-platform)
   - [Code structure](#code-structure)
   - [Data processing](#data-processing)
   - [English to German Translation dataset](#english-to-german-translation-dataset)
     - [WMT-16 processing commands](#wmt-16-processing-commands)
   - [Input function pipeline](#input-function-pipeline)
   - [Running model commands](#running-model-commands)
-    - [Steps to compile and validate](#steps-to-compile-and-validate)
-  - [To run train and eval on Cerebras System](#to-run-train-and-eval-on-cerebras-system)
+  - [To compile/validate, run train and eval on Cerebras System](#to-compilevalidate-run-train-and-eval-on-cerebras-system)
   - [To run train and eval on GPU/CPU](#to-run-train-and-eval-on-gpucpu)
   - [Implementation notes](#implementation-notes)
   - [Configs included for this model](#configs-included-for-this-model)
@@ -49,12 +47,6 @@ The steps to perform are listed in the diagram below. Bold files are scripts to 
 <p align="center">
     Flow-charts for the training procedure for the Transformer models. Files in bold are scripts to be run, along with short explanations of the steps involved.
 </p>
-
-## Key features from CSoft platform
-
-* Transformer models support [Variable Tensor Shape (VTS)](https://docs.cerebras.net/en/latest/wsc/general/sparse-input.html) configurations.  At a high-level, this means that we can take advantage of Cerebras hardware's differences from GPU's to perform operations on different sized sequences in parallel, without requiring padding tokens. This reduces the amount of time spent on computations that are never used in the end. For more details, see [\[4\]](https://www.cerebras.net/software/increasing-model-throughput-with-variable-tensor-shape-computations/) and [\[5\]](https://docs.cerebras.net/en/latest/wsc/general/sparse-input.html).
-To run either model with VTS, simply add `enable_vts: True` to the `model` section of the configuration YAML file for a training run.  
-* Transformer supports `--multireplica` flag can be used to perform data-parallel training across multiple copies of the model at the same time. To read more, please refer to [Multi-Replica Data Parallel Training](https://docs.cerebras.net/en/latest/wsc/general/multi-replica-data-parallel-training.html) documentation page.
 
 ## Code structure
 
@@ -148,8 +140,6 @@ In the [configs](./configs/) directory we have files for Transformer.
 
 * [Transformer-base](configs/transformer_base.yaml) have a base reference with `d_kv=64`, `num_heads=8`, `encoder_num_hidden_layers=6`.
 * [Transformer-large](configs/transformer_large.yaml) have a large reference with `d_kv=64`, `num_heads=16`, `encoder_num_hidden_layers=6`.
-
-All configs are meant to be run on [Pipeline mode](https://docs.cerebras.net/en/latest/wsc/cerebras-basics/cerebras-execution-modes.html#layer-pipelined-mode)
 
 These files are just samples, and can be adjusted for any changes in training procedure that you desire, such as different number of layers or hidden sizes, or different number of steps.
 

@@ -12,11 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import random
 from pathlib import Path
 
 import h5py
 import numpy as np
+import pandas as pd
 import torch
 from torchvision import transforms
 
@@ -73,33 +73,31 @@ class Hdf5DataProcessor(Hdf5BaseDataProcessor):
         if not files:
             raise RuntimeError('No hdf5 datasets found')
 
-        assert (
-            len(files) >= self.num_tasks
-        ), f"Number of h5 files {len(files)} should atleast be equal to the number of Slurm tasks {self.num_tasks}, to correctly shard the dataset between the streamers"
+        all_files = [str(file.resolve()) for file in files]
 
-        # Shard H5 files between the tasks and resolve the paths
-        files_in_this_task = [
-            str(file.resolve())
-            for file in files[self.task_id :: self.num_tasks]
-        ]
-
+        self.all_files = []
         self.files_in_this_task = []
+        self.num_examples = 0
         self.num_examples_in_this_task = 0
-        for file_path in files_in_this_task:
+        for idx, file_path in enumerate(all_files):
             with h5py.File(file_path, mode='r') as h5_file:
                 num_examples_in_file = h5_file.attrs["n_examples"]
-                self.files_in_this_task.append(
-                    (file_path, num_examples_in_file)
-                )
-                self.num_examples_in_this_task += num_examples_in_file
+                file_details = (file_path, num_examples_in_file)
+                self.all_files.append(file_details)
+                self.num_examples += num_examples_in_file
+                if idx % self.num_tasks == self.task_id:
+                    self.files_in_this_task.append(file_details)
+                    self.num_examples_in_this_task += num_examples_in_file
 
-        assert (
-            self.num_examples_in_this_task >= self.num_workers * self.batch_size
-        ), f"The number of examples on this worker={self.num_examples_in_this_task} is lesser than batch size(={self.batch_size}) * num_workers(={self.num_workers}). Please consider reducing the number of workers (or) increasing the number of samples in files (or) reducing the batch size"
-
-        if self.shuffle:
-            random.seed(self.shuffle_seed)
-            random.shuffle(self.files_in_this_task)
+        # Prevent CoW which is effectively copy on read behavior for PT,
+        # see: https://github.com/pytorch/pytorch/issues/13246
+        self.all_files = pd.DataFrame(
+            self.all_files, columns=["file_path", "num_examples_in_file"]
+        )
+        self.files_in_this_task = pd.DataFrame(
+            self.files_in_this_task,
+            columns=["file_path", "num_examples_in_file"],
+        )
 
     def _apply_normalization(self, x):
         return normalize_tensor_transform(
@@ -112,45 +110,48 @@ class Hdf5DataProcessor(Hdf5BaseDataProcessor):
                 for idx in range(start_idx, start_idx + num_examples):
                     yield h5_file[f"example_{idx}"]
 
-    def _shard_dataset(self, worker_id, num_workers):
-        per_worker_partition = []
-        for file, num_examples_in_file in self.files_in_this_task:
+    def _maybe_shard_dataset(self, num_workers):
+        per_worker_partition = {}
+        idx = 0
+        files = (
+            self.all_files if self.disable_sharding else self.files_in_this_task
+        )
+        for _, row in files.iterrows():
             # Try to evenly distribute number of examples between workers
+            file_path = row["file_path"]
+            num_examples_in_file = row["num_examples_in_file"]
             num_examples_all_workers = [
                 (num_examples_in_file // num_workers)
             ] * num_workers
             for i in range(num_examples_in_file % num_workers):
                 num_examples_all_workers[i] += 1
-
             assert sum(num_examples_all_workers) == num_examples_in_file
 
-            per_worker_partition.append(
-                (
-                    file,
-                    sum(num_examples_all_workers[:worker_id])
-                    if worker_id > 0
-                    else 0,  # Start index
-                    num_examples_all_workers[worker_id],  # Length of data chunk
-                )
-            )
-
+            for file_idx in range(num_examples_in_file):
+                per_worker_partition[idx] = (file_path, f"example_{file_idx}")
+                idx += 1
         return per_worker_partition
 
-    def __iter__(self):
-        """
-        Iterating over the data to construct input features.
-        """
-        for example in self._load_buffer(self.data_partitions):
-            example_dict = {}
-            for idx, feature in enumerate(self.features_list):
+    def __len__(self):
+        if self.disable_sharding:
+            return self.num_examples
+        else:
+            return self.num_examples_in_this_task
+
+    def __getitem__(self, index):
+        """Get item at a particular index"""
+        file_path, sample_name = self.data_partitions[index]
+        example_dict = {}
+        with h5py.File(file_path, mode='r') as h5_file:
+            example = h5_file[sample_name]
+            for _, feature in enumerate(self.features_list):
                 example_dict[feature] = torch.from_numpy(
                     np.array(example[feature])
                 )
             image, label = self.transform_image_and_mask(
                 example_dict["image"], example_dict["label"]
             )
-
-            yield image, label
+        return image, label
 
     def transform_image_and_mask(self, image, mask):
         if self.normalize_data_method:

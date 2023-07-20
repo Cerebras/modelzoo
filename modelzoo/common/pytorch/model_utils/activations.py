@@ -85,6 +85,11 @@ def quick_gelu(x):
     return x * torch.sigmoid(1.702 * x)
 
 
+def squared_gelu(x):
+    g = gelu(x)
+    return g * g
+
+
 def _silu_python(x):
     """
     See Gaussian Error Linear Units (Hendrycks et al., https://arxiv.org/abs/1606.08415) where the SiLU (Sigmoid Linear
@@ -120,6 +125,38 @@ def linear_act(x):
     return x
 
 
+# GLU bivariate Activations implementation
+def glu_bivariate_base_fn(x1, x2, activation_fn):
+    assert (
+        x1.shape == x2.shape
+    ), "GLU activation inputs must have the same shape"
+    return x1 * activation_fn(x2)
+
+
+def liglu(x1, x2):
+    identity = lambda x: x
+    return glu_bivariate_base_fn(x1, x2, identity)
+
+
+def geglu(x1, x2):
+    return glu_bivariate_base_fn(x1, x2, gelu)
+
+
+def reglu(x1, x2):
+    return glu_bivariate_base_fn(x1, x2, nn.functional.relu)
+
+
+def swiglu(x1, x2):
+    return glu_bivariate_base_fn(x1, x2, nn.functional.silu)
+
+
+GLU_ACTIVATIONS = {
+    "liglu",
+    "geglu",
+    "reglu",
+    "swiglu",
+}
+
 ACT2FN = {
     "relu": nn.functional.relu,
     "leaky_relu": nn.functional.leaky_relu,
@@ -130,20 +167,35 @@ ACT2FN = {
     "gelu_new": gelu_new,
     "gelu_fast": gelu_fast,
     "quick_gelu": quick_gelu,
+    "squared_gelu": squared_gelu,
     "mish": mish,
     "linear": linear_act,
     "sigmoid": torch.sigmoid,
     "relu6": nn.functional.relu6,
+    "liglu": liglu,
+    "geglu": geglu,
+    "reglu": reglu,
+    "swiglu": swiglu,
     None: linear_act,
 }
 
 
-def get_activation(activation_string):
-    if activation_string is not None:
-        activation_string = activation_string.lower()
-    if activation_string in ACT2FN:
-        return ACT2FN[activation_string]
+def get_activation(activation):
+    if callable(activation):
+        return activation
+    if activation is not None:
+        activation = activation.lower()
+    if activation in ACT2FN:
+        return ACT2FN[activation]
     else:
         raise KeyError(
-            f"function {activation_string} not found in ACT2FN mapping {list(ACT2FN.keys())}"
+            f"function {activation} not found in ACT2FN mapping {list(ACT2FN.keys())}"
         )
+
+
+def is_glu_activation(activation):
+    if hasattr(activation, "is_glu_activation"):
+        return getattr(activation, "is_glu_activation")
+    if isinstance(activation, str):
+        activation = activation.lower()
+    return activation in GLU_ACTIVATIONS

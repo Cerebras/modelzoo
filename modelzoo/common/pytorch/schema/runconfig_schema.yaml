@@ -11,6 +11,10 @@ properties:
     - 'null'
   checkpoint_steps:
     type: integer
+  compile_crd_memory_gi:
+    type:
+    - integer
+    - 'null'
   compile_dir:
     type:
     - string
@@ -31,17 +35,21 @@ properties:
     type: string
   dist_backend:
     type: string
-  enable_distributed:
+  drop_data:
+    type:
+    - boolean
+    - 'null'
+  dump_activations:
     type: boolean
-  enable_summaries:
+  enable_distributed:
     type: boolean
   eval_steps:
     type:
     - integer
     - 'null'
-  execution_strategy:
+  execute_crd_memory_gi:
     type:
-    - string
+    - integer
     - 'null'
   experimental_api:
     type:
@@ -65,8 +73,16 @@ properties:
     type:
     - string
     - 'null'
+  log_initialization:
+    type:
+    - boolean
+    - 'null'
   main_process_id:
     type: integer
+  max_checkpoints:
+    type:
+    - integer
+    - 'null'
   max_steps:
     type:
     - integer
@@ -115,6 +131,10 @@ properties:
     type:
     - array
     - 'null'
+  precision_opt_level:
+    type:
+    - integer
+    - 'null'
   save_initial_checkpoint:
     type: boolean
   save_losses:
@@ -143,24 +163,24 @@ properties:
     - boolean
     - 'null'
   autoload_last_checkpoint:
-    type: 
+    type:
     - boolean
     - 'null'
   keep_checkpoint_max:
     type:
     - integer
-    - 'null' 
+    - 'null'
   variant:
-    type: 
+    type:
     - string
-    - 'null' 
+    - 'null'
   use_appliance_data:
-    type: 
-    - boolean 
-    - 'null' 
+    type:
+    - boolean
+    - 'null'
   use_cs_grad_accum:
-    type: 
-    - boolean 
+    type:
+    - boolean
     - 'null'
   use_cstorch_optimizer_step:
     type:
@@ -174,11 +194,13 @@ properties:
     type:
     - integer
     - 'null'
-  save_summary_steps:
+  disable_version_check:
+    type:
+    - boolean
+    - 'null'
+  wrk_memory_gi:
     type:
     - integer
     - 'null'
-  disable_version_check:
-    type: boolean
 type: object
 additionalProperties: false

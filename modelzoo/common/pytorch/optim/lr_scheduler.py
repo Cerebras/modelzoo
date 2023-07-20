@@ -64,7 +64,6 @@ class LRScheduler(torch.optim.lr_scheduler.LambdaLR, abc.ABC):
             LRScheduler.global_start_step += decay_steps
 
         self.cb_scheduler = None
-
         # Cerebras specific learning rate scheduler configuration
         if cm.use_cs():
             from modelzoo.common.pytorch import cbtorch
@@ -570,8 +569,13 @@ class SequentialLR(torch.optim.lr_scheduler.SequentialLR):
             # Otherwise, we will use the LR scheduler from previous iteration.
             res = torch.where(
                 global_step < milestone,
-                new_lr,
-                self._schedulers[idx + 1].lr_function(global_step - milestone),
+                torch.tensor(new_lr, dtype=torch.float32),
+                torch.tensor(
+                    self._schedulers[idx + 1].lr_function(
+                        global_step - milestone
+                    ),
+                    dtype=torch.float32,
+                ),
             )
             new_lr = res
         return new_lr
@@ -1384,3 +1388,96 @@ class OneCycleLR(LRScheduler):
             )
             start_step = milestone
         return lr
+
+
+class ScalePerParamLR(LRScheduler):
+    r"""Wraps a scheduler: torch.optim.lr_scheduler.LambdaLR object or 
+    torch.optim.lr_scheduler.SequentialLR object and scales the
+    learning rate of a param_group based on the corresponding adjust_learning_rate
+    factor
+    Args:
+        optimizer: The optimizer to schedule
+        scheduler: The scheduler that provides updated lr with its _lr_function method
+        decay_steps: Number of steps to perform the decay
+    """
+
+    def __init__(
+        self,
+        optimizer: torch.optim.Optimizer,
+        scheduler: torch.optim.lr_scheduler.LambdaLR,
+        decay_steps: int,
+        disable_lr_steps_reset: bool = False,
+    ):
+        self._scheduler_nested = scheduler
+        self.decay_steps = decay_steps
+        self.disable_lr_steps_reset = disable_lr_steps_reset
+        self.lr_adjustment_scalars = [
+            param_group.get('adjust_learning_rate', 1.0)
+            for param_group in optimizer.param_groups
+        ]
+        super().__init__(optimizer, decay_steps, disable_lr_steps_reset)
+
+    def _configure_cerebras_lrs(self, optimizer):
+        from modelzoo.common.pytorch import cbtorch
+
+        return cbtorch.optim.lr_scheduler.ScalePerParamLR(
+            optimizer,
+            self._scheduler_nested,
+            self.decay_steps,
+            self.disable_lr_steps_reset,
+        )
+
+    def state_dict(self):
+        s = super().state_dict()
+        s["_scheduler"] = self._scheduler_nested.state_dict()
+        s.pop("_scheduler_nested", None)
+        s.pop("disable_lr_steps_reset", None)
+        s.pop("verbose", None)
+        s.pop("_get_lr_called_within_step", None)
+        s["_scheduler"].pop("disable_lr_steps_reset", None)
+        s["_scheduler"].pop("verbose", None)
+        s["_scheduler"].pop("_get_lr_called_within_step", None)
+        if not self.decay_steps:
+            s.pop("decay_steps", None)
+        if not s["_scheduler"].get("decay_steps"):
+            s["_scheduler"].pop("decay_steps", None)
+        return s
+
+    def load_state_dict(self, state_dict):
+        super().load_state_dict(state_dict)
+        _scheduler_dict = state_dict.pop('_scheduler')
+        state_dict['_scheduler'] = _scheduler_dict
+        self._scheduler_nested.load_state_dict(_scheduler_dict)
+
+    def lr_function(self, global_step, adjust_learning_rate=1.0):
+        if cm.use_cs():
+            # technically should be one lr tensor for each param group
+            # for now assume all lr are same across param groups
+            lr = self._lr_function(global_step)
+            self._last_lr = [
+                lr * self.lr_adjustment_scalars[group_idx]
+                for group_idx, _ in enumerate(self.optimizer.param_groups)
+            ]
+            return lr
+        else:
+            return (
+                self._lr_function(torch.tensor(global_step)).item()
+                * adjust_learning_rate
+            )
+
+    def get_lr(self):
+        if not self._get_lr_called_within_step:
+            warnings.warn(
+                "to get the last learning rate computed by the scheduler, "
+                "please use `get_last_lr()`."
+            )
+
+        # note, different from the parent class,
+        # we ignore the base learning rate entirely
+        return [
+            lmbda(self.last_epoch, self.lr_adjustment_scalars[i])
+            for i, lmbda in enumerate(self.lr_lambdas)
+        ]
+
+    def _lr_function(self, global_step):
+        return self._scheduler_nested._lr_function(global_step)

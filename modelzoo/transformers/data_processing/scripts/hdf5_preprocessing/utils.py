@@ -13,25 +13,25 @@
 # limitations under the License.
 
 import argparse
+import gzip
+import io
 import json
 import logging
-import random
+import os
+import re
 from itertools import repeat
 from math import ceil
 from multiprocessing import Pool, cpu_count
+from pathlib import Path
 
 import h5py
+import jsonlines
 import numpy as np
+import yaml
+import zstandard
+from lm_dataformat import listdir_or_file, tarfile_reader
 from tqdm import tqdm
 
-from modelzoo.transformers.data_processing.scripts.pile.tokenizer import (
-    get_tokenizer,
-)
-from modelzoo.transformers.data_processing.scripts.utils import (
-    get_single_example,
-    read_checkpoint,
-    wikitext_detokenizer,
-)
 from modelzoo.transformers.data_processing.utils import split_list
 
 logger = logging.getLogger("utils")
@@ -40,14 +40,17 @@ logger.setLevel(logging.INFO)
 
 def add_common_args(parser):
     """
-    For the argparse to parse arguments for subcommands, we add common 
+    For the argparse to parse arguments for subcommands, we add common
     command line arguments to each subcommand parser here.
     """
     parser.add_argument(
-        "--input_dir",
+        "--params",
         type=str,
         default=None,
-        help="Directory where raw data is stored.",
+        help="Path to the YAML config file for setting dataset preprocessing hyper-parameters.",
+    )
+    parser.add_argument(
+        "--input_dir", type=str, help="Directory where raw data is stored.",
     )
     parser.add_argument(
         "--metadata_files",
@@ -59,17 +62,71 @@ def add_common_args(parser):
         "separated by comma.",
     )
     parser.add_argument(
-        "--jsonl_key",
-        type=str,
-        default="text",
-        help="The key name in input jsonl files from which the raw text will be "
-        "extracted in order to further process it. Default: 'text'.",
-    )
-    parser.add_argument(
         "--output_dir",
         type=str,
-        default="./data_dir/",
-        help="Directory where HDF5 files will be stored. Defaults to `./data_dir/`.",
+        help="Directory where HDF5 files will be stored.",
+    )
+    parser.add_argument(
+        "--processes", type=int, help="Number of processes to use.",
+    )
+    parser.add_argument(
+        "--tokenizer_type",
+        type=str,
+        choices=["GPT2Tokenizer", "NeoXTokenizer"],
+        help=(
+            "Type of tokenizer to use for HDF5 dataset generation. "
+            "Can be one of `GPT2Tokenizer` or `NeoXTokenizer`."
+        ),
+    )
+    parser.add_argument(
+        "--vocab_file", type=str, help="Path to the vocabulary file."
+    )
+    parser.add_argument(
+        "--encoder_file", type=str, help="Path to the encoder file."
+    )
+    parser.add_argument(
+        "--eos_id",
+        type=int,
+        default=0,
+        help="Token id of the end of sentence token",
+    )
+    parser.add_argument(
+        "--pad_id", type=int, default=0, help="Token id of the padding token"
+    )
+    parser.add_argument(
+        "--max_seq_length", type=int, help="Maximum sequence length.",
+    )
+    parser.add_argument(
+        "--short_seq_prob",
+        type=float,
+        default=0.0,
+        help=(
+            "Probability of creating sequences which are shorter than the"
+            + " maximum sequence length."
+        ),
+    )
+    parser.add_argument(
+        "--use_ftfy",
+        type=str,
+        choices=["True", "False"],
+        help="Whether to fix text with ftfy.",
+    )
+    parser.add_argument(
+        "--ftfy_normalizer",
+        type=str,
+        choices=["NFC", "None"],
+        help=(
+            "Choose what kind of unicode normalization is applied. Usually, we"
+            + " apply `NFC` normalization, so that letters followed by combining"
+            + " characters become single combined characters. Using `None`"
+            + " applies no normalization while fixing text."
+        ),
+    )
+    parser.add_argument(
+        "--wikitext_detokenize",
+        type=str,
+        choices=["True", "False"],
+        help="Whether to use wikitext detokenizer to fix text.",
     )
     parser.add_argument(
         "--output_name",
@@ -81,41 +138,53 @@ def add_common_args(parser):
         ),
     )
     parser.add_argument(
-        "--seed", type=int, default=0, help="Random seed. Defaults to `0`.",
-    )
-    parser.add_argument(
-        "--processes",
-        type=int,
-        default=0,
-        help="Number of processes to use. Default to cpu count.",
-    )
-    parser.add_argument(
-        "--write_remainder",
-        action="store_true",
-        help="Write the remainder files when data is left over from "
-        "processing.",
-    )
-    parser.add_argument(
-        "--resume_from_checkpoint",
-        action="store_true",
-        help="Resume record writing from a given checkpoint.",
-    )
-    parser.add_argument(
-        "--display_pbar",
-        action="store_true",
-        help="Display progress while runs.",
-    )
-    parser.add_argument(
         "--files_per_record",
         type=int,
-        default=50000,
         help="Text files to write per HDF5 file.",
     )
     parser.add_argument(
         "--write_in_batch",
-        action="store_true",
+        type=str,
+        choices=["True", "False"],
         help="Whether to write the samples in batch for the HDF5 format, "
         "setting to false will save memory but a bit slower.",
+    )
+    parser.add_argument(
+        "--write_remainder",
+        type=str,
+        choices=["True", "False"],
+        help="Write the remainder files when data is left over from "
+        "processing.",
+    )
+    parser.add_argument(
+        "--pack_sequences",
+        type=str,
+        choices=["True", "False"],
+        help="Concatenate a document smaller than maximum sequence length with "
+        "other documents, instead of filling it with Padding token.",
+    )
+    parser.add_argument(
+        "--min_sequence_len",
+        type=int,
+        default=6,
+        help=(
+            "sequences shorter than min_sequence_len tokens in length will be skipped"
+        ),
+    )
+    parser.add_argument(
+        "--resume_from_checkpoint",
+        type=str,
+        choices=["True", "False"],
+        help="Resume record writing from a given checkpoint.",
+    )
+    parser.add_argument(
+        "--display_pbar",
+        type=str,
+        choices=["True", "False"],
+        help="Display progress while runs.",
+    )
+    parser.add_argument(
+        "--seed", type=int, help="Random seed.",
     )
 
 
@@ -135,104 +204,144 @@ def get_parser(desc):
         "pre-processed text converted into token ids at desired maximum "
         "sequence length.",
     )
-    raw_text_parser = subparser.add_parser(
-        "raw_text", help="Convert input files into hdf5 files with raw text."
+
+    lm_parser = subparser.add_parser(
+        "LMData", help="Language modeling dataset in `.jsonl` or `.txt` format."
     )
-    add_common_args(raw_text_parser)
-    token_id_parser = subparser.add_parser(
-        "preprocessed_text",
-        help="Convert input files into hdf5 files with the input text "
-        "that is tokenized and converted into token ids. Along with it "
-        "also save the labels and input attention mask for each sample.",
-    )
-    add_common_args(token_id_parser)
-    token_id_parser.add_argument(
-        "--tokenizer_type",
-        type=str,
-        required=True,
-        choices=["GPT2Tokenizer", "NeoXTokenizer"],
-        help=(
-            "Type of tokenizer to use for tfrecord/HDF5 dataset generation. "
-            "Can be one of `GPT2Tokenizer` or `NeoXTokenizer`."
-        ),
-    )
-    token_id_parser.add_argument(
-        "--vocab_file",
+    add_common_args(lm_parser)
+    lm_parser.add_argument(
+        "--jsonl_key",
         type=str,
         default=None,
-        help="path to the vocabulary file. Defaults to None.",
+        help="The key name in input jsonl files from which the raw text will be "
+        "extracted in order to further process it.",
     )
-    token_id_parser.add_argument(
-        "--encoder_file",
+
+    summarization_parser = subparser.add_parser(
+        "Summarization", help="Fine-tuning dataset in plane text format."
+    )
+    add_common_args(summarization_parser)
+    summarization_parser.add_argument(
+        "--sep_token",
         type=str,
         default=None,
-        help="Path to the encoder file. Defaults to None.",
+        help="Token added between prompt and completion in preprocessed sequences.",
     )
-    token_id_parser.add_argument(
-        "--max_seq_length",
-        type=int,
-        default=2048,
-        help="Maximum sequence length. Defaults to `2048`.",
+    summarization_parser.add_argument(
+        "--prompt_key", type=str, help="Json key for the prompt.",
     )
-    token_id_parser.add_argument(
-        "--short_seq_prob",
-        type=float,
-        default=0.0,
-        help=(
-            "Probability of creating sequences which are shorter than the"
-            + " maximum sequence length. Defaults to `0.0`."
-        ),
+    summarization_parser.add_argument(
+        "--completion_key", type=str, help="Json key for the completion.",
     )
-    token_id_parser.add_argument(
-        "--ftfy", action="store_true", help="Fix text with ftfy."
+
+    custom_parser = subparser.add_parser(
+        "Customize", help="Provide customized dataset processor."
     )
-    token_id_parser.add_argument(
-        "--ftfy_normalizer",
+    add_common_args(custom_parser)
+    custom_parser.add_argument(
+        "--module",
         type=str,
-        default="NFC",
-        choices=["NFC", "None"],
-        help=(
-            "Choose what kind of unicode normalization is applied. Usually, we"
-            + " apply `NFC` normalization, so that letters followed by combining"
-            + " characters become single combined characters. Using `None`"
-            + " applies no normalization while fixing text."
-        ),
+        help="Python file name contains the custom dataset processor.",
     )
-    token_id_parser.add_argument(
-        "--wikitext-detokenize",
-        action="store_true",
-        help="Use wikitext detokenizer to fix text.",
+    custom_parser.add_argument(
+        "--dataset_processor",
+        type=str,
+        help="Name of the custom dataset processor.",
     )
-    token_id_parser.add_argument(
-        "--eos_id",
-        type=int,
-        default=50256,
-        help=(
-            "Id for padding out shorter sequences. Defaults to 50256, which"
-            + " is `<|endoftext|>` in tokens."
-        ),
-    )
-    token_id_parser.add_argument(
-        "--pad_id",
-        type=int,
-        default=50256,
-        help=(
-            "Id for padding out shorter sequences. Defaults to 50256, which"
-            + " is `<|endoftext|>` in tokens."
-        ),
-    )
-    return parser
+
+    return parser.parse_args()
 
 
-def set_defaults(args):
-    if args.mode == "preprocessed_text":
-        # fix args for ftfy normalization
-        if args.ftfy_normalizer == "None":
-            args.ftfy_normalizer = None
+def update_params(params, args):
+    """
+    Update config parameters with CLI arguments
+    """
+    setup_params = [
+        "input_dir",
+        "metadata_files",
+        "output_dir",
+        "processes",
+        "module",
+        "dataset_processor",
+    ]
+    processing_params = [
+        "tokenizer_type",
+        "vocab_file",
+        "encoder_file",
+        "eos_id",
+        "pad_id",
+        "max_seq_length",
+        "short_seq_prob",
+        "output_name",
+        "files_per_record",
+        "write_in_batch",
+        "write_remainder",
+        "resume_from_checkpoint",
+        "display_pbar",
+        "seed",
+    ]
+    dataset_params = [
+        "use_ftfy",
+        "ftfy_normalizer",
+        "wikitext_detokenize",
+        "jsonl_key",
+        "pack_sequences",
+        "min_sequence_len",
+        "input_ids_dtype",
+        "input_mask_dtype",
+        "inverted_mask",
+        "prompt_key",
+        "completion_key",
+        "sep_token",
+    ]
+    processor_map = {
+        "lmdata": "LMDataPreprocessor",
+        "summarization": "SummarizationPreprocessor",
+    }
 
-    if args.processes == 0:
-        # if nothing is specified, then set number of processes to CPU count.
-        args.processes = cpu_count()
+    mode = args.pop("mode").lower()
+    if mode != "customize":
+        params["setup"]["dataset_processor"] = processor_map[mode]
+
+    for key, value in args.items():
+        if value in ["True", "False"]:
+            value = value == "True"
+        if value is not None:
+            if key in setup_params:
+                if key not in params["setup"]:
+                    params["setup"][key] = value
+            elif key in processing_params:
+                if key not in params["processing"]:
+                    params["processing"][key] = value
+            elif key in dataset_params:
+                if key not in params["dataset"]:
+                    params["dataset"][key] = value
+            else:
+                raise ValueError(f"Unexpected arguments: {key}")
+
+
+def get_params(desc):
+    """Retrieve configuration parameters
+    Returns:
+        params (Dict): Dictionary contains the parameters used to configure
+            the data processing.
+    """
+    args = get_parser(desc)
+    args = vars(args)
+
+    params_file = args.pop("params", None)
+    if params_file:
+        with open(params_file, 'r') as stream:
+            params = yaml.safe_load(stream)
+    else:
+        params = {}
+
+    for section in ["setup", "processing", "dataset"]:
+        if not params.get(section, None):
+            params[section] = {}
+
+    update_params(params, args)
+    return params
 
 
 def dump_args(args, json_params_file):
@@ -242,230 +351,80 @@ def dump_args(args, json_params_file):
     logger.info(f"User arguments can be found at {json_params_file}.")
 
     # write initial params to file
-    params = vars(args)
     with open(json_params_file, "w") as _fout:
-        json.dump(params, _fout, indent=4, sort_keys=True)
+        json.dump(args, _fout, indent=4, sort_keys=True)
 
 
-def dump_result(results, json_params_file, eos_id=None, pad_id=None):
+def dump_result(
+    results, json_params_file, eos_id=None, pad_id=None, vocab_size=None
+):
     """
     Write outputs of execution
     """
     with open(json_params_file, "r") as _fin:
         data = json.load(_fin)
 
-    data["discarded_files"] = results["discarded"]
-    data["processed_files"] = results["processed"]
-    data["successful_files"] = results["successful"]
-    data["n_examples"] = results["examples"]
+    post_process = {}
+    post_process["discarded_files"] = results["discarded"]
+    post_process["processed_files"] = results["processed"]
+    post_process["successful_files"] = results["successful"]
+    post_process["n_examples"] = results["examples"]
     if eos_id:
-        data["eos_id"] = eos_id[0] if isinstance(eos_id, list) else eos_id
+        post_process["eos_id"] = (
+            eos_id[0] if isinstance(eos_id, list) else eos_id
+        )
     if pad_id:
-        data["pad_id"] = pad_id
+        post_process["pad_id"] = pad_id
+    if vocab_size:
+        post_process["vocab_size"] = vocab_size
+
+    data["post-process"] = post_process
 
     with open(json_params_file, "w") as _fout:
         json.dump(data, _fout, indent=4, sort_keys=True)
 
 
-def get_doc_or_tokens(f, tokenizer, args, prefix=[]):
-    """Generator that yields the contents of the files in an archive
-    if data_to_prepend is not None, prepend data_to_preprend + an EOS separator
-    to the encoded data.
-    Optionally, it also tokenizes the docs and encodes them based on the input 
-    args.
+def get_verification_args(params):
+    args = argparse.Namespace()
+    args.processes = params["setup"].get("processes", 0)
+    if args.processes == 0:
+        args.processes = cpu_count()
+    args.files_per_record = params["processing"].get("files_per_record", 50000)
+    args.max_seq_length = params["processing"].get("max_seq_length", 2048)
 
-    Args:
-        f (file): Archive file to read.
-        tokenizer (BPETokenizer obj): Tokenizer used to encode raw data.
-        args (argparse namespace): Arguments for writing out tfrecords/HDF5.
-        prefix (list): Data to prefix before splitting to given context length.
-            Used to add remainder data from previous iteration of data reads.
-            Defaults to `[]`, i.e, empty list.
-
-    Yields:
-        A list of lists with tokenized data + EOS separator appended at the end.
-    """
-    import ftfy
-    from lm_dataformat import Reader
-
-    reader = Reader(f)
-    # We're not using `stream_data()` from lm_dataformat.Reader object because
-    # it has a bug where it can't support custom keys, so we use the so
-    # called private method `_stream_data()`
-    for doc in reader._stream_data(jsonl_key=args.jsonl_key):
-        if args.mode == "raw_text":
-            yield doc
-        else:
-            if args.ftfy:
-                doc = ftfy.fix_text(doc, normalization=args.ftfy_normalizer)
-            if args.wikitext_detokenize:
-                doc = wikitext_detokenizer(doc)
-
-            doc = tokenizer.encode(doc) + args.eos_id
-            doc = prefix + doc
-            yield [
-                doc[i : i + args.max_seq_length + 1]
-                for i in range(0, len(doc), args.max_seq_length)
-            ]
+    return args
 
 
-def create_dataset(params):
-    """Creates HDF5 dataset from given parameters.
-
-    Args:
-        params (tuple): Tuple containing the files, arguments and process number
-            for current execution.
-
-    Returns:
-        Dictionary containing results of execution, specifically as number of
-            processed, discarded, and successful files as well as number of examples.
-    """
-    files, args, write_files_fn, process_no = params
-    rng = seed_runs(args.seed, rank=process_no)
-
-    write_remainder = args.write_remainder
-    resume_from_checkpoint = args.resume_from_checkpoint
-    display_pbar = args.display_pbar
-
-    discarded_files = 0
-    files_processed = 0
-    pbar = tqdm(
-        desc=f"Parsed 0 input files. Files written ", disable=not display_pbar,
-    )
-    checkpoint_path = f"{args.output_dir}/checkpoint_{process_no}.txt"
-    resume_files_processed, df_count = read_checkpoint(
-        checkpoint_path, resume_from_checkpoint
-    )
-
-    data_to_prepend = []
-    doc_object_array = []
-
-    tokenizer = None
-    if args.mode == "preprocessed_text":
-        tokenizer, eos_id, pad_id = get_tokenizer(args)
-
-        # re-assign eos_id, pos_id to the args value since it is used for generation
-        if not isinstance(eos_id, list):
-            eos_id = [eos_id]
-        args.eos_id = eos_id
-        args.pad_id = pad_id
-
-    for _file in files:
-        for doc_object in get_doc_or_tokens(
-            _file, tokenizer, args, prefix=data_to_prepend
-        ):
-            files_processed += 1
-            if files_processed < resume_files_processed:
-                continue  # enable resuming from checkpoint
-
-            if args.mode == "preprocessed_text":
-                # if the last chunk < chunk size, but > minimum_size, take it
-                # and append it to the beginning of the next file
-                if data_to_prepend:
-                    data_to_prepend.clear()
-                n_tokens = len(doc_object[-1])
-                if n_tokens < args.max_seq_length:
-                    data = doc_object.pop(-1)
-                    if n_tokens > 0:
-                        data_to_prepend.extend(data)
-                    else:
-                        discarded_files += 1
-
-            # add tokenized files > chunk size to main array
-            if args.mode == "preprocessed_text":
-                doc_object_array.extend(doc_object)
-            else:
-                doc_object_array.append(doc_object)
-
-            if len(doc_object_array) >= args.files_per_record:
-                _df_count, remainder = write_files_fn(
-                    doc_object_array,
-                    args,
-                    start_number=df_count,
-                    process_number=process_no,
-                    rng=rng,
-                )
-                pbar.update(_df_count - df_count)
-                pbar.set_description(
-                    f"Parsed {files_processed} input files. Files written "
-                )
-
-                df_count = _df_count
-                doc_object_array = (
-                    remainder if remainder is not None else []
-                )  # add remaining files to next chunk
-                with open(checkpoint_path, "w") as checkpoint_file:
-                    checkpoint_file.write(f"{files_processed}, {df_count}")
-
-    if len(doc_object_array) >= args.files_per_record:
-        _df_count, remainder = write_files_fn(
-            doc_object_array,
-            args,
-            start_number=df_count,
-            process_number=process_no,
-            rng=rng,
-        )
-        pbar.update(_df_count - df_count)
-        pbar.set_description(
-            f"Parsed {files_processed} input files. Files written "
-        )
-        df_count = _df_count
-        with open(checkpoint_path, "w") as checkpoint_file:
-            checkpoint_file.write(f"{files_processed}, {df_count}")
-    else:
-        remainder = doc_object_array
-
-    n_examples = df_count * args.files_per_record
-    if write_remainder:
-        n_examples += len(remainder)
-        _df_count, _ = write_files_fn(
-            remainder,
-            args,
-            start_number=df_count,
-            write_remainder=True,
-            process_number=process_no,
-            rng=rng,
-        )
-        pbar.update(_df_count - df_count)
-        pbar.set_description(
-            f"Parsed {files_processed} input files. Files written "
-        )
-        with open(checkpoint_path, "w") as checkpoint_file:
-            checkpoint_file.write(f"{files_processed}, {_df_count}")
-
-    successful_files = files_processed - discarded_files
-    return {
-        "discarded": discarded_files,
-        "processed": files_processed,
-        "successful": successful_files,
-        "examples": n_examples,
-    }
-
-
-def create_dataset_mp(files, args, write_files_fn):
-    """Create HDF5 dataset using multiple processes.
+def process_dataset(files, dataset_processor, processes):
+    """Process a dataset and write it into HDF5 format.
 
     Args:
         files (list): List of files to process.
-        args (argparse namespace): Arguments for writing out HDF5 dataset.
+        dataset_processor: Class containing methods that specify how the dataset
+            will be processed and written into HDF5 files.
+        processes (int): Number of processes to use.
 
     Returns:
         Dictionary containing results of execution, specifically as number of
             processed, discarded, and successful files as well as number of examples 
             from all processes.
     """
+    if processes < 2:
+        # Run only single process run, with process number set as 0.
+        return dataset_processor.create_dataset((files, 0))
+
     try:
-        n_proc = args.processes
+        n_proc = processes
         n_chunks = ceil(len(files) / n_proc)
         remain = len(files) % n_proc
         if n_chunks == 1 and remain:
             n_proc = remain
             logger.warning(
-                f"There aren't enough files to distribute to {args.processes} "
+                f"There aren't enough files to distribute to {processes} "
                 f"processes, resetting it to {n_proc}. If you're working with a "
                 "small number of compressed archives and could extract it into "
                 "txt files, you might be able to get more benefits from the "
-                f"available {args.processes} processes."
+                f"available {processes} processes."
             )
         files = split_list(files, n_chunks)
     except ValueError as e:
@@ -480,13 +439,8 @@ def create_dataset_mp(files, args, write_files_fn):
     with Pool(processes=n_proc) as pool:
         pbar = tqdm(
             pool.imap(
-                create_dataset,
-                zip(
-                    files,
-                    repeat(args),
-                    repeat(write_files_fn),
-                    range(len(files)),
-                ),
+                dataset_processor.create_dataset,
+                zip(files, range(len(files)),),
             ),
             total=len(files),
         )
@@ -499,161 +453,11 @@ def create_dataset_mp(files, args, write_files_fn):
         return meta
 
 
-def seed_runs(seed, rank=0):
-    """Set seed for run based on user provided seed and rank.
-
-    Args:
-        seed (int): Seed value to set.
-        rank (int): Rank to set, based on process number for execution.
-            Defaults to 0.
-
-    Returns:
-        Object of type random.Random, with seed set.
-    """
-    rng = random.Random()
-    rng.seed(seed + rank)
-    np.random.seed(seed + rank)
-
-    return rng
-
-
-def write_hdf5_file(
-    file_path,
-    files,
-    args,
-    rng,
-    n_examples,
-    chunks,
-    dtype="i4",
-    compression="gzip",
-):
-    """Write data to HDF5 file.
-
-    Args:
-        file_path (string): HDF5 file path.
-        files (sequence): List of lists containing tokenized data to write.
-        args (argparse namespace): Arguments for writing out HDF5.
-        rng (random.Random obj): Instance of random object, with states set.
-        n_examples (int): Number of examples that will be written in the file.
-        chunks (tuple or bool): Chunk shape, or True to enable auto-chunking.
-        dtype (string): Data type for the HDF5 dataset.
-        compression (string): Compression strategy.
-    """
-    if args.mode == "raw_text":
-        data_label = "text"
-        data_shape = (n_examples,)
-        args.write_in_batch = False
-    else:
-        data_label = "data"
-        data_shape = (n_examples, 3, args.max_seq_length)
-    if args.write_in_batch:
-        data_buffer = [get_single_example(f, args, rng) for f in files]
-        # Below will convert list of strings into numpy 'U' type and h5py
-        # doesn't allow storing such format
-        # https://docs.h5py.org/en/stable/strings.html#what-about-numpy-s-u-type
-        _data = np.stack(data_buffer)
-        with h5py.File(file_path, mode="w") as h5_file:
-            h5_file.attrs["n_examples"] = n_examples
-            h5_file.create_dataset(
-                data_label,
-                data=_data,
-                dtype=dtype,
-                chunks=chunks,
-                compression=compression,
-            )
-    else:
-        with h5py.File(file_path, mode="w") as h5_file:
-            h5_file.attrs["n_examples"] = n_examples
-            dset = h5_file.create_dataset(
-                data_label,
-                shape=data_shape,
-                dtype=dtype,
-                chunks=chunks,
-                compression=compression,
-            )
-            for idx, f in enumerate(files):
-                dset[idx] = (
-                    get_single_example(f, args, rng)
-                    if args.mode != "raw_text"
-                    else f
-                )
-
-
-def write_hdf5_files(
-    files,
-    args,
-    start_number,
-    write_remainder=False,
-    process_number=None,
-    rng=random.Random(),
-):
-    """Writes a list of files to HDF5.
-
-    Args:
-        files (sequence): List of lists containing tokenized data to write.
-        args (argparse namespace): Arguments for writing out HDF5
-        start_number (int): Continual count of HDF5 files written out.
-        write_remainder (bool): Write out remaining data from files, if
-            files per record is not met. Defaults to `False`.
-        process_number (int): Process number for execution. Defaults to `None`.
-        rng (random.Random obj): Instance of random object, with states set.
-            Defaults to new instance created for write.
-
-    Returns:
-        start_number (int): Continual count of HDF5 files written out.
-        remainder (list): Remaining sequences not written out, if length of
-            files to write is greater than the file per record.
-    """
-    if not files:
-        return
-
-    files_per_record = args.files_per_record
-    file_chunks = split_list(files, files_per_record)
-    if not file_chunks:
-        return
-
-    if len(file_chunks[-1]) != files_per_record and not write_remainder:
-        remainder = file_chunks.pop(-1)
-    else:
-        remainder = None
-        files_per_record = len(file_chunks[-1])
-
-    if args.mode == "raw_text":
-        hdf5_chunk_size = (1,)
-        hdf5_dtype = h5py.string_dtype(encoding="utf-8")
-    else:
-        hdf5_chunk_size = (1, 3, args.max_seq_length)
-        hdf5_dtype = "i4"
-
-    for files in file_chunks:
-        fp = f"{args.output_dir}/{args.output_name}_{start_number}"
-        if process_number is not None:
-            fp += f"_{process_number}"
-
-        write_hdf5_file(
-            file_path=fp + f".h5",
-            files=files,
-            args=args,
-            rng=rng,
-            n_examples=files_per_record,
-            chunks=hdf5_chunk_size,
-            dtype=hdf5_dtype,
-        )
-
-        start_number += 1
-
-    return start_number, remainder
-
-
 def verify_saved_hdf5_files(params):
     """
-    This function is used to do sanity checks at the end of the creation 
+    This function is used to do sanity checks at the end of the creation
     of hdf5 files.
-    This function loads every .h5 files generated and 
-    - for `raw_text` mode it checks:
-        1. The data type
-        2. Attributes in the dataset
-    - for `preprocessed_text` mode it checks:
+    This function loads every .h5 files generated and checks:
         1. The data type
         2. Shape of the dataset
         3. Fact that labels and inputs are as expected
@@ -661,51 +465,45 @@ def verify_saved_hdf5_files(params):
     h5_files_path, args = params
     for h5_file_path in h5_files_path:
         with h5py.File(h5_file_path, mode="r") as h5_file:
-            if args.mode == "raw_text":
-                # verify the raw text h5 file content
-                n_docs = h5_file.attrs["n_examples"]
-                dataset = h5_file["text"]
-                expected_dtype = h5py.string_dtype(encoding="utf-8")
-                assert dataset.dtype == expected_dtype, (
-                    f"Error in {h5_file}, conversion is corrupted as the "
-                    f"datatype is unexpected. Expected: {expected_dtype}, "
-                    f"received {dataset.dtype}."
-                )
-                assert n_docs <= args.files_per_record, (
-                    f"Error in {h5_file}, conversion is corrupted as the "
-                    f"number of docs in file is unexpected. Expected:"
-                    f" {args.files_per_record}, received {n_docs}."
-                )
-            else:
-                # verify the preprocessed text h5 file content
-                n_examples = h5_file.attrs["n_examples"]
-                dataset = h5_file["data"]
-                expected_dtype = "i4"
-                assert dataset.dtype == expected_dtype, (
-                    f"Error in {h5_file}, conversion is corrupted as the "
-                    f"datatype is unexpected. Expected: {expected_dtype}, "
-                    f"received {dataset.dtype}."
-                )
-                data_shape = dataset[()].shape
-                assert n_examples <= args.files_per_record, (
-                    f"Error in {h5_file}, conversion is corrupted as the "
-                    f"number of examples in file is unexpected. Expected:"
-                    f" {args.files_per_record}, received {n_examples}."
-                )
-                assert data_shape[1:] == (3, args.max_seq_length), (
-                    f"Error in {h5_file}, conversion is corrupted as the "
-                    f"number shape of example is unexpected. Expected:"
-                    f" {(3, args.max_seq_length)}, received {data_shape[1:]}."
-                )
+            n_examples = h5_file.attrs["n_examples"]
+            dataset = h5_file["data"]
+            expected_dtype = "i4"
+            assert dataset.dtype == expected_dtype, (
+                f"Error in {h5_file}, conversion is corrupted as the "
+                f"datatype is unexpected. Expected: {expected_dtype}, "
+                f"received {dataset.dtype}."
+            )
+            data_shape = dataset[()].shape
+            assert (
+                n_examples <= args.files_per_record
+                or args.files_per_record == -1
+            ), (
+                f"Error in {h5_file}, conversion is corrupted as the "
+                f"number of examples in file is unexpected. Expected:"
+                f" {args.files_per_record}, received {n_examples}."
+            )
+            assert (
+                data_shape[1:] == (3, args.max_seq_length)
+                or args.max_seq_length == -1
+            ), (
+                f"Error in {h5_file}, conversion is corrupted as the "
+                f"shape of example is unexpected. Expected:"
+                f" {(3, args.max_seq_length)}, received {data_shape[1:]}."
+            )
+
+    return True
 
 
 def verify_saved_hdf5_files_mp(files, args):
-    """Create HDF5 dataset using multiple processes.
-
+    """Verify the generated HDF5 dataset.
     Args:
         files (list): List of files to process.
         args (argparse namespace): Arguments for verifying HDF5 dataset.
     """
+    if args.processes == 1:
+        verify_saved_hdf5_files((files, args))
+        return
+
     try:
         n_proc = args.processes
         n_chunks = ceil(len(files) / n_proc)
@@ -728,3 +526,433 @@ def verify_saved_hdf5_files_mp(files, args):
             pool.imap(verify_saved_hdf5_files, zip(files, repeat(args))),
             total=len(files),
         )
+        for test in pbar:
+            if test:
+                continue
+
+
+def handle_jsonl(
+    jsonl_reader, get_meta, autojoin_paragraphs, para_joiner, key=None
+):
+    for ob in jsonl_reader:
+        # naive jsonl where each object is just the string itself, with no meta. For legacy compatibility.
+        if isinstance(ob, str):
+            assert not get_meta
+            yield ob
+            continue
+
+        if key is None:
+            yield ob
+        else:
+            text = ob[key]
+
+            if autojoin_paragraphs and isinstance(text, list):
+                text = para_joiner.join(text)
+
+            if get_meta:
+                yield text, (ob['meta'] if 'meta' in ob else {})
+            else:
+                yield text
+
+
+class Reader:
+    def __init__(self, in_path):
+        self.in_path = in_path
+
+    def stream_data(self, get_meta=False, jsonl_key=None):
+        self.f_name = ""
+        files = listdir_or_file(self.in_path)
+        if not files:
+            raise FileNotFoundError(f"No valid file(s) found in {self.in_path}")
+        for f in files:
+            self.f_name = f
+            if f.endswith('.jsonl'):
+                yield from self.read_jsonl(f, get_meta, key=jsonl_key)
+            elif f.endswith('.jsonl.zst'):
+                yield from self.read_jsonl_zst(f, get_meta, key=jsonl_key)
+            elif f.endswith('.jsonl.zst.tar'):
+                yield from self.read_jsonl_tar(f, get_meta, key=jsonl_key)
+            elif f.endswith('.json.zst'):
+                assert not get_meta
+
+                yield from self.read_json(f)
+            elif f.endswith('.txt'):
+                assert not get_meta
+
+                yield from self.read_txt(f)
+            elif f.endswith('.json.gz'):
+                assert not get_meta
+
+                yield from self.read_jsongz(f)
+            else:
+                # shouldn't be reached
+                print(
+                    f'Skipping {f} as streaming for that filetype is not implemented'
+                )
+
+    def read_txt(self, file):
+        with open(file, 'r') as fh:
+            yield fh.read()
+
+    def read_gz(self, file):
+        with gzip.open(file, 'rb') as f:
+            for line in f:
+                yield line.decode('utf-8')
+
+    def read_jsongz(self, file):
+        for line in self.read_gz(file):
+            yield json.loads(line)
+
+    def read_json(self, file):
+        with open(file, 'rb') as fh:
+            cctx = zstandard.ZstdDecompressor()
+            reader = cctx.stream_reader(fh)
+            ob = json.load(reader)
+            yield from ob
+
+    def read_jsonl(
+        self,
+        file,
+        get_meta=False,
+        autojoin_paragraphs=True,
+        para_joiner='\n\n',
+        key=None,
+    ):
+        with jsonlines.open(file) as rdr:
+            yield from handle_jsonl(
+                rdr, get_meta, autojoin_paragraphs, para_joiner, key
+            )
+
+    def read_jsonl_zst(
+        self,
+        file,
+        get_meta=False,
+        autojoin_paragraphs=True,
+        para_joiner='\n\n',
+        key=None,
+    ):
+        with open(file, 'rb') as fh:
+            cctx = zstandard.ZstdDecompressor()
+            reader = io.BufferedReader(cctx.stream_reader(fh))
+            rdr = jsonlines.Reader(reader)
+            yield from handle_jsonl(
+                rdr, get_meta, autojoin_paragraphs, para_joiner, key
+            )
+
+    def read_jsonl_tar(
+        self,
+        file,
+        get_meta=False,
+        autojoin_paragraphs=True,
+        para_joiner='\n\n',
+        key=None,
+    ):
+        with open(file, 'rb') as fh:
+            for f in tarfile_reader(fh, streaming=True):
+                cctx = zstandard.ZstdDecompressor()
+                reader = io.BufferedReader(cctx.stream_reader(f))
+                rdr = jsonlines.Reader(reader)
+                yield from handle_jsonl(
+                    rdr, get_meta, autojoin_paragraphs, para_joiner, key
+                )
+                f.close()
+
+
+def validate_tokens(tokens, min_len=2):
+    is_valid = len(tokens) >= min_len
+    if not is_valid:
+        logger.warning(
+            f"token_ids must have at least {min_len} elements, skipping this example..."
+        )
+    return is_valid
+
+
+def create_features_auto_lm(
+    token_ids,
+    max_sequence_length,
+    short_seq_prob=0,
+    inverted_mask=False,
+    pad_id=0,
+    min_len=10,
+    input_ids_dtype="int32",
+    input_mask_dtype="int32",
+    labels_dtype="int32",
+    rng=None,
+):
+    """Given a list of token_ids, generate input sequence and labels.
+
+    Args:
+        token_ids (sequence): List containing token ids for creating features,
+            labels and input mask from.
+        max_sequence_length (int): Maximum sequence length for data writes.
+        short_seq_prob (float): Probability of generating short sequences from
+            data. Defaults to `0`.
+        inverted_mask (bool): Invert mask if specified for runtime execution.
+            Defaults to `False`.
+        min_len (int): Minimum length of token_ids to be considered a valid 
+            sequence.
+        pad_id (int): Id for pad token. Defaults to `0`.
+        input_ids_dtype (str): Dtype as string for input ids.
+            Defaults to `int32`.
+        input_mask_dtype (str): Dtype as string for input mask.
+            Defaults to `int32`.
+        labels_dtype (str): Dtype as string for labels. Defaults to `int32`.
+        rng (random.Random obj): Instance of random object, with states set.
+            Defaults to `None`.
+
+    Returns:
+        Tuple containing features and labels
+    """
+    if not validate_tokens(token_ids, min_len=min_len):
+        return []
+
+    if rng.random() < short_seq_prob:
+        token_ids = token_ids[0 : rng.randint(2, max_sequence_length - 1)]
+
+    input_ids = token_ids[:-1]
+    labels = token_ids[1:]
+    input_mask = [1] * len(input_ids)
+
+    # padding
+    num_pad = max_sequence_length - len(input_ids)
+    padding = [pad_id] * num_pad
+
+    input_ids.extend(padding)
+    labels.extend(padding)
+    input_mask.extend([0] * num_pad)
+
+    # assertions to ensure correct output shapes
+    assert (
+        len(input_ids) == max_sequence_length
+        and len(labels) == max_sequence_length
+        and len(input_mask) == max_sequence_length
+    ), "Wrong sequence length"
+
+    # create feature dict
+    features = dict()
+    features["input_ids"] = getattr(np, input_ids_dtype)(input_ids)
+    features["input_mask"] = getattr(np, input_mask_dtype)(input_mask)
+
+    if inverted_mask:
+        features["input_mask"] = np.equal(features["input_mask"], 0).astype(
+            features["input_mask"].dtype
+        )
+    labels = getattr(np, labels_dtype)(labels)
+
+    return np.stack([features["input_ids"], features["input_mask"], labels])
+
+
+def create_features_summarization(
+    prompt_ids,
+    completion_ids,
+    max_sequence_length,
+    eos_id=0,
+    sep_id=None,
+    pad_id=0,
+    min_len=10,
+    inverted_mask=False,
+    input_ids_dtype="int32",
+    input_mask_dtype="int32",
+    labels_dtype="int32",
+):
+    """
+    Given a list of prompt_ids and completion_ids, generate input sequence 
+    and labels.
+    
+    Args:
+        prompt_ids (sequence): List containing token ids for the prompt to 
+            create features,labels and input mask from.
+        completion_ids (sequence): List containing token ids for the completion
+            create features,labels and input mask from.
+        max_sequence_length (int): Maximum sequence length for data writes.
+        eos_id (int): Id for end of sequence token. Defaults to `0`.
+        sep_id (int): Id for separator token. Defaults to `None`.
+        pad_id (int): Id for pad token. Defaults to `0`.
+        min_len (int): Minimum length of token_ids to be considered a valid
+            sequence.
+        inverted_mask (bool): Invert mask if specified for runtime execution.
+            Defaults to `False`.
+        input_ids_dtype (str): Dtype as string for input ids.
+            Defaults to `int32`.
+        input_mask_dtype (str): Dtype as string for input mask. 
+            Defaults to `int32`.
+        labels_dtype (str): Dtype as string for labels. Defaults to `int32`.
+    """
+
+    # extra <EOS>
+    total_len = len(prompt_ids) + len(completion_ids) + 1
+    if sep_id is not None:
+        total_len += 1
+    if total_len > max_sequence_length:
+        logger.warning(
+            "prompt_ids + completion_ids > max_sequence_length, skipping this example..."
+        )
+        return []
+    if total_len < min_len:
+        logger.warning(
+            "prompt_ids + completion_ids < min_sequence_len, skipping this example..."
+        )
+        return []
+
+    token_ids = prompt_ids
+    if sep_id is not None:
+        token_ids = token_ids + [sep_id]
+    token_ids = token_ids + completion_ids + [eos_id]
+
+    token_mask = [0] * (len(prompt_ids))
+    if sep_id is not None:
+        token_mask += [1]
+    else:
+        # if no sep_id, prediction starts at the last token of prompt_ids
+        token_mask[-1] = 1
+    token_mask += [1] * len(completion_ids)
+    token_mask += [0]  # EOS
+
+    # add padding
+    token_ids_pad = max_sequence_length + 1 - len(token_ids)
+    input_mask_pad = max_sequence_length - len(token_mask)
+
+    token_ids.extend([pad_id] * token_ids_pad)
+    token_mask.extend([0] * input_mask_pad)
+
+    input_ids = token_ids[:-1]
+    labels = token_ids[1:]
+
+    assert (
+        len(input_ids) == max_sequence_length
+        and len(labels) == max_sequence_length
+        and len(token_mask) == max_sequence_length
+    ), "Wrong sequence length"
+
+    features = dict()
+    features["input_ids"] = getattr(np, input_ids_dtype)(input_ids)
+    features["input_mask"] = getattr(np, input_mask_dtype)(token_mask)
+
+    if inverted_mask:
+        features["input_mask"] = np.equal(features["input_mask"], 0).astype(
+            features["input_mask"].dtype
+        )
+    labels = getattr(np, labels_dtype)(labels)
+
+    return np.stack([features["input_ids"], features["input_mask"], labels])
+
+
+def get_files(input_dir=None, filetypes=None, metadata_files=None):
+    """Get all files of given filetypes from input directory.
+
+    Args:
+        input_dir (str): Input directory to read files from.
+        filetypes (sequence): File types to fetch from the given input
+            directory. Defaults to `None`.
+        metadata_files (str): Comma separated string of metadata files.
+
+    Returns:
+        List of lists containing all file paths as strings
+    """
+    if not filetypes:
+        filetypes = [
+            '.jsonl',
+            '.json.gz',
+            '.jsonl.zst',
+            '.jsonl.zst.tar',
+            '.txt',
+        ]
+    filetypes = tuple(filetypes)
+    assert input_dir or metadata_files, (
+        "User need to provide `input_dir` or `metadata_files`, "
+        "but neither was provided."
+    )
+    if metadata_files:
+        if isinstance(metadata_files, str):
+            metadata_files = [metadata_files]
+
+        input_files = []
+        for _file in metadata_files:
+            with open(_file, "r") as _fin:
+                input_files.extend(_fin.readlines())
+
+        input_files_list = [x.strip() for x in input_files if x]
+        flattened_list = [x for x in input_files_list if x.endswith(filetypes)]
+    else:
+        files = [list(Path(input_dir).rglob(f"*{ft}")) for ft in filetypes]
+        # flatten list of list -> list and stringify Paths
+        flattened_list = [str(item) for sublist in files for item in sublist]
+    flattened_list = list(set(flattened_list))
+    if not flattened_list:
+        raise Exception(
+            f"Did not find any files at this path {input_dir}, please "
+            f"ensure your files are in format {filetypes}."
+        )
+    return flattened_list
+
+
+def wikitext_detokenizer(string):
+    """Detokenizer for wikitext. Used for special handling of data for substrings.
+
+    Args:
+        string (str): String to detoknize before tokenization.
+
+    Returns:
+        Detokenized string
+    """
+    # contractions
+    string = string.replace("s '", "s'")
+    string = re.sub(r"/' [0-9]/", r"/'[0-9]/", string)
+    # number separators
+    string = string.replace(" @-@ ", "-")
+    string = string.replace(" @,@ ", ",")
+    string = string.replace(" @.@ ", ".")
+    # punctuation
+    string = string.replace(" : ", ": ")
+    string = string.replace(" ; ", "; ")
+    string = string.replace(" . ", ". ")
+    string = string.replace(" ! ", "! ")
+    string = string.replace(" ? ", "? ")
+    string = string.replace(" , ", ", ")
+    # double brackets
+    string = re.sub(r"\(\s*([^\)]*?)\s*\)", r"(\1)", string)
+    string = re.sub(r"\[\s*([^\]]*?)\s*\]", r"[\1]", string)
+    string = re.sub(r"{\s*([^}]*?)\s*}", r"{\1}", string)
+    string = re.sub(r"\"\s*([^\"]*?)\s*\"", r'"\1"', string)
+    string = re.sub(r"'\s*([^']*?)\s*'", r"'\1'", string)
+    # miscellaneous
+    string = string.replace("= = = =", "====")
+    string = string.replace("= = =", "===")
+    string = string.replace("= =", "==")
+    string = string.replace(" " + chr(176) + " ", chr(176))
+    string = string.replace(" \n", "\n")
+    string = string.replace("\n ", "\n")
+    string = string.replace(" N ", " 1 ")
+    string = string.replace(" 's", "'s")
+
+    return string
+
+
+def read_checkpoint(checkpoint_path, resume_from_checkpoint=True):
+    """Checkpoint reader for execution.
+
+    Args:
+        checkpoint_path (str): Path to read checkpoint data from
+        resume_from_checkpoint (bool): Resume from checkpoint for execution.
+            Defaults to `True`.
+
+    Returns:
+        Tuple containing number of files processed and the count of tfrecords/HDF5 files
+            written to output directory.
+    """
+    if resume_from_checkpoint and os.path.isfile(checkpoint_path):
+        try:
+            resume_files_processed, count = [
+                int(i) for i in open(checkpoint_path, "r").read().split(", ")
+            ]
+            logger.info(
+                f"Resuming from file number: {count}, "
+                f"with raw file number processed: {resume_files_processed}"
+            )
+            return resume_files_processed, count
+        except Exception as e:
+            # if checkpoint path is at initialization,
+            # file may exist, but no data might be written in the file
+            # in that event, do not do anything, go to the final return
+            logger.error(e)
+    return 0, 0

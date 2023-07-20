@@ -15,6 +15,7 @@
 import torch.nn as nn
 
 from modelzoo.common.pytorch.layers import (
+    BiaslessLayerNorm,
     EmbeddingLayer,
     GPTJDecoderLayer,
     RelativePositionEmbeddingLayer,
@@ -46,11 +47,14 @@ class GPTJModel(nn.Module):
         filter_size=3072,
         dropout_rate=0.1,
         nonlinearity="gelu",
+        use_biasless_norm=False,
         layer_norm_epsilon=1.0e-5,
         use_ffn_bias=True,
         use_untied_layer_norm=False,
         # Attention params
         num_heads=12,
+        attention_module="aiayn_attention",
+        extra_attention_params={},
         attention_type="scaled_dot_product",
         attention_dropout_rate=0.1,
         attention_softmax_fp32=True,
@@ -98,6 +102,8 @@ class GPTJModel(nn.Module):
 
         self.drop_embd = nn.Dropout(embd_pdrop)
 
+        norm_class = BiaslessLayerNorm if use_biasless_norm else nn.LayerNorm
+
         decoder_layer = GPTJDecoderLayer(
             d_model=hidden_size,
             nhead=num_heads,
@@ -106,7 +112,9 @@ class GPTJModel(nn.Module):
             dropout=dropout_rate,
             activation=nonlinearity,
             layer_norm_eps=layer_norm_epsilon,
-            extra_attention_params={},
+            norm_layer=norm_class,
+            attention_module=attention_module,
+            extra_attention_params={**extra_attention_params,},
             add_cross_attention=False,
             attention_type=attention_type,
             attention_dropout_rate=attention_dropout_rate,
@@ -121,7 +129,7 @@ class GPTJModel(nn.Module):
             norm_first=True,
         )
 
-        self.ln_f = nn.LayerNorm(hidden_size, eps=layer_norm_epsilon)
+        self.ln_f = norm_class(hidden_size, eps=layer_norm_epsilon)
 
         self.transformer_decoder = TransformerDecoder(
             decoder_layer, num_layers=num_hidden_layers, norm=self.ln_f
@@ -193,7 +201,7 @@ class GPTJModel(nn.Module):
             output_embedding.out_features = input_embedding.num_embeddings
 
     def forward(
-        self, input_ids=None, attention_mask=None, labels=None,
+        self, input_ids=None, attention_mask=None,
     ):
         hidden_states = self.embedding_layer(input_ids)
         hidden_states = self.drop_embd(hidden_states)

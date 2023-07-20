@@ -2,6 +2,47 @@
 
 The following are the release notes for the Model Zoo repository.
 
+## Version 1.9.1
+
+### New features and enhancements
+
+#### Large Language Models
+
+- Maximal Update Parameterization (muP), used for improving training stability and transferring hyperparameters from smaller language models to Larger Language Models (including CerebrasGPT), is now available for GPT-2 and GPT-3 style models. See the [How-to guide](https://docs.cerebras.net/en/latest/wsc/how_to_guides/mup_docs.html) for usage.
+- New checkpoint converters between Hugging Face and Cerebras formats have been added. See more at [Convert checkpoints and configurations](https://docs.cerebras.net/en/latest/wsc/port/porting-checkpoints.html).
+- Gradient accumulation is enabled for all transformer language models in 1.9.1 through YAML config.
+- Pre-trained [Falcon 7B](./modelzoo/transformers/pytorch/falcon/) is supported in Model Zoo.
+- Pre-trained [LLaMA 7B, 13B, and 33B](./modelzoo/transformers/pytorch/llama/) are supported in Model Zoo.
+- [BLOOM 7B](./modelzoo/transformers/pytorch/bloom/) is available in Model Zoo.
+- ALiBi positional encodings can be enabled in all GPT-style models through the model section in the configuration yaml as shown below:
+
+```yaml
+position_embedding_type: 'alibi'
+
+alibi_trainable_slopes: False # whether the slopes of the alibi embedding is trainable (default to False).
+
+alibi_implementation: 'expand' # We support `embedding` and `expand` with default set to `expand`.
+```
+
+#### Computer vision models
+
+- Fixed bugs and improved performance for computer vision models.
+
+#### Other features
+
+- Pipeline mode and TensorFlow support is deprecated. All models must use PyTorch and weight streaming functionality. There is no longer a need to specify a `{pipelined,weight_streaming}` argument in `run.py` because all models will run in `weight_streaming` mode by default. All models previously supported in Pipeline are now supported for Weight Streaming.
+- The `batch_size` parameter in Model Zoo yaml configuration files now represents the total effective batch size of the model and is divided evenly across the specified `num_csx` CSX systems. This differs from pre-1.9.0 behavior, where the `batch_size` parameter defined the batch size per CSX, not globally. Note that `batch_size` must now be divisible by `num_csx`.
+
+#### Known Issues
+
+- Some dataloader implementations from Model Zoo require evaluation to be done on a single CS-2 rather than multiple CS-2s. Multi-box evaluation has no explicit limitation, but these dataloaders require the dataset to be sharded in such a way that each worker gets at least one file. Evaluation datasets are often small and not split into many files.
+- All T5 limitations from Release 1.8 remain.
+- Loss scaling by number of tokens is not yet fully supported and requires coordination with the Cerebras team.
+- GPT NeoX suffers NaNs when trained with extremely long sequence lengths (30k, 50k).
+- The base, pre-trained Falcon and LLaMA variants are supported. Other variants, such as those with long sequence lengths or different numbers of heads, may not be supported.
+
+*Note: Version 1.9.0 was a special, small-distribution release. 1.9.1 is our general release.*
+
 ## Version 1.8.0
 
 ### New features and enhancements
@@ -14,7 +55,7 @@ The following are the release notes for the Model Zoo repository.
 * Added support for deterministic checkpointing of dataloaders for language models to enable pausing and restarting of training runs without using duplicate samples or batches. See [our documentation](https://docs.cerebras.net/en/latest/wsc/general/deterministic_checkpoints.html) for more details.
 * Loss scaling by ``num_tokens`` is enabled, allowing users to divide the loss value by the actual number of tokens in a batch, since input lengths are not constant. See [our documentation](https://docs.cerebras.net/en/latest/wsc/general/num-tokens-loss-scaling.html) for more details.
 * In past releases pre-layer normalization in our T5 & Transformer models required setting ``use_pre_encoder_decoder_layer_norm: False``. This was confusing, and we have changed the behavior in 1.8. To enable pre-layer normalization you should instead set ``use_pre_encoder_decoder_layer_norm: True``. This update better aligns the naming of the parameter to its usage. To use release 1.7 checkpoints in release 1.8, you'll need to update the config to reflect this change. Directions for converting configuration files can be found in [our documentation](https://docs.cerebras.net/en/latest/wsc/port/porting-checkpoints.html).
-* You may now control the activation function used by the BERT pooler (``pooler_nonlinearity``) and masked language model head (``mlm_nonlinearity``) independently of the activation used for the rest of the model (``encoder_nonlinearity``). Both will default to ``encoder_nonlinearity`` if not explicitly set. Use [our documentation](https://docs.cerebras.net/en/latest/wsc/port/porting-checkpoints.html#upgrading-checkpoints-configs-to-the-current-release) to convert 1.7 configuration files to 1.8 to have access to this feature.  
+* You may now control the activation function used by the BERT pooler (``pooler_nonlinearity``) and masked language model head (``mlm_nonlinearity``) independently of the activation used for the rest of the model (``encoder_nonlinearity``). Both will default to ``encoder_nonlinearity`` if not explicitly set. Use [our documentation](https://docs.cerebras.net/en/lastest/wsc/port/porting-checkpoints.html) to convert 1.7 configuration files to 1.8 to have access to this feature.  
 
 #### Computer vision models
 
@@ -39,7 +80,7 @@ The following are the release notes for the Model Zoo repository.
 * T5 with input or output sequences longer than 1024 tokens (``src_max_sequence_length`` and ``tgt_max_sequence_length`` parameters in model yaml config file) may have compile times of over 3 hours. T5 is only supported with input and output sequences up to 2048 tokens.
 * T5 has limitations with respect to gradient accumulation and batch sizes (BS).
     * Gradient accumulation is not supported for T5.
-    * At [precision optimization level](https://docs.cerebras.net/en/latest/wsc/general/cs-1-data-formats.html#precision-optimization-level) 0 (POL0), the largest supported batch size for T5 model with 11B parameters is 220.
+    * At [precision optimization level](https://docs.cerebras.net/en/latest/general/performance-optimization.html#precision-optimization-level) 0 (POL0), the largest supported batch size for T5 model with 11B parameters is 220.
     * At precision optimization levels 1 and 2 (POL1 and POL2) batch sizes over 770 for T5 3B and over 260 for T5 11B will result in a long compile time.
     * Models will not compile if ``(vocabulary V / (heads * Greatest_Common_Divisor(Sin, Sout)) > 2^11``.
 * Maximum supported vocabulary size for language models is 1 million.

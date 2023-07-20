@@ -16,6 +16,7 @@ import torch
 from torchvision import datasets, transforms
 
 from modelzoo.common.pytorch import cb_model as cm
+from modelzoo.common.pytorch.input_utils import get_streaming_batch_size
 from modelzoo.common.pytorch.utils import SampleGenerator, get_input_dtype
 
 
@@ -32,7 +33,7 @@ def get_train_dataloader(params):
     input_params = params["train_input"]
     use_cs = cm.use_cs() or cm.is_appliance()
 
-    batch_size = input_params.get("batch_size")
+    batch_size = get_streaming_batch_size(input_params.get("batch_size"))
     to_float16 = input_params.get("to_float16", True)
     dtype = get_input_dtype(to_float16)
     shuffle = input_params["shuffle"]
@@ -94,7 +95,7 @@ def get_eval_dataloader(params):
     input_params = params["eval_input"]
     use_cs = cm.use_cs() or cm.is_appliance()
 
-    batch_size = input_params.get("batch_size")
+    batch_size = get_streaming_batch_size(input_params.get("batch_size"))
     to_float16 = input_params.get("to_float16", True)
     dtype = get_input_dtype(to_float16)
 

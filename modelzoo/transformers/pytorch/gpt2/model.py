@@ -52,20 +52,26 @@ class Gpt2Model(torch.nn.Module):
         self.model.tie_weights()
 
     def build_model(self, model_params):
-        if model_params.pop("position_embedding_type") != "learned":
-            raise NotImplementedError(
-                "Only learned position embeddings are supported."
-            )
+
+        position_embedding_type = (
+            model_params.pop("position_embedding_type", "learned")
+            if model_params.pop("use_position_embedding", True)
+            else None
+        )
 
         self.loss_weight = model_params.pop("loss_weight", 1.0)
         self.loss_scaling = model_params.pop(
             "loss_scaling", "num_tokens"
         ).lower()
         if self.loss_weight != 1.0 and self.loss_scaling == "num_tokens":
-            self.loss_scaling = "batch_size"
             logging.warning(
-                "loss_weight and loss_scaling don't match, fall back to using 'batch_size' for loss_scaling"
+                f"loss_weight cannot be {self.loss_weight} for num_tokens "
+                f"loss_scaling. Setting loss_weight to 1.0."
             )
+            self.loss_weight = 1.0
+        self.output_logits_scale = model_params.pop("output_logits_scale", None)
+        self.scale_qk_dot_by_d = model_params.pop("scale_qk_dot_by_d", None)
+        self.embeddings_scale = model_params.pop("embeddings_scale", 1.0)
         default_dropout_rate = model_params.pop("dropout_rate")
         embedding_dropout_rate = model_params.pop(
             "embedding_dropout_rate", default_dropout_rate
@@ -83,11 +89,7 @@ class Gpt2Model(torch.nn.Module):
                 "max_position_embeddings", 1024
             ),
             embd_pdrop=embedding_dropout_rate,
-            position_embedding_type=model_params.pop(
-                "position_embedding_type", "learned"
-            )
-            if model_params.pop("use_position_embedding", True)
-            else None,
+            position_embedding_type=position_embedding_type,
             hidden_size=model_params.pop("hidden_size"),
             share_embedding_weights=model_params.pop(
                 "share_embedding_weights", True
@@ -95,15 +97,26 @@ class Gpt2Model(torch.nn.Module):
             embedding_layer_norm=model_params.pop(
                 "embedding_layer_norm", False
             ),
+            num_relative_attention_buckets=model_params.pop(
+                "num_relative_attention_buckets", 32
+            ),
+            rotary_dim=model_params.pop("rotary_dim", None),
             # Encoder
             num_hidden_layers=model_params.pop("num_hidden_layers"),
             dropout_rate=default_dropout_rate,
+            use_rms_norm=model_params.pop("use_rms_norm", False),
             layer_norm_epsilon=float(
                 model_params.pop("layer_norm_epsilon", 1.0e-5),
             ),
             # Encoder - Attention
             num_heads=model_params.pop("num_heads"),
             attention_type=model_params.pop("attention_type"),
+            attention_module=model_params.pop(
+                "attention_module", "aiayn_attention"
+            ),
+            extra_attention_params=model_params.pop(
+                "extra_attention_params", {}
+            ),
             use_projection_bias_in_attention=model_params.pop(
                 "use_projection_bias_in_attention", True
             ),
@@ -121,7 +134,6 @@ class Gpt2Model(torch.nn.Module):
             use_ffn_bias=model_params.pop("use_ffn_bias", True),
             # Task-specific
             use_bias_in_output=model_params.pop("use_bias_in_output", False),
-            loss_weight=self.loss_weight,
             fixed_sparse_attention=model_params.pop(
                 "fixed_sparse_attention", None
             ),
@@ -133,7 +145,20 @@ class Gpt2Model(torch.nn.Module):
             output_layer_initializer=model_params.pop(
                 "output_layer_initializer", None
             ),
-            loss_scaling=self.loss_scaling,
+            initializer_range=model_params.pop("initializer_range", 0.02),
+            # muP (maximal update parameterization)  parameters
+            output_logits_scale=self.output_logits_scale,
+            embeddings_scale=self.embeddings_scale,
+            scale_qk_dot_by_d=self.scale_qk_dot_by_d,
+            scale_glu_initialization=model_params.pop(
+                "scale_glu_initialization", False
+            ),
+            alibi_trainable_slopes=model_params.pop(
+                "alibi_trainable_slopes", False
+            ),
+            alibi_implementation=model_params.pop(
+                "alibi_implementation", "expand"
+            ),
         )
 
         # `use_bfloat16` and `precision_opt_level` are accessed later,
@@ -151,16 +176,31 @@ class Gpt2Model(torch.nn.Module):
 
         return model
 
-    def __call__(self, data):
+    def forward(self, data):
+        # Note: attention_mask is a misnomer in this model and actually acts as
+        # a loss mask. In the model computation its contents are ignored and
+        # only its shape is used.
+        assert (
+            "input_ids" in data
+            and "attention_mask" in data
+            and "labels" in data
+        ), "GPT-2 model expects these data fields: input_ids, attention_mask, labels"
+        assert (
+            data["input_ids"].dtype == torch.int32
+            and data["attention_mask"].dtype == torch.int32
+            and data["labels"].dtype == torch.int32
+        ), "The dtype for all inputs should be torch.int32"
+
         lm_logits = self.model(
             input_ids=data["input_ids"],
-            attention_mask=data["attention_mask"],
-            labels=data["labels"],
+            attention_mask=data[
+                "attention_mask"
+            ],  # doesn't actually mask anything
         )
         loss = self.loss_fn(
             lm_logits,
             labels=data["labels"],
-            attention_mask=data["attention_mask"],
+            attention_mask=data["attention_mask"],  # acts as a loss mask
         )
 
         # Calculate eval metrics if not training
