@@ -82,6 +82,11 @@ from modelzoo.common.pytorch.model_utils.checkpoint_converters.falcon import (  
     Converter_Falcon_HF_CS19,
 )
 
+from modelzoo.common.pytorch.model_utils.checkpoint_converters.bloom_hf_cs import (  # noqa
+    Converter_BloomLMHeadModel_HF_CS19,
+    Converter_BloomModel_HF_CS19,
+)
+
 
 converters = {
     "bert": [
@@ -116,6 +121,12 @@ converters = {
         Converter_Bert_CS17_CS18,
         Converter_BertForQuestionAnswering_HF_CS17,
         Converter_BertForQuestionAnswering_HF_CS18,
+    ],
+    "bloom": [
+        Converter_BloomLMHeadModel_HF_CS19,
+    ],
+    "bloom-headless": [
+        Converter_BloomModel_HF_CS19,
     ],
     "codegen": [
         Converter_Codegen_LMHeadModel_HF_CS17,
