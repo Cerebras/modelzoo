@@ -28,7 +28,7 @@ This directory contains the PyTorch ML reference for GPT-2 and GPT-3 models.
 
 The larger versions of GPT-3 range from 1.3B to 175B parameters.
 
-**NOTE:** In out current implementation, we use the code from [GPT2 implementation](../gpt2/) which does not have banded sparse attention implemented. We plan to add this support in the future releases.
+**NOTE:** In our current implementation, we use the code from [GPT2 implementation](../gpt2/) which does not have banded sparse attention implemented. We plan to add this support in the future releases.
 
 ## Structure of the code
 
