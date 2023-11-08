@@ -15,7 +15,8 @@
 import torch
 from torchvision import datasets, transforms
 
-from modelzoo.common.pytorch import cb_model as cm
+import cerebras_pytorch as cstorch
+import cerebras_pytorch.distributed as dist
 from modelzoo.vision.pytorch.input.utils import create_worker_cache
 from modelzoo.vision.pytorch.unet.input.UNetDataProcessor import (
     UNetDataProcessor,
@@ -28,10 +29,10 @@ class Cityscapes(datasets.Cityscapes):
 
     def __init__(self, use_worker_cache=False, **kwargs):
         super(Cityscapes, self).__init__(**kwargs)
-        if use_worker_cache and cm.is_streamer():
-            if not cm.is_appliance():
+        if use_worker_cache and dist.is_streamer():
+            if not cstorch.use_cs():
                 raise RuntimeError(
-                    "use_worker_cache not supported for non-appliance runs"
+                    "use_worker_cache not supported for non-CS runs"
                 )
             else:
                 self.root = create_worker_cache(self.root)

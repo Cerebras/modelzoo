@@ -17,7 +17,7 @@
 
 ## Model overview
 
-A summarizaion task is the task of automatically generating a shorter version of the 
+A summarizaion task is the task of automatically generating a shorter version of the
 document while retaining its most important information.
 
 Usually the task is divided into two paradigms: abstractive summarization and extractive summarization.
@@ -27,13 +27,13 @@ or phrases that were not in the original text, and usually require various text 
 
 This code implements the extractive summarization approach,
 where the summary is formed by copying and concatenating the most important
-spans (usually sentences) in the document. 
+spans (usually sentences) in the document.
 
-### Rouge metric 
+### Rouge metric
 Rouge metric [wiki](https://en.wikipedia.org/wiki/ROUGE_\(metric\)) is a special
 metric for asessing summarization tasks. It takes `1-grams`, `2-grams`, etc. and evaluates
 the percentage of intersection between the referenced `n-grams` and the `n-grams` predicted by the system.
-This percentage can be later on evaluated in terms of `f1-score`, `precition` and `recall`. 
+This percentage can be later on evaluated in terms of `f1-score`, `precition` and `recall`.
 
 <img src="images/bertsum-rouge.png" width="1000">
 
@@ -113,11 +113,11 @@ NOTE: The input tokens will be converted to IDs using the vocab file.
 ___
 
 #### Prepare input format
-To use BERT for extractive summarization, we follow the approach provided in the 
+To use BERT for extractive summarization, we follow the approach provided in the
 paper [Fine-tune BERT for Extractive Summarization by Yang Liu](https://arxiv.org/pdf/1903.10318.pdf).
 
 In order to apply BERT, authors suggest to fine-tune pre-trained BERT weights
-by formatting the input into the special format: 
+by formatting the input into the special format:
 
 ![input](images/bertsum-input.png)
 
@@ -162,7 +162,7 @@ Same applies for the `eval_input`.
 
 Please follow the instructions on our [quickstart in the Developer Docs](https://docs.cerebras.net/en/latest/wsc/getting-started/cs-appliance.html).
 
-> **Note**: To specify a BERT pretrained checkpoint use: `--checkpoint_path` is the path to the saved checkpoint from BERT pre-training,`--is_pretrained_checkpoint` flag is needed for loading the pre-trained BERT model for fine-tuning.
+> **Note**: To specify a BERT pretrained checkpoint use: `--checkpoint_path` is the path to the saved checkpoint from BERT pre-training,`--load_checkpoint_states="model"` setting is needed for loading the pre-trained BERT model for fine-tuning and `--disable_strict_checkpoint_loading` is needed to be able to only partially load a model.
 
 ## To run train and eval on GPU/CPU
 

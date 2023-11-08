@@ -24,11 +24,7 @@ import os
 import torch
 import yaml
 
-from cerebras_pytorch.saver import (
-    CerebrasStateDict,
-    CheckpointReader,
-    PyTorchH5Saver,
-)
+import cerebras_pytorch as cstorch
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -47,12 +43,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     def load_model_state(ckpt_path):
-        if not PyTorchH5Saver.is_valid_checkpoint(ckpt_path):
-            raise ValueError(f"path {ckpt_path} is not a valid h5 checkpoint")
-        reader = CheckpointReader(ckpt_path)
-        spec = reader.spec
-        csd = CerebrasStateDict.create(spec, ckpt_path)
-        return {k: v for (k, v) in csd["model"].items()}
+        state_dict = cstorch.load(ckpt_path)
+        return {k: v for (k, v) in state_dict["model"].items()}
 
     state_dict = load_model_state(args.src)
     with open(args.params, "r") as f:
@@ -79,9 +71,10 @@ if __name__ == "__main__":
     state_dict[f"{prefix}.embedding_layer.word_embeddings.weight"] = (
         x * emb_scale
     )
-    state_dict[
-        f"{prefix}.embedding_layer.position_embeddings.weight"
-    ] *= emb_scale
+    if f"{prefix}.embedding_layer.position_embeddings.weight" in state_dict:
+        state_dict[
+            f"{prefix}.embedding_layer.position_embeddings.weight"
+        ] *= emb_scale
     state_dict[f"{prefix}.lm_head.weight"] = x * output_scale
 
     for k in state_dict:

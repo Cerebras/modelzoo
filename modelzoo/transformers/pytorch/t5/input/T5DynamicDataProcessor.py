@@ -418,7 +418,7 @@ class T5DynamicDataProcessor(torch.utils.data.IterableDataset):
         Classmethod to create the dataloader object.
         """
         if not self.num_workers:
-            self.prefetch_factor = 2
+            self.prefetch_factor = None
             self.persistent_workers = False
         dataloader = torch.utils.data.DataLoader(
             self,

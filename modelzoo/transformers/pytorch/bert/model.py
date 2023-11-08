@@ -17,17 +17,15 @@ import logging
 import torch
 from torch.nn import CrossEntropyLoss
 
-from modelzoo.common.pytorch.metrics import AccuracyMetric, PerplexityMetric
+import cerebras_pytorch as cstorch
+from cerebras_pytorch.metrics import AccuracyMetric, PerplexityMetric
 from modelzoo.common.pytorch.model_utils.BertPretrainModelLoss import (
     BertPretrainModelLoss,
 )
 from modelzoo.transformers.pytorch.bert.bert_pretrain_models import (
     BertPretrainModel,
 )
-from modelzoo.transformers.pytorch.bert.utils import (
-    check_unused_model_params,
-    set_custom_stack_params,
-)
+from modelzoo.transformers.pytorch.bert.utils import check_unused_model_params
 
 
 class BertForPreTrainingModel(torch.nn.Module):
@@ -61,9 +59,6 @@ class BertForPreTrainingModel(torch.nn.Module):
                 name="eval/mlm_perplexity"
             )
 
-        # Add stack flags for performance runs
-        set_custom_stack_params(params)
-
     def _post_device_transfer(self):
         self.model.tie_weights()
 
@@ -89,6 +84,9 @@ class BertForPreTrainingModel(torch.nn.Module):
             max_position_embeddings=model_params.pop("max_position_embeddings"),
             position_embedding_type=position_embedding_type,
             embedding_pad_token_id=model_params.pop("pad_token_id", 0),
+            mask_padding_in_positional_embed=model_params.pop(
+                "mask_padding_in_positional_embed", False
+            ),
             hidden_size=model_params.pop("hidden_size"),
             share_embedding_weights=model_params.pop(
                 "share_embedding_weights", True
@@ -121,7 +119,9 @@ class BertForPreTrainingModel(torch.nn.Module):
                 "use_output_bias_in_mlm", True
             ),
             initializer_range=model_params.pop("initializer_range", 0.02),
-            num_segments=None if self.disable_nsp else 2,
+            num_segments=model_params.pop(
+                "num_segments", None if self.disable_nsp else 2
+            ),
             extra_attention_params={
                 "attention_kernel": model_params.pop("attention_kernel", None)
             },
@@ -129,9 +129,7 @@ class BertForPreTrainingModel(torch.nn.Module):
 
         enable_vts = model_params.pop("enable_vts")
         if enable_vts:
-            from modelzoo.common.pytorch import cbtorch
-
-            self.vts = cbtorch.nn.StripPadding()
+            self.vts = cstorch.nn.StripPadding()
         else:
             self.vts = None
 

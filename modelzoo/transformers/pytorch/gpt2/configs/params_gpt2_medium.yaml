@@ -71,8 +71,7 @@ model:
 optimizer:
     optimizer_type: "AdamW"
     correct_bias: True
-    disable_lr_steps_reset: False
-    weight_decay_rate: 0.01
+    weight_decay: 0.01
     learning_rate: 0.0002
     # grad_accum_steps: 32 # Should be set for GPU
 
@@ -82,8 +81,6 @@ runconfig:
     checkpoint_steps: 10000
     seed: 1
     model_dir: "./model_dir"
-    show_debug_metrics: False
-    save_losses: True
     eval_steps: 233
 
     # Distributed Training Params:

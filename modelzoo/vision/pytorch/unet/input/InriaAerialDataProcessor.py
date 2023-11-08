@@ -21,7 +21,8 @@ from PIL import Image
 from torchvision import transforms
 from torchvision.datasets import VisionDataset
 
-from modelzoo.common.pytorch import cb_model as cm
+import cerebras_pytorch as cstorch
+import cerebras_pytorch.distributed as dist
 from modelzoo.common.pytorch.input_utils import get_streaming_batch_size
 from modelzoo.vision.pytorch.input.classification.dataset_factory import (
     VisionSubset,
@@ -66,10 +67,10 @@ class InriaAerialDataset(VisionDataset):
             raise ValueError(
                 "split {split} has no mask images and hence target_transform should be None. Got {target_tranform}"
             )
-        if use_worker_cache and cm.is_streamer():
-            if not cm.is_appliance():
+        if use_worker_cache and dist.is_streamer():
+            if not cstorch.use_cs:
                 raise RuntimeError(
-                    "use_worker_cache not supported for non-appliance runs"
+                    "use_worker_cache not supported for non-CS runs"
                 )
             else:
                 self.root = create_worker_cache(self.root)
@@ -116,7 +117,7 @@ class InriaAerialDataProcessor:
         self.normalize_data_method = params.get("normalize_data_method")
 
         self.shuffle_seed = params.get("shuffle_seed", None)
-        if self.shuffle_seed:
+        if self.shuffle_seed is not None:
             torch.manual_seed(self.shuffle_seed)
 
         self.augment_data = params.get("augment_data", True)

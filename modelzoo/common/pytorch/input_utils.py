@@ -18,7 +18,8 @@ import random
 import numpy as np
 from torch.utils.data._utils.collate import default_collate
 
-from modelzoo.common.pytorch import cb_model as cm
+import cerebras_pytorch as cstorch
+import cerebras_pytorch.distributed as dist
 
 
 def bucketed_batch(
@@ -145,11 +146,43 @@ def get_streaming_batch_size(effective_batch_size: int) -> int:
         user node (used when compiling the model), this returns the original
         effective batch size as passed in the argument.
     """
-    streaming_batch_size = cm.get_streaming_batch_size(effective_batch_size)
+    streaming_batch_size = dist.get_streaming_batch_size(effective_batch_size)
 
     msg = f"Effective batch size is {effective_batch_size}."
-    if (cm.use_cs() or cm.is_appliance()) and cm.is_streamer():
+    if cstorch.use_cs() and dist.is_streamer():
         msg += f" Using batch size {streaming_batch_size} for streaming."
     logging.info(msg)
 
     return streaming_batch_size
+
+
+def validate_streaming_and_micro_batch_size(
+    batch_size: int, micro_batch_size: int, num_csx: int
+) -> None:
+    """Validates the streaming and micro batch sizes.
+
+    Args:
+        batch_size: The global batch size of the model.
+        micro_batch_size: The micro batch size of the model.
+        num_csx: The number of CSX in the cluster.
+    """
+    if micro_batch_size < 1:
+        raise ValueError(
+            f"micro_batch_size must be a positive integer. "
+            f"Got {micro_batch_size}."
+        )
+    if batch_size % num_csx != 0:
+        raise ValueError(
+            f"Expected batch_size ({batch_size}) to be a "
+            f"multiple of num_csx ({num_csx})."
+        )
+    streaming_batch_size = batch_size // num_csx
+    if streaming_batch_size % micro_batch_size != 0:
+        raise ValueError(
+            f"With current batch_size ({batch_size}) and num_csx ({num_csx}), "
+            f"per-CSX batch size ({streaming_batch_size}) "
+            f"is not a multiple of micro_batch_size {micro_batch_size}.\n"
+            f"If you want to force micro_batch_size in gradient accumulation, "
+            f"please set num_csx and batch_size such that batch_size//num_csx "
+            f"is a multiple of micro_batch_size."
+        )

@@ -69,24 +69,7 @@ In order to run any of the models in this directory, you must go through the fol
 
 ### OpenWebText dataset
 
-The scripts for downloading and preprocessing OpenWebText dataset: [https://skylion007.github.io/OpenWebTextCorpus/](https://skylion007.github.io/OpenWebTextCorpus/) are located [here](../../data_processing/scripts/owt/).
-
-Start by downloading the OWT dataset by accessing the following link from a browser:
-
-```url
-https://drive.google.com/uc?id=1EA5V0oetDCOke7afsktL_JDQ-ETtNOvx
-```
-
-and manually download the `tar.xz` file from that location to your preferred local directory.
-
-> **NOTE**: Currently a server side issue with the OWT site prevents using the below [extract.sh](../../data_processing/scripts/owt/extract.sh) shell script to download this tar file. We will update the script when this issue resolved.
-
-You need to download your raw data and create preprocessed dataloader using [`create_hdf5_dataset.py`](input/scripts/create_hdf5_dataset.py).
-
-Example:<br />
-`source venv_cerebras_pt/bin/activate`<br />
-`venv_cerebras_pt:~> python create_hdf5_dataset.py --metadata_files /path/to/meta_file/train_512k.txt --vocab_file /path/to/vocab_file/vocab.bpe --encoder_file /path/to/encode_file/encoder.json --output_dir /path/to/output_dir`
-
+You need to download raw OWT data following [these instructions](../../data_processing/scripts/owt) and create preprocessed dataset files using [`create_hdf5_dataset.py`](../../data_processing/scripts/hdf5_preprocessing/).
 
 ## GPT-2 input function
 

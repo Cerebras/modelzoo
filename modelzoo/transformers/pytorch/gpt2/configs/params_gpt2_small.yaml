@@ -74,25 +74,23 @@ model:
 ### Optimization
 optimizer:
     optimizer_type: "adamw"
-    beta1: 0.9
-    beta2: 0.95
-    epsilon: 1.0e-8
+    betas: [0.9, 0.95]
+    eps: 1.0e-8
     max_gradient_norm: 1.0
     learning_rate:
       ## GPT-3 schedule warms up over 375M tokens
       - scheduler: "Linear"
         initial_learning_rate: 0.0
         end_learning_rate: 0.0006
-        steps: 1600
+        total_iters: 1600
       ## GPT-3 schedule decays over 300B tokens, but we shorten
       ## to 34B (150k steps at BS=112)
       - scheduler: "Linear" # Cosine not supported
         initial_learning_rate: 0.0006
         end_learning_rate: 0.0
         alpha: 0.1 # Decay by 10x
-        steps: 150000
-    weight_decay_rate: 0.01
-    use_bias_correction: True
+        total_iters: 150000
+    weight_decay: 0.01
     initial_loss_scale: 2147483648.0
     max_loss_scale: 2147483648.0
 
@@ -104,7 +102,5 @@ runconfig:
     save_initial_checkpoint: True
     seed: 1
     model_dir: "./model_dir"
-    show_debug_metrics: False
-    save_losses: True
     eval_steps: 32
 

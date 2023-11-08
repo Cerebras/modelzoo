@@ -19,13 +19,18 @@ from typing import Tuple
 import torch
 
 from modelzoo.common.pytorch.model_utils.checkpoint_converters.base_converter import (
+    BaseCheckpointConverter_CS_CS,
     BaseCheckpointConverter_HF_CS,
     BaseConfigConverter,
+    BaseConfigConverter_CS_CS,
     BaseConfigConverter_HF_CS,
     ConfigConversionError,
     ConversionRule,
     EquivalentSubkey,
     FormatVersions,
+)
+from modelzoo.common.pytorch.model_utils.checkpoint_converters.helper import (
+    convert_use_biasless_layer_norm_helper,
 )
 
 
@@ -61,7 +66,7 @@ class Converter_GPTJ_Attention_HF_CS17(BaseCheckpointConverter_HF_CS):
                 ],
                 # This is a hacky way to initialize bias and masked_bias when converting from CS to Huggingface
                 # However, based on huggingface implementation this is unavoidable in order to initialize
-                # attn.bias and attn.masked_bias, which we intiantiate when we capture the `out_proj` key
+                # attn.bias and attn.masked_bias, which we initiate when we capture the `out_proj` key
                 action=self.replace_or_fill_masked_bias,
             ),
         ]
@@ -196,7 +201,9 @@ class Converter_GPTJ_Headless_HF_CS17(BaseCheckpointConverter_HF_CS):
         if from_index == 0:
             logging.warning(
                 "{} GPTJ has a language model head (lm_head) "
-                "while {} GPTJModel does not. Initializing lm_head to default."
+                "while {} GPTJModel does not. Initializing lm_head to default.".format(
+                    *self.formats()
+                )
             )
 
         # Manually tie weights
@@ -237,6 +244,14 @@ class Converter_GPTJ_Headless_HF_CS17(BaseCheckpointConverter_HF_CS):
                 lm_head_bias = torch.zeros(vocab_size)
                 new_state_dict["lm_head.bias"] = lm_head_bias
 
+        super().post_model_convert(
+            old_state_dict,
+            new_state_dict,
+            configs,
+            from_index,
+            drop_unmatched_keys,
+        )
+
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (FormatVersions("hf"), FormatVersions("cs-1.7"))
@@ -263,7 +278,7 @@ class Converter_GPTJ_Headless_HF_CS18(Converter_GPTJ_Headless_HF_CS17):
         self.rules = [
             # Catch checkpoints from Pytorch 2.0 API
             ConversionRule([Converter_GPTJ_Headless_HF_CS17(),], action=None,),
-            # Catch checkpoints from depricated PyTorchBaseModel
+            # Catch checkpoints from 1.7/1.8
             ConversionRule(
                 [
                     EquivalentSubkey("", "model."),
@@ -350,7 +365,7 @@ class Converter_GPTJ_LMHeadModel_HF_CS18(BaseCheckpointConverter_HF_CS):
             ConversionRule(
                 [Converter_GPTJ_LMHeadModel_HF_CS17(),], action=None,
             ),
-            # Catch checkpoints from depricated PyTorchBaseModel
+            # Catch checkpoints from 1.7/1.8
             ConversionRule(
                 [
                     EquivalentSubkey("", "model."),
@@ -379,6 +394,10 @@ class ConfigConverter_GPTJModel_HF_CS17(BaseConfigConverter_HF_CS):
     def __init__(self):
         super().__init__()
         self.rules = [
+            ConversionRule(
+                ["model_type"],
+                action=BaseConfigConverter.assert_factory_fn(0, "gptj"),
+            ),
             # Embedding
             ConversionRule(["vocab_size"], action=self.replaceKey),
             ConversionRule(["rotary_dim"], action=self.replaceKey),
@@ -480,7 +499,59 @@ class ConfigConverter_GPTJModel_HF_CS17(BaseConfigConverter_HF_CS):
                 ["use_ff_layer1_dropout"],
                 action=BaseConfigConverter.assert_factory_fn(1, False),
             ),
+            ConversionRule(
+                ["use_untied_layer_norm"],
+                action=BaseConfigConverter.assert_factory_fn(1, False),
+            ),
         ]
+
+        self.pre_convert_defaults[0].update(
+            {
+                "vocab_size": 50400,
+                "n_positions": 2048,
+                "n_embd": 4096,
+                "n_layer": 28,
+                "n_head": 16,
+                "rotary_dim": 64,
+                "activation_function": "gelu_new",
+                "resid_pdrop": 0.1,
+                "embd_pdrop": 0.1,
+                "attn_pdrop": 0.1,
+                "initializer_range": 0.02,
+                "layer_norm_epsilon": 1e-5,
+                "tie_word_embeddings": False,
+            }
+        )
+        self.pre_convert_defaults[1].update(
+            {
+                "max_position_embeddings": 1024,
+                "embedding_dropout_rate": 0.1,
+                "share_embedding_weights": True,
+                "residual_dropout_rate": 0.1,
+                "nonlinearity": "gelu",
+                "layer_norm_epsilon": 1.0e-5,
+                "use_ffn_bias": False,
+                "use_untied_layer_norm": False,
+                "attention_dropout_rate": 0.1,
+                "use_projection_bias_in_attention": True,
+                "use_ffn_bias_in_attention": True,
+                "initializer_range": 0.02,
+                "use_bias_in_output": False,
+                "norm_first": True,
+            }
+        )
+
+        self.post_convert_defaults[0].update({"model_type": "gptj"})
+        self.post_convert_defaults[1].update(
+            {
+                "use_untied_layer_norm": False,
+                "use_ffn_bias_in_attention": False,
+                "use_projection_bias_in_attention": False,
+                "use_ffn_bias": True,
+                "use_bias_in_output": True,
+                "attention_type": "scaled_dot_product",
+            },
+        )
 
     def convert_position_embedding_type(
         self,
@@ -537,73 +608,10 @@ class ConfigConverter_GPTJModel_HF_CS17(BaseConfigConverter_HF_CS):
     ):
         config = super().pre_config_convert(config, from_index)
 
-        defaults = [
-            {
-                "vocab_size": 50400,
-                "n_positions": 2048,
-                "n_embd": 4096,
-                "n_layer": 28,
-                "n_head": 16,
-                "rotary_dim": 64,
-                "activation_function": "gelu_new",
-                "resid_pdrop": 0.1,
-                "embd_pdrop": 0.1,
-                "attn_pdrop": 0.1,
-                "initializer_range": 0.02,
-                "layer_norm_epsilon": 1e-5,
-                "tie_word_embeddings": False,
-            },
-            {
-                "max_position_embeddings": 1024,
-                "embedding_dropout_rate": 0.1,
-                "share_embedding_weights": True,
-                "residual_dropout_rate": 0.1,
-                "nonlinearity": "gelu",
-                "layer_norm_epsilon": 1.0e-5,
-                "use_ffn_bias": False,
-                "use_untied_layer_norm": False,
-                "attention_dropout_rate": 0.1,
-                "use_projection_bias_in_attention": True,
-                "use_ffn_bias_in_attention": True,
-                "initializer_range": 0.02,
-                "use_bias_in_output": False,
-                "norm_first": True,
-            },
-        ]
-
-        # Apply defaults
-        for key in defaults[from_index]:
-            if key not in config:
-                config[key] = defaults[from_index][key]
-
         if from_index == 0:
             if "n_inner" not in config or config["n_inner"] is None:
                 config["n_inner"] = 4 * config["n_embd"]
         return config
-
-    def post_config_convert(
-        self,
-        original_config,
-        old_config,
-        new_config,
-        from_index,
-        drop_unmatched_keys,
-    ):
-        if from_index == 0:
-            new_config["use_ffn_bias_in_attention"] = False
-            new_config["use_projection_bias_in_attention"] = False
-            new_config["use_ffn_bias"] = True
-            new_config["use_bias_in_output"] = True
-            if "attention_type" not in new_config:
-                new_config["attention_type"] = "scaled_dot_product"
-
-        return super().post_config_convert(
-            original_config,
-            old_config,
-            new_config,
-            from_index,
-            drop_unmatched_keys,
-        )
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
@@ -617,3 +625,86 @@ class ConfigConverter_GPTJModel_HF_CS18(ConfigConverter_GPTJModel_HF_CS17):
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (FormatVersions("hf"), FormatVersions("cs-1.8", "cs-1.9"))
+
+
+class Converter_GPTJ_LMHeadModel_CS18_CS20(BaseCheckpointConverter_CS_CS):
+    def __init__(self):
+        super().__init__()
+        # Model didn't change between 1.8 and 1.9. Copy all keys.
+        self.rules = [
+            ConversionRule([".*"], action=self.replaceKey),
+        ]
+
+    @classmethod
+    def converter_note(cls) -> str:
+        return "{} <-> {} GPTJModel".format(cls.formats()[0], cls.formats()[1])
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("cs-1.8", "cs-1.9"), FormatVersions("cs-2.0"))
+
+    @staticmethod
+    def get_config_converter_class() -> BaseConfigConverter:
+        return ConfigConverter_GPTJModel_CS18_CS20
+
+
+class ConfigConverter_GPTJModel_CS18_CS20(BaseConfigConverter_CS_CS):
+    def __init__(self):
+        super().__init__()
+        # Only difference between 1.8/1.9 and 2.0 is introduction of norm_type
+        self.rules = [
+            ConversionRule(
+                [EquivalentSubkey("use_biasless_norm", "norm_type")],
+                action=self.convert_use_biasless_layer_norm,
+            ),
+            ConversionRule([".*"], action=self.replaceKey),
+        ]
+
+    def convert_use_biasless_layer_norm(self, *args):
+        convert_use_biasless_layer_norm_helper(self, *args)
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("cs-1.8", "cs-1.9"), FormatVersions("cs-2.0"))
+
+
+class Converter_GPTJ_Headless_HF_CS20(Converter_GPTJ_Headless_HF_CS18):
+    def __init__(self):
+        super().__init__()
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-2.0"))
+
+    @staticmethod
+    def get_config_converter_class() -> BaseConfigConverter:
+        return ConfigConverter_GPTJModel_HF_CS20
+
+
+class Converter_GPTJ_LMHeadModel_HF_CS20(Converter_GPTJ_LMHeadModel_HF_CS18):
+    def __init__(self):
+        super().__init__()
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-2.0"))
+
+    @staticmethod
+    def get_config_converter_class() -> BaseConfigConverter:
+        return ConfigConverter_GPTJModel_HF_CS20
+
+
+class ConfigConverter_GPTJModel_HF_CS20(ConfigConverter_GPTJModel_HF_CS18):
+    def __init__(self):
+        super().__init__()
+        self.rules = [
+            ConversionRule(
+                ["norm_type"],
+                action=BaseConfigConverter.assert_factory_fn(1, "layernorm"),
+            ),
+            *self.rules,
+        ]
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-2.0"))

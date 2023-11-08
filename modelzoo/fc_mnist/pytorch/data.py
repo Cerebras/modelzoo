@@ -15,9 +15,10 @@
 import torch
 from torchvision import datasets, transforms
 
-from modelzoo.common.pytorch import cb_model as cm
+import cerebras_pytorch as cstorch
+import cerebras_pytorch.distributed as dist
 from modelzoo.common.pytorch.input_utils import get_streaming_batch_size
-from modelzoo.common.pytorch.utils import SampleGenerator, get_input_dtype
+from modelzoo.common.pytorch.utils import SampleGenerator
 
 
 def get_train_dataloader(params):
@@ -31,15 +32,25 @@ def get_train_dataloader(params):
     - "drop_last_batch" (bool): whether to drop the last batch or not
     """
     input_params = params["train_input"]
-    use_cs = cm.use_cs() or cm.is_appliance()
+    use_cs = cstorch.use_cs()
 
     batch_size = get_streaming_batch_size(input_params.get("batch_size"))
     to_float16 = input_params.get("to_float16", True)
-    dtype = get_input_dtype(to_float16)
+    use_bfloat16 = params["model"].get("use_bfloat16", False)
     shuffle = input_params["shuffle"]
 
+    dtype = torch.float32
+    if to_float16:
+        if use_cs or torch.cuda.is_available():
+            dtype = torch.bfloat16 if use_bfloat16 else torch.float16
+        else:
+            print(
+                f"Input dtype float16 is not supported with "
+                f"vanilla PyTorch CPU workflow. Using float32 instead."
+            )
+
     if input_params.get("use_fake_data", False):
-        num_streamers = cm.num_streamers() if cm.is_streamer() else 1
+        num_streamers = dist.num_streamers() if dist.is_streamer() else 1
         train_loader = SampleGenerator(
             data=(
                 torch.zeros(batch_size, 1, 28, 28, dtype=dtype),
@@ -53,7 +64,7 @@ def get_train_dataloader(params):
         train_dataset = datasets.MNIST(
             input_params["data_dir"],
             train=True,
-            download=cm.is_master_ordinal(),
+            download=dist.is_master_ordinal(),
             transform=transforms.Compose(
                 [
                     transforms.ToTensor(),
@@ -71,11 +82,11 @@ def get_train_dataloader(params):
         )
 
         train_sampler = None
-        if use_cs and cm.num_streamers() > 1 and cm.is_streamer():
+        if use_cs and dist.num_streamers() > 1 and dist.is_streamer():
             train_sampler = torch.utils.data.distributed.DistributedSampler(
                 train_dataset,
-                num_replicas=cm.num_streamers(),
-                rank=cm.get_streaming_rank(),
+                num_replicas=dist.num_streamers(),
+                rank=dist.get_streaming_rank(),
                 shuffle=shuffle,
             )
         else:
@@ -93,14 +104,24 @@ def get_train_dataloader(params):
 
 def get_eval_dataloader(params):
     input_params = params["eval_input"]
-    use_cs = cm.use_cs() or cm.is_appliance()
+    use_cs = cstorch.use_cs()
 
     batch_size = get_streaming_batch_size(input_params.get("batch_size"))
     to_float16 = input_params.get("to_float16", True)
-    dtype = get_input_dtype(to_float16)
+    use_bfloat16 = params["model"].get("use_bfloat16", False)
+
+    dtype = torch.float32
+    if to_float16:
+        if use_cs or torch.cuda.is_available():
+            dtype = torch.bfloat16 if use_bfloat16 else torch.float16
+        else:
+            print(
+                f"Input dtype float16 is not supported with "
+                f"vanilla PyTorch CPU workflow. Using float32 instead."
+            )
 
     if input_params.get("use_fake_data", False):
-        num_streamers = cm.num_streamers() if cm.is_streamer() else 1
+        num_streamers = dist.num_streamers() if dist.is_streamer() else 1
         eval_loader = SampleGenerator(
             data=(
                 torch.zeros(batch_size, 1, 28, 28, dtype=dtype),
@@ -114,7 +135,7 @@ def get_eval_dataloader(params):
         eval_dataset = datasets.MNIST(
             input_params["data_dir"],
             train=False,
-            download=cm.is_master_ordinal(),
+            download=dist.is_master_ordinal(),
             transform=transforms.Compose(
                 [
                     transforms.ToTensor(),

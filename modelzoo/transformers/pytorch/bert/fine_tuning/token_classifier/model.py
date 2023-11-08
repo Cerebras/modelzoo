@@ -14,7 +14,7 @@
 
 import torch
 
-from modelzoo.common.pytorch.metrics import FBetaScoreMetric
+from cerebras_pytorch.metrics import FBetaScoreMetric
 from modelzoo.transformers.data_processing.utils import get_label_id_map
 from modelzoo.transformers.pytorch.bert.bert_finetune_models import (
     BertForTokenClassification,
@@ -85,6 +85,7 @@ class BertForTokenClassificationModel(torch.nn.Module):
                 for key, label_id in self.label_map_id.items():
                     if not (key.startswith("B") or key.startswith("I")):
                         eval_ignore_labels.append(label_id)
+
             self.f1_metric = FBetaScoreMetric(
                 num_classes=num_classes,
                 beta=1.0,

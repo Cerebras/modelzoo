@@ -14,7 +14,7 @@ train_input:
         - "./language/datasets/pile_original/hdf5_dataset/train_neox_msl2048/8/"
         - "./language/datasets/pile_original/hdf5_dataset/train_neox_msl2048/9/"
     # The effective batch size, which is evenly divided across "num_csx" systems used for the run
-    batch_size: 121
+    batch_size: 252
     shuffle: True
     shuffle_seed: 1337
     num_workers: 8
@@ -25,7 +25,7 @@ eval_input:
     data_processor: "GptHDF5DataProcessor"
     data_dir: "./language/datasets/pile_original/hdf5_dataset/val_neox_msl2048/"
     # The effective batch size, which is evenly divided across "num_csx" systems used for the run
-    batch_size: 121
+    batch_size: 252
     shuffle: False
     num_workers: 8
     prefetch_factor: 10
@@ -81,28 +81,26 @@ model:
         std: 0.0018414239093399673 # 2 / num_hidden_layers / sqrt(hidden_size)
 
     mixed_precision: True
-    precision_opt_level: 1
 
 optimizer:
     optimizer_type: "adamw"
-    beta1: 0.9
-    beta2: 0.999
+    betas: [0.9, 0.999]
     eps: 1.0e-8
-    weight_decay_rate: 0.0
+    weight_decay: 0.0
     max_gradient_norm: 1.0
     correct_bias: True
     learning_rate:
-    - steps: 13540 # 1% of max_steps
+    - total_iters: 6501 # 1% of max_steps
       scheduler: "Linear"
       initial_learning_rate: 0.0
-      end_learning_rate: 4.9e-5   # sqrt(121 / 2048) * 2e-4
+      end_learning_rate: 7.01e-5   # sqrt(252 / 2048) * 2e-4
     - scheduler: "CosineDecay"
-      initial_learning_rate: 4.9e-5
-      steps: 5362037 # 5416198 - 54161
-      end_learning_rate: 4.9e-6 # (1 - 0.9) * 4.9e-5
+      initial_learning_rate: 7.01e-5
+      total_iters: 643657 # 5416198 - 54161
+      end_learning_rate: 7.01e-6 # (1 - 0.9) * 7.01e-5
 
 runconfig:
-    max_steps: 5416198 # 320000 * 512 / 121
+    max_steps: 650158 # 320000 * 512 / 252
     log_steps: 100
     checkpoint_steps: 5000
     use_cs_grad_accum: True

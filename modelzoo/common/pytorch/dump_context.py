@@ -21,16 +21,16 @@ import functools
 import os
 import warnings
 from collections import defaultdict
+from contextlib import ContextDecorator
 
 import numpy as np
 import torch
 
-import modelzoo.common.pytorch.utils as utils
-from modelzoo.common.pytorch import cb_model as cm
-from modelzoo.common.pytorch import cbtorch
+import cerebras_pytorch as cstorch
+from cerebras_pytorch.utils.nest import visit_torch_tensors
 
 
-class DumpContext:
+class DumpContext(ContextDecorator):
     """
     A debug utility context manager. When provided with a torch.nn.Module, the
     resulting context manager can be entered to enable dumping of all module
@@ -74,12 +74,6 @@ class DumpContext:
         self._buffer_steps = buffer_steps
         self._flush_count = 0
         self._buffer = defaultdict(list)
-        if cm.use_cs():
-            cbtorch.enable_debug_name_scope()
-            # The CS version of DumpContext involves setting debug name
-            # scopes so that tensor dumps can be correlated. However, the debug
-            # name scope feature isn't enabled by default and must be set
-            # before the first operation is traced.
 
     def __enter__(self):
         self.enable_collection()
@@ -106,11 +100,11 @@ class DumpContext:
         Args:
             model: torch.nn.Module that serves as the root for recursive names
         """
-        cbtorch.add_debug_name(model)
+        cstorch.add_debug_name(model)
 
         # Helpers for hooks
         def get_name(module, counter_increment=0):
-            name = cbtorch.get_debug_name(module)
+            name = cstorch.get_debug_name(module)
 
             def_counter = 0 if counter_increment >= 0 else 1
             counter = self._call_counter.setdefault(name, def_counter)
@@ -121,19 +115,15 @@ class DumpContext:
             return name
 
         def recurse(top_scope, output):
-            for scope, tensor in utils.visit_structure(
-                output,
-                select_fn=lambda struct: isinstance(struct, torch.Tensor),
-                scope=top_scope,
-            ):
+            for scope, tensor in visit_torch_tensors(output, scope=top_scope):
                 yield ".".join(scope), tensor
 
         # pylint: disable=redefined-builtin
-        if cm.use_cs():
+        if cstorch.use_cs():
 
             def fwd_pre_name_scope(module, input):
                 name = get_name(module) + ".fwd"
-                cbtorch.set_debug_scope(name)
+                cstorch.set_debug_scope(name)
 
             def fwd_post_name_scope(module, input, output):
                 # This will actually be the name for the bwd pass entered from
@@ -150,15 +140,15 @@ class DumpContext:
                         tensor._debug_name_scope = name
                         # Set scope before beginning bwd pass from any output
                         tensor.register_hook(
-                            lambda x: cbtorch.set_debug_scope(name)
+                            lambda x: cstorch.set_debug_scope(name)
                         )
 
                 # Clear any scope in case this is the last module.
-                cbtorch.set_debug_scope(None)
+                cstorch.set_debug_scope(None)
 
             def bwd_post_name_scope(module, grad_output, grad_input):
                 # Clear scope after bwd pass is complete.
-                cbtorch.set_debug_scope(None)
+                cstorch.set_debug_scope(None)
 
             self._forward_pre_hook = fwd_pre_name_scope
             self._forward_hook = fwd_post_name_scope
@@ -185,7 +175,7 @@ class DumpContext:
                 name = get_name(module, counter_increment)
 
                 for scope, tensor in recurse([name, key], output):
-                    tensor = cm.to_cpu(tensor.detach()).clone()
+                    tensor = tensor.detach().to("cpu").clone()
                     if tensor.dtype == torch.bfloat16:
                         warnings.warn(
                             f"Encountered bfloat16 tensor in summary "

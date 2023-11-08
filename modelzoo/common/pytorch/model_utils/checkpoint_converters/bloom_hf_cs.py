@@ -20,13 +20,18 @@ from typing import Tuple
 import torch
 
 from modelzoo.common.pytorch.model_utils.checkpoint_converters.base_converter import (
+    BaseCheckpointConverter_CS_CS,
     BaseCheckpointConverter_HF_CS,
     BaseConfigConverter,
+    BaseConfigConverter_CS_CS,
     BaseConfigConverter_HF_CS,
     ConfigConversionError,
     ConversionRule,
     EquivalentSubkey,
     FormatVersions,
+)
+from modelzoo.common.pytorch.model_utils.checkpoint_converters.helper import (
+    convert_use_rms_layer_norm_helper,
 )
 
 
@@ -368,6 +373,13 @@ class Converter_BloomModel_HF_CS17(BaseCheckpointConverter_HF_CS):
             ] = Converter_BloomModel_HF_CS17.get_alibi_slopes(
                 cs_config["model"]["num_heads"]
             )
+        super().post_model_convert(
+            old_state_dict,
+            new_state_dict,
+            configs,
+            from_index,
+            drop_unmatched_keys,
+        )
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
@@ -376,7 +388,7 @@ class Converter_BloomModel_HF_CS17(BaseCheckpointConverter_HF_CS):
     @classmethod
     def converter_note(cls) -> str:
         return (
-            "{} BloomModel <-> {} GPT2LMHeadModel\n"
+            "{} BloomModel <-> {} GPT2LMHeadModel (configured as bloom)\n"
             "The HF model doesn't contain a language model head while the CS "
             "one does. When converting to CS, the exported checkpoint will "
             "contain a language model head initialized to default random values"
@@ -394,7 +406,7 @@ class Converter_BloomModel_HF_CS19(Converter_BloomModel_HF_CS17):
         self.rules = [
             # Catch checkpoints from Pytorch 2.0 API
             ConversionRule([Converter_BloomModel_HF_CS17(),], action=None,),
-            # Catch checkpoints from depricated PyTorchBaseModel
+            # Catch checkpoints from 1.7/1.8
             ConversionRule(
                 [
                     EquivalentSubkey("", "model."),
@@ -411,7 +423,7 @@ class Converter_BloomModel_HF_CS19(Converter_BloomModel_HF_CS17):
     @classmethod
     def converter_note(cls) -> str:
         return (
-            "{} BloomModel <-> {} GPT2LMHeadModel\n"
+            "{} BloomModel <-> {} GPT2LMHeadModel (configured as bloom)\n"
             "The HF model doesn't contain a language model head while the CS "
             "one does. When converting to CS, the exported checkpoint will "
             "contain a language model head initialized to default random values"
@@ -427,6 +439,10 @@ class ConfigConverter_BloomModel_HF_CS17(BaseConfigConverter_HF_CS):
     def __init__(self):
         super().__init__()
         self.rules = [
+            ConversionRule(
+                ["model_type"],
+                action=BaseConfigConverter.assert_factory_fn(0, "bloom"),
+            ),
             # Embedding
             ConversionRule(["vocab_size"], action=self.replaceKey),
             ConversionRule(
@@ -560,6 +576,37 @@ class ConfigConverter_BloomModel_HF_CS17(BaseConfigConverter_HF_CS):
             ),
         ]
 
+        self.pre_convert_defaults[0].update(
+            {
+                "tie_word_embeddings": True,
+                "vocab_size": 250880,
+                "hidden_size": 64,
+                "n_layer": 2,
+                "n_head": 8,
+                "layer_norm_epsilon": 1e-5,
+                "initializer_range": 0.02,
+                "apply_residual_connection_post_layernorm": False,
+                "hidden_dropout": 0.0,
+                "attention_dropout": 0.0,
+            }
+        )
+        self.pre_convert_defaults[1].update(
+            {"share_embedding_weights": True, "embedding_layer_norm": False}
+        )
+
+        self.post_convert_defaults[0].update({"model_type": "bloom"})
+        self.post_convert_defaults[1].update(
+            {
+                "position_embedding_type": "alibi",
+                "use_ffn_bias_in_attention": True,
+                "use_projection_bias_in_attention": True,
+                "use_ffn_bias": True,
+                "use_bias_in_output": False,
+                "attention_type": "scaled_dot_product",
+                "embedding_layer_norm": True,
+            }
+        )
+
     def assert_filter_size(
         self,
         old_key,
@@ -596,17 +643,10 @@ class ConfigConverter_BloomModel_HF_CS17(BaseConfigConverter_HF_CS):
     ):
         config = super().pre_config_convert(config, from_index)
 
-        defaults = [
-            {"tie_word_embeddings": True,},
-            {"share_embedding_weights": True, "embedding_layer_norm": False},
-        ]
-
-        # Apply defaults
-        for key in defaults[from_index]:
-            if key not in config:
-                config[key] = defaults[from_index][key]
-
-        if from_index == 1:
+        if from_index == 0:
+            if "n_embed" in config and config["n_embed"] is not None:
+                config["hidden_size"] = config["n_embed"]
+        elif from_index == 1:
             if "embedding_dropout_rate" not in config:
                 config["embedding_dropout_rate"] = config["dropout_rate"]
             if "attention_dropout_rate" not in config:
@@ -622,13 +662,6 @@ class ConfigConverter_BloomModel_HF_CS17(BaseConfigConverter_HF_CS):
         drop_unmatched_keys,
     ):
         if from_index == 0:
-            new_config["position_embedding_type"] = "alibi"
-            new_config["use_ffn_bias_in_attention"] = True
-            new_config["use_projection_bias_in_attention"] = True
-            new_config["use_ffn_bias"] = True
-            new_config["use_bias_in_output"] = False
-            new_config["attention_type"] = "scaled_dot_product"
-            new_config["embedding_layer_norm"] = True
             new_config["filter_size"] = 4 * new_config["hidden_size"]
 
         return super().post_config_convert(
@@ -702,6 +735,13 @@ class Converter_BloomLMHeadModel_HF_CS17(BaseCheckpointConverter_HF_CS):
             ] = Converter_BloomModel_HF_CS17.get_alibi_slopes(
                 cs_config["model"]["num_heads"]
             )
+        super().post_model_convert(
+            old_state_dict,
+            new_state_dict,
+            configs,
+            from_index,
+            drop_unmatched_keys,
+        )
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
@@ -726,7 +766,7 @@ class Converter_BloomLMHeadModel_HF_CS19(BaseCheckpointConverter_HF_CS):
             ConversionRule(
                 [Converter_BloomLMHeadModel_HF_CS17(),], action=None,
             ),
-            # Catch checkpoints from depricated PyTorchBaseModel
+            # Catch checkpoints from 1.7/1.8
             ConversionRule(
                 [
                     EquivalentSubkey("", "model."),
@@ -751,6 +791,13 @@ class Converter_BloomLMHeadModel_HF_CS19(BaseCheckpointConverter_HF_CS):
             ] = Converter_BloomModel_HF_CS17.get_alibi_slopes(
                 cs_config["model"]["num_heads"]
             )
+        super().post_model_convert(
+            old_state_dict,
+            new_state_dict,
+            configs,
+            from_index,
+            drop_unmatched_keys,
+        )
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
@@ -765,3 +812,89 @@ class Converter_BloomLMHeadModel_HF_CS19(BaseCheckpointConverter_HF_CS):
     @staticmethod
     def get_config_converter_class() -> BaseConfigConverter:
         return ConfigConverter_BloomModel_HF_CS19
+
+
+class Converter_BloomLMHeadModel_CS19_CS20(BaseCheckpointConverter_CS_CS):
+    def __init__(self):
+        super().__init__()
+        # Model didn't change between 1.9 and 2.0. Copy all keys.
+        self.rules = [
+            ConversionRule([".*"], action=self.replaceKey),
+        ]
+
+    @classmethod
+    def converter_note(cls) -> str:
+        return "GPT2LMHeadModel class (configured as bloom)"
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("cs-1.9"), FormatVersions("cs-2.0"))
+
+    @staticmethod
+    def get_config_converter_class() -> BaseConfigConverter:
+        return ConfigConverter_BloomLMHeadModel_CS19_CS20
+
+
+class ConfigConverter_BloomLMHeadModel_CS19_CS20(BaseConfigConverter_CS_CS):
+    def __init__(self):
+        super().__init__()
+        # Only difference between 1.9 and 2.0 is introduction of norm_type
+        self.rules = [
+            ConversionRule(
+                [EquivalentSubkey("use_rms_norm", "norm_type")],
+                action=self.convert_use_rms_layer_norm,
+            ),
+            ConversionRule([".*"], action=self.replaceKey),
+        ]
+
+        self.pre_convert_defaults[0]["use_rms_norm"] = False
+        self.pre_convert_defaults[1]["norm_type"] = "layernorm"
+
+    def convert_use_rms_layer_norm(self, *args):
+        convert_use_rms_layer_norm_helper(self, *args)
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("cs-1.9"), FormatVersions("cs-2.0"))
+
+
+class Converter_BloomModel_HF_CS20(Converter_BloomModel_HF_CS19):
+    def __init__(self):
+        super().__init__()
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-2.0"))
+
+    @staticmethod
+    def get_config_converter_class() -> BaseConfigConverter:
+        return ConfigConverter_BloomModel_HF_CS20
+
+
+class Converter_BloomLMHeadModel_HF_CS20(Converter_BloomLMHeadModel_HF_CS19):
+    def __init__(self):
+        super().__init__()
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-2.0"))
+
+    @staticmethod
+    def get_config_converter_class() -> BaseConfigConverter:
+        return ConfigConverter_BloomModel_HF_CS20
+
+
+class ConfigConverter_BloomModel_HF_CS20(ConfigConverter_BloomModel_HF_CS19):
+    def __init__(self):
+        super().__init__()
+        self.rules = [
+            ConversionRule(
+                ["norm_type"],
+                action=BaseConfigConverter.assert_factory_fn(1, "layernorm"),
+            ),
+            *self.rules,
+        ]
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-2.0"))

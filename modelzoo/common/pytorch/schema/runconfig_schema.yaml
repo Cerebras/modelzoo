@@ -31,6 +31,14 @@ properties:
     type:
     - string
     - 'null'
+  retrace_every_iteration:
+    type:
+    - boolean
+    - 'null'
+  disable_strict_checkpoint_loading:
+    type:
+    - boolean
+    - 'null'
   dist_addr:
     type: string
   dist_backend:
@@ -51,14 +59,8 @@ properties:
     type:
     - integer
     - 'null'
-  experimental_api:
-    type:
-    - boolean
-    - 'null'
   init_method:
     type: string
-  is_pretrained_checkpoint:
-    type: boolean
   job_labels:
     type:
     - array
@@ -67,6 +69,10 @@ properties:
     type:
     - integer
     - 'null'
+  load_checkpoint_states:
+    type:
+    - string
+    - 'null'
   log_steps:
     type: integer
   logging:
@@ -74,6 +80,10 @@ properties:
     - string
     - 'null'
   log_initialization:
+    type:
+    - boolean
+    - 'null'
+  log_input_summaries:
     type:
     - boolean
     - 'null'
@@ -103,20 +113,16 @@ properties:
     type:
     - array
     - 'null'
-  multireplica:
-    type:
-    - boolean
-    - 'null'
   num_act_servers:
-    type: integer
+    type:
+    - integer
+    - 'null'
   num_csx:
     type: integer
   num_epochs:
     type:
     - integer
     - 'null'
-  num_replicas:
-    type: integer
   num_steps:
     type:
     - integer
@@ -137,18 +143,14 @@ properties:
     - 'null'
   save_initial_checkpoint:
     type: boolean
-  save_losses:
-    type: boolean
-  save_stream_size:
-    type: integer
   seed:
     type: integer
-  service_dir:
-    type: string
-  show_debug_metrics:
-    type: boolean
   steps_per_epoch:
     type: integer
+  summary_dir:
+    type:
+    - string
+    - 'null'
   sync_batchnorm:
     type: boolean
   target_device:
@@ -199,6 +201,18 @@ properties:
     - boolean
     - 'null'
   wrk_memory_gi:
+    type:
+    - integer
+    - 'null'
+  act_memory_gi:
+    type:
+    - integer
+    - 'null'
+  cmd_memory_gi:
+    type:
+    - integer
+    - 'null'
+  wgt_memory_gi:
     type:
     - integer
     - 'null'

@@ -41,9 +41,9 @@ class RotaryPositionEmbeddingHelper:
                 return self.sin_cached, self.cos_cached
         self.offset = offset
 
-        from modelzoo.common.pytorch import cb_model as cm
+        import cerebras_pytorch as cstorch
 
-        device = "cpu" if cm.use_cs() else x.device
+        device = "cpu" if cstorch.use_cs() else x.device
 
         inv_freq = 1.0 / (
             10000
@@ -76,8 +76,8 @@ class RotaryPositionEmbeddingHelper:
 
         # For cs runs, wrap the sin and cos matrices in xla_literal so that
         # constant folding is performed.
-        self.sin_cached = cm.make_constant(sin)
-        self.cos_cached = cm.make_constant(cos)
+        self.sin_cached = cstorch.make_constant(sin)
+        self.cos_cached = cstorch.make_constant(cos)
         return self.sin_cached, self.cos_cached
 
     def _apply_rotary_pos_emb(self, x, real_seq_length, offset=0):

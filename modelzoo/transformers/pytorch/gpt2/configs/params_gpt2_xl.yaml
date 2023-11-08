@@ -98,19 +98,18 @@ model:
 optimizer:
     optimizer_type: "AdamW"
     correct_bias: True
-    weight_decay_rate: 0.011 # https://nostalgebraist.tumblr.com/post/642136680709652480/gpt2s-weight-decay/amp
-    beta1: 0.9
-    beta2: 0.999
+    weight_decay: 0.011 # https://nostalgebraist.tumblr.com/post/642136680709652480/gpt2s-weight-decay/amp
+    betas: [0.9, 0.999]
     learning_rate:
     # https://en.wikipedia.org/wiki/GPT-2
         - scheduler: "Linear"
           initial_learning_rate: 0.0
-          steps: 10779 # 2000 * 512/95 (warmup)
+          total_iters: 10779 # 2000 * 512/95 (warmup)
           end_learning_rate: 1.0e-4 # sqrt(95 / 512) * 0.00025
         - scheduler: "CosineDecay"
           initial_learning_rate: 1.0e-4 # sqrt(95 / 512) * 0.00025
           end_learning_rate: 0
-          steps: 3073099 # 3083878 - 10779
+          total_iters: 3073099 # 3083878 - 10779
     loss_scaling_factor: "dynamic"
     max_gradient_norm: 1.0
 
@@ -119,8 +118,6 @@ runconfig:
     log_steps: 100
     checkpoint_steps: 10000
     seed: 1
-    show_debug_metrics: False
-    save_losses: True
     eval_steps: 77 # 7481/95 - 1
     validate_only: False
     compile_only: False

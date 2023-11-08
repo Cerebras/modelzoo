@@ -4,7 +4,7 @@ prepare the raw input data into the format that can be fed into the deep learnin
 
 Preprocessing stages differ from model to model, but on the high-level, most of them are targeting on the next tasks: 
 1. Removing special symbols that are not part of the vocabulary (for example, Chinese symbols in the English text).
-2. Converting words into the tokens (with tokenizers such as [BPE](#BPE), [WordPiece](#WordPiece), [FullTokenizer](#FullTokenizer)).
+2. Converting words into the tokens (with tokenizers such as [BPE](#bpe), [WordPiece](#wordpiece), [FullTokenizer](#fulltokenizer)).
 3. Adding special symbols to indicate the beginning, middle or the end of sequence.
 4. Converting tokens into features that can be fed into the model (such as pytorch or tensorflow tensors with numerical values representing tokens in the vocabulary).
 
@@ -29,13 +29,13 @@ Here is an example of the input/output for stages above:
 ## Tokenizer
 Now let's talk about stage #2 in details. There is a list of ways to tokenize your data. 
 In our preprocessing modules we are using some of the most popular algorithms for data tokenization such as 
-[BPE](#BPE), [FullTokenizer](#FullTokenizer) (which is using [WordPiece](#WordPiece) tokenizer), and will also discuss how you can create your own tokenizer from 
+[BPE](#bpe), [FullTokenizer](#fulltokenizer) (which is using [WordPiece](#wordpiece) tokenizer), and will also discuss how you can create your own tokenizer from 
 scratch. 
 
 A tokenizer is in charge of preparing the inputs for a model. 
 Above listed tokenizers are used across the majority of our [transformer-based](../) models. You can find a different 
-tokenization methods created for [T5](https://arxiv.org/abs/1910.10683) and [Transformer](https://arxiv.org/abs/1706.03762) networks. Please follow their specific documentation: [T5-README](../tf/t5/input), [Transformer-README](../tf/transformer/input).
-If you want to add your own version, feel free to do so with the steps provided in the section [Creating your own Tokenizer](#Creating-your-own-Tokenizer).
+tokenization methods created for [T5](https://arxiv.org/abs/1910.10683) and [Transformer](https://arxiv.org/abs/1706.03762) networks. Please follow their specific documentation: [T5-README](../pytorch/t5/input), [Transformer-README](../pytorch/transformer/input).
+If you want to add your own version, feel free to do so with the steps provided in the section [Creating your own Tokenizer](#creating-your-own-tokenizer).
 
 ### BPE 
 Byte-Pair Encoding (BPE) was initially developed as an algorithm to compress texts, and then used by OpenAI for tokenization when pretraining the GPT model.
@@ -66,9 +66,9 @@ In order to use it, please provide the next list of params:
 :param iterable special_tokens: Optional param specifying special tokens to use (such as `[PAD]`, `[MASK]`, etc.) (default value: None).
 ```
 ### FullTokenizer
-This tokenizer consists of two stages: additional pre-processing and tokenization with [WordPiece](#WordPiece) tokenizer.
+This tokenizer consists of two stages: additional pre-processing and tokenization with [WordPiece](#wordpiece) tokenizer.
 During the first stage we perform additional text filtering such as removing strip accents, and checking for Chinese 
-characters. At the second stage we apply [WordPiece](#WordPiece) tokenizer. 
+characters. At the second stage we apply [WordPiece](#wordpiece) tokenizer. 
 
 #### WordPiece
 On a high-level, WordPiece is another way to perform tokenization on the raw bulk of text. The key 
@@ -84,9 +84,9 @@ Here is the example of the WordPiece algorithm at work:
 * `output: ["i", "am", "converting", "this", "sentence", "into", "word", "##piece", "token", "##s", "!"]`
 
 In this example we used vocabulary with tokens `[..., "!", "##e", "##s", "am", "converting", "i", "into", "sentence", "this", "token", "word", ...]`, and you can see the input is transformed from words into tokens.
-As in our previous example with BPE, we can see a specail token `"##"` added to identify the word boundaries.
+As in our previous example with BPE, we can see a special token `"##"` added to identify the word boundaries.
 
-You can find our own reference implementation at [monolith/src/models/transformers/data_processing/tokenizers/Tokenization.py#L302](./Tokenization.py#L302).
+You can find our own reference implementation at [Tokenization.py](./tokenizers/Tokenization.py#L302).
 In order to use it, please provide the next list of params:
 ```
 :param str vocab_file: File containing vocabulary, each token in new line;
@@ -97,12 +97,12 @@ In order to use it, please provide the next list of params:
 In this section, you can see where and how you can add your own tokenizer, following examples from the 
 previous sections in this documentation. 
 
-The easiest way to add a new tokenizer is to add another class in this file [monolith/src/models/transformers/data_processing/tokenizers/Tokenization.py](./Tokenization.py), and inherit it from [`BaseTokenizer`](./tokenizers/Tokenization.py#L37).
+The easiest way to add a new tokenizer is to add another class in this file [Tokenization.py](./tokenizers/Tokenization.py), and inherit it from [`BaseTokenizer`](./tokenizers/Tokenization.py#L37).
 If you want to change the tokenizer class for your models, you need to update which tokenization class you're calling 
-in the dataloader script. For example, for [BERT](../tf/bert) these lines would need to be replaced with a call of a different 
-class: [TfRecordsDynamicMaskProcessor.py#L47](../tf/bert/input/BertMlmOnlyTfRecordsDynamicMaskProcessor.py#L47).
+in the dataloader script. For example, for [BERT](../pytorch/bert) these lines would need to be replaced with a call of a different 
+class: [TfRecordsDynamicMaskProcessor.py#L47](../pytorch/bert/input/BertMlmOnlyTfRecordsDynamicMaskProcessor.py#L47).
 
-`BaseTokenizer` is what we called the stage #1 in the [`FullTokenizer`](#FullTokenizer), where we perform some basic 
+`BaseTokenizer` is what we called the stage #1 in the [`FullTokenizer`](#fulltokenizer), where we perform some basic 
 grammar filtering on the raw bulk of text. By inheriting, you don't have to implement this basic text pre-processing from
 scratch. However, there are a few methods that still need to be created: tokenization method, and a method to convert 
 tokens to the indices. 

@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import re
 from abc import ABC, abstractmethod
 from collections import OrderedDict
@@ -26,7 +25,12 @@ import torch
 import yaml
 from tqdm import tqdm
 
-from modelzoo.common.pytorch import cbtorch
+import cerebras_pytorch as cstorch
+from modelzoo.common.pytorch.model_utils.checkpoint_converters.streaming_checkpoints import (
+    StreamingCSWriter,
+    StreamingShardedHFReader,
+    StreamingShardedHFWriter,
+)
 
 
 class EquivalentSubkey:
@@ -53,7 +57,7 @@ class EquivalentSubkey:
 class ConversionRule:
     r"""ConversionRule defines a "rule" which:
         1. a key can be matched against
-        2. procedure for converting this old key to a new one upon a sucessful match
+        2. procedure for converting this old key to a new one upon a successful match
         3. and an action to be taken once the new key is created (ex: updating the
            state dictionary)
 
@@ -85,7 +89,7 @@ class ConversionRule:
         4. Both will have keys that follow with a dot and then either weight or bias
     This representation should make it easy to see how we can 1) build a regex which
     matches against old keys, and 2) use the matched result & EquivalentSubkey information
-    to create a new key. Finally, once thhe new key is constructed the conversion rule
+    to create a new key. Finally, once the new key is constructed the conversion rule
     will apply the 'action' described by the user in order to complete the conversion
     (in this case simply copying the value at old_state's old key into the new_state at the
     new key).
@@ -95,7 +99,7 @@ class ConversionRule:
     converter which uses another converter to handle a portion of the conversion.
     Doing so reduces the amount of copy & pasted conversion rules. For example,
     many models have base model classes which are extended with additional layers
-    for finetuning. For example, HF's GP2Model doesn't contain a language model head
+    for fine-tuning. For example, HF's GP2Model doesn't contain a language model head
     while GP2LMHeadModel does. Rather than copying the conversion rules, we could
     instead define a new checkpoint converter as follows:
 
@@ -357,7 +361,7 @@ class BaseDictionaryConverter(ABC):
         Attempts to convert the old key by matching against the list of
         conversion rules. The first rule to match is used for conversion (i.e.
         even if multiple rules *would* match, the latter ones are never used).
-        Returns True if a conversion occured.
+        Returns True if a conversion occurred.
         """
         assert hasattr(
             self, "rules"
@@ -388,7 +392,7 @@ class BaseDictionaryConverter(ABC):
         suppress_unmatched_key_warning: bool = False,
     ):
         if not no_progress_bar:
-            pbar = tqdm(total=len(old_state_dict.keys()), desc=self.pbar_desc)
+            pbar = tqdm(total=len(old_state_dict), desc=self.pbar_desc)
 
         matched_all_keys = True
         for key in old_state_dict.keys():
@@ -441,18 +445,42 @@ class BaseCheckpointConverter(BaseDictionaryConverter, ABC):
         pass
 
     @classmethod
-    def convert(cls, checkpoint, configs, checkpoint_from_index, **kwargs):
+    @abstractmethod
+    def init_output_checkpoint(
+        cls, file_without_ext: str, from_index: int, **kwargs,
+    ) -> str:
+        r"""
+        (Pre)Initializes the output checkpoint at a supplied path. This is used
+        in streaming conversion when the checkpoint is written to file as
+        conversion is performed rather than accumulating the full checkpoint
+        in memory and saving to file at the very end.
+        """
+
+    @classmethod
+    def convert(
+        cls,
+        input_checkpoint,
+        configs,
+        checkpoint_from_index,
+        output_checkpoint=OrderedDict(),
+        **kwargs,
+    ):
         instance = cls()
-        new_checkpoint = instance.convert_helper(
-            checkpoint, configs, checkpoint_from_index, **kwargs
+        output_checkpoint = instance.convert_helper(
+            input_checkpoint,
+            configs,
+            checkpoint_from_index,
+            output_checkpoint=output_checkpoint,
+            **kwargs,
         )
-        return new_checkpoint
+        return output_checkpoint
 
     def convert_helper(
         self,
-        checkpoint,
+        input_checkpoint,
         configs: Tuple[dict, dict],
         from_index: int,
+        output_checkpoint=OrderedDict(),
         drop_unmatched_keys: bool = False,
         no_progress_bar: bool = True,
         debug: bool = False,
@@ -463,13 +491,13 @@ class BaseCheckpointConverter(BaseDictionaryConverter, ABC):
         on any conversion rules and drop_unmatched_keys is not enabled. Returns
         the newly converted checkpoint.
         """
-        checkpoint = self.pre_checkpoint_convert(
-            checkpoint, configs, from_index
+        self.pre_checkpoint_convert(
+            input_checkpoint, output_checkpoint, configs, from_index
         )
 
-        has_model = "model" in checkpoint
-        old_state_dict = checkpoint["model"] if has_model else checkpoint
-        new_state_dict = OrderedDict()
+        old_state_dict, new_state_dict = self.extract_model_dict(
+            input_checkpoint, output_checkpoint, configs, from_index,
+        )
 
         self.pre_model_convert(
             old_state_dict,
@@ -505,15 +533,10 @@ class BaseCheckpointConverter(BaseDictionaryConverter, ABC):
                 "proceeding even though some keys weren't matched because of --drop-unmatched-keys"
             )
 
-        if has_model:
-            checkpoint["model"] = new_state_dict
-        else:
-            checkpoint = new_state_dict
-
-        checkpoint = self.post_checkpoint_convert(checkpoint, from_index)
-
-        del old_state_dict
-        return checkpoint
+        self.post_checkpoint_convert(
+            input_checkpoint, output_checkpoint, configs, from_index
+        )
+        return output_checkpoint
 
     def pre_model_convert(
         self,
@@ -540,23 +563,41 @@ class BaseCheckpointConverter(BaseDictionaryConverter, ABC):
         """
 
     def pre_checkpoint_convert(
-        self, checkpoint, configs: Tuple[dict, dict], from_index: int,
+        self,
+        input_checkpoint,
+        output_checkpoint,
+        configs: Tuple[dict, dict],
+        from_index: int,
     ):
         r"""
         Hook executes before checkpoint conversion.
         """
-        return checkpoint
+
+    def extract_model_dict(
+        self,
+        input_checkpoint,
+        output_checkpoint,
+        configs: Tuple[dict, dict],
+        from_index: int,
+    ):
+        r"""
+        Hook to extract model state dicts out of the input/output checkpoint
+        """
+        return input_checkpoint, output_checkpoint
 
     def post_checkpoint_convert(
-        self, checkpoint, from_index: int,
+        self,
+        input_checkpoint,
+        output_checkpoint,
+        configs: Tuple[dict, dict],
+        from_index: int,
     ):
         r"""
         Hook executes after checkpoint conversion.
         """
-        return checkpoint
 
 
-class BaseCheckpointConverter_PT_PT(BaseCheckpointConverter):
+class BaseCheckpointConverter_CS_CS(BaseCheckpointConverter):
     def __init__(self):
         super().__init__()
 
@@ -565,44 +606,57 @@ class BaseCheckpointConverter_PT_PT(BaseCheckpointConverter):
         return ("mdl", "mdl")
 
     @classmethod
-    def load(cls, file: str, from_index: int,) -> OrderedDict:
-        if file.endswith(".index.json"):
-            # HF style sharded checkpoint
-            print("Detected HF sharded checkpoint")
-            index_dir = os.path.dirname(file)
-            with open(file, "r") as f:
-                index = json.load(f)
-                files = set(index["weight_map"].values())
-                combined_checkpoint = {}
-                for bin_file in files:
-                    print("Reading", bin_file)
-                    combined_checkpoint.update(
-                        cbtorch.load(os.path.join(index_dir, bin_file))
-                    )
-            return combined_checkpoint
-        else:
-            # Any other type of checkpoint
-            return cbtorch.load(file)
+    def load(cls, file: str, from_index: int) -> OrderedDict:
+        return cstorch.load(file, map_location="cpu")
 
     @classmethod
     def save(
-        cls,
-        file_without_ext: str,
-        checkpoint: OrderedDict,
-        from_index: int,
-        export_h5_checkpoint: bool = False,
+        cls, file_without_ext: str, checkpoint: OrderedDict, from_index: int,
     ) -> OrderedDict:
+
+        if isinstance(checkpoint, StreamingCSWriter):
+            checkpoint.save()
+            return checkpoint.checkpoint_file
+        else:
+            to_index = from_index - 1
+            output_file_format = cls.file_formats()[to_index]
+            file = file_without_ext + "." + output_file_format
+            cstorch.save(checkpoint, file)
+            return file
+
+    @classmethod
+    def init_output_checkpoint(
+        cls, file_without_ext: str, from_index: int, **kwargs
+    ) -> str:
         to_index = from_index - 1
         output_file_format = cls.file_formats()[to_index]
         file = file_without_ext + "." + output_file_format
-        if export_h5_checkpoint:
-            cbtorch.save(checkpoint, file)
-        else:
-            torch.save(checkpoint, file)
-        return file
+        return StreamingCSWriter(file)
+
+    def pre_checkpoint_convert(
+        self,
+        input_checkpoint,
+        output_checkpoint,
+        configs: Tuple[dict, dict],
+        from_index: int,
+    ):
+        # Copy non model keys like optimizer state:
+        for category in input_checkpoint:
+            if category != "model":
+                output_checkpoint[category] = input_checkpoint[category]
+        output_checkpoint["model"] = {}
+
+    def extract_model_dict(
+        self,
+        input_checkpoint,
+        output_checkpoint,
+        configs: Tuple[dict, dict],
+        from_index: int,
+    ):
+        return input_checkpoint["model"], output_checkpoint["model"]
 
 
-class BaseCheckpointConverter_HF_CS(BaseCheckpointConverter_PT_PT):
+class BaseCheckpointConverter_HF_CS(BaseCheckpointConverter_CS_CS):
     r"""HF checkpoints contain model only while CS checkpoints package model,
     optimizer, and lr_scheduler into a single checkpoint. This class overrides
     the post_checkpoint_convert to automatically extract/package the state_dict
@@ -616,29 +670,99 @@ class BaseCheckpointConverter_HF_CS(BaseCheckpointConverter_PT_PT):
     def file_formats() -> Tuple[str, str]:
         return ("bin", "mdl")
 
-    def pre_checkpoint_convert(
-        self, checkpoint, configs: Tuple[dict, dict], from_index: int,
-    ):
-        if from_index == 1:
-            # Finalize the CS sparsity early.
-            logging.info(
-                "Finalzing sparsity. The output checkpoint will be dense."
-            )
-            cs_config = configs[from_index]
-            if cs_config.get("sparsity", {}).get("type") == "sideband":
-                for weight in checkpoint["model"].values():
-                    weight[weight.isnan()] = 0
-        return checkpoint
+    @classmethod
+    def load(cls, file: str, from_index: int,) -> OrderedDict:
+        if file.endswith(".index.json"):
+            assert (
+                from_index == 0
+            ), ".index.json files are only supported when doing HF -> CS conversion"
+            return StreamingShardedHFReader(file)
+        else:
+            # Any other type of checkpoint
+            return cstorch.load(file, map_location="cpu")
 
-    def post_checkpoint_convert(
-        self, checkpoint, from_index: int,
+    @classmethod
+    def save(
+        cls, file_without_ext: str, checkpoint: OrderedDict, from_index: int,
+    ) -> OrderedDict:
+
+        if isinstance(checkpoint, StreamingCSWriter):
+            checkpoint.save()
+            return checkpoint.checkpoint_file
+        elif isinstance(checkpoint, StreamingShardedHFWriter):
+            checkpoint.save()
+            return checkpoint.checkpoint_dir
+        else:
+            to_index = from_index - 1
+            output_file_format = cls.file_formats()[to_index]
+            file = file_without_ext + "." + output_file_format
+            if from_index == 0:
+                torch.save(checkpoint, file)
+            else:
+                cstorch.save(checkpoint, file)
+            return file
+
+    @classmethod
+    def init_output_checkpoint(
+        cls,
+        file_without_ext: str,
+        from_index: int,
+        hf_shard_size: Union[str, int] = "10GB",
+        **kwargs,
+    ) -> str:
+        to_index = from_index - 1
+        output_file_format = cls.file_formats()[to_index]
+        file = file_without_ext + "." + output_file_format
+
+        if from_index == 0:
+            # HF -> CS
+            return StreamingCSWriter(file)
+        else:
+            # CS -> HF
+            return StreamingShardedHFWriter(
+                file_without_ext, shard_size=hf_shard_size
+            )
+
+    def pre_checkpoint_convert(
+        self,
+        input_checkpoint,
+        output_checkpoint,
+        configs: Tuple[dict, dict],
+        from_index: int,
     ):
         if from_index == 0:
-            packaged_checkpoint = OrderedDict()
-            packaged_checkpoint["model"] = checkpoint
-            return packaged_checkpoint
+            output_checkpoint["model"] = {}
+
+    def extract_model_dict(
+        self,
+        input_checkpoint,
+        output_checkpoint,
+        configs: Tuple[dict, dict],
+        from_index: int,
+    ):
+        if from_index == 0:
+            return input_checkpoint, output_checkpoint["model"]
         else:
-            return checkpoint["model"]
+            return input_checkpoint["model"], output_checkpoint
+
+    def post_model_convert(
+        self,
+        old_state_dict: OrderedDict,
+        new_state_dict: OrderedDict,
+        configs: Tuple[dict, dict],
+        from_index: int,
+        drop_unmatched_keys: bool,
+    ):
+        if from_index == 1:
+            cs_config = configs[from_index]
+            if cs_config.get("sparsity", {}).get("type") == "sideband":
+                # Finalize the CS sparsity in CS -> HF conversion.
+                logging.info(
+                    "Finalizing sparsity. The output checkpoint will be dense."
+                )
+                for key, weight in new_state_dict.items():
+                    weight[weight.isnan()] = 0
+                    new_state_dict[key] = weight
 
 
 class ConfigConversionError(Exception):
@@ -648,6 +772,8 @@ class ConfigConversionError(Exception):
 class BaseConfigConverter(BaseDictionaryConverter, ABC):
     def __init__(self):
         super().__init__(pbar_desc="Converting Config")
+        self.pre_convert_defaults = [{}, {}]
+        self.post_convert_defaults = [{}, {}]
 
     @staticmethod
     @abstractmethod
@@ -665,9 +791,7 @@ class BaseConfigConverter(BaseDictionaryConverter, ABC):
                 return yaml.load(f, Loader=yaml.SafeLoader)
         else:
             raise ValueError(
-                "Unsupported input file format: {}".format(
-                    self.input_file_format()
-                )
+                "Unsupported input file format: {}".format(input_file_format())
             )
 
     @classmethod
@@ -683,9 +807,7 @@ class BaseConfigConverter(BaseDictionaryConverter, ABC):
                 f.write(yaml.dump(config, indent=4))
         else:
             raise ValueError(
-                "Unsupported input file format: {}".format(
-                    self.output_file_format()
-                )
+                "Unsupported input file format: {}".format(output_file_format())
             )
         return file
 
@@ -745,6 +867,15 @@ class BaseConfigConverter(BaseDictionaryConverter, ABC):
     def pre_config_convert(
         self, config, from_index,
     ):
+        for key in self.pre_convert_defaults[from_index]:
+            if key not in config:
+                config[key] = self.pre_convert_defaults[from_index][key]
+            elif isinstance(self.pre_convert_defaults[from_index][key], dict):
+                for subkey, subvalue in self.pre_convert_defaults[from_index][
+                    key
+                ].items():
+                    if subkey not in config[key]:
+                        config[key][subkey] = subvalue
         return config
 
     def post_config_convert(
@@ -755,6 +886,16 @@ class BaseConfigConverter(BaseDictionaryConverter, ABC):
         from_index,
         drop_unmatched_keys,
     ):
+        to_index = 1 - from_index
+        for key in self.post_convert_defaults[to_index]:
+            if key not in new_config:
+                new_config[key] = self.post_convert_defaults[to_index][key]
+            elif isinstance(self.post_convert_defaults[to_index][key], dict):
+                for subkey, subvalue in self.post_convert_defaults[to_index][
+                    key
+                ].items():
+                    if subkey not in new_config[key]:
+                        new_config[key][subkey] = subvalue
         return new_config
 
     @staticmethod
@@ -791,6 +932,7 @@ class BaseConfigConverter_HF_CS(BaseConfigConverter):
 
     def __init__(self):
         super().__init__()
+        self.post_convert_defaults[1]["mixed_precision"] = True
 
     @staticmethod
     def file_formats() -> Tuple[str, str]:
@@ -799,10 +941,8 @@ class BaseConfigConverter_HF_CS(BaseConfigConverter):
     def pre_config_convert(
         self, config, from_index,
     ):
-        if from_index == 1:
-            return config["model"]
-        else:
-            return config
+        model_config = config["model"] if from_index == 1 else config
+        return super().pre_config_convert(model_config, from_index)
 
     def post_config_convert(
         self,
@@ -812,12 +952,18 @@ class BaseConfigConverter_HF_CS(BaseConfigConverter):
         from_index,
         drop_unmatched_keys,
     ):
+        model_config = super().post_config_convert(
+            original_config,
+            old_config,
+            new_config,
+            from_index,
+            drop_unmatched_keys,
+        )
+
         if from_index == 0:
-            if "mixed_precision" not in new_config:
-                new_config["mixed_precision"] = True
-            return {"model": new_config}
+            return {"model": model_config}
         else:
-            return new_config
+            return model_config
 
 
 class BaseConfigConverter_CS_CS(BaseConfigConverter):
@@ -828,6 +974,8 @@ class BaseConfigConverter_CS_CS(BaseConfigConverter):
 
     def __init__(self):
         super().__init__()
+        self.post_convert_defaults[0]["mixed_precision"] = True
+        self.post_convert_defaults[1]["mixed_precision"] = True
 
     @staticmethod
     def file_formats() -> Tuple[str, str]:
@@ -836,7 +984,7 @@ class BaseConfigConverter_CS_CS(BaseConfigConverter):
     def pre_config_convert(
         self, config, from_index,
     ):
-        return config["model"]
+        return super().pre_config_convert(config["model"], from_index)
 
     def post_config_convert(
         self,
@@ -851,7 +999,13 @@ class BaseConfigConverter_CS_CS(BaseConfigConverter):
             for key in original_config
             if key != "model"
         }
-        final_config["model"] = new_config
+        final_config["model"] = super().post_config_convert(
+            original_config,
+            old_config,
+            new_config,
+            from_index,
+            drop_unmatched_keys,
+        )
         return final_config
 
 

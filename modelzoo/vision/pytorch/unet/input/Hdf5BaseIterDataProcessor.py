@@ -18,7 +18,8 @@ from abc import ABC, abstractmethod
 import torch
 from torchvision import transforms
 
-from modelzoo.common.pytorch import cb_model as cm
+import cerebras_pytorch as cstorch
+import cerebras_pytorch.distributed as dist
 from modelzoo.common.pytorch.input_utils import get_streaming_batch_size
 from modelzoo.common.pytorch.utils import BufferedShuffleDataset
 from modelzoo.vision.pytorch.input.utils import create_worker_cache
@@ -62,10 +63,10 @@ class Hdf5BaseIterDataProcessor(ABC, torch.utils.data.IterableDataset):
 
         use_worker_cache = params["use_worker_cache"]
         self.data_dir = params["data_dir"]
-        if use_worker_cache and cm.is_streamer():
-            if not cm.is_appliance():
+        if use_worker_cache and dist.is_streamer():
+            if not cstorch.use_cs():
                 raise RuntimeError(
-                    "use_worker_cache not supported for non-appliance runs"
+                    "use_worker_cache not supported for non-CS runs"
                 )
             else:
                 self.data_dir = create_worker_cache(self.data_dir)
@@ -88,7 +89,7 @@ class Hdf5BaseIterDataProcessor(ABC, torch.utils.data.IterableDataset):
         self.loss_type = params["loss"]
 
         self.shuffle_seed = params.get("shuffle_seed", None)
-        if self.shuffle_seed:
+        if self.shuffle_seed is not None:
             torch.manual_seed(self.shuffle_seed)
 
         self.augment_data = params.get("augment_data", True)
@@ -110,8 +111,8 @@ class Hdf5BaseIterDataProcessor(ABC, torch.utils.data.IterableDataset):
         else:
             self.mp_type = torch.float32
 
-        self.num_tasks = cm.num_streamers() if cm.is_streamer() else 1
-        self.task_id = cm.get_streaming_rank() if cm.is_streamer() else 0
+        self.num_tasks = dist.num_streamers() if dist.is_streamer() else 1
+        self.task_id = dist.get_streaming_rank() if dist.is_streamer() else 0
 
         # set later once processor gets a call to create a dataloader
         self.num_examples_in_this_task = 0
@@ -150,7 +151,7 @@ class Hdf5BaseIterDataProcessor(ABC, torch.utils.data.IterableDataset):
             worker_id = 0
             num_workers = 1
 
-        if self.shuffle_seed:
+        if self.shuffle_seed is not None:
             # Use a unique seed for each worker.
             random.seed(self.shuffle_seed + worker_id)
 
@@ -175,7 +176,9 @@ class Hdf5BaseIterDataProcessor(ABC, torch.utils.data.IterableDataset):
             batch_size=self.batch_size,
             drop_last=self.drop_last,
             num_workers=self.num_workers,
-            prefetch_factor=self.prefetch_factor if self.num_workers > 0 else 2,
+            prefetch_factor=self.prefetch_factor
+            if self.num_workers > 0
+            else None,
             persistent_workers=self.persistent_workers
             if self.num_workers > 0
             else False,

@@ -18,6 +18,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from cerebras_pytorch.metrics import AccuracyMetric
 from modelzoo.common.pytorch.run_utils import half_dtype_instance
 
 
@@ -87,21 +88,9 @@ class MNISTModel(nn.Module):
         if isinstance(compute_eval_metrics, bool) and compute_eval_metrics:
             compute_eval_metrics = ["accuracy"]  # All metrics
 
-        self.experimental_api = params["runconfig"].get(
-            "experimental_api", True
-        )
-        self.model.experimental_api = self.experimental_api
-
         self.accuracy_metric = None
         for name in compute_eval_metrics:
             if "accuracy" in name:
-                if self.experimental_api:
-                    from cerebras_pytorch.experimental.metrics import (
-                        AccuracyMetric,
-                    )
-                else:
-                    from modelzoo.common.pytorch.metrics import AccuracyMetric
-
                 self.accuracy_metric = AccuracyMetric(name=name)
             else:
                 raise ValueError(f"Unknown metric: {name}")

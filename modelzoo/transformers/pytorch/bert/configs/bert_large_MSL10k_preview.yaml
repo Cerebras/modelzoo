@@ -21,7 +21,7 @@ train_input:
     max_sequence_length: 10256
     max_predictions_per_seq: 1538
     # The effective batch size, which is evenly divided across "num_csx" systems used for the run
-    batch_size: 66
+    batch_size: 30
     whole_word_masking: False
     do_lower: True
     masked_lm_prob: 0.15
@@ -38,7 +38,7 @@ eval_input:
     max_predictions_per_seq: 80
     max_sequence_length: 512
     # The effective batch size, which is evenly divided across "num_csx" systems used for the run
-    batch_size: 66
+    batch_size: 30
     whole_word_masking: False
     do_lower: True
     masked_lm_prob: 0.15
@@ -68,28 +68,25 @@ model:
 
 optimizer:
     optimizer_type: "AdamW"
-    disable_lr_steps_reset: True
     learning_rate:
     - scheduler: "Linear"
       initial_learning_rate: 0.0
-      end_learning_rate: 1.2890625e-05
-      steps: 38787
+      end_learning_rate: 8.6e-05
+      total_iters: 85331
     - scheduler: "Linear"
-      initial_learning_rate: 1.2890625e-05
+      initial_learning_rate: 8.6e-05
       end_learning_rate: 0.0
-      steps: 8533300
+      total_iters: 18773260
     loss_scaling_factor: 1.0
     max_gradient_norm: 1.0
-    weight_decay_rate: 0.01
+    weight_decay: 0.01
 
 runconfig:
     checkpoint_steps: 1000
-    eval_steps: 150
+    eval_steps: 331
     log_steps: 1
     max_steps: 10000
     model_dir: "./model_dir"
     save_initial_checkpoint: True
-    save_losses: True
     seed: 1
-    show_debug_metrics: False
     use_cs_grad_accum: True

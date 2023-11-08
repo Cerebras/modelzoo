@@ -16,12 +16,12 @@ import logging
 
 import torch.nn as nn
 
-from modelzoo.common.pytorch.metrics import AccuracyMetric, PerplexityMetric
+import cerebras_pytorch as cstorch
+from cerebras_pytorch.metrics import AccuracyMetric, PerplexityMetric
 from modelzoo.common.pytorch.model_utils.T5ForConditionalGenerationLoss import (
     T5ForConditionalGenerationLoss,
 )
 from modelzoo.transformers.pytorch.t5.t5_model import T5ForConditionalGeneration
-from modelzoo.transformers.pytorch.t5.utils import set_custom_stack_params
 
 
 class T5ForConditionalGenerationModel(nn.Module):
@@ -48,9 +48,6 @@ class T5ForConditionalGenerationModel(nn.Module):
         if self.compute_eval_metrics:
             self.accuracy_metric = AccuracyMetric(name="eval/accuracy_lm")
             self.perplexity_metric = PerplexityMetric(name="eval/perplexity_lm")
-
-        # Add custom Cerebras stack flags
-        set_custom_stack_params()
 
     def _post_device_transfer(self):
         self.model.tie_weights()
@@ -86,7 +83,7 @@ class T5ForConditionalGenerationModel(nn.Module):
             "tie_word_embeddings": model_params.pop(
                 "share_embedding_weights", True,
             ),
-            "use_t5_layer_norm": model_params.pop("use_t5_layer_norm", True),
+            "norm_type": model_params.pop("norm_type", "rmsnorm"),
             "dropout_rate": model_params.pop("dropout_rate"),
             "layer_norm_epsilon": float(
                 model_params.pop("layer_norm_epsilon", 1.0e-5),
@@ -154,9 +151,7 @@ class T5ForConditionalGenerationModel(nn.Module):
 
         self.enable_vts = model_params.pop("enable_vts", False)
         if self.enable_vts:
-            from modelzoo.common.pytorch import cbtorch
-
-            self.vts = cbtorch.nn.StripPadding()
+            self.vts = cstorch.nn.StripPadding()
         else:
             self.vts = None
 

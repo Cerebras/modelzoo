@@ -3,7 +3,7 @@
 ##############################################################
 
 train_input:
-    data_processor: "GptHDF5DataProcessor"
+    data_processor: "GptHDF5MapDataProcessor"
     data_dir:
         - "./language/datasets/pile_original/hdf5_dataset/train_shuffled_msl2048/0/"
         - "./language/datasets/pile_original/hdf5_dataset/train_shuffled_msl2048/1/"
@@ -15,21 +15,22 @@ train_input:
         - "./language/datasets/pile_original/hdf5_dataset/train_shuffled_msl2048/7/"
         - "./language/datasets/pile_original/hdf5_dataset/train_shuffled_msl2048/8/"
         - "./language/datasets/pile_original/hdf5_dataset/train_shuffled_msl2048/9/"
-    shuffle: True
+    shuffle: False # data is expected to be shuffled during preprocessing
     shuffle_seed: 0
     # The effective batch size, which is evenly divided across "num_csx" systems used for the run
-    batch_size: 528 # 528 global = (132 micro)*(num_csx)*(grad accum steps)
-    num_workers: 1
+    batch_size: 528 # 528 global = (264 micro)*(num_csx)*(grad accum steps)
+    micro_batch_size: 264 # forcing this micro batch size will lead to best performance but could be changed for better convergence
+    num_workers: 8
     prefetch_factor: 10
     persistent_workers: True # Important to avoid seeding at each epoch
 
 eval_input:
-    data_processor: "GptHDF5DataProcessor"
+    data_processor: "GptHDF5MapDataProcessor"
     data_dir: "./language/datasets/pile_original/hdf5_dataset/val_msl2048/"
     # The effective batch size, which is evenly divided across "num_csx" systems used for the run
-    batch_size: 132
+    batch_size: 264
     shuffle: False
-    num_workers: 1
+    num_workers: 8
 
 ### Model
 model:
@@ -59,8 +60,7 @@ model:
     use_ffn_bias: True
 
     # Task-specific
-    loss_scaling: "batch_size" # needed for gradient accumulation
-    loss_weight: 0.00048828125 # = 1/max_sequence_length
+    # loss_scaling defaults to num_tokens
     use_bias_in_output: False
 
     # Initializers
@@ -92,30 +92,28 @@ model:
 ### Optimization
 optimizer:
     optimizer_type: "AdamW"
-    beta1: 0.9
-    beta2: 0.95
+    betas: [0.9, 0.95]
     eps: 1.0e-8
-    weight_decay_rate: 0.1
+    weight_decay: 0.1
     max_gradient_norm: 1.0
     correct_bias: True
     learning_rate:
       - scheduler: "Linear"
         initial_learning_rate: 0.0
         end_learning_rate: 0.0002
-        steps: 346
+        total_iters: 346
       - scheduler: "CosineDecay"
         initial_learning_rate: 0.0002
         end_learning_rate: 2.0e-05
-        steps: 23988
+        total_iters: 23988
     log_summaries: True
 
 ### Cerebras parameters
 runconfig:
     max_steps: 24334
-    eval_steps: 1405
+    eval_steps: 702
     checkpoint_steps: 2000
     enable_distributed: False
-    save_losses: True
     log_steps: 1
     save_initial_checkpoint: False
     use_cs_grad_accum: True

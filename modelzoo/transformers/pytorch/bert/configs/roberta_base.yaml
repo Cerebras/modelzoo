@@ -43,6 +43,7 @@ eval_input:
 
 model:
     disable_nsp: True  # turn off NSP head
+    mask_padding_in_positional_embed: True
     vocab_size: 28996
     hidden_size: 768
     num_hidden_layers: 12
@@ -60,17 +61,16 @@ model:
 optimizer:
     optimizer_type: "AdamW"
     correct_bias: True
-    weight_decay_rate: 0.01
-    disable_lr_steps_reset: True
+    weight_decay: 0.01
     learning_rate:
        - scheduler: "Linear"
          initial_learning_rate: 0.0
          end_learning_rate: 0.0001
-         steps: 10000
+         total_iters: 10000
        - scheduler: "Linear"
          initial_learning_rate: 0.0001
          end_learning_rate: 0.0
-         steps: 1000000
+         total_iters: 1000000
     loss_scaling_factor: "dynamic"
     max_gradient_norm: 1.0
 #    grad_accum_steps: 32 # helps fit in GPU memory
@@ -81,8 +81,6 @@ runconfig:
     checkpoint_steps: 5000
     seed: 1
     model_dir: "./model_dir"
-    show_debug_metrics: False
-    save_losses: True
     save_initial_checkpoint: True
     eval_steps: 240
     use_cs_grad_accum: True

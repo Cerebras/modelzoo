@@ -179,15 +179,25 @@ def add_general_arguments(
         help="Checkpoint to initialize weights from.",
     )
     optional_arguments.add_argument(
-        "--is_pretrained_checkpoint",
+        "--disable_strict_checkpoint_loading",
         action="store_true",
-        default=None if first_parse else False,
+        default=None,
         help=(
-            "Flag indicating that the provided checkpoint is from a "
-            "pre-training run. If set, training will begin from step 0 "
-            "after loading the matching weights from the checkpoint and "
-            "ignoring the optimizer state if present in the checkpoint."
-            "Defaults to False."
+            "Disabled strict loading of the model state from the checkpoint."
+        ),
+    )
+    optional_arguments.add_argument(
+        "--load_checkpoint_states",
+        default=None,
+        help=(
+            "Comma-separated string of keys to explicitly specify the components "
+            "whose state should be loaded if present in a checkpoint. If this flag is "
+            "used, then all component states that exist in a checkpoint, but are not "
+            "specified to load via the flag will be ignored. For example, for fine-tuning "
+            "runs on a different dataset, setting `--load_checkpoint_states=\"model\" will only "
+            "load the model state; any `optimizer` or `dataloader` state present in the "
+            "checkpoint will not be loaded. By default, the config is `None`, i.e. "
+            "everything present in the checkpoint is loaded."
         ),
     )
     optional_arguments.add_argument(
@@ -254,7 +264,10 @@ def add_csx_arguments(
         "-c",
         "--compile_dir",
         default=None,
-        help="Compile directory where compile artifacts will be written.",
+        help="Remote compile directory where compile artifacts will be written."
+        " This path is appended to a base root directory common for all"
+        " compiles on the Wafer-Scale Cluster and is written in the remote"
+        " filesystem. Defaults to None.",
     )
     optional_arguments.add_argument(
         "--job_labels",
@@ -320,11 +333,14 @@ def add_csx_arguments(
     )
     optional_arguments.add_argument(
         "--num_act_servers",
-        default=None if first_parse else 1,
+        default=None,
         type=int,
-        help="Number of ACT server per device. Defaults to 1.",
+        help="Maximum number of activation servers to use per device. "
+        "Defaults to None",
     )
-
+    optional_arguments.add_argument(
+        "--mgmt_namespace", default=None, help=argparse.SUPPRESS,
+    )
     return
 
 
@@ -536,36 +552,39 @@ def update_params_from_args(
             )
 
     mode = params.get("mode")
-    if (
-        params.get("is_pretrained_checkpoint")
-        and not params.get("checkpoint_path")
-        and mode == "train"
-    ):
-        raise RuntimeError(
-            "'--is_pretrained_checkpoint' can only be used if a "
-            "'--checkpoint_path' is provided."
-        )
 
     # Nice to have warning for users to understand behavior for
-    # --is_pretrained_checkpoint and --checkpoint_path
+    # --load_checkpoint_states and --checkpoint_path
     if mode == "train" and params.get("checkpoint_path"):
-        if params.get("is_pretrained_checkpoint"):
-            logging.info(
-                "A checkpoint path is provided, and '--is_pretrained_checkpoint' "
-                "is set. This will load the model weights from the checkpoint, "
-                "reset the optimizer states and start training from step 0."
+        if params.get("load_checkpoint_states"):
+            checkpoint_keys_to_load = set(
+                params["load_checkpoint_states"].split(",")
             )
-        else:
-            logging.info(
-                "A checkpoint path is provided, and '--is_pretrained_checkpoint' "
-                "is not set. This will load the model weights and optimizer  "
-                "states from the checkpoint and resume training from the last "
-                "saved step."
-            )
+
+            if (
+                len(checkpoint_keys_to_load) == 1
+                and "model" in checkpoint_keys_to_load
+            ):  # Load model state only
+                logging.info(
+                    "A checkpoint path is provided, and `--load_checkpoint_states=\"model\"` is "
+                    "set which is loading state for the model only. This will load the model "
+                    "model weights from the checkpoint, reset the optimizer states and start "
+                    "training from step 0."
+                )
+            else:
+                states = (
+                    "All"
+                    if len(checkpoint_keys_to_load) == 0
+                    else (", ".join(checkpoint_keys_to_load))
+                )
+                logging.info(
+                    f"{states} states from the checkpoint will be loaded (if present). "
+                    "To only include a subset of components to load, specify "
+                    "`--load_checkpoint_states` with the components to include."
+                )
 
     model_dir = params["model_dir"]
     os.makedirs(model_dir, exist_ok=True)
-    params.setdefault("service_dir", model_dir)
 
 
 def post_process_params(
@@ -573,13 +592,10 @@ def post_process_params(
 ) -> list:
     """ Removes arguments that are not used by this target device. """
     target_device = params["runconfig"].pop("target_device", None)
-    execution_strategy = params["runconfig"].pop("execution_strategy", None)
     assert target_device is not None
 
     new_command, invalid_params = [], []
     new_command.append(target_device)
-    if execution_strategy:
-        new_command.append(execution_strategy)
 
     for k, v in params["runconfig"].copy().items():
         if v == None or v == False:

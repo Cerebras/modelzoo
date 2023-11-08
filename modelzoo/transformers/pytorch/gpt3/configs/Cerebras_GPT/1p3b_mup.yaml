@@ -63,21 +63,21 @@ model:
     embedding_initializer:
         mean: 0.0
         name: truncated_normal
-        std: 0.02
-        a: -0.04
-        b: 0.04
+        std: 0.08
+        a: -0.16
+        b: 0.16
     initializer:
         mean: 0.0
         name: truncated_normal
-        std: 0.02
-        a: -0.04
-        b: 0.04
+        std: 0.028284271247461898
+        a: -0.056568542494923796
+        b: 0.056568542494923796
     output_layer_initializer:
         mean: 0.0
         name: truncated_normal
-        std: 0.0025
-        a: -0.005
-        b: 0.005
+        std: 0.00408248290463863
+        a: -0.00816496580927726
+        b: 0.00816496580927726
 
     # Task-specific
     loss_scaling: "batch_size" # needed for gradient accumulation
@@ -96,20 +96,19 @@ model:
 ### Optimization
 optimizer:
     optimizer_type: "AdamW"
-    beta1: 0.9
-    beta2: 0.95
+    betas: [0.9, 0.95]
     eps: 1.0e-8
     max_gradient_norm: 1.0
     learning_rate:
       - scheduler: "Linear"
         initial_learning_rate: 0.0
         end_learning_rate: 0.006
-        steps: 346
+        total_iters: 346
       - scheduler: "CosineDecay"
         initial_learning_rate: 0.006
         end_learning_rate: 0.0006
-        steps: 23988
-    weight_decay_rate: 0.1
+        total_iters: 23988
+    weight_decay: 0.1
     log_summaries: True
     correct_bias: True
     adjust_learning_rate:
@@ -121,7 +120,6 @@ runconfig:
     eval_steps: 2811
     checkpoint_steps: 2000
     enable_distributed: False
-    save_losses: True
     log_steps: 1
     save_initial_checkpoint: False
     use_cs_grad_accum: True

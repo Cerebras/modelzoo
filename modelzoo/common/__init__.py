@@ -20,8 +20,3 @@ if CSOFT_PACKAGE == CSoftPackage.SRC:
     appliance_environ = os.environ
 elif CSOFT_PACKAGE == CSoftPackage.WHEEL:
     from cerebras_appliance.environment import appliance_environ
-elif CSOFT_PACKAGE == CSoftPackage.NONE:
-    appliance_environ = os.environ
-else:
-    # We should never get here
-    assert False, f"Invalid value for `CSOFT_PACKAGE {CSOFT_PACKAGE}"

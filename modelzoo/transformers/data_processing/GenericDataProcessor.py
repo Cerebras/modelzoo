@@ -123,7 +123,9 @@ class GenericDataProcessor:
             batch_size=self.batch_size,
             drop_last=self.drop_last,
             num_workers=self.num_workers,
-            prefetch_factor=self.prefetch_factor if self.num_workers > 0 else 2,
+            prefetch_factor=self.prefetch_factor
+            if self.num_workers > 0
+            else None,
             persistent_workers=self.persistent_workers
             if self.num_workers > 0
             else False,

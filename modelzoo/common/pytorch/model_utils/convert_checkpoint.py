@@ -41,52 +41,88 @@ from modelzoo.common.pytorch.model_utils.checkpoint_converters.bert_finetune imp
     Converter_BertForTokenClassification_HF_CS17,
     Converter_BertForTokenClassification_HF_CS18,
 )
+from modelzoo.common.pytorch.model_utils.checkpoint_converters.falcon import (
+    Converter_Falcon_Headless_HF_CS20,
+    Converter_Falcon_HF_CS20,
+)
 from modelzoo.common.pytorch.model_utils.checkpoint_converters.gpt2_hf_cs import (  # To CS 1.7; To CS 1.8
+    Converter_GPT2LMHeadModel_CS18_CS20,
     Converter_GPT2LMHeadModel_HF_CS17,
     Converter_GPT2LMHeadModel_HF_CS18,
+    Converter_GPT2LMHeadModel_HF_CS20,
     Converter_GPT2Model_HF_CS17,
     Converter_GPT2Model_HF_CS18,
+    Converter_GPT2Model_HF_CS20,
 )
 from modelzoo.common.pytorch.model_utils.checkpoint_converters.gpt_neox_hf_cs import (  # To CS 1.7; To CS 1.8
     Converter_GPT_Neox_Headless_HF_CS17,
     Converter_GPT_Neox_Headless_HF_CS18,
+    Converter_GPT_Neox_Headless_HF_CS20,
+    Converter_GPT_Neox_LMHeadModel_CS18_CS20,
     Converter_GPT_Neox_LMHeadModel_HF_CS17,
     Converter_GPT_Neox_LMHeadModel_HF_CS18,
+    Converter_GPT_Neox_LMHeadModel_HF_CS20,
 )
 from modelzoo.common.pytorch.model_utils.checkpoint_converters.gptj_hf_cs import (  # To CS 1.7; To CS 1.8
     Converter_GPTJ_Headless_HF_CS17,
     Converter_GPTJ_Headless_HF_CS18,
+    Converter_GPTJ_Headless_HF_CS20,
+    Converter_GPTJ_LMHeadModel_CS18_CS20,
     Converter_GPTJ_LMHeadModel_HF_CS17,
     Converter_GPTJ_LMHeadModel_HF_CS18,
+    Converter_GPTJ_LMHeadModel_HF_CS20,
 )
 from modelzoo.common.pytorch.model_utils.checkpoint_converters.llama import (  # To CS 1.9
+    Converter_LlamaForCausalLM_CS19_CS20,
     Converter_LlamaForCausalLM_HF_CS19,
+    Converter_LlamaForCausalLM_HF_CS20,
     Converter_LlamaModel_HF_CS19,
+    Converter_LlamaModel_HF_CS20,
+)
+from modelzoo.common.pytorch.model_utils.checkpoint_converters.roberta import (
+    Converter_RobertaPretrainModel_HF_CS18,
 )
 from modelzoo.common.pytorch.model_utils.checkpoint_converters.salesforce_codegen_hf_cs import (  # To CS 1.7; To CS 1.8
     Converter_Codegen_Headless_HF_CS17,
     Converter_Codegen_Headless_HF_CS18,
+    Converter_Codegen_Headless_HF_CS20,
+    Converter_Codegen_LMHeadModel_CS18_CS20,
     Converter_Codegen_LMHeadModel_HF_CS17,
     Converter_Codegen_LMHeadModel_HF_CS18,
+    Converter_Codegen_LMHeadModel_HF_CS20,
+)
+from modelzoo.common.pytorch.model_utils.checkpoint_converters.streaming_checkpoints import (
+    StreamingShardedHFWriter,
 )
 from modelzoo.common.pytorch.model_utils.checkpoint_converters.t5 import (  # To CS 1.7; To CS 1.8
     Converter_T5_CS16_CS17,
     Converter_T5_CS16_CS18,
     Converter_T5_CS17_CS18,
+    Converter_T5_CS18_CS20,
     Converter_T5_HF_CS17,
     Converter_T5_HF_CS18,
+    Converter_T5_HF_CS20,
 )
 
-from modelzoo.common.pytorch.model_utils.checkpoint_converters.falcon import (  # noqa
-    Converter_Falcon_Headless_HF_CS19,
-    Converter_Falcon_HF_CS19,
+from modelzoo.common.pytorch.model_utils.checkpoint_converters.btlm_hf_cs import (  # noqa
+    Converter_BTLMLMHeadModel_HF_CS20,
+    Converter_BTLMModel_HF_CS20,
 )
+
 
 from modelzoo.common.pytorch.model_utils.checkpoint_converters.bloom_hf_cs import (  # noqa
+    Converter_BloomLMHeadModel_CS19_CS20,
     Converter_BloomLMHeadModel_HF_CS19,
+    Converter_BloomLMHeadModel_HF_CS20,
     Converter_BloomModel_HF_CS19,
+    Converter_BloomModel_HF_CS20,
 )
 
+
+from modelzoo.common.pytorch.model_utils.checkpoint_converters.starcoder import (  # noqa
+    Converter_StarcoderForCausalLM_HF_CS20,
+    Converter_StarcoderModel_HF_CS20,
+)
 
 converters = {
     "bert": [
@@ -123,67 +159,98 @@ converters = {
         Converter_BertForQuestionAnswering_HF_CS18,
     ],
     "bloom": [
+        Converter_BloomLMHeadModel_CS19_CS20,
         Converter_BloomLMHeadModel_HF_CS19,
+        Converter_BloomLMHeadModel_HF_CS20,
     ],
     "bloom-headless": [
         Converter_BloomModel_HF_CS19,
+        Converter_BloomModel_HF_CS20,
     ],
+    "btlm": [Converter_BTLMLMHeadModel_HF_CS20],
+    "btlm-headless": [Converter_BTLMModel_HF_CS20],
     "codegen": [
+        Converter_Codegen_LMHeadModel_CS18_CS20,
         Converter_Codegen_LMHeadModel_HF_CS17,
         Converter_Codegen_LMHeadModel_HF_CS18,
+        Converter_Codegen_LMHeadModel_HF_CS20,
     ],
     "codegen-headless": [
         Converter_Codegen_Headless_HF_CS17,
         Converter_Codegen_Headless_HF_CS18,
+        Converter_Codegen_Headless_HF_CS20,
     ],
     "gpt2": [
+        Converter_GPT2LMHeadModel_CS18_CS20,
         Converter_GPT2LMHeadModel_HF_CS17,
         Converter_GPT2LMHeadModel_HF_CS18,
+        Converter_GPT2LMHeadModel_HF_CS20,
     ],
     "gpt2-headless": [
         Converter_GPT2Model_HF_CS17,
         Converter_GPT2Model_HF_CS18,
+        Converter_GPT2Model_HF_CS20,
     ],
     "gptj": [
+        Converter_GPTJ_LMHeadModel_CS18_CS20,
         Converter_GPTJ_LMHeadModel_HF_CS17,
         Converter_GPTJ_LMHeadModel_HF_CS18,
+        Converter_GPTJ_LMHeadModel_HF_CS20,
     ],
     "gptj-headless": [
         Converter_GPTJ_Headless_HF_CS17,
         Converter_GPTJ_Headless_HF_CS18,
+        Converter_GPTJ_Headless_HF_CS20,
     ],
     "gpt-neox": [
+        Converter_GPT_Neox_LMHeadModel_CS18_CS20,
         Converter_GPT_Neox_LMHeadModel_HF_CS17,
         Converter_GPT_Neox_LMHeadModel_HF_CS18,
+        Converter_GPT_Neox_LMHeadModel_HF_CS20,
     ],
     "gpt-neox-headless": [
         Converter_GPT_Neox_Headless_HF_CS17,
         Converter_GPT_Neox_Headless_HF_CS18,
+        Converter_GPT_Neox_Headless_HF_CS20,
     ],
-    "llama": [Converter_LlamaForCausalLM_HF_CS19,],
-    "llama-headless": [Converter_LlamaModel_HF_CS19,],
+    "llama": [
+        Converter_LlamaForCausalLM_CS19_CS20,
+        Converter_LlamaForCausalLM_HF_CS19,
+        Converter_LlamaForCausalLM_HF_CS20,
+    ],
+    "llama-headless": [
+        Converter_LlamaModel_HF_CS19,
+        Converter_LlamaModel_HF_CS20,
+    ],
+    "roberta": [Converter_RobertaPretrainModel_HF_CS18,],
+    "starcoder": [Converter_StarcoderForCausalLM_HF_CS20,],
+    "starcoder-headless": [Converter_StarcoderModel_HF_CS20,],
     "t5": [
         Converter_T5_CS16_CS17,
         Converter_T5_CS16_CS18,
         Converter_T5_CS17_CS18,
+        Converter_T5_CS18_CS20,
         Converter_T5_HF_CS17,
         Converter_T5_HF_CS18,
+        Converter_T5_HF_CS20,
     ],
-    "transformer": [  # Transformer model shares same codebase as T5
-        Converter_T5_CS16_CS17,
-        Converter_T5_CS16_CS18,
-        Converter_T5_CS17_CS18,
-    ],
-    "falcon": [Converter_Falcon_HF_CS19],
-    "falcon-headless": [Converter_Falcon_Headless_HF_CS19],
+    "falcon": [Converter_Falcon_HF_CS20,],
+    "falcon-headless": [Converter_Falcon_Headless_HF_CS20],
 }
+
+# Add some model aliases
+converters["ul2"] = converters["t5"]
+converters["flan-ul2"] = converters["t5"]
+converters["transformer"] = converters["t5"]
+converters["llamaV2"] = converters["llama"]
+converters["llamaV2-headless"] = converters["llama-headless"]
 
 
 def _print_supported_models():
     print("The following models are supported:\n")
     print(
         tabulate(
-            [[key] for key in converters],
+            [[key] for key in sorted(converters)],
             headers=["model"],
             tablefmt="fancy_grid",
         )
@@ -212,22 +279,21 @@ def _print_supported_models_converters(model=None, hide_notes=False):
                 "{}\n{}".format(converter.formats()[1], converter.formats()[0]),
             ]
             if not hide_notes:
-                row.append(_get_converter_notes(converter, width=70))
+                row.append(_get_converter_notes(converter, width=60))
             table += [row]
 
     if model is None:
-        for model in converters:
+        for model in sorted(converters):
             _add_model_converters(table, model)
     else:
         _add_model_converters(table, model)
-    # TODO: upgrade tabulate package so that we can use 'maxcolwidths' argument
     headers = ["model", "src-fmt", "tgt-fmt"]
     if not hide_notes:
         headers.append("notes")
     print(tabulate(table, headers=headers, tablefmt="fancy_grid"))
 
 
-def _get_model_converter(model, src_fmt, tgt_fmt):
+def get_model_converter(model, src_fmt, tgt_fmt):
     for converter in converters[model]:
         if converter.supports_conversion(src_fmt, tgt_fmt):
             return converter
@@ -238,7 +304,7 @@ def _select_model_and_config_converter(model, src_fmt, tgt_fmt):
     if model not in converters:
         _print_supported_models()
         return None, None, None, None
-    converter_class = _get_model_converter(model, src_fmt, tgt_fmt)
+    converter_class = get_model_converter(model, src_fmt, tgt_fmt)
     if converter_class is None:
         print("Cannot convert from ", src_fmt, "to", tgt_fmt)
         _print_supported_models_converters(model)
@@ -275,6 +341,7 @@ def _convert_checkpoint_helper(
     config_converter_class,
     config,
     config_from_index,
+    output_checkpoint={},
     drop_unmatched_keys=False,
     no_progress_bar=True,
     debug=False,
@@ -293,10 +360,12 @@ def _convert_checkpoint_helper(
         if checkpoint_from_index == 0
         else (new_config, config)
     )
+
     new_checkpoint = converter_class.convert(
         checkpoint,
         configs,
         checkpoint_from_index,
+        output_checkpoint=output_checkpoint,
         drop_unmatched_keys=drop_unmatched_keys,
         no_progress_bar=no_progress_bar,
         debug=debug,
@@ -312,7 +381,7 @@ def convert_checkpoint_from_file(
     checkpoint_file,
     config_file,
     outputdir=None,
-    export_h5_checkpoint=False,
+    hf_shard_size="10GB",
     drop_unmatched_keys=False,
     no_progress_bar=True,
     debug=False,
@@ -331,18 +400,6 @@ def convert_checkpoint_from_file(
     config = config_converter_class.load(config_file, config_from_index)
     checkpoint = converter_class.load(checkpoint_file, checkpoint_from_index)
 
-    new_checkpoint, new_config = _convert_checkpoint_helper(
-        converter_class,
-        checkpoint,
-        checkpoint_from_index,
-        config_converter_class,
-        config,
-        config_from_index,
-        drop_unmatched_keys,
-        no_progress_bar,
-        debug,
-    )
-
     if outputdir is not None and not os.path.exists(outputdir):
         os.makedirs(outputdir)
 
@@ -358,22 +415,45 @@ def convert_checkpoint_from_file(
         )
     )
 
+    output_checkpoint = converter_class.init_output_checkpoint(
+        new_checkpoint_file_without_ext,
+        checkpoint_from_index,
+        hf_shard_size=hf_shard_size,
+    )
+
+    new_checkpoint, new_config = _convert_checkpoint_helper(
+        converter_class,
+        checkpoint,
+        checkpoint_from_index,
+        config_converter_class,
+        config,
+        config_from_index,
+        output_checkpoint,
+        drop_unmatched_keys,
+        no_progress_bar,
+        debug,
+    )
+
     logging.info("Saving...")
     final_checkpoint_file = converter_class.save(
-        new_checkpoint_file_without_ext,
-        new_checkpoint,
-        checkpoint_from_index,
-        export_h5_checkpoint=export_h5_checkpoint,
+        new_checkpoint_file_without_ext, new_checkpoint, checkpoint_from_index,
     )
 
     config_folder, config_filename = os.path.split(config_file)
     new_config_filename_without_ext = (
         os.path.splitext(config_filename)[0] + "_to_" + tgt_fmt
     )
-    new_config_file_without_ext = (
-        os.path.join(outputdir, new_config_filename_without_ext)
-        if outputdir is not None
-        else os.path.join(config_folder, new_config_filename_without_ext)
+
+    if isinstance(output_checkpoint, StreamingShardedHFWriter):
+        output_config_dir = final_checkpoint_file
+        new_config_filename_without_ext = "config"
+    elif outputdir is not None:
+        output_config_dir = outputdir
+    else:
+        output_config_dir = config_folder
+
+    new_config_file_without_ext = os.path.join(
+        output_config_dir, new_config_filename_without_ext
     )
 
     final_config_file = config_converter_class.save(
@@ -389,6 +469,7 @@ def convert_checkpoint(
     tgt_fmt,
     checkpoint,
     config,
+    output_checkpoint=None,
     drop_unmatched_keys=False,
     no_progress_bar=True,
     debug=False,
@@ -402,6 +483,9 @@ def convert_checkpoint(
     if converter_class is None:
         return None
 
+    if output_checkpoint is None:
+        output_checkpoint = {}
+
     return _convert_checkpoint_helper(
         converter_class,
         checkpoint,
@@ -409,6 +493,7 @@ def convert_checkpoint(
         config_converter_class,
         config,
         config_from_index,
+        output_checkpoint,
         drop_unmatched_keys,
         no_progress_bar,
         debug,
@@ -451,6 +536,7 @@ def convert_config_from_file(
     new_config_filename_without_ext = (
         os.path.splitext(config_filename)[0] + "_to_" + tgt_fmt
     )
+
     new_config_file_without_ext = (
         os.path.join(outputdir, new_config_filename_without_ext)
         if outputdir is not None
@@ -508,11 +594,11 @@ def diff_checkpoints_from_file(
         print("No such file: {}".format(file_right))
         return False
     if file_left_exists and file_right_exists:
-        from modelzoo.common.pytorch import cbtorch
+        import cerebras_pytorch as cstorch
 
         print("Loading checkpoints...")
-        checkpoint_left = cbtorch.load(file_left)
-        checkpoint_right = cbtorch.load(file_right)
+        checkpoint_left = cstorch.load(file_left)
+        checkpoint_right = cstorch.load(file_right)
         print("Comparing checkpoints...")
         return diff_checkpoints(
             checkpoint_left,
@@ -662,45 +748,65 @@ The following commands are supported:
         getattr(self, fn_name)()
 
     def _convert(self):
-        parser = argparse.ArgumentParser(description='Convert checkpoint')
+        parser = argparse.ArgumentParser(
+            description='Convert a checkpoint & the corresponding config'
+        )
         parser.add_argument(
             'checkpoint_file',
             metavar='checkpoint-file',
             type=str,
-            help='Checkpoint file to convert',
+            help='Checkpoint file to convert (ex: .bin or .mdl file). For sharded HuggingFace checkpoints, provide the .index.json file instead.',
         )
 
         parser.add_argument(
-            '--model', type=str, required=True, help='Type of model',
+            '--model',
+            type=str,
+            required=True,
+            help='Name of model. For options, run `python convert_checkpoint.py list`.',
         )
 
         parser.add_argument(
-            '--src-fmt', type=str, required=True, help='Format of input',
+            '--src-fmt',
+            type=str,
+            required=True,
+            help='Format of input. Can be "hf" for HuggingFace Models, or "cs-X.X" (i.e. cs-2.0) for a Cerebras version type.',
         )
 
         parser.add_argument(
-            '--tgt-fmt', type=str, required=True, help='Format of output',
+            '--tgt-fmt',
+            type=str,
+            required=True,
+            help='Format of output. Can be "hf" for HuggingFace Models, or "cs-X.X" (i.e. cs-2.0) for a Cerebras version type.',
         )
         parser.add_argument(
-            '--config', type=str, required=True, help='Config file to convert',
+            '--config',
+            type=str,
+            required=True,
+            help='Config file corresponding to checkpoint',
         )
 
         parser.add_argument(
-            '--output-dir', type=str, help='Output directory',
+            '--output-dir',
+            type=str,
+            help='Output directory. Default: directory of input checkpoint/config',
         )
+
+        hf_shard_size_default = "10GB"
 
         parser.add_argument(
-            '--export-h5-checkpoint',
-            action='store_true',
-            help='If enabled, store the output checkpoint in H5 format instead\
-            of the standard pytorch pickle format. Using this format is recommended\
-             when converting between/to CS models as it is faster.',
+            '--hf-shard-size',
+            default=hf_shard_size_default,
+            type=str,
+            help=f'Size of HuggingFace checkpoint shards. Default: \
+                   {hf_shard_size_default}. Must be of the format integer \
+                   followed by unit. The following units are supported: GB \
+                   (gigabyte), GiB (gibibyte), MB (megabyte), MiB (mebibyte), \
+                   KB (kilobyte), and KIB (kibibyte)',
         )
-
         parser.add_argument(
             '--drop-unmatched-keys',
             action='store_true',
-            help='Output directory',
+            help="Ignore (drop) keys that aren't matched during conversion. Note that this will lead to a partially converted checkpoint.",
         )
 
         parser.add_argument(
@@ -725,7 +831,7 @@ The following commands are supported:
             args.checkpoint_file,
             args.config,
             args.output_dir,
-            args.export_h5_checkpoint,
+            args.hf_shard_size,
             args.drop_unmatched_keys,
             args.no_progress_bar,
             args.debug,
@@ -748,18 +854,29 @@ The following commands are supported:
         )
 
         parser.add_argument(
-            '--model', type=str, required=True, help='Type of model',
+            '--model',
+            type=str,
+            required=True,
+            help='Name of model. For options, run `python convert_checkpoint.py list`.',
         )
 
         parser.add_argument(
-            '--src-fmt', type=str, required=True, help='Format of input',
+            '--src-fmt',
+            type=str,
+            required=True,
+            help='Format of input. Can be "hf" for HuggingFace Models, or "cs-X.X" (i.e. cs-2.0) for a Cerebras version type.',
         )
 
         parser.add_argument(
-            '--tgt-fmt', type=str, required=True, help='Format of output',
+            '--tgt-fmt',
+            type=str,
+            required=True,
+            help='Format of output. Can be "hf" for HuggingFace Models, or "cs-X.X" (i.e. cs-2.0) for a Cerebras version type.',
         )
         parser.add_argument(
-            '--output-dir', type=str, help='Output directory',
+            '--output-dir',
+            type=str,
+            help='Output directory. Default: directory of input config',
         )
 
         parser.add_argument(
@@ -793,7 +910,7 @@ The following commands are supported:
             type=str.lower,
             default="all",
             nargs='?',
-            help="Either MODEL to list supported converters for a paritcular model or 'all' to list all converters",
+            help="Either MODEL to list supported converters for a particular model or 'all' to list all converters",
         )
         parser.add_argument(
             '--hide-notes', action='store_true', help='Hide notes column',

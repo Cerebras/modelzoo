@@ -51,8 +51,7 @@ model:
     share_embedding_weights: True
     share_encoder_decoder_embedding: True
 
-    # T5 layer norm (no mean subtraction, and bias correction)
-    use_t5_layer_norm: False
+    norm_type: "layernorm" # Disable T5 style layer norm (RMSNorm)
 
     # Encoder -- ffn
     d_ff: 3072 # Size of the intermediate feed forward layer in t5 blocks.
@@ -75,20 +74,11 @@ model:
     use_bfloat16: True
 
 optimizer:
-    optimizer_type: "AdamW" # in the paper AdaFactor is used, but AdamW should be a good alternative.
-    correct_bias: True
+    optimizer_type: "AdaFactor"
     learning_rate:
-        - scheduler: "Linear"
-          initial_learning_rate: 0.0
-          end_learning_rate: 0.0001
-          steps: 10000
-        - scheduler: "Linear"
-          initial_learning_rate: 0.0001
-          end_learning_rate: 0.00001
-          steps: 514288
-    weight_decay_rate: 0.01
-    max_gradient_norm: 1.0
-    # grad_accum_steps: 27 # helps fit in GPU memory
+    - scheduler: "InverseSquareRootDecay"
+      warmup_steps: 10000
+      scale: 1.0
 
 runconfig:
     max_steps: 524288
@@ -97,5 +87,3 @@ runconfig:
     eval_steps: 2510
     seed: 1
     model_dir: "./model_dir"
-    show_debug_metrics: False
-    save_losses: True

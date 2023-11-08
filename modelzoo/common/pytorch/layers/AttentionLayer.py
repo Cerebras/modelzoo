@@ -12,13 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
 from typing import Optional
 
 import torch
 import torch.nn as nn
 
-from modelzoo.common.pytorch import cb_model as cm
-from modelzoo.common.pytorch import cbtorch
+import cerebras_pytorch as cstorch
 from modelzoo.common.pytorch.model_utils.create_initializer import (
     create_initializer,
 )
@@ -84,9 +84,14 @@ class MultiheadAttention(nn.Module):
         scale_qk_dot_by_d=False,
         softmax_dtype_fp32=True,
         attention_kernel: Optional[str] = None,
+        scale_qk_dot_by_layer_idx=False,
         device=None,
     ):
-        _SUPPORTED_ATTENTION_TYPES = ["dot_product", "scaled_dot_product"]
+        _SUPPORTED_ATTENTION_TYPES = [
+            "dot_product",
+            "scaled_dot_product",
+            "scaled_cosine",
+        ]
         assert (
             attention_type in _SUPPORTED_ATTENTION_TYPES
         ), f"Attention type {attention_type} is not supported."
@@ -110,7 +115,7 @@ class MultiheadAttention(nn.Module):
         self.inner_dim = inner_dim if inner_dim is not None else embed_dim
 
         self.num_heads = num_heads
-        self.scale_dot_product = attention_type == "scaled_dot_product"
+        self.attention_type = attention_type
         self.neg_inf = None
 
         self.use_projection_bias = use_projection_bias
@@ -135,6 +140,11 @@ class MultiheadAttention(nn.Module):
             device=device,
         )
 
+        if self.attention_type == "scaled_cosine":
+            self.logits_scale = nn.Parameter(
+                torch.log(10 * torch.ones((self.num_heads, 1, 1)))
+            )
+
         self.dropout_layer = nn.Dropout(dropout)
 
         self.proj_output_dense_layer = nn.Linear(
@@ -155,9 +165,11 @@ class MultiheadAttention(nn.Module):
         self.softmax_dtype_fp32 = softmax_dtype_fp32
 
         self._scope = None
-        if attention_kernel and cm.use_cs():
-            self._scope = cbtorch.nn.Scope(attention_kernel.upper())
+        if attention_kernel and cstorch.use_cs():
+            self._scope = cstorch.nn.Scope(attention_kernel.upper())
         self.scale_qk_dot_by_d = scale_qk_dot_by_d
+
+        self.scale_qk_dot_by_layer_idx = scale_qk_dot_by_layer_idx
 
         self.__reset_parameters()
 
@@ -201,6 +213,7 @@ class MultiheadAttention(nn.Module):
         past_kv_self_attn=True,
         position_bias=None,
         rotary_position_embedding_helper=None,
+        layer_idx=None,
     ):
         """Applies the attention mechanism to queries ``q``, keys ``k`` and values ``v``.
 
@@ -278,7 +291,10 @@ class MultiheadAttention(nn.Module):
         )
 
         # Scale k for muP transfer before Transpose to get around the compile issue
-        if self.scale_qk_dot_by_d and self.scale_dot_product:
+        if (
+            self.scale_qk_dot_by_d
+            and self.attention_type == "scaled_dot_product"
+        ):
             depth = self.embed_dim // self.num_heads
             k *= torch.tensor(1 / float(depth) ** 0.5, dtype=k.dtype)
 
@@ -299,7 +315,7 @@ class MultiheadAttention(nn.Module):
 
         present_kv = self.construct_present_kv(cache_present_kv, k, v)
 
-        logits = self.calculate_attention_logits(q, k)
+        logits = self.calculate_attention_logits(q, k, layer_idx)
 
         attn_mask_processed = self.process_attention_mask(attn_mask, past_kv, q)
         key_padding_mask_processed = self.process_key_padding_mask(
@@ -441,15 +457,28 @@ class MultiheadAttention(nn.Module):
             present_kv = (k, v)
         return present_kv
 
-    def calculate_attention_logits(self, q, k):
-        if self.scale_dot_product:
+    def calculate_attention_logits(self, q, k, layer_idx=None):
+        if self.attention_type == "scaled_dot_product":
             depth = self.inner_dim // self.num_heads
             q = q * torch.tensor(1 / float(depth) ** 0.5, dtype=q.dtype,)
+        elif self.attention_type == "scaled_cosine":
+            q = q / q.norm(p=2, dim=-1, keepdim=True)
+            k = k / k.norm(p=2, dim=-1, keepdim=True)
+
+        if self.scale_qk_dot_by_layer_idx:
+            q = q * torch.tensor(1 / float(layer_idx + 1), dtype=q.dtype,)
 
         # calculate dot product attention
         logits = torch.matmul(
             q, k.transpose(-1, -2)
         )  # (B, H, Lq, E) * (B, H, E, Lk) -> (B, H, Lq, Lk)
+
+        if self.attention_type == "scaled_cosine":
+            logits_scale = torch.clamp(
+                self.logits_scale, max=math.log(1.0 / 0.01)
+            ).exp()
+            logits = logits * logits_scale
+
         return logits
 
     def process_attention_mask(self, attn_mask, past_kv, q):
@@ -516,37 +545,61 @@ class MultiheadAttention(nn.Module):
     def process_key_padding_mask(self, key_padding_mask, attn_mask, past_kv, q):
         key_padding_mask_reshaped = None
 
-        # apply key padding mask
         if key_padding_mask is not None:
-            # 2D [batch_size, sequence_length]
-            assert (
-                len(key_padding_mask.shape) == 2
-            ), "Only 2D key_padding_mask is supported for now"
+
             if (
                 not key_padding_mask.is_floating_point()
                 and not key_padding_mask.dtype == torch.bool
             ):
                 key_padding_mask = key_padding_mask.to(torch.bool)
 
-            # for broadcasting over all heads and queries
-            if past_kv is not None:
-                past_mask = torch.zeros(
-                    (q.shape[0], past_kv.shape[-2]), dtype=attn_mask.dtype,
-                )
-                key_padding_mask = torch.cat(
-                    [past_mask, key_padding_mask], axis=-1
-                )
-            batch_size, all_seq_length = key_padding_mask.shape
+            num_heads = 1
+            query_length = 1
+            if len(key_padding_mask.shape) == 2:
+                if past_kv is not None:
+                    past_mask = torch.zeros(
+                        (q.shape[0], past_kv.shape[-2]),
+                        dtype=key_padding_mask.dtype,
+                    )
+                    key_padding_mask = torch.cat(
+                        [past_mask, key_padding_mask], axis=-1
+                    )
+                batch_size, all_seq_length = key_padding_mask.shape
+            elif len(key_padding_mask.shape) == 3:
+                if past_kv is not None:
+                    past_mask = torch.zeros(
+                        (q.shape[0], q.shape[-2], past_kv.shape[-2]),
+                        dtype=key_padding_mask.dtype,
+                    )
+                    key_padding_mask = torch.cat(
+                        [past_mask, key_padding_mask], axis=-1
+                    )
+                (
+                    batch_size,
+                    query_length,
+                    all_seq_length,
+                ) = key_padding_mask.shape
+            else:
+                num_heads = key_padding_mask.shape[1]
+                if past_kv is not None:
+                    past_mask = torch.zeros(
+                        (q.shape[0], num_heads, q.shape[-2], past_kv.shape[-2]),
+                        dtype=key_padding_mask.dtype,
+                    )
+                    key_padding_mask = torch.cat(
+                        [past_mask, key_padding_mask], axis=-1
+                    )
+                (
+                    batch_size,
+                    num_heads,
+                    query_length,
+                    all_seq_length,
+                ) = key_padding_mask.shape
 
             # compute the attention_bias based on the mask.
             key_padding_mask_reshaped = key_padding_mask.view(
-                batch_size, 1, 1, all_seq_length
+                batch_size, num_heads, query_length, all_seq_length
             )
-            # Need to expand key_padding_mask's head dimension if we need to merge masks
-            if attn_mask is not None:
-                key_padding_mask_reshaped = key_padding_mask_reshaped.expand(
-                    batch_size, self.num_heads, 1, all_seq_length
-                )
 
         return key_padding_mask_reshaped
 
@@ -557,6 +610,14 @@ class MultiheadAttention(nn.Module):
             attn_mask_reshaped is not None
             and key_padding_mask_reshaped is not None
         ):
+            # Need to broadcast over dimensions before merging
+            (
+                attn_mask_reshaped,
+                key_padding_mask_reshaped,
+            ) = torch.broadcast_tensors(
+                attn_mask_reshaped, key_padding_mask_reshaped
+            )
+
             # Need to merge attention mask and key padding mask:
             attn_mask_is_float = attn_mask_reshaped.is_floating_point()
             key_padding_is_float = key_padding_mask_reshaped.is_floating_point()

@@ -27,7 +27,7 @@ ATTENTION_TYPE_DICT = {
 
 def get_attention_module(attn_module: Union[str, nn.Module], extra_params):
     """
-        This function retrieves the attention module according to 
+        This function retrieves the attention module according to
         `attn_module`. If the input is a string, the function lookups
         the corresponding attention class and checks if provided extra_params is
         correctly related to the attention module. If the input is a nn.Module,

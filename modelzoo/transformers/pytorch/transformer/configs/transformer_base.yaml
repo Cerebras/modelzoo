@@ -61,8 +61,7 @@ model:
     share_embedding_weights: True
     share_encoder_decoder_embedding: True
 
-    # T5 layer norm (no mean subtraction, and bias correction)
-    use_t5_layer_norm: False
+    norm_type: "layernorm" # Disable T5 style layer norm (RMSNorm)
     use_pre_encoder_decoder_layer_norm: False
 
     # Encoder -- ffn
@@ -90,95 +89,93 @@ model:
 
 optimizer:
     optimizer_type: "Adam"
-    beta1: 0.9
-    beta2: 0.98
-    epsilon: 1.0e-6
-    disable_lr_steps_reset: False
+    betas: [0.9, 0.98]
+    eps: 1.0e-6
     learning_rate:
         - scheduler: "Linear"
           initial_learning_rate: 0.0
           end_learning_rate: 0.000698683912937353  # (d_model(=512)**-0.5) * (warm=4000**-0.5)
-          steps: 4000
+          total_iters: 4000
         - scheduler: "Linear"
           initial_learning_rate: 0.000698683912937353
           end_learning_rate: 0.0004710847104863831
-          steps: 4800
+          total_iters: 4800
         - scheduler: "Linear"
           initial_learning_rate: 0.0004710847104863831
           end_learning_rate: 0.00037894798246424215
-          steps: 4800
+          total_iters: 4800
         - scheduler: "Linear"
           initial_learning_rate: 0.00037894798246424215
           end_learning_rate: 0.0003257949189616652
-          steps: 4800
+          total_iters: 4800
         - scheduler: "Linear"
           initial_learning_rate: 0.0003257949189616652
           end_learning_rate: 0.00029014271289331547
-          steps: 4800
+          total_iters: 4800
         - scheduler: "Linear"
           initial_learning_rate: 0.00029014271289331547
           end_learning_rate: 0.000264105988466404
-          steps: 4800
+          total_iters: 4800
         - scheduler: "Linear"
           initial_learning_rate: 0.000264105988466404
           end_learning_rate: 0.00024401778319601815
-          steps: 4800
+          total_iters: 4800
         - scheduler: "Linear"
           initial_learning_rate: 0.00024401778319601815
           end_learning_rate: 0.00022791101850398209
-          steps: 4800
+          total_iters: 4800
         - scheduler: "Linear"
           initial_learning_rate: 0.00022791101850398209
           end_learning_rate: 0.00021462335024901533
-          steps: 4800
+          total_iters: 4800
         - scheduler: "Linear"
           initial_learning_rate: 0.00021462335024901533
           end_learning_rate: 0.00020341801856705902
-          steps: 4800
+          total_iters: 4800
         - scheduler: "Linear"
           initial_learning_rate: 0.00020341801856705902
           end_learning_rate: 0.00019380240931989222
-          steps: 4800
+          total_iters: 4800
         - scheduler: "Linear"
           initial_learning_rate: 0.00019380240931989222
           end_learning_rate: 0.00018543300176721207
-          steps: 4800
+          total_iters: 4800
         - scheduler: "Linear"
           initial_learning_rate: 0.00018543300176721207
           end_learning_rate: 0.00017806195541597027
-          steps: 4800
+          total_iters: 4800
         - scheduler: "Linear"
           initial_learning_rate: 0.00017806195541597027
           end_learning_rate: 0.00017150536478269344
-          steps: 4800
+          total_iters: 4800
         - scheduler: "Linear"
           initial_learning_rate: 0.00017150536478269344
           end_learning_rate: 0.00016562350566866137
-          steps: 4800
+          total_iters: 4800
         - scheduler: "Linear"
           initial_learning_rate: 0.00016562350566866137
           end_learning_rate: 0.0001603080628584663
-          steps: 4800
+          total_iters: 4800
         - scheduler: "Linear"
           initial_learning_rate: 0.0001603080628584663
           end_learning_rate: 0.00015547359888418554
-          steps: 4800
+          total_iters: 4800
         - scheduler: "Linear"
           initial_learning_rate: 0.00015547359888418554
           end_learning_rate: 0.00015105169410466443
-          steps: 4800
+          total_iters: 4800
         - scheduler: "Linear"
           initial_learning_rate: 0.00015105169410466443
           end_learning_rate: 0.00014698682270697125
-          steps: 4800
+          total_iters: 4800
         - scheduler: "Linear"
           initial_learning_rate: 0.00014698682270697125
           end_learning_rate: 0.00014323338788643664
-          steps: 4800
+          total_iters: 4800
         - scheduler: "Linear"
           initial_learning_rate: 0.00014323338788643664
           end_learning_rate: 0.00013975354982773464
-          steps: 4800
+          total_iters: 4800
     loss_scaling_factor: "dynamic"
 #    grad_accum_steps: 256 # helps fit in GPU memory
 
@@ -188,7 +185,5 @@ runconfig:
     checkpoint_steps: 10000
     seed: 1
     model_dir: "./model_dir"
-    show_debug_metrics: False
-    save_losses: True
     eval_steps: 3001 # comment out this line for GPU eval
     use_cs_grad_accum:  True

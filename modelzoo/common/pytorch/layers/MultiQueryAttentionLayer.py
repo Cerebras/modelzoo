@@ -85,6 +85,7 @@ class MultiQueryAttention(MultiheadAttention):
         scale_qk_dot_by_d=False,
         softmax_dtype_fp32=True,
         attention_kernel: Optional[str] = None,
+        scale_qk_dot_by_layer_idx=False,
         device=None,
         # MQA specific
         num_kv_groups=1,
@@ -109,6 +110,7 @@ class MultiQueryAttention(MultiheadAttention):
             scale_qk_dot_by_d=scale_qk_dot_by_d,
             softmax_dtype_fp32=softmax_dtype_fp32,
             attention_kernel=attention_kernel,
+            scale_qk_dot_by_layer_idx=scale_qk_dot_by_layer_idx,
             device=device,
         )
 
@@ -190,25 +192,26 @@ class MultiQueryAttention(MultiheadAttention):
     def expand_kv_over_group_dim(self, x):
         # expand k/v over dimension
         batch_size, _, seq_length, _ = x.shape
+
         x = x.unsqueeze(
-            1
-        )  # [batch_size, 1, self.num_kv_groups, seq_length, self.head_dim]
+            2
+        )  # [batch_size, self.num_kv_groups, 1, seq_length, self.head_dim]
         # expand over per_group_num_heads
         x = x.expand(
             batch_size,
-            self.per_group_num_heads,
             self.num_kv_groups,
+            self.per_group_num_heads,
             seq_length,
             self.head_dim,
         )
         x = x.reshape(batch_size, self.num_heads, seq_length, self.head_dim)
         return x
 
-    def calculate_attention_logits(self, q, k):
+    def calculate_attention_logits(self, q, k, layer_idx):
         if self.num_kv_groups > 1:
             k = self.expand_kv_over_group_dim(k)
 
-        return super().calculate_attention_logits(q, k)
+        return super().calculate_attention_logits(q, k, layer_idx)
 
     def calculate_attention_output(self, attention_scores, v):
         if self.num_kv_groups > 1:

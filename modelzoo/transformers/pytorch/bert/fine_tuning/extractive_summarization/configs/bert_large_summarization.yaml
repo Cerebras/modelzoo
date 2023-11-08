@@ -46,29 +46,29 @@ model:
 
 optimizer:
     optimizer_type: "Adam" # {"SGD", "AdamW", "Adam"}
-    epsilon: 1e-6
+    eps: 1.0e-6
     max_gradient_norm: 1.0
     learning_rate:
         - scheduler: "Linear"
           initial_learning_rate: 0.0
           end_learning_rate: 0.00002
-          steps: 10000
+          total_iters: 10000
         - scheduler: "Linear"
           initial_learning_rate: 0.00002
           end_learning_rate: 0.000014142135623730951
-          steps: 10000
+          total_iters: 10000
         - scheduler: "Linear"
           initial_learning_rate: 0.000014142135623730951
           end_learning_rate: 0.000011547005383792516
-          steps: 10000
+          total_iters: 10000
         - scheduler: "Linear"
           initial_learning_rate: 0.000011547005383792516
           end_learning_rate: 0.00001
-          steps: 10000
+          total_iters: 10000
         - scheduler: "Linear"
           initial_learning_rate: 0.00001
           end_learning_rate: 0.000008944361354059921
-          steps: 10000
+          total_iters: 10000
     loss_scaling_factor: "dynamic"
     # grad_accum_steps: 8  # helps fit in GPU memory, uncomment 
                         # when using GPU and reduced batch_size above
@@ -77,8 +77,6 @@ runconfig:
     max_steps: 50000
     log_steps: 100
     checkpoint_steps: 10000
-    show_debug_metrics: False
-    save_losses: True
     seed: 1
     model_dir: "./model_dir"
     save_initial_checkpoint: True

@@ -61,7 +61,7 @@ by adding token embeddings on repeated space tokens and applied consistent non-s
 #### Download and Process the [Pile](https://arxiv.org/abs/2101.00027) Dataset:
 Pile is a dataset of diverse text for language modeling. It is constructed from `22` diverse high-quality subsets, both existing and newly constructed, many of which derive from academic or professional sources.
 
-In order to launch pre-training, you need to preprocess Pile to generate HDF5 files. Follow [these instructions](../../data_processing/scripts/pile)  to download the raw data, extract it and generate HDF5 files to be used by the dataloader.
+In order to launch pre-training, you need to preprocess Pile to generate HDF5 files. Follow [these instructions](../../data_processing/scripts/pile) to download the raw data, extract it and generate HDF5 files to be used by the dataloader by following [these conversion instructions](../../data_processing/scripts/hdf5_preprocessing/README.md#generating-hdf5-data-from-raw-data).
 
 #### Run with Data Processors:
 The `GptHDF5DataProcessor` class in [`GptHDF5DataProcessor.py`](../gpt2/input/GptHDF5DataProcessor.py) creates `example_dict` iterative from the `self.features_list` which is returned on the call iteratively. 

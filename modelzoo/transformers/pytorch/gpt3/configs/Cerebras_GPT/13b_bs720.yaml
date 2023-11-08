@@ -91,20 +91,19 @@ model:
 ### Optimization
 optimizer:
     optimizer_type: "AdamW"
-    beta1: 0.9
-    beta2: 0.95
+    betas: [0.9, 0.95]
     eps: 1.0e-9
     max_gradient_norm: 1.0
     learning_rate:
       - scheduler: "Linear"
         initial_learning_rate: 0.0
         end_learning_rate: 0.00012
-        steps: 254
+        total_iters: 254
       - scheduler: "CosineDecay"
         initial_learning_rate: 0.00012
         end_learning_rate: 1.2000e-05
-        steps: 174081
-    weight_decay_rate: 0.1
+        total_iters: 174081
+    weight_decay: 0.1
     log_summaries: True
     correct_bias: True
 
@@ -114,7 +113,6 @@ runconfig:
     eval_steps: 1507 # 180956 / 120
     checkpoint_steps: 500
     enable_distributed: False
-    save_losses: True
     log_steps: 1
     save_initial_checkpoint: False
     use_cs_grad_accum: True

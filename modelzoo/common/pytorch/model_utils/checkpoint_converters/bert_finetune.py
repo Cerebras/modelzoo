@@ -16,8 +16,8 @@ import logging
 from typing import Tuple
 
 from modelzoo.common.pytorch.model_utils.checkpoint_converters.base_converter import (
+    BaseCheckpointConverter_CS_CS,
     BaseCheckpointConverter_HF_CS,
-    BaseCheckpointConverter_PT_PT,
     BaseConfigConverter,
     ConfigConversionError,
     ConversionRule,
@@ -33,7 +33,7 @@ from modelzoo.common.pytorch.model_utils.checkpoint_converters.bert import (
 )
 
 
-class Converter_BertFinetuneModel_CS16_CS17(BaseCheckpointConverter_PT_PT):
+class Converter_BertFinetuneModel_CS16_CS17(BaseCheckpointConverter_CS_CS):
     def __init__(self):
         super().__init__()
         self.rules = [
@@ -43,16 +43,21 @@ class Converter_BertFinetuneModel_CS16_CS17(BaseCheckpointConverter_PT_PT):
             ),
         ]
 
-    def post_checkpoint_convert(
-        self, checkpoint, from_index: int,
+    def pre_checkpoint_convert(
+        self,
+        input_checkpoint,
+        output_checkpoint,
+        configs: Tuple[dict, dict],
+        from_index: int,
     ):
+        # Don't copy non model keys like optimizer state:
         logging.warning(
             "The Bert model changed significantly between {} and {}. As a result, the"
             " optimizer state won't be included in the converted checkpoint.".format(
                 *self.formats()
             )
         )
-        return {"model": checkpoint["model"]}
+        output_checkpoint["model"] = {}
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
@@ -70,7 +75,7 @@ class Converter_BertFinetuneModel_CS16_CS17(BaseCheckpointConverter_PT_PT):
         return ConfigConverter_Bert_CS16_CS17
 
 
-class Converter_BertFinetuneModel_CS16_CS18(BaseCheckpointConverter_PT_PT):
+class Converter_BertFinetuneModel_CS16_CS18(BaseCheckpointConverter_CS_CS):
     def __init__(self):
         super().__init__()
         self.rules = [
@@ -78,7 +83,7 @@ class Converter_BertFinetuneModel_CS16_CS18(BaseCheckpointConverter_PT_PT):
             ConversionRule(
                 [Converter_BertFinetuneModel_CS16_CS17(),], action=None,
             ),
-            # Catch checkpoints from depricated PyTorchBaseModel
+            # Catch checkpoints from 1.7/1.8
             ConversionRule(
                 [
                     EquivalentSubkey("", "model."),
@@ -88,20 +93,28 @@ class Converter_BertFinetuneModel_CS16_CS18(BaseCheckpointConverter_PT_PT):
             ),
         ]
 
-    def post_checkpoint_convert(
-        self, checkpoint, from_index: int,
+    def pre_checkpoint_convert(
+        self,
+        input_checkpoint,
+        output_checkpoint,
+        configs: Tuple[dict, dict],
+        from_index: int,
     ):
+        # Don't copy non model keys like optimizer state:
         logging.warning(
             "The Bert model changed significantly between {} and {}. As a result, the"
             " optimizer state won't be included in the converted checkpoint.".format(
                 *self.formats()
             )
         )
-        return {"model": checkpoint["model"]}
+        output_checkpoint["model"] = {}
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("cs-1.6"), FormatVersions("cs-1.8", "cs-1.9"))
+        return (
+            FormatVersions("cs-1.6"),
+            FormatVersions("cs-1.8", "cs-1.9", "cs-2.0"),
+        )
 
     @classmethod
     def converter_note(cls) -> str:
@@ -121,12 +134,13 @@ class Converter_BertForSequenceClassification_HF_CS17(
     def __init__(self):
         super().__init__()
 
-    def post_checkpoint_convert(
-        self, checkpoint, from_index: int,
-    ):
-        return BaseCheckpointConverter_HF_CS.post_checkpoint_convert(
-            self, checkpoint, from_index
+    def pre_checkpoint_convert(self, *args):
+        return BaseCheckpointConverter_HF_CS.pre_checkpoint_convert(
+            self, *args,
         )
+
+    def extract_model_dict(self, *args):
+        return BaseCheckpointConverter_HF_CS.extract_model_dict(self, *args)
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
@@ -154,7 +168,7 @@ class Converter_BertForSequenceClassification_HF_CS18(
                 [Converter_BertForSequenceClassification_HF_CS17(),],
                 action=None,
             ),
-            # Catch checkpoints from depricated PyTorchBaseModel
+            # Catch checkpoints from 1.7/1.8
             ConversionRule(
                 [
                     EquivalentSubkey("", "model."),
@@ -166,7 +180,10 @@ class Converter_BertForSequenceClassification_HF_CS18(
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-1.8", "cs-1.9"))
+        return (
+            FormatVersions("hf"),
+            FormatVersions("cs-1.8", "cs-1.9", "cs-2.0"),
+        )
 
     @classmethod
     def converter_note(cls) -> str:
@@ -185,7 +202,7 @@ class ConfigConverter_BertForSequenceClassification_HF_CS17(
     def __init__(self):
         super().__init__()
         self.rules = [
-            # Finetuning config params
+            # Fine-tuning config params
             ConversionRule(
                 [EquivalentSubkey("classifier_dropout", "task_dropout")],
                 action=self.replaceKey,
@@ -218,7 +235,7 @@ class ConfigConverter_BertForSequenceClassification_HF_CS17(
                     config["problem_type"] = "regression"
                 else:
                     raise ConfigConversionError(
-                        "Cannot infer the problem_type (it is either single_label_classification or multi_label_classification). Please explcitly include the problem_type field before re-running."
+                        "Cannot infer the problem_type (it is either single_label_classification or multi_label_classification). Please explicitly include the problem_type field before re-running."
                     )
 
         return config
@@ -237,7 +254,10 @@ class ConfigConverter_BertForSequenceClassification_HF_CS18(
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-1.8", "cs-1.9"))
+        return (
+            FormatVersions("hf"),
+            FormatVersions("cs-1.8", "cs-1.9", "cs-2.0"),
+        )
 
 
 class Converter_BertForTokenClassification_HF_CS17(
@@ -246,12 +266,15 @@ class Converter_BertForTokenClassification_HF_CS17(
     def __init__(self):
         super().__init__()
 
-    def post_checkpoint_convert(
-        self, checkpoint, from_index: int,
+    def pre_checkpoint_convert(
+        self, *args,
     ):
-        return BaseCheckpointConverter_HF_CS.post_checkpoint_convert(
-            self, checkpoint, from_index
+        return BaseCheckpointConverter_HF_CS.pre_checkpoint_convert(
+            self, *args,
         )
+
+    def extract_model_dict(self, *args):
+        return BaseCheckpointConverter_HF_CS.extract_model_dict(self, *args)
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
@@ -278,7 +301,7 @@ class Converter_BertForTokenClassification_HF_CS18(
             ConversionRule(
                 [Converter_BertForTokenClassification_HF_CS17(),], action=None,
             ),
-            # Catch checkpoints from depricated PyTorchBaseModel
+            # Catch checkpoints from 1.7/1.8
             ConversionRule(
                 [
                     EquivalentSubkey("", "model."),
@@ -290,7 +313,10 @@ class Converter_BertForTokenClassification_HF_CS18(
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-1.8", "cs-1.9"))
+        return (
+            FormatVersions("hf"),
+            FormatVersions("cs-1.8", "cs-1.9", "cs-2.0"),
+        )
 
     @classmethod
     def converter_note(cls) -> str:
@@ -309,7 +335,7 @@ class ConfigConverter_BertForTokenClassification_HF_CS17(
     def __init__(self):
         super().__init__()
         self.rules = [
-            # Finetuning config params
+            # Fine-tuning config params
             ConversionRule(
                 [
                     EquivalentSubkey(
@@ -381,7 +407,10 @@ class ConfigConverter_BertForTokenClassification_HF_CS18(
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-1.8", "cs-1.9"))
+        return (
+            FormatVersions("hf"),
+            FormatVersions("cs-1.8", "cs-1.9", "cs-2.0"),
+        )
 
 
 class Converter_BertForQuestionAnswering_HF_CS17(BaseCheckpointConverter_HF_CS):
@@ -421,7 +450,7 @@ class Converter_BertForQuestionAnswering_HF_CS18(BaseCheckpointConverter_HF_CS):
             ConversionRule(
                 [Converter_BertForQuestionAnswering_HF_CS17(),], action=None,
             ),
-            # Catch checkpoints from depricated PyTorchBaseModel
+            # Catch checkpoints from 1.7/1.8
             ConversionRule(
                 [
                     EquivalentSubkey("", "model."),
@@ -433,7 +462,10 @@ class Converter_BertForQuestionAnswering_HF_CS18(BaseCheckpointConverter_HF_CS):
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-1.8", "cs-1.9"))
+        return (
+            FormatVersions("hf"),
+            FormatVersions("cs-1.8", "cs-1.9", "cs-2.0"),
+        )
 
     @classmethod
     def converter_note(cls) -> str:
@@ -452,13 +484,14 @@ class ConfigConverter_BertForQuestionAnswering_HF_CS17(
     def __init__(self):
         super().__init__()
         self.rules = [
-            # Finetuning config params
+            # Fine-tuning config params
             ConversionRule(
                 ["num_labels"],
                 action=BaseConfigConverter.assert_factory_fn(0, 2),
             ),
             *self.rules,
         ]
+        self.post_convert_defaults[0].update({"num_labels": 2})
 
     def pre_config_convert(
         self, config, from_index,
@@ -473,28 +506,7 @@ class ConfigConverter_BertForQuestionAnswering_HF_CS17(
                 else:
                     config["num_labels"] = 2
 
-        print(config)
-
         return config
-
-    def post_config_convert(
-        self,
-        original_config,
-        old_config,
-        new_config,
-        from_index,
-        drop_unmatched_keys,
-    ):
-        if from_index == 1:
-            new_config["num_labels"] = 2
-
-        return super().post_config_convert(
-            original_config,
-            old_config,
-            new_config,
-            from_index,
-            drop_unmatched_keys,
-        )
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
@@ -510,4 +522,7 @@ class ConfigConverter_BertForQuestionAnswering_HF_CS18(
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-1.8", "cs-1.9"))
+        return (
+            FormatVersions("hf"),
+            FormatVersions("cs-1.8", "cs-1.9", "cs-2.0"),
+        )

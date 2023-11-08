@@ -28,15 +28,3 @@ class DeviceType:
     def devices(cls):
         """Valid strategies"""
         return [cls.CSX, cls.CPU, cls.GPU]
-
-
-class ExecutionStrategy:
-    """Supported Cerebras Execution Strategies"""
-
-    pipeline = "pipeline"
-    weight_streaming = "weight_streaming"
-
-    @classmethod
-    def strategies(cls):
-        """Valid strategies"""
-        return [cls.pipeline, cls.weight_streaming]

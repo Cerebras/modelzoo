@@ -40,14 +40,3 @@ def set_defaults(params):
         params["model"].get("mlm_loss_scaling", "batch_size")
         == "precomputed_num_masked"
     )
-
-
-def set_custom_stack_params(params):
-    from modelzoo.common.pytorch import cb_model as cm
-
-    if cm.use_cs():
-        from modelzoo.common.pytorch import cbtorch
-
-        state = cbtorch.state()
-        state.full_config.matching.kernel.enable_pipelined_mlm_loss = True
-        state.full_config.matching.kernel.inc_pwt_estimate = True

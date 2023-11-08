@@ -16,7 +16,7 @@ import logging
 
 import torch
 
-from modelzoo.common.pytorch.metrics import AccuracyMetric, PerplexityMetric
+from cerebras_pytorch.metrics import AccuracyMetric, PerplexityMetric
 from modelzoo.common.pytorch.model_utils.GPTLMHeadModelLoss import (
     GPTLMHeadModelLoss,
 )
@@ -118,7 +118,7 @@ class GptjModel(torch.nn.Module):
             filter_size=model_params.pop("filter_size"),
             dropout_rate=model_params.pop("residual_dropout_rate", 0.1),
             nonlinearity=model_params.pop("nonlinearity", "gelu"),
-            use_biasless_norm=model_params.pop("use_biasless_norm", False),
+            norm_type=model_params.pop("norm_type", "layernorm"),
             layer_norm_epsilon=float(
                 model_params.pop("layer_norm_epsilon", 1.0e-5)
             ),

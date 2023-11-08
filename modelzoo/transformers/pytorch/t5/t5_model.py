@@ -38,12 +38,12 @@ import torch.nn as nn
 
 from modelzoo.common.pytorch.layers import (
     EmbeddingLayer,
-    RMSNorm,
     TransformerDecoder,
     TransformerDecoderLayer,
     TransformerEncoder,
     TransformerEncoderLayer,
 )
+from modelzoo.common.pytorch.model_utils.norms import get_norm
 from modelzoo.transformers.pytorch.transformer_utils import (
     build_broadcastable_attention_mask,
     create_2D_autoregressive_mask,
@@ -78,9 +78,9 @@ class T5ForConditionalGeneration(nn.Module):
             Number of attention heads for each attention layer in the Transformer encoder and decoder.
         relative_attention_num_buckets (:obj:`int`, `optional`, defaults to 32):
             The number of buckets to use for each attention layer.
-        use_t5_layer_norm (:obj:`bool`, `optional`, defaults to False):
-            Whether to use T5 layer norm (with no mean subtraction and bias correction) or
-            use the regular nn.LayerNorm module.
+        norm_type (:obj:`str`, `optional`, defaults to "rmsnorm"):
+            Determines which type of layernorm to use. RMSNorm is the same
+            as T5-style layernorm (no mean subtraction and bias correction).
         dropout_rate (:obj:`float`, `optional`, defaults to 0.1):
             The ratio for all dropout layers.
         layer_norm_eps (:obj:`float`, `optional`, defaults to 1e-6):
@@ -154,7 +154,7 @@ class T5ForConditionalGeneration(nn.Module):
         decoder_num_hidden_layers=None,
         num_heads=8,
         relative_attention_num_buckets=32,
-        use_t5_layer_norm=False,
+        norm_type="rmsnorm",
         dropout_rate=0.1,
         relu_dropout_rate=None,
         layer_norm_epsilon=1e-6,
@@ -315,13 +315,15 @@ class T5ForConditionalGeneration(nn.Module):
             )
             use_ffn_bias = False
 
+        norm_class = get_norm(norm_type)
+
         encoder_layer = TransformerEncoderLayer(
             d_model=d_model,
             nhead=num_heads,
             dim_feedforward=d_ff,
             dropout=dropout_rate,
             activation=encoder_nonlinearity,
-            norm_layer=RMSNorm if use_t5_layer_norm else nn.LayerNorm,
+            norm_layer=norm_class,
             layer_norm_eps=layer_norm_epsilon,
             norm_first=use_pre_encoder_decoder_layer_norm,
             batch_first=True,
@@ -377,12 +379,7 @@ class T5ForConditionalGeneration(nn.Module):
             },
         )
 
-        if use_t5_layer_norm:
-            encoder_final_layer_norm = RMSNorm(d_model, eps=layer_norm_epsilon)
-        else:
-            encoder_final_layer_norm = torch.nn.LayerNorm(
-                d_model, eps=layer_norm_epsilon
-            )
+        encoder_final_layer_norm = norm_class(d_model, eps=layer_norm_epsilon)
 
         self.dropout_before_encoder = nn.Dropout(dropout_rate)
         self.encoder = TransformerEncoder(
@@ -400,7 +397,7 @@ class T5ForConditionalGeneration(nn.Module):
             dim_feedforward=d_ff,
             dropout=dropout_rate,
             activation=encoder_nonlinearity,
-            norm_layer=RMSNorm if use_t5_layer_norm else nn.LayerNorm,
+            norm_layer=norm_class,
             layer_norm_eps=layer_norm_epsilon,
             norm_first=use_pre_encoder_decoder_layer_norm,
             batch_first=True,
@@ -455,12 +452,7 @@ class T5ForConditionalGeneration(nn.Module):
             },
         )
 
-        if use_t5_layer_norm:
-            decoder_final_layer_norm = RMSNorm(d_model, eps=layer_norm_epsilon)
-        else:
-            decoder_final_layer_norm = torch.nn.LayerNorm(
-                d_model, eps=layer_norm_epsilon
-            )
+        decoder_final_layer_norm = norm_class(d_model, eps=layer_norm_epsilon)
 
         self.dropout_before_decoder = nn.Dropout(dropout_rate)
         self.decoder = TransformerDecoder(

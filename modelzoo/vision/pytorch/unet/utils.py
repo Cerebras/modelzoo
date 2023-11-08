@@ -14,7 +14,6 @@
 
 import logging
 
-from modelzoo.common.pytorch import cb_model as cm
 from modelzoo.vision.pytorch.utils.run_utils import (
     get_default_inis,
     update_runconfig_debug_args_path,
@@ -62,8 +61,6 @@ def set_defaults(params):
         if params["train_input"].get("image_shape")
         else "input_shape"
     )
-    if input_mode == "eval_all":
-        input_mode = "eval"
     params["model"]["image_shape"] = params[f"{input_mode}_input"].get(
         shape_key
     )
@@ -78,6 +75,11 @@ def set_defaults(params):
         "use_worker_cache", False
     )
     params["model"]["num_classes"] = params["train_input"]["num_classes"]
+
+    if params["model"]["loss"] == "bce" and params["model"]["num_classes"] > 2:
+        raise ValueError(
+            f"`bce` loss can only be used with `num_classes`=2. Got num_classes={params['model']['num_classes']}"
+        )
     params["model"]["skip_connect"] = params["model"].get("skip_connect", True)
     params["model"]["downscale_method"] = params["model"].get(
         "downscale_method", "max_pool"
@@ -152,13 +154,3 @@ def set_defaults(params):
     for model_key in ("mixed_precision", "loss", "use_bfloat16"):
         for input_key in ("train_input", "eval_input"):
             params[input_key][model_key] = params["model"].get(model_key)
-
-
-def set_custom_stack_params(params):
-    # TODO: Add custom stack params for UNet if any.
-    # Fcn used in `model.py` __init__
-    if cm.use_cs():
-        from modelzoo.common.pytorch import cbtorch
-
-        state = cbtorch.state()
-        runconfig_params = params["runconfig"]

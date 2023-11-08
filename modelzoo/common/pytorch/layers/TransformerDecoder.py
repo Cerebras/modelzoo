@@ -131,6 +131,7 @@ class TransformerDecoder(nn.Module):
                 cache_present_kv=cache_present_kv,
                 self_attn_position_bias=self_attn_position_bias,
                 cross_attn_position_bias=cross_attn_position_bias,
+                layer_idx=layer_idx,
                 **extra_args,
             )
             if cache_present_kv:
