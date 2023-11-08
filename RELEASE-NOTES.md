@@ -6,22 +6,22 @@ The following are the release notes for the Model Zoo repository.
 
 ### New features and enhancements
 
-- All Model Zoo models now use the new Cerebras PyTorch 2.0 API.
+- All Model Zoo models now use the new [Cerebras PyTorch 2.0 API](https://docs.cerebras.net/en/latest/wsc/api/cerebras_pytorch/index.html).
 - We improved deterministic restart of custom dataloaders with the new Cerebras PyTorch API. Refer to our [documentation](https://docs.cerebras.net/en/latest/wsc/tutorials/dataloader-checkpointing.html) to see how to save and load the dataloader state along with existing mechanisms for saving model checkpoints during a training run.
 
 #### Sparsity
 
-- With release 2.0.2, we introduce [Sparse Pretraining and Dense Finetuning (SPDF)](https://arxiv.org/abs/2303.10464), a technique designed to accelerate pretraining by incorporating high levels of sparsity while maintaining downstream task accuracy through dense finetuning. To get started with SPDF, we have provided a comprehensive [Sparsity how-to-guide](https://docs.cerebras.net/en/latest/wsc/how_to_guides/sparsity.html). Additionally, you can explore reference configurations in the Model Zoo to leverage SPDF effectively in your projects. The Model Zoo reference configuration is accessible in the Cerebras Model Zoo. For more information, contact our support team.
-- We are introducing [Sparse-Iso Flop Transformation (Sparse-IFT)](https://arxiv.org/abs/2303.11525), a technique that leverages sparsification to enhance model accuracy without the need to increase training FLOPs (floating-point operations). To help you make the most of Sparse-IFT, we have prepared a detailed [Sparsity how-to-guide](https://docs.cerebras.net/en/latest/wsc/how_to_guides/sparsity.html). Additionally, you can find reference configurations in the Cerebras Model Zoo. For more information, contact our support team.
+- With release 2.0.2, we introduce [Sparse Pretraining and Dense Finetuning (SPDF)](https://arxiv.org/abs/2303.10464), a technique designed to accelerate pretraining by incorporating high levels of sparsity while maintaining downstream task accuracy through dense finetuning. To get started with SPDF, we have provided a comprehensive [Sparsity how-to-guide](https://docs.cerebras.net/en/latest/wsc/how_to_guides/sparsity.html). Additionally, you can explore reference configurations in the Model Zoo to leverage SPDF effectively in your projects. The Model Zoo reference configuration is accessible in the Cerebras Model Zoo [here](./transformers/pytorch/gpt3/configs/sparsity). For more information, contact our support team.
+- We are introducing [Sparse-Iso Flop Transformation (Sparse-IFT)](https://arxiv.org/abs/2303.11525), a technique that leverages sparsification to enhance model accuracy without the need to increase training FLOPs (floating-point operations). To help you make the most of Sparse-IFT, we have prepared a detailed [Sparsity how-to-guide](https://docs.cerebras.net/en/latest/wsc/how_to_guides/sparsity.html). Additionally, you can find reference configurations in the Cerebras Model Zoo [here](./transformers/pytorch/gpt3/configs/sparsity/). For more information, contact our support team.
 
 #### Large Language Models
 
 - Cerebras released **BTLM**, the best performing and the most downloaded 3B model in the world, in July. G42, a Cerebras strategic partner, released the #1 Arabic language model in the world, **Jais**, in September. Both models used high-performing architectures (maximal update parameterization, SwiGLU activations, ALiBi position encodings). Examples of this style of configuration are available [here](./transformers/pytorch/btlm/configs/).
 - Both static and dynamic weight sparsity are supported in release 2.0.2 for [faster training](https://www.cerebras.net/blog/harnessing-the-power-of-sparsity-for-large-gpt-ai-models) and [higher accuracy](https://www.cerebras.net/blog/can-sparsity-make-ai-models-more-accurate). We provide example sparse model configurations in the Cerebras Model Zoo. For more information, contact our support team. Information on using how to use sparsity can be found [here](https://docs.cerebras.net/en/latest/wsc/how_to_guides/sparsity.html) in the Cerebras Developer Documentation.
 - GPT style models train with ~30% improved performance in release 2.0.2.
-- **LLaMA v2** 7B, 13B, 70B is supported for training from scratch, continuous pretraining, or fine-tuning from a pretrained checkpoint.
-- **Falcon 40B** is supported for training from scratch, continuous pretraining, or fine-tuning from a pretrained checkpoint.
-- **StarCoder 15B** is supported for training from scratch, continuous pretraining, or fine-tuning from a pretrained checkpoint.
+- **LLaMA v2** 7B, 13B, 70B is supported for training from scratch, continuous pretraining, or fine-tuning from a pretrained checkpoint. Reference ModelZoo configs are available [here](./transformers/pytorch/llama/configs/).
+- **Falcon 40B** is supported for training from scratch, continuous pretraining, or fine-tuning from a pretrained checkpoint. Reference ModelZoo configs are available [here](./transformers/pytorch/falcon/configs/).
+- **StarCoder 15B** is supported for training from scratch, continuous pretraining, or fine-tuning from a pretrained checkpoint. Reference ModelZoo configs are available [here](./transformers/pytorch/starcoder/configs/).
 - The default dataloader for GPT-style models is now GptHDF5MapDataProcessor.
 
 #### Computer Vision Models
@@ -31,11 +31,11 @@ The following are the release notes for the Model Zoo repository.
 #### Other features
 
 - We have deprecated old PyTorch BaseModel and BaseRunner classes as part of our update to PyTorch 2.0. Check out our [PyTorch documentation](https://docs.cerebras.net/en/latest/wsc/api/cerebras_pytorch/index.html).
-- Enabling gradient accumulation now makes the stack search for a micro-batch size that provides good training throughput performance. This makes compile times longer. Users may avoid this compile time by supplying a micro-batch size with the ``micro_batch_size`` parameter within the ``train_input`` and ``eval_input`` sections of the model configuration YAML. Note that ``batch_size/num_csx`` must be a multiple of ``micro_batch_size``. Micro-batch sizes with good performance are recommended within the gradient accumulation :ref:`Micro-batch size setting in YAML params` within the Cerebras Developer Documentation.
-- Model evaluation is now supported on multibox.
+- Enabling gradient accumulation now makes the stack search for a micro-batch size that provides good training throughput performance. This makes compile times longer. Users may avoid this compile time by supplying a micro-batch size with the ``micro_batch_size`` parameter within the ``train_input`` and ``eval_input`` sections of the model configuration YAML. Note that ``batch_size/num_csx`` must be a multiple of ``micro_batch_size``. Micro-batch sizes with good performance are recommended within the gradient accumulation [Micro-batch size setting in YAML params](https:/docs.cerebras.net/en/latest/wsc/general/grad_accumulation.rst#micro-batch-size-setting-in-yaml-params) within the Cerebras Developer Documentation.
+- Distributed data parallel model evaluation is now supported on multiple CS-2 systems in a Wafer-Scale Cluster.
 - Previous limitations in T5 compile times have been addressed. T5 XXL compile time is now less than 90 minutes with a specified micro-batch size.
-- Jobs submitted from the user nodes to the appliance cluster now include a token that identifies the user submitting the job. This token can be validated on the appliance cluster for user authentication. This change is made to improve security. Machine learning users will not notice any difference in their workflows.
-- We improved messages related to appliance job scheduling errors to provide clear guidance for users to take corrective action.
+- Jobs submitted from the user nodes to the Wafer-Scale cluster now include a token that identifies the user submitting the job. This token can be validated on the Wafer-Scale cluster for user authentication. This change is made to improve security. Machine learning users will not notice any difference in their workflows.
+- We improved messages related to job scheduling errors to provide clear guidance for users to take corrective action.
 - Loss scaling by number of tokens is supported on single box and multi-box, with and without gradient accumulation. See our [documentation](https://docs.cerebras.net/en/latest/wsc/general/num-tokens-loss-scaling.html) for more information.
 - The ``is_pretrained_checkpoint`` flag has been deprecated for clarity. Users should instead use the ``load_checkpoint_states`` in conjunction with ``checkpoint_path`` to specify which components are loaded from the checkpoint. Allowed values are ``model``, ``optimizer``, ``dataloader``, ``grad_scaler``, ``lr_scheduler``. For more information, see the [PyTorch params documentation](https://docs.cerebras.net/en/latest/wsc/port/yaml-params/pytorch_params.html).
 
@@ -43,12 +43,12 @@ The following are the release notes for the Model Zoo repository.
 
 - Diffusion Transformer (DiT) supports up to 1k by 1k image sizes, but compile time for this input size is extremely long.
 - We encourage users to save models and artifacts (with model_dir) on fast storage (SSD backed, local or NFS) to achieve significant improvement in weight initialization, checkpoint loading, and sending weights from host to wafer when using cached compilation.
-- Using larger batch sizes provides better training performance but increases compile times.
+- Using larger batch sizes provides better training performance but increases compile times. We encourage using batch sizes that have multiple factors as it enables more options for micro-batch for the stack to choose from. This is especially important for distributed runs.
 - Dynamic sparsity cannot be used with gradient accumulation (``use_cs_grad_accum`` in ``runconfig`` of YAML) in release 2.0.2.
 - Computer vision workloads (UNet and ResNet) will cause out of memory errors if scheduled in parallel with other jobs on the appliance.
 - Hugging Face's Transformers library does not support Maximal Update Parameterization (muP) or models with SwiGLU and ALiBi. If you have a Cerebras GPT2/3 checkpoint that uses muP, it is possible to :doc:`convert it to the GPT2 Hugging Face model](https://docs.cerebras.net/en/latest/wsc/how_to_guides/mup_docs>` to perform inference. Custom models can still be used with Hugging Face via the Hugging Face Hub.  
 - Gradient accumulation for computer vision models is supported by the software stack but has not been fully tested across all model variants. We plan to perform comprehensive qualification testing for CV models with gradient accumulation as part of the upcoming 2.1 release. This will ensure that larger batch sizes can be confidently utilized for your computer vision tasks.
-- The number of heads ``num_heads`` within a transformer block should not be a prime number. 
+- The number of heads ``num_heads`` within a transformer block should not be a prime number.
 
 *Note: Version 2.0.0 and 2.0.1 were special, small-distribution releases. 2.0.2 is our general release.*
 
