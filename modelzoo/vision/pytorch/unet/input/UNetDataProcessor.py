@@ -41,7 +41,7 @@ class UNetDataProcessor:
         self.normalize_data_method = params.get("normalize_data_method")
 
         self.shuffle_seed = params.get("shuffle_seed", None)
-        if self.shuffle_seed:
+        if self.shuffle_seed is not None:
             torch.manual_seed(self.shuffle_seed)
 
         self.augment_data = params.get("augment_data", True)
@@ -170,16 +170,17 @@ class UNetDataProcessor:
             # Only long tensors are accepted by one_hot fcn.
             mask = mask.to(torch.long)
 
-            # out shape: (H, W, num_classes)
+            # out shape: ((D), H, W, num_classes)
             mask = torch.nn.functional.one_hot(
                 mask, num_classes=self.num_classes
             )
-            # out shape: (num_classes, H, W)
-            mask = torch.permute(mask, [2, 0, 1])
+            # out shape: (num_classes, (D), H, W)
+            mask_axes = [_ for _ in range(len(mask.shape))]
+            mask = torch.permute(mask, mask_axes[-1:] + mask_axes[0:-1])
             mask = mask.to(self.mp_type)
 
         elif self.loss_type == "ssce":
-            # out shape: (H, W) with each value in [0, num_classes)
+            # out shape: ((D), H, W) with each value in [0, num_classes)
             mask = torch.squeeze(mask, 0)
 
             mask = mask.to(torch.int32)
@@ -190,7 +191,7 @@ class UNetDataProcessor:
 
     def preprocess_image(self, image):
 
-        # converts to (C, H, W) format.
+        # converts to (C, (D), H, W) format.
         to_tensor_transform = transforms.PILToTensor()
 
         # Resize and convert to torch.Tensor

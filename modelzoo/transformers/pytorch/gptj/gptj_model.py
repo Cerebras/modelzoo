@@ -15,13 +15,13 @@
 import torch.nn as nn
 
 from modelzoo.common.pytorch.layers import (
-    BiaslessLayerNorm,
     EmbeddingLayer,
     GPTJDecoderLayer,
     RelativePositionEmbeddingLayer,
     TransformerDecoder,
 )
 from modelzoo.common.pytorch.layers.utils import apply_position_bias
+from modelzoo.common.pytorch.model_utils.norms import get_norm
 from modelzoo.common.pytorch.model_utils.RotaryPositionEmbeddingHelper import (
     RotaryPositionEmbeddingHelper,
 )
@@ -47,7 +47,7 @@ class GPTJModel(nn.Module):
         filter_size=3072,
         dropout_rate=0.1,
         nonlinearity="gelu",
-        use_biasless_norm=False,
+        norm_type="layernorm",
         layer_norm_epsilon=1.0e-5,
         use_ffn_bias=True,
         use_untied_layer_norm=False,
@@ -102,7 +102,7 @@ class GPTJModel(nn.Module):
 
         self.drop_embd = nn.Dropout(embd_pdrop)
 
-        norm_class = BiaslessLayerNorm if use_biasless_norm else nn.LayerNorm
+        norm_class = get_norm(norm_type)
 
         decoder_layer = GPTJDecoderLayer(
             d_model=hidden_size,
@@ -163,7 +163,8 @@ class GPTJModel(nn.Module):
 
     def __reset_parameters(self):
         # Init final norm layer
-        self.ln_f.bias.data.zero_()
+        if hasattr(self.ln_f, "bias"):
+            self.ln_f.bias.data.zero_()
         self.ln_f.weight.data.fill_(1.0)
         # Initialize LM head
         self.lm_head.weight.data.normal_(mean=0.0, std=self.initializer_range)

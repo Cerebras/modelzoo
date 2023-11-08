@@ -12,46 +12,39 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import contextlib
+import tempfile
 from pathlib import Path
+from typing import List, Optional, Union
 
 import h5py
 import numpy as np
 
 
-@contextlib.contextmanager
-def trivial_context_manager(f):
-    yield f
-
-
 class H5Reader:
-    """
-    An abstraction for reading individual sequences from h5 files on disk.
+    """Class for reading individual sequences from HDF5 files stored on disk.
 
-    Supports 2 formats of data on disk. The first is a rank-1 tensor of
-    concatenated tokenized documents. The second is a rank > 1 tensor of
-    preprocessed samples where the 0th index of the data on disk indexes the
-    data by sample.
+    Supports 2 formats of data on disk:
+        1. rank-1 tensor of concatenated tokenized documents.
+        2. rank > 1 tensor of preprocessed samples where the 0th index of the
+           data on disk indexes the data by sample.
     """
-
-    _MAX_OPEN_FILES = 35
 
     def __init__(
         self,
-        data_dirs,
-        sequence_length=None,
-        read_extra_token=False,
-        data_subset=None,
+        data_dirs: Union[str, List[str]],
+        sequence_length: Optional[int] = None,
+        read_extra_token: bool = False,
+        data_subset: Optional[str] = None,
+        sort: bool = True,
     ):
-        """
-        Creates a reader for an h5 corpus
+        """Creates a reader for an HDF5 corpus.
 
         Args:
-            data_dirs (list[str]): Directories containing h5 files to read from
-            sequence_length (int): The number of tokens per sample if reading
+            data_dirs: Directories containing h5 files to read from.
+            sequence_length: The number of tokens per sample if reading
                 from a corpus. Must be `None` if the data has already been
                 preprocessed into samples.
-            read_extra_token (bool): Whether to read and return one extra token
+            read_extra_token: Whether to read and return one extra token
                 after the end of the sequence. This can be useful for language
                 modeling tasks where you want to construct the labels as an
                 shifted version of the inputs. Setting this to `True` differs
@@ -59,189 +52,346 @@ class H5Reader:
                 returned due to this flag will be included in some other
                 sequence as the first token. Will be ignored if
                 `sequence_length` is `None`.
-            data_subset (str): A string specifying the subset of the corpus to
+            data_subset: A string specifying the subset of the corpus to
                 consider. E.g. if `data_subset="0.0-0.75"` is specified, only
                 samples in the first 3/4 of the dataset will be considered and
                 the last 1/4 of the dataset will be completely untouched. The
                 self reported length will be the length of the valid portion
                 of the dataset (e.g. the first 3/4), and any attempt to access
                 an element beyond this length will result in an exception.
+            sort: Whether to sort the file paths after reading them. This flag
+                is included for backwards compatibility and should almost always
+                be set to `True`. It will be removed in the future.
         """
-        self.msl = sequence_length
-        self._num_extra_tokens = 1 if read_extra_token else 0
-
-        self._files = []
+        files = []
         if not isinstance(data_dirs, list):
             data_dirs = [data_dirs]
         for data_dir in data_dirs:
             p = Path(data_dir)
             if not p.is_dir():
                 raise ValueError(
-                    f"The path {p} does not exist or is not a directory"
+                    f"The path {p} does not exist or is not a directory. "
+                    f"Please specify a valid directory containing h5 files "
+                    f"and ensure that the directory is mounted."
                 )
-            self._files.extend(p.glob("*.h5"))
+            files.extend(p.glob("*.h5"))
+        if not files:
+            raise ValueError(
+                f"No *.h5 files found in specified data directories: "
+                f"{data_dirs}."
+            )
 
-        self._by_sample = False
-        with h5py.File(self._files[0], "r") as f:
+        if sort:
+            files.sort()
+
+        by_sample = False
+        with h5py.File(files[0], "r") as f:
             data_shape = f["data"].shape
-        if self.msl is None:
+        if sequence_length is None:
             if len(data_shape) < 2:
                 raise ValueError(
                     "If you don't specify `sequence_length`, then the data "
                     "being read must be preprocessed by sample, but the data "
-                    f"written to {self._files[0]} has rank 1"
+                    f"written to {files[0]} has rank 1"
                 )
-            self._by_sample = True
+            by_sample = True
         elif len(data_shape) > 1:
-            if self.msl is not None:
+            if sequence_length is not None:
                 raise ValueError(
                     "If loading data that has been preprocessed into sequences "
                     "the sequence length provided must either be None or match "
                     "dimension 1 of the data on disk. Got sequence length "
-                    f"{self.msl}, but the shape of the data in {self._files[0]}"
-                    f" is {data_shape}"
+                    f"{sequence_length}, but the shape of the data in "
+                    f"{files[0]} is {data_shape}"
                 )
-            self._by_sample = True
+            by_sample = True
 
-        sequence_counts = []
-        for f in self._files:
-            with h5py.File(f, "r") as f:
-                if self._by_sample:
-                    sequence_counts.append(len(f["data"]))
-                else:
-                    sequence_counts.append(
-                        (len(f["data"]) - self._num_extra_tokens) // self.msl
-                    )
-        self._num_sequences = sum(sequence_counts)
-        self._file_end_counts = np.cumsum(sequence_counts)
-        self._file_start_indices = np.insert(self._file_end_counts, 0, 0)[:-1]
-
-        if self._by_sample or len(self._files) > self._MAX_OPEN_FILES:
-            self.keep_files_open = False
+        if by_sample:
+            self._impl = _SequencedH5Reader(files, data_subset=data_subset)
         else:
-            self.keep_files_open = True
-            self._files = [h5py.File(f, "r") for f in self._files]
-        if self._by_sample:
-            self.prev_file_descriptor = None
-            self.prev_file_name = None
-
-        # handle data subsetting
-        self.offsets_full_dataset = []
-        self.offsets_skipped_dataset = []
-        if data_subset is not None:
-            try:
-                segments = [
-                    (float(seg.split("-")[0]), float(seg.split("-")[1]))
-                    for seg in data_subset.strip().split(",")
-                ]
-            except Exception as e:
-                raise RuntimeError(
-                    f"There was a problem parsing data subset {data_subset}. "
-                    "data_subset must be a string of comma separated ranges of "
-                    "floats, for example '0.0-0.2,0.5-0.7'"
-                ) from e
-            prev_end = 0
-            segments = [(0, 0)] + segments + [(1, 1)]
-            n = self._num_sequences
-            for start, end in segments:
-                if start < 0:
-                    raise ValueError(
-                        f"data_subset must contain only non-negative bounds. "
-                        f"Got {data_subset} which contains {start}."
-                    )
-                if end < start:
-                    raise ValueError(
-                        f"the end of each range in data_subset must be at "
-                        f"least as large as the start of the range, but "
-                        f"start={start} and end={end} are present in provided "
-                        f"data subset {data_subset}"
-                    )
-                if end > 1:
-                    raise ValueError(
-                        f"data_subset can only contain ranges which are subsets"
-                        f" of the range [0, 1], but found end={end} in "
-                        f"data_subset {data_subset}"
-                    )
-                if start < prev_end:
-                    raise ValueError(
-                        f"ranges in data_subset must be monotonically "
-                        f"increasing. Got {data_subset}"
-                    )
-                self.offsets_skipped_dataset.append(
-                    int(n * end) - int(n * start)
-                )
-                self.offsets_full_dataset.append(
-                    int(n * start) - int(n * prev_end)
-                )
-                prev_end = end
-            self.offsets_skipped_dataset = np.cumsum(
-                self.offsets_skipped_dataset
+            self._impl = _CorpusH5Reader(
+                files,
+                sequence_length=sequence_length,
+                read_extra_token=read_extra_token,
+                data_subset=data_subset,
             )
-            self.offsets_full_dataset = np.cumsum(self.offsets_full_dataset)
-            self._num_sequences -= self.offsets_full_dataset[-1]
 
     @property
-    def by_sample(self):
-        return self._by_sample
+    def by_sample(self) -> bool:
+        return isinstance(self._impl, _SequencedH5Reader)
 
-    def _maybe_open_file(self, f):
-        if self._by_sample:
-            # if we're loading data by sample, we expect the common access
-            # pattern to be sequential as data should be shuffled during
-            # pre-processing, so we keep the current file open until a new
-            # file is requested so that we can save time on file opens
-            if f == self.prev_file_name:
-                return trivial_context_manager(self.prev_file_descriptor)
-            else:
-                if self.prev_file_descriptor is not None:
-                    self.prev_file_descriptor.close()
-                self.prev_file_name = f
-                self.prev_file_descriptor = h5py.File(f, "r")
-                return trivial_context_manager(self.prev_file_descriptor)
-        elif self.keep_files_open:
-            return trivial_context_manager(f)
-        return h5py.File(f, "r")
-
-    def __getitem__(self, i):
-        """
-        Reads a single item of the dataset from disk
+    def __getitem__(self, i: int) -> np.ndarray:
+        """Reads a single sequence of the dataset from disk.
 
         Args:
-            i (int): The index of the item to return. Samples are indexed in
-                order of file name (sorted alphabetically) then location within
-                that file.
+            i: The index of the item to return. Samples are indexed in
+               order of file name (sorted alphabetically) then location within
+               that file.
         Returns:
             The `i`th sample element of the corpus, i.e. a numpy array of shape
             `(sequence_length + 1, )` if `read_extra_token` is `True` or of
             shape `(sequence_length, )` otherwise. The dtype of the returned
             array is `np.int32` regardless of how the data was written to disk.
         """
-        if len(self.offsets_full_dataset):
-            chunk_idx = self.offsets_full_dataset.searchsorted(i, side="right")
-            i += self.offsets_skipped_dataset[chunk_idx]
-        file_index = np.searchsorted(self._file_end_counts, i, side="right")
-        f = self._files[file_index]
-        with self._maybe_open_file(f) as f:
-            sequence_index = i - self._file_start_indices[file_index]
-            if self._by_sample:
-                x = f["data"][sequence_index]
-            else:
-                tok_index = self.msl * sequence_index
-                x = f["data"][
-                    tok_index : tok_index + self.msl + self._num_extra_tokens
-                ]
-        return x.astype(np.int32)
+        return self._impl[i]
 
-    def __len__(self):
+    def __len__(self) -> int:
+        """Returns total number of sequences in the dataset."""
+        return len(self._impl)
+
+
+class _SequencedH5Reader:
+    """Class for reading preprocessed samples from HDF5 files stored on disk."""
+
+    def __init__(self, files: List[str], data_subset: Optional[str] = None):
+        """Creates an HDF5 reader for preprocessed sequences.
+
+        Args:
+            files: HDF5 files to read from.
+            data_subset: A string specifying the subset of the corpus to
+                consider.
+        """
+        vsources: List[h5py.VirtualSource] = []
+        for idx, filepath in enumerate(files):
+            with h5py.File(filepath, "r") as f:
+                dataset = f["data"]
+
+                if idx == 0:
+                    data_shape = dataset.shape
+                    data_dtype = dataset.dtype
+                else:
+                    if dataset.dtype != data_dtype:
+                        raise ValueError(
+                            f"Expected all dataset H5 files to have the same "
+                            f"dtype, but got {data_dtype} in {files[0]} and "
+                            f"{dataset.dtype} in {filepath}."
+                        )
+
+                    if dataset.shape[1:] != data_shape[1:]:
+                        raise ValueError(
+                            f"Expected all dataset H5 files to have the same "
+                            f"shape beyond the first axis, but got "
+                            f"{data_shape} in {files[0]} and {dataset.shape} "
+                            f"in {filepath}."
+                        )
+
+                vsources.append(h5py.VirtualSource(dataset))
+
+        self._vdataset = _VirtualDataset(vsources)
+        self._num_sequences = len(self._vdataset)
+
+        if data_subset is not None:
+            self._segmenter = _DatasetSegmenter(
+                self._num_sequences, data_subset
+            )
+            self._num_sequences -= self._segmenter.num_skipped_sequences
+        else:
+            self._segmenter = None
+
+    def __getitem__(self, i: int) -> np.ndarray:
+        """Reads a single item of the dataset from disk."""
+        if self._segmenter:
+            i = self._segmenter.map_index(i)
+
+        return self._vdataset[i].astype(np.int32)
+
+    def __len__(self) -> int:
+        """Returns total number of sequences in the dataset."""
         return self._num_sequences
 
-    def __del__(self):
-        # not necessary for most python runtimes, but good for completeness
-        if self._by_sample and self.prev_file_descriptor is not None:
-            self.prev_file_descriptor.close()
-        elif self.keep_files_open:
-            for f in self._files:
-                f.close()
+
+class _CorpusH5Reader:
+    """Class for reading samples from HDF5 corpus stored on disk."""
+
+    def __init__(
+        self,
+        files: List[str],
+        sequence_length: Optional[int] = None,
+        read_extra_token: bool = False,
+        data_subset: Optional[str] = None,
+    ):
+        """Creates an HDF5 reader for an HDF5 corpus.
+
+        Args:
+            files: HDF5 files to read from.
+            sequence_length: The number of tokens per sample.
+            read_extra_token: Whether to read and return one extra token
+                after the end of the sequence.
+            data_subset: A string specifying the subset of the corpus to
+                consider.
+        """
+        vsources: List[h5py.VirtualSource] = []
+        for idx, filepath in enumerate(files):
+            with h5py.File(filepath, "r") as f:
+                dataset = f["data"]
+
+                if len(dataset.shape) != 1:
+                    raise ValueError(
+                        f"Expected all dataset H5 files in corpus format to "
+                        f"have rank 1, but got rank {len(dataset.shape)} in "
+                        f"{filepath}."
+                    )
+
+                if idx == 0:
+                    data_dtype = dataset.dtype
+                else:
+                    if dataset.dtype != data_dtype:
+                        raise ValueError(
+                            f"Expected all dataset H5 files to have the same "
+                            f"dtype, but got {data_dtype} in {files[0]} and "
+                            f"{dataset.dtype} in {filepath}."
+                        )
+
+                vsources.append(h5py.VirtualSource(dataset))
+
+        self._vdataset = _VirtualDataset(vsources)
+
+        self._msl = sequence_length
+        self._num_extra_tokens = 1 if read_extra_token else 0
+        self._num_sequences = (
+            len(self._vdataset) - self._num_extra_tokens
+        ) // self._msl
+
+        if data_subset is not None:
+            self._segmenter = _DatasetSegmenter(
+                self._num_sequences, data_subset
+            )
+            self._num_sequences -= self._segmenter.num_skipped_sequences
+        else:
+            self._segmenter = None
+
+    def __getitem__(self, i: int) -> np.ndarray:
+        """Reads a single item of the dataset from disk."""
+        if self._segmenter:
+            i = self._segmenter.map_index(i)
+
+        tok_idx = self._msl * i
+        return self._vdataset[
+            tok_idx : tok_idx + self._msl + self._num_extra_tokens
+        ].astype(np.int32)
+
+    def __len__(self) -> int:
+        """Returns total number of sequences in the dataset."""
+        return self._num_sequences
+
+
+class _VirtualDataset:
+    """Class that represents a virtual dataset over multiple HDF5 files."""
+
+    def __init__(self, sources: List[h5py.VirtualSource]):
+        """Constructs a virtual dataset from a list of virtual sources.
+
+        Args:
+            sources: A list of virtual sources to construct the dataset from.
+                It is expected that all virtual sources have the same shape
+                (except for the first axis) and dtype.
+        """
+
+        length = sum(s.shape[0] for s in sources)
+
+        layout = h5py.VirtualLayout(
+            shape=(length, *sources[0].shape[1:]), dtype=sources[0].dtype
+        )
+
+        start = 0
+        for vsource in sources:
+            end = start + vsource.shape[0]
+            layout[start:end:1, ...] = vsource
+            start = end
+
+        self._dataset_tmpfile = tempfile.NamedTemporaryFile(
+            "w", prefix="virtual_dataset", suffix=".h5"
+        )
+        with h5py.File(self._dataset_tmpfile.name, "w", libver="latest") as f:
+            f.create_virtual_dataset("data", layout, fillvalue=0)
+
+        self.__dataset_file = None
+        self.__dataset = None
+
+    @property
+    def _dataset(self) -> h5py.Dataset:
+        """Returns the underlying dataset.
+
+        The underlying dataset is lazily loaded from disk the first time it is
+        accessed. This is to avoid loading the dataset then forking when using
+        multiprocessing. The loaded dataset is then cached to avoid reloading
+        the dataset on every access, which has a high overhead. This is safe
+        because the dataset is opened in read-only mode and is not expected
+        to be modified while this object is alive.
+        """
+        if self.__dataset is None:
+            self.__dataset_file = h5py.File(self._dataset_tmpfile.name, "r")
+            self.__dataset = self.__dataset_file["data"]
+        return self.__dataset
+
+    def __getitem__(self, i) -> np.ndarray:
+        """Returns the `i`th element of the dataset."""
+        return self._dataset[i]
+
+    def __len__(self):
+        """Returns the length of the dataset."""
+        return self._dataset.shape[0]
+
+
+class _DatasetSegmenter:
+    def __init__(self, num_sequences: int, data_subset: str):
+        offsets_full_dataset = []
+        offsets_skipped_dataset = []
+
+        try:
+            segments = [
+                (float(seg.split("-")[0]), float(seg.split("-")[1]))
+                for seg in data_subset.strip().split(",")
+            ]
+        except Exception as e:
+            raise RuntimeError(
+                f"There was a problem parsing data subset {data_subset}. "
+                "data_subset must be a string of comma separated ranges of "
+                "floats, for example '0.0-0.2,0.5-0.7'"
+            ) from e
+        prev_end = 0
+        segments = [(0, 0)] + segments + [(1, 1)]
+        n = num_sequences
+        for start, end in segments:
+            if start < 0:
+                raise ValueError(
+                    f"data_subset must contain only non-negative bounds. "
+                    f"Got {data_subset} which contains {start}."
+                )
+            if end < start:
+                raise ValueError(
+                    f"the end of each range in data_subset must be at "
+                    f"least as large as the start of the range, but "
+                    f"start={start} and end={end} are present in provided "
+                    f"data subset {data_subset}"
+                )
+            if end > 1:
+                raise ValueError(
+                    f"data_subset can only contain ranges which are subsets"
+                    f" of the range [0, 1], but found end={end} in "
+                    f"data_subset {data_subset}"
+                )
+            if start < prev_end:
+                raise ValueError(
+                    f"ranges in data_subset must be monotonically "
+                    f"increasing. Got {data_subset}"
+                )
+            offsets_full_dataset.append(int(n * end) - int(n * start))
+            offsets_skipped_dataset.append(int(n * start) - int(n * prev_end))
+            prev_end = end
+
+        self._offsets_skipped_dataset = np.cumsum(offsets_skipped_dataset)
+        self._offsets_full_dataset = np.cumsum(offsets_full_dataset)
+
+    @property
+    def num_skipped_sequences(self) -> int:
+        return self._offsets_skipped_dataset[-1]
+
+    def map_index(self, i):
+        if len(self._offsets_full_dataset):
+            chunk_idx = self._offsets_full_dataset.searchsorted(i, side="right")
+            i += self._offsets_skipped_dataset[chunk_idx]
+        return i
 
 
 class Mixture:
@@ -266,7 +416,13 @@ class Mixture:
             is `False`.
     """
 
-    def __init__(self, datasets, weights, interleave=False, seed=0):
+    def __init__(
+        self,
+        datasets: List[H5Reader],
+        weights: List[int],
+        interleave: bool = False,
+        seed: int = 0,
+    ):
         self.interleave = interleave
 
         self._by_sample = all(d.by_sample for d in datasets)
@@ -276,7 +432,6 @@ class Mixture:
                 "sample or all read data by slicing a corpus, but got datasets "
                 "that use a mixture"
             )
-        num_datasets = len(datasets)
         if len(weights) != len(datasets):
             raise ValueError(
                 f"weights must have same length as datasets, got {weights}"

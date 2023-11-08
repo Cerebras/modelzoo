@@ -12,17 +12,93 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import glob
 import logging
-import os
 
 import torch
 
-from modelzoo.common.pytorch import cb_model as cm
+import cerebras_pytorch as cstorch
+import cerebras_pytorch.distributed as dist
+from cerebras_pytorch.distributed import get_worker_state
+from modelzoo.common.pytorch.input_utils import get_streaming_batch_size
 from modelzoo.vision.pytorch.input.utils import create_worker_cache
 
 from .readers import H5Reader, Mixture
 from .samplers import CBSampler
+
+
+class RestartableDataLoader(torch.utils.data.DataLoader):
+    """
+    The state we care about for allowing deterministic restart of instances
+    of `HDF5Dataset` is the total number of samples streamed globally,
+    which gets consumed by the sampler. Accordingly each worker saves the number
+    of samples that it has streamed in `state_dict()`. We aggregate these
+    together via summation to save the global number of samples streamed across
+    all workers, which is the same thing that is used to set the state of the
+    sampler on state dict load.
+    """
+
+    def __init__(self, *args, **kwargs):
+        # keep track of how many samples were streamed in the previous portion
+        # of the run so that we can track cumulative samples streamed in the
+        # state_dict
+        self.previous_samples_streamed = 0
+        super().__init__(*args, **kwargs)
+
+    def state_dict(self):
+        """
+        Save number of samples streamed for current worker
+        """
+        worker_state = get_worker_state()
+        return {
+            "samples_streamed": worker_state.samples_streamed,
+            "previous_samples_streamed": self.previous_samples_streamed,
+        }
+
+    def load_state_dict(self, state_dict):
+        """
+        Set sampler state with the total number of samples streamed globally
+        """
+        self.validate_state_dict(state_dict)
+        self.previous_samples_streamed = state_dict["samples_streamed"]
+        if (
+            self.dataset.shuffle or isinstance(self.dataset.reader, Mixture)
+        ) and state_dict["seed"] != self.dataset.seed:
+            raise ValueError(
+                f"shuffle seed {self.dataset.seed} doesn't match the seed used "
+                f"for the previous portion of the run {state_dict['seed']}"
+            )
+        self.dataset.sampler.set_state(state_dict["samples_streamed"])
+
+    def aggregate_state_dict(self, worker_states):
+        """
+        Sum samples streamed across all workers to get the number of samples
+        streamed globally
+        """
+        return {
+            "samples_streamed": sum(
+                sd["samples_streamed"] for sd in worker_states
+            )
+            + worker_states[0]["previous_samples_streamed"],
+            "seed": self.dataset.seed,
+        }
+
+    def deaggregate_state_dict(self, aggregated_state_dict):
+        """
+        No deaggregation needed since the sampler needs the global number of
+        samples streamed
+        """
+        return aggregated_state_dict
+
+    @staticmethod
+    def validate_state_dict(sd):
+        if len(sd) != 2 or "samples_streamed" not in sd or "seed" not in sd:
+            raise RuntimeError(
+                "The keys in state_dict must be 'samples_streamed' and 'seed', "
+                f"found {sd.keys()}. This means that the dataloader state in "
+                "the checkpoint you are loading from is not compatible with "
+                "the dataloader currently in use. Consider re-running without "
+                "loading the dataloader state."
+            )
 
 
 class HDF5Dataset(torch.utils.data.Dataset):
@@ -55,7 +131,7 @@ class HDF5Dataset(torch.utils.data.Dataset):
                 Exactly one of "data_dir" or "mixture" must be specified.
             - "batch_size" (int): batch size
             - "shuffle" (bool): whether or not to shuffle the dataset. Defaults
-                to `True`
+                to `False`
             - "shuffle_seed" (int): seed used for deterministic shuffling.
                 Defaults to 0.
             - "use_worker_cache" (bool): whether or not to copy data to storage
@@ -88,17 +164,28 @@ class HDF5Dataset(torch.utils.data.Dataset):
                 start of the next epoch so that there is no data loss. This is
                 necessary for a data ordering that is independent of the
                 distributed setup being used.
+            - "num_samples" (int): the number of samples to shuffle over (if
+                shuffling is enabled). In multi-epoch training, it is common to
+                set this to the total number of samples that you plan to train
+                on so that epochs are not sequential but instead shuffled
+                together for potentially improved convergence.
+            - "sort_files" (bool): whether or not the reader should sort the input
+                files. This is included for backwards compatibility and should
+                almost always be set to `True`.
     """
 
     def __init__(self, params):
         self.use_worker_cache = params.get("use_worker_cache", False)
         self.msl = params.get("max_sequence_length", None)
-        shuffle = params.get("shuffle", True)
-        seed = params.get("shuffle_seed", 0)
+        self.shuffle = params.get("shuffle", False)
+        self._seed = params.get("shuffle_seed", 0)
         data_dir = params.get("data_dir", None)
         mixture_params = params.get("mixture", None)
-        batch_size = params["batch_size"]
+        batch_size = get_streaming_batch_size(params["batch_size"])
+        micro_batch_size = params.get("micro_batch_size")
         drop_last = params.get("drop_last", True)
+        num_samples = params.get("num_samples", None)
+        self.sort_files = params.get("sort_files", True)
 
         if data_dir and mixture_params:
             raise ValueError(
@@ -117,29 +204,38 @@ class HDF5Dataset(torch.utils.data.Dataset):
                     for x in mixture_params
                 ],
                 [x["weight"] for x in mixture_params],
-                interleave=not shuffle,
-                seed=seed,
+                interleave=not self.shuffle,
+                seed=self._seed,
             )
 
-        start_index = self._get_global_samples_from_ckpt(
-            params.get("cerebras", {})
-        )
-        logging.info(f"Starting dataloader from sample {start_index}")
         self.sampler = CBSampler(
             self,
-            shuffle=shuffle,
-            seed=seed,
-            start_index=start_index,
+            shuffle=self.shuffle,
+            seed=self._seed,
             shard=True,
             batch_size=batch_size,
             drop_last=drop_last,
+            num_samples=num_samples,
         )
 
         self.map_fn = None
 
+        if self.by_sample and self.shuffle:
+            logging.warning(
+                "You have chosen to use the sample data format with shuffling. "
+                "If you are doing a single-epoch run, it is usually beneficial "
+                "to shuffle at preprocessing time instead of runtime. On some "
+                "storage setups, shuffling at runtime can cause performance "
+                "degredation."
+            )
+
     @property
     def by_sample(self):
         return self.reader.by_sample
+
+    @property
+    def seed(self):
+        return self._seed
 
     def map(self, fn):
         if self.map_fn is not None:
@@ -151,57 +247,11 @@ class HDF5Dataset(torch.utils.data.Dataset):
     def _set_up_reader(self, data_dir, subset):
         if not isinstance(data_dir, list):
             data_dir = [data_dir]
-        if self.use_worker_cache and cm.use_cs() and cm.is_streamer():
-            if not cm.is_appliance():
-                raise RuntimeError(
-                    "use_worker_cache not supported for non-appliance runs"
-                )
-            else:
-                data_dir = [create_worker_cache(d) for d in data_dir]
+        if self.use_worker_cache and cstorch.use_cs() and dist.is_streamer():
+            data_dir = [create_worker_cache(d) for d in data_dir]
 
-        reader = H5Reader(data_dir, self.msl, True, subset)
+        reader = H5Reader(data_dir, self.msl, True, subset, self.sort_files)
         return reader
-
-    def _get_global_samples_from_ckpt(self, dataloader_state):
-        base_path = dataloader_state.get("save_iter_state_path", None)
-        if base_path is None:
-            return 0
-        global_state_path = os.path.join(
-            base_path, "data_iter_checkpoint_state_file_global"
-        )
-        if not os.path.exists(global_state_path):
-            return 0
-        try:
-            with open(global_state_path, "r") as f:
-                contents = f.readline()
-        except Exception as e:
-            raise RuntimeError(
-                f"Could not access dataloader checkpoint file "
-                f"{global_state_path}"
-            ) from e
-        try:
-            global_step = int(contents)
-        except Exception as e:
-            raise RuntimeError(
-                "Invalid contents of global dataloader checkpoint file. "
-                f"File {global_state_path} has first line {contents}, but the "
-                "first line of the global checkpoint file should be an integer "
-                "representing the global step of the previous checkpoint."
-            ) from e
-
-        worker_ckpts = glob.glob(
-            os.path.join(
-                base_path,
-                f"data_iter_state_file_worker_*_step_{global_step}.txt",
-            )
-        )
-        total_samples = 0
-        # TODO(william): improve error messages for the following code
-        for ckpt_path in worker_ckpts:
-            with open(ckpt_path, "r") as f:
-                total_samples += int(f.readline())
-
-        return total_samples
 
     def __getitem__(self, i):
         x = self.reader[i]

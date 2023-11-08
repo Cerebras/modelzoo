@@ -10,9 +10,7 @@ setup:
 
 processing:
     tokenizer_type: "NeoXTokenizer"
-    encoder_file: "../../../vocab/neox-encoder.json "
-    eos_id: 0
-    pad_id: 0
+    encoder_file: "../../../vocab/neox-encoder.json"
 
     max_seq_length: 2048
     short_seq_prob: 0.0

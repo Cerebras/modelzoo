@@ -62,7 +62,7 @@ class HDF5BasePreprocessor(ABC):
                 encoder_file
             ), "`encoder_file` is missing, please provide it using `args.encoder_file`."
             self.tokenizer = BPETokenizer(vocab_file, encoder_file)
-            self.eos_id = [self.tokenizer.get_token_id("<|endoftext|>")]
+            self.eos_id = self.tokenizer.get_token_id("<|endoftext|>")
             self.pad_id = self.tokenizer.get_token_id("<|endoftext|>")
         elif self.tokenizer_type == "neoxtokenizer":
             encoder_file = params.pop("encoder_file", None)
@@ -70,16 +70,50 @@ class HDF5BasePreprocessor(ABC):
                 encoder_file
             ), "`encoder_file` is missing, please provide it using `args.encoder_file`."
             self.tokenizer = HFTokenizer(encoder_file)
-            self.eos_id = [self.tokenizer.eos]
+            self.eos_id = self.tokenizer.eos
             self.pad_id = self.tokenizer.pad
+        elif self.tokenizer_type == "huggingfacetokenizer":
+            from transformers import AutoTokenizer
+
+            self.tokenizer = AutoTokenizer.from_pretrained(
+                params.pop("huggingface_tokenizer")
+            )
+            self.eos_id = self.tokenizer.eos_token_id
+            self.pad_id = (
+                self.eos_id
+                if self.tokenizer.pad_token_id is None
+                else self.tokenizer.pad_token_id
+            )
         else:
             raise NotImplementedError(
                 f"{self.tokenizer_type} is not implemented."
             )
-        if not self.eos_id:
-            self.eos_id = [params.pop("eos_id", 0)]
-        if not self.pad_id:
-            self.pad_id = params.pop("pad_id", 0)
+        # override eos id and pad id from user args
+        if (
+            params.get("eos_id") is not None
+        ):  # important as id could be set to 0
+            logger.info(
+                f"Overriding the eos id {self.eos_id} from the tokenizer "
+                f"with supplied eos id: {params['eos_id']}."
+            )
+            self.eos_id = params["eos_id"]
+            self.pad_id = params["eos_id"]  # set pad id same as eos id
+        if params.get("pad_id") is not None:
+            logger.info(
+                f"Overriding the pad id {self.pad_id} from the tokenizer "
+                f"with supplied pad id: {params['pad_id']}."
+            )
+            self.pad_id = params["pad_id"]
+            if (
+                self.pad_id != self.eos_id
+                and self.tokenizer_type == "gpt2tokenizer"
+            ):
+                logger.info(
+                    f"Pad id {self.pad_id} supplied from command line is "
+                    f"different from eos id {self.eos_id}. For GPT2 tokenizer, "
+                    f"pad id and eos id must be the same. Setting pad id to eos id."
+                )
+                self.pad_id = self.eos_id
 
         self.max_seq_length = params.pop("max_seq_length", 2048)
         self.short_seq_prob = params.pop("short_seq_prob", 0.0)
@@ -102,14 +136,19 @@ class HDF5BasePreprocessor(ABC):
         self.seed = params.pop("seed", 0)
         self.write_in_batch = params.pop("write_in_batch", False)
 
-        if params:
-            logger.warning(
-                "The following processing params are unused: "
-                + ", ".join(params.keys())
+        self.split_text_to_tokenize = params.pop(
+            "split_text_to_tokenize", False
+        )
+        if self.split_text_to_tokenize:
+            self.chunk_len_to_split = params.pop("chunk_len_to_split", 2000)
+            self.remove_bos_in_chunks = params.pop(
+                "remove_bos_in_chunks", False
             )
 
         self.files_processed = 0
         self.discarded_files = 0
+        self.raw_chars_count = 0
+        self.raw_bytes_count = 0
 
     @abstractmethod
     def file_read_generator(self, file):
@@ -150,6 +189,8 @@ class HDF5BasePreprocessor(ABC):
             self.tokenizer.add_token(token)
         elif self.tokenizer_type == "neoxtokenizer":
             self.tokenizer.add_token([token])
+        elif self.tokenizer_type == "huggingfacetokenizer":
+            self.tokenizer.add_token([token])
 
     def get_vocab_size(self):
         """ Get tokenizer vocabulary size
@@ -160,6 +201,8 @@ class HDF5BasePreprocessor(ABC):
             vocab_size = len(self.tokenizer.encoder)
         elif self.tokenizer_type == "neoxtokenizer":
             vocab_size = self.tokenizer.tokenizer.get_vocab_size()
+        elif self.tokenizer_type == "huggingfacetokenizer":
+            return self.tokenizer.vocab_size
 
         return vocab_size
 
@@ -365,10 +408,12 @@ class HDF5BasePreprocessor(ABC):
             with open(checkpoint_path, "w") as checkpoint_file:
                 checkpoint_file.write(f"{self.files_processed}, {_df_count}")
 
-            successful_files = self.files_processed - self.discarded_files
-            return {
-                "discarded": self.discarded_files,
-                "processed": self.files_processed,
-                "successful": successful_files,
-                "examples": n_examples,
-            }
+        successful_files = self.files_processed - self.discarded_files
+        return {
+            "discarded": self.discarded_files,
+            "processed": self.files_processed,
+            "successful": successful_files,
+            "examples": n_examples,
+            "raw_chars_count": self.raw_chars_count,
+            "raw_bytes_count": self.raw_bytes_count,
+        }

@@ -150,6 +150,7 @@ class BertPretrainModel(nn.Module):
         max_position_embeddings=1024,
         position_embedding_type="learned",
         embedding_pad_token_id=0,
+        mask_padding_in_positional_embed=False,
         hidden_size=768,
         share_embedding_weights=True,
         # Encoder
@@ -201,6 +202,7 @@ class BertPretrainModel(nn.Module):
             hidden_size=hidden_size,
             embedding_dropout_rate=dropout_rate,
             embedding_pad_token_id=embedding_pad_token_id,
+            mask_padding_in_positional_embed=mask_padding_in_positional_embed,
             # Encoder
             num_hidden_layers=num_hidden_layers,
             layer_norm_epsilon=layer_norm_epsilon,

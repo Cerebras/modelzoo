@@ -4,7 +4,7 @@ datasketch==1.5.9
 ftfy==6.1.1
 joblib==1.2.0
 jsonlines==3.1.0
-lm-dataformat @ git+https://github.com/leogao2/lm_dataformat.git@ac85cb7dae49ce25e9973a128ebd9167deaf64dd
+lm-dataformat @ https://github.com/leogao2/lm_dataformat/archive/ac85cb7dae49ce25e9973a128ebd9167deaf64dd.zip
 more-itertools==9.1.0
 networkit==10.1
 nltk==3.8.1

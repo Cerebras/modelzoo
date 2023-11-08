@@ -74,6 +74,8 @@ Before doing that, you need to setup a python virtual environment through [conda
 
 ## Environment Setup
 
+**NOTE:** Skip this if you have already setup the model zoo environment as described in [PYTHON-SETUP.md](../../../../PYTHON-SETUP.md) if you're running on a Cerebras Wafer-Scale Cluster. If trying to run this locally, please follow the below steps.
+
 The following pre-requisites are needed to enable a clean run of the script. Below is a setup for a Python virtual environment:
 
 **NOTE**: This assumes commands are run from the current directory.
@@ -144,10 +146,11 @@ Example content in the format that may be outside of the
 
 ### Definition of vocab_file and encoder_file
 
-We support two different tokenizers with this script, 1. `GPT2Tokenizer`, 2. `NeoXTokenizer`. We need to supply correct `vocab_file` and `encoder_file` when using the desired tokenizer.
+We support three different tokenizers with this script, 1. `GPT2Tokenizer`, 2. `NeoXTokenizer` and 3. `HuggingFaceTokenizer`. We need to supply the following parameters when using a specific tokenizer:
 
 - For `GPT2Tokenizer`, `vocab_file=gpt2-vocab.bpe` and `encoder_file=gpt2-encoder.json`.
 - For `NeoXTokenizer`, `encoder_file=neox-encoder.json`.
+- For `HuggingFaceTokenizer`, `huggingface_tokenizer` should be specified, for example `huggingface_tokenizer=tiiuae/falcon-7b` .
 
 These files can be found [here](../../../vocab/).
 
@@ -179,11 +182,11 @@ Argument | Default Value | Description
 ##### Table 3: Processing Arguments
 Argument | Default Value | Description
 --- | --- | ---
-`tokenizer_type` | **required arg** | Type of tokenizer to use for HDF5 dataset generation. Can be one of `GPT2Tokenizer` or `NeoXTokenizer`.
+`tokenizer_type` | **required arg** | Type of tokenizer to use for HDF5 dataset generation. Can be one of `GPT2Tokenizer`, `NeoXTokenizer` or `HuggingFaceTokenizer`.
 `vocab_file` | N/A | Path to the vocabulary file.
 `encoder_file` | N/A | Path to the encoder file.
-`eos_id` | `0` | Token id of the end of sentence token. Will be used if tokenizer doesn't have a default eos_id.
-`pad_id` | `0` | Token id of the padding token. Will be used if tokenizer doesn't have a default pad_id.
+`eos_id` | `None` | Token id of the end of sentence token. Will be used if tokenizer doesn't have a default eos_id.
+`pad_id` | `None` | Token id of the padding token. Will be used if tokenizer doesn't have a default pad_id.
 `max_seq_length` | `2048` | Maximum sequence length.
 `short_seq_prob` | `0.0` | Probability of creating sequences which are shorter than the maximum sequence length.
 `output_name` | `examples` | Name of the dataset; i.e. prefix to use for HDF5 file names.
@@ -206,7 +209,9 @@ Argument | Default Value | Description
 `input_ids_dtype` | `int32` | dtype of processed input_ids.
 `input_mask_dtype` | `int32` | dtype of processed input loss masks.
 `inverted_mask` | `False` | If False, 0 represents masked positions. If True 1 represents masked positions.
-
+`split_text_to_tokenize` | `False` | Whether to split the text into smaller chunks before tokenization. This is helpful for very long documents with tokenizers such as Llama tokenizer which performs quadratically in the text length.
+`chunk_len_to_split` | `2000` | Length of the text chunks to split the text into before tokenization for slower tokenizers. Could be optionally used with the above flag `split_text_to_tokenize`. Without the previous flag, this argument will be ignored.
+`remove_bos_in_chunks` | `False` | Whether to remove the BOS token from the beginning of the chunks. Set this to `True` when using `split_test_to_tokenize` and `chunk_len_to_split` to avoid having multiple BOS tokens in the middle of the text. Not applicable to all tokenizers.
 
 ##### Table 5: Dataset Arguments (`Summarization` mode)
 Argument | Default Value | Description
@@ -215,7 +220,7 @@ Argument | Default Value | Description
 `ftfy_normalizer` | `NFC` | Choose what kind of unicode normalization is applied. Usually, we apply `NFC` normalization, so that letters followed by combining characters become single combined characters. Using `None` applies no normalization while fixing text.
 `wikitext_detokenize` | `False` | Use wikitext detokenizer to fix text.
 `min_sequence_len` | `10` | Minimum token length to skip the sample.
-`sep_token` | `<\|sep\|>` | Token added between prompt and completion in preprocessed sequences.
+`sep_token` | `None` | Token added between prompt and completion in preprocessed sequences. If supplied with a non-None value, the tokenizer will add the token to the vocab size and modify the vocab size. This may not be advisable for doing fine tuning on a pre-trained model on the types of models that do not provision for extra tokens.
 `prompt_key` | **required arg** | Json key for the prompt.
 `completion_key` | **required arg** | Json key for the completion.
 `input_ids_dtype` | `int32` | dtype of processed input_ids.
@@ -234,6 +239,10 @@ python create_hdf5_dataset.py LMData --params ./configs/autoregressive_lm_prepro
 example yaml files for LMData and Summarization are located under [./configs](./configs).
 
 > **Note**: You can also provide both, but command line arguments will override any common arguments with the yaml configuration file.
+
+> **Note**: The behavior of `eos` and `pad` ids is dependent on the tokenizer used.
+For `GPT2Tokenizer`, the `eos` and `pad` ids are the same.
+For `NeoXTokenizer` and `HuggingFaceTokenizer`, the `eos` and `pad` ids are the same as the `eos` and `pad` ids in the tokenizer. If the tokenizer does not have a default `pad_id` then the `pad_id` argument will be used. If `pad_id` is not provided, then the default `pad_id` will be set to same as `eos_id`.
 
 ### `Customize` mode steps
 1. Create a python file or put under `./hdf5_dataset_preprocessors.py`
@@ -265,7 +274,7 @@ For example, in the autoregressive language modeling task, file_read_generator y
 2. `input_mask`: Loss mask for the sequence. It has 0's on padded positions like prompts or padding tokens and 1's elsewhere.
 3. `labels`: input_ids shifted to the right by 1 position as the target labels.
 
-**NOTE**: To avoid tedious setup of arguments specific to your customized preprocessor, we recommend running with a yaml file config.
+> **NOTE**: To avoid tedious setup of arguments specific to your customized preprocessor, we recommend running with a yaml file config.
 
 ### Generation Notes
 
@@ -302,3 +311,17 @@ The output directory will contain a bunch of `h5` files as shown below (with 2 p
 ```
 
 Here `data_params.json` is the file which stores the parameters used for generating this set of files. `checkpoint_*.txt` can be used for resuming the processing in case the run script gets killed for some reason. There is one `checkpoint_*.txt` file for each process. To use this file, simply resume the previous command that you ran along with additional command line argument `--resume_from_checkpoint`
+
+The `h5_dataset_stats` section in the generated `data_params.json` file contains the statistics on the generated dataset. The statistics are as follows:
+
+```bash
+
+"h5_dataset_stats": {
+  "detokenized_bytes": # total bytes in the detokenized text using the same tokenizer as used for tokenization,
+  "detokenized_chars": # total characters in the detokenized text using the same tokenizer as used for tokenization,
+  "loss_valid_tokens": # total number of tokens that are not padding tokens or prompt tokens,
+  "non_pad_tokens": # total number of tokens that are not padding tokens,
+  "num_sequences": # total number of sequences in the dataset,
+  "num_tokens": # total number of tokens in the dataset,
+}
+```

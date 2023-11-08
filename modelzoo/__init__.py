@@ -39,7 +39,10 @@ def _find_spec(name):
 # accordingly.
 if _find_spec("cerebras.framework") is not None:
     CSOFT_PACKAGE = CSoftPackage.SRC
-elif _find_spec("cerebras_appliance") is not None:
+elif _find_spec("cerebras_pytorch") is not None:
     CSOFT_PACKAGE = CSoftPackage.WHEEL
 else:
-    CSOFT_PACKAGE = CSoftPackage.NONE
+    raise ImportError(
+        "Cerebras ModelZoo depends on cerebras_pytorch package. "
+        "Please install cerebras_pytorch to use the ModelZoo."
+    )

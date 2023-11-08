@@ -26,13 +26,12 @@ model:
 optimizer:
     optimizer_type: "Adam"
     correct_bias: True
-    disable_lr_steps_reset: False
-    weight_decay_rate: 0.01
+    weight_decay: 0.01
     learning_rate:
         - scheduler: "Linear"
           initial_learning_rate: 1.0e-4
           end_learning_rate: 0.0
-          steps: 1000
+          total_iters: 1000
     loss_scaling_factor: "dynamic"
 
 runconfig:
@@ -40,5 +39,3 @@ runconfig:
     log_steps: 100
     seed: 1
     model_dir: "./model_dir"
-    show_debug_metrics: False
-    save_losses: True

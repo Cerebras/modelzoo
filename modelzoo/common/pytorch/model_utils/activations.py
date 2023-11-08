@@ -34,22 +34,11 @@
 import math
 
 import torch
-from packaging import version
 from torch import nn
 
 # TODO: Figure logging
 # from .utils import logging
 # logger = logging.get_logger(__name__)
-
-
-def _gelu_python(x):
-    """
-    Original Implementation of the GELU activation function in Google BERT repo when initially created. For
-    information: OpenAI GPT's GELU is slightly different (and gives slightly different results): 0.5 * x * (1 +
-    torch.tanh(math.sqrt(2 / math.pi) * (x + 0.044715 * torch.pow(x, 3)))) This is now written in C in nn.functional
-    Also see the Gaussian Error Linear Units paper: https://arxiv.org/abs/1606.08415
-    """
-    return x * 0.5 * (1.0 + torch.erf(x / math.sqrt(2.0)))
 
 
 def gelu_new(x):
@@ -67,12 +56,6 @@ def gelu_new(x):
     )
 
 
-if version.parse(torch.__version__) < version.parse("1.4"):
-    gelu = _gelu_python
-else:
-    gelu = nn.functional.gelu
-
-
 def gelu_fast(x):
     return (
         0.5
@@ -86,39 +69,8 @@ def quick_gelu(x):
 
 
 def squared_gelu(x):
-    g = gelu(x)
+    g = nn.functional.gelu(x)
     return g * g
-
-
-def _silu_python(x):
-    """
-    See Gaussian Error Linear Units (Hendrycks et al., https://arxiv.org/abs/1606.08415) where the SiLU (Sigmoid Linear
-    Unit) was originally introduced and coined, and see Sigmoid-Weighted Linear Units for Neural Network Function
-    Approximation in Reinforcement Learning (Elfwing et al., https://arxiv.org/abs/1702.03118) and Swish: a Self-Gated
-    Activation Function (Ramachandran et al., https://arxiv.org/abs/1710.05941v1) where the SiLU was experimented with
-    later.
-    """
-    return x * torch.sigmoid(x)
-
-
-if version.parse(torch.__version__) < version.parse("1.7"):
-    silu = _silu_python
-else:
-    silu = nn.functional.silu
-
-
-def _mish_python(x):
-    """
-    See Mish: A Self-Regularized Non-Monotonic Activation Function (Misra., https://arxiv.org/abs/1908.08681). Also
-    visit the official repository for the paper: https://github.com/digantamisra98/Mish
-    """
-    return x * torch.tanh(nn.functional.softplus(x))
-
-
-if version.parse(torch.__version__) < version.parse("1.9"):
-    mish = _mish_python
-else:
-    mish = nn.functional.mish
 
 
 def linear_act(x):
@@ -139,7 +91,7 @@ def liglu(x1, x2):
 
 
 def geglu(x1, x2):
-    return glu_bivariate_base_fn(x1, x2, gelu)
+    return glu_bivariate_base_fn(x1, x2, nn.functional.gelu)
 
 
 def reglu(x1, x2):
@@ -160,15 +112,15 @@ GLU_ACTIVATIONS = {
 ACT2FN = {
     "relu": nn.functional.relu,
     "leaky_relu": nn.functional.leaky_relu,
-    "silu": silu,
-    "swish": silu,
-    "gelu": gelu,
+    "silu": nn.functional.silu,
+    "swish": nn.functional.silu,
+    "gelu": nn.functional.gelu,
     "tanh": torch.tanh,
     "gelu_new": gelu_new,
     "gelu_fast": gelu_fast,
     "quick_gelu": quick_gelu,
     "squared_gelu": squared_gelu,
-    "mish": mish,
+    "mish": nn.functional.mish,
     "linear": linear_act,
     "sigmoid": torch.sigmoid,
     "relu6": nn.functional.relu6,

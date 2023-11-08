@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import itertools
+import math
 
 import torch
 
@@ -36,6 +37,7 @@ class CBSampler(torch.utils.data.Sampler):
         shard=True,
         batch_size=None,
         drop_last=True,
+        num_samples=None,
     ):
         """
         Create a sampler to handle shuffling in a deterministic and restartable
@@ -50,42 +52,63 @@ class CBSampler(torch.utils.data.Sampler):
                 data streamer nodes
             batch_size (int): The batch size to use to compute sharded indices
                 and group samples into batches. If `None`, no batching will be
-                performed. This is the global batch size visible to the dataset
-                rather than the microbatch size.
+                performed. When running on worker nodes, this should be the
+                per-system batch size rather than the global batch size or the
+                microbatch size. The per-system batch size is defined as
+                `global_batch_size / num_csx` and can be found using the
+                `modelzoo.common.pytorch.input_utils.get_streaming_batch_size`
+                function. When running on the coordinator node, this should
+                be the global batch size. Again, the `get_streaming_batch_size`
+                function will return the appropriate result.
+            num_samples (int): The number of samples to shuffle over. In multi-
+                epoch training, it is common to set this to the total number
+                of samples that you plan to see in your training run to get
+                smoother loss curves and improved convergence.
         """
         cluster_spec, _ = cluster_config()
         _num_systems = cluster_spec.num_csx
-        if batch_size is not None and batch_size % _num_systems:
-            raise ValueError(
-                f"The global batch size must be a multiple of the number of "
-                f"CS-2s being used. Got global batch size {batch_size} and "
-                f"number of systems {_num_systems}."
-            )
         if _num_systems > 1 and not drop_last:
             raise ValueError(
                 f"`drop_last=False` is only supported on GPU. Please re-run "
                 f"with `drop_last=True`."
             )
-        microbatch_size = (
-            batch_size // _num_systems if batch_size is not None else None
-        )
         self.sampler = BaseSampler(
-            data_source, shuffle=shuffle, seed=seed, start_index=start_index
+            data_source,
+            shuffle=shuffle,
+            seed=seed,
+            start_index=start_index,
+            num_samples=num_samples,
         )
         if batch_size is not None:
-            self.sampler = BatchSampler(
-                self.sampler, microbatch_size, drop_last
-            )
+            self.sampler = BatchSampler(self.sampler, batch_size, drop_last)
         if shard:
             self.sampler = Sharder(self.sampler)
-        if batch_size is not None and _num_systems > 1:
-            self.sampler = BatchAccumulator(self.sampler, _num_systems)
+
+        self.kwargs = {
+            "data_source": data_source,
+            "shuffle": shuffle,
+            "seed": seed,
+            "shard": shard,
+            "batch_size": batch_size,
+            "drop_last": drop_last,
+        }
 
     def __iter__(self):
         return iter(self.sampler)
 
     def __len__(self):
         return len(self.sampler)
+
+    def set_state(self, start_index):
+        """
+        Sets the state of the sampler to continue deterministically from a prior
+        run.
+
+        Args:
+            start_index: the total number of samples streamed globally across
+                all workers from a previous run.
+        """
+        self.__init__(**self.kwargs, start_index=start_index)
 
 
 class BaseSampler(torch.utils.data.Sampler):
@@ -130,15 +153,27 @@ class BaseSampler(torch.utils.data.Sampler):
         if self.shuffle:
             gen = torch.Generator()
             gen.manual_seed(self.seed + self.epoch)
-            if self.num_samples >= len(self.data_source):
-                perm = torch.randperm(self.num_samples, generator=gen)
+            if self.num_samples > len(self.data_source):
+                epochs = math.ceil(self.num_samples / len(self.data_source))
+                perm = torch.cat(
+                    [
+                        torch.arange(len(self.data_source))
+                        for _ in range(epochs - 1)
+                    ]
+                )
+                perm = torch.cat(
+                    (perm, torch.randperm(len(self.data_source), generator=gen))
+                )
+                perm = perm[: self.num_samples]
+                indices = torch.randperm(self.num_samples, generator=gen)
+                perm = perm[indices]
             else:
                 perm = torch.randperm(len(self.data_source), generator=gen)
                 perm = perm[: self.num_samples]
             perm = perm[self.start_index :]
+            yield from perm.tolist()
         else:
-            perm = torch.arange(self.start_index, self.num_samples)
-        yield from perm.tolist()
+            yield from range(self.start_index, self.num_samples)
         self.epoch += 1
         self.start_index = 0
 
@@ -205,6 +240,9 @@ class BatchSampler(torch.utils.data.Sampler):
         self.drop_last = drop_last
         self.leftover_samples = []
 
+        if len(self.sampler) < self.batch_size:
+            self.leftover_samples = [s for s in self.sampler]
+
     def __iter__(self):
         # Implemented based on the benchmarking in https://github.com/pytorch/pytorch/pull/76951
         if self.drop_last:
@@ -238,37 +276,3 @@ class BatchSampler(torch.utils.data.Sampler):
             ) // self.batch_size
         else:
             return (len(self.sampler) + self.batch_size - 1) // self.batch_size
-
-
-class BatchAccumulator(torch.utils.data.Sampler):
-    """
-    Accumulate neighboring batches into one single larger batch. This is the
-    inverse operation to the splitting of batches into microbatches that
-    happens when using multiple CSX systems.
-    """
-
-    def __init__(
-        self, data_source, n_accum,
-    ):
-        """
-        Assumes data_source is an iterator of batches where each batch has the
-        same length (i.e. `drop_last=True`).
-        """
-        self.data_source = data_source
-        self._n = n_accum
-        self._next_batch = []
-
-    def __iter__(self):
-        data_iter = itertools.chain(self._next_batch, self.data_source)
-        self._next_batch = []
-        while True:
-            try:
-                for _ in range(self._n):
-                    self._next_batch.append(next(data_iter))
-                yield [x for batch in self._next_batch for x in batch]
-                self._next_batch = []
-            except StopIteration:
-                break
-
-    def __len__(self):
-        return (len(self.data_source) + len(self._next_batch)) // self._n

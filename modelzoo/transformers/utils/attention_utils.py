@@ -33,23 +33,6 @@ class SparseAttentionBuilder:
             f"is correctly implemented in {self.__class__.__module__}"
         )
 
-    def get_tensorflow_mask(self, batch_size=1, dtype=None):
-        import tensorflow as tf
-
-        # Avoid rebuilding mask if already exists
-        if not self.mask_is_built:
-            self.build_mask()
-        attn_matrix = self.attention_mask
-        multiples = [batch_size, 1, 1, 1]
-        if self.num_different_head_attn_configs == 1:
-            attn_matrix = self.attention_mask[0, :, :]
-            multiples = [batch_size, 1, 1]
-        mask = tf.constant(attn_matrix, dtype=dtype)
-        mask = 1 - mask
-        sparse_attn_mask = tf.tile(tf.expand_dims(mask, axis=0), multiples)
-
-        return sparse_attn_mask
-
     def get_pytorch_mask(self, dtype=None):
         import torch
 

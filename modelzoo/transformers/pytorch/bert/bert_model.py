@@ -140,6 +140,7 @@ class BertModel(nn.Module):
         hidden_size=768,
         embedding_dropout_rate=0.1,  # need to be careful when testing
         embedding_pad_token_id=0,
+        mask_padding_in_positional_embed=False,
         # Encoder
         num_hidden_layers=12,
         layer_norm_epsilon=1.0e-5,
@@ -200,6 +201,14 @@ class BertModel(nn.Module):
             embeddings_initializer=embeddings_initializer,
             max_position_embeddings=max_position_embeddings,
             position_embedding_type=position_embedding_type,
+            position_embedding_offset=(
+                # We only need to add position embedding offset when we're using
+                # masked padding in positional embed
+                embedding_pad_token_id
+                if mask_padding_in_positional_embed
+                else 0
+            ),
+            mask_padding_in_positional_embed=mask_padding_in_positional_embed,
             position_embeddings_initializer=position_embeddings_initializer,
             num_segments=num_segments,
             segment_embeddings_initializer=segment_embeddings_initializer,
@@ -289,7 +298,7 @@ class BertModel(nn.Module):
         src_key_padding_mask = None
 
         hidden_states = self.embedding_layer(
-            input_ids, position_ids=position_ids, segment_ids=segment_ids
+            input_ids, position_ids=position_ids, segment_ids=segment_ids,
         )
         hidden_states = self.embed_ln_f(hidden_states)
         hidden_states = self.dropout_embd(hidden_states)

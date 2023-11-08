@@ -19,6 +19,9 @@ import random
 import torch
 
 from modelzoo.common.pytorch.utils import BufferedShuffleDataset
+from modelzoo.transformers.data_processing.HDF5IterableDataset import (
+    RestartableDataLoader,
+)
 
 
 class HDF5IterableDataProcessor:
@@ -50,9 +53,11 @@ class HDF5IterableDataProcessor:
 
         self.num_workers = params.get("num_workers", 0)
         self.drop_last = params.get("drop_last", True)
-        self.prefetch_factor = params.get("prefetch_factor", 10)
+        if self.num_workers == 0:
+            self.prefetch_factor = None
+        else:
+            self.prefetch_factor = params.get("prefetch_factor", 10)
         self.persistent_workers = params.get("persistent_workers", True)
-        self.dataloader_state = params.get('cerebras', {})
 
     def _worker_init_fn(self, worker_id):
         worker_info = torch.utils.data.get_worker_info()
@@ -68,24 +73,31 @@ class HDF5IterableDataProcessor:
         """
         # Seed BufferedShuffleDataset() in case of single-worker,
         # for multiple workers, using _worker_init_fn()
-        if self.num_workers == 0 and self.shuffle_seed:
+        if self.num_workers == 0 and self.shuffle_seed is not None:
             random.seed(self.shuffle_seed)
 
-        data_loader = torch.utils.data.DataLoader(
-            BufferedShuffleDataset(
+        if self.shuffle:
+            dataloader_cls = torch.utils.data.DataLoader
+            dataset = BufferedShuffleDataset(
                 dataset=self.dataset, buffer_size=self.shuffle_buffer
             )
-            if self.shuffle and not bool(self.dataloader_state)
-            else self.dataset,
+        else:
+            dataloader_cls = RestartableDataLoader
+            dataset = self.dataset
+
+        data_loader = dataloader_cls(
+            dataset,
             batch_size=self.batch_size,
             drop_last=self.drop_last,
             num_workers=self.num_workers,
-            prefetch_factor=self.prefetch_factor if self.num_workers > 0 else 2,
+            prefetch_factor=self.prefetch_factor
+            if self.num_workers > 0
+            else None,
             persistent_workers=self.persistent_workers
             if self.num_workers > 0
             else False,
             worker_init_fn=self._worker_init_fn
-            if self.num_workers > 0 and self.shuffle_seed
+            if self.num_workers > 0 and self.shuffle_seed is not None
             else None,
         )
 

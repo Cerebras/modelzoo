@@ -19,13 +19,18 @@ from typing import Tuple
 import torch
 
 from modelzoo.common.pytorch.model_utils.checkpoint_converters.base_converter import (
+    BaseCheckpointConverter_CS_CS,
     BaseCheckpointConverter_HF_CS,
     BaseConfigConverter,
+    BaseConfigConverter_CS_CS,
     BaseConfigConverter_HF_CS,
     ConfigConversionError,
     ConversionRule,
     EquivalentSubkey,
     FormatVersions,
+)
+from modelzoo.common.pytorch.model_utils.checkpoint_converters.helper import (
+    convert_use_rms_layer_norm_helper,
 )
 
 
@@ -142,7 +147,7 @@ class Converter_GPT2_Attention_HF_CS17(BaseCheckpointConverter_HF_CS):
     ):
         # HF represents Q, K, and V in a packed format. It also contains
         # special ".bias" and ".masked_bias" register buffers that need to be
-        # initalized
+        # initialized
         q_key = old_key
         k_key = re.sub("\.proj_q_dense_layer\.", ".proj_k_dense_layer.", q_key)
         v_key = re.sub("\.proj_q_dense_layer\.", ".proj_v_dense_layer.", q_key)
@@ -163,7 +168,7 @@ class Converter_GPT2_Attention_HF_CS17(BaseCheckpointConverter_HF_CS):
             dim=0,
         )
 
-        # Need to tranpose to convert from Linear.weight -> Conv1D.weight
+        # Need to transpose to convert from Linear.weight -> Conv1D.weight
         if len(new_state_dict[new_key].shape) == 2:
             new_state_dict[new_key] = torch.transpose(
                 new_state_dict[new_key], 0, 1
@@ -234,7 +239,7 @@ class Converter_GPT2Model_HF_CS17(BaseCheckpointConverter_HF_CS):
                     EquivalentSubkey("h", "transformer_decoder.layers"),
                     "\.\d+\.",
                     EquivalentSubkey("attn.", "self_attn."),
-                    Converter_GPT2_Attention_HF_CS17(),
+                    self.attention_converter_class(),
                 ],
                 action=None,
             ),
@@ -263,7 +268,7 @@ class Converter_GPT2Model_HF_CS17(BaseCheckpointConverter_HF_CS):
                     EquivalentSubkey("mlp.c_fc", "ffn.ffn.0.linear_layer"),
                     "\.(?:weight|bias)",
                 ],
-                action=transpose_key_if_2D,
+                action=self.ffn_converter(),
             ),
             ConversionRule(
                 [
@@ -272,7 +277,7 @@ class Converter_GPT2Model_HF_CS17(BaseCheckpointConverter_HF_CS):
                     EquivalentSubkey("mlp.c_proj", "ffn.ffn.1.linear_layer"),
                     "\.(?:weight|bias)",
                 ],
-                action=transpose_key_if_2D,
+                action=self.ffn_converter(),
             ),
             ConversionRule(
                 [
@@ -287,6 +292,17 @@ class Converter_GPT2Model_HF_CS17(BaseCheckpointConverter_HF_CS):
                 ["h\.\d+\.attn\.(?:masked_bias|bias)",], exists="left"
             ),
         ]
+
+    def attention_converter_class(self):
+        # Allows other checkpoint converters to inherit from
+        # this main converter but can overide this function with
+        # different types of attention converters (i.e. MQA)
+        return Converter_GPT2_Attention_HF_CS17()
+
+    def ffn_converter(self):
+        # similar to above, allows overriding method for other models
+        # that use mostly GPT-2, but with slight changes
+        return transpose_key_if_2D
 
     def replace_final_norm(
         self,
@@ -356,6 +372,13 @@ class Converter_GPT2Model_HF_CS17(BaseCheckpointConverter_HF_CS):
             if use_bias_in_output:
                 lm_head_bias = torch.zeros(vocab_size)
                 new_state_dict["lm_head.bias"] = lm_head_bias
+        super().post_model_convert(
+            old_state_dict,
+            new_state_dict,
+            configs,
+            from_index,
+            drop_unmatched_keys,
+        )
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
@@ -383,7 +406,7 @@ class Converter_GPT2Model_HF_CS18(Converter_GPT2Model_HF_CS17):
         self.rules = [
             # Catch checkpoints from Pytorch 2.0 API
             ConversionRule([Converter_GPT2Model_HF_CS17(),], action=None,),
-            # Catch checkpoints from depricated PyTorchBaseModel
+            # Catch checkpoints from 1.7/1.8
             ConversionRule(
                 [
                     EquivalentSubkey("", "model."),
@@ -417,6 +440,10 @@ class ConfigConverter_GPT2Model_HF_CS17(BaseConfigConverter_HF_CS):
     def __init__(self):
         super().__init__()
         self.rules = [
+            ConversionRule(
+                ["model_type"],
+                action=BaseConfigConverter.assert_factory_fn(0, "gpt2"),
+            ),
             # Embedding
             ConversionRule(["vocab_size"], action=self.replaceKey),
             ConversionRule(
@@ -525,6 +552,13 @@ class ConfigConverter_GPT2Model_HF_CS17(BaseConfigConverter_HF_CS):
             ),
         ]
 
+        self.pre_convert_defaults[0].update(
+            {"tie_word_embeddings": True,}
+        )
+        self.pre_convert_defaults[1].update({"share_embedding_weights": True,},)
+        self.post_convert_defaults[0].update({"model_type": "gpt2"})
+        self.post_convert_defaults[1].update({"use_bias_in_output": False})
+
     def convert_attention_type(
         self,
         old_key,
@@ -560,16 +594,6 @@ class ConfigConverter_GPT2Model_HF_CS17(BaseConfigConverter_HF_CS):
         self, config, from_index,
     ):
         config = super().pre_config_convert(config, from_index)
-
-        defaults = [
-            {"tie_word_embeddings": True,},
-            {"share_embedding_weights": True,},
-        ]
-
-        # Apply defaults
-        for key in defaults[from_index]:
-            if key not in config:
-                config[key] = defaults[from_index][key]
 
         if from_index == 0:
             if "n_inner" not in config or config["n_inner"] is None:
@@ -652,7 +676,7 @@ class Converter_GPT2LMHeadModel_HF_CS18(BaseCheckpointConverter_HF_CS):
             ConversionRule(
                 [Converter_GPT2LMHeadModel_HF_CS17(),], action=None,
             ),
-            # Catch checkpoints from depricated PyTorchBaseModel
+            # Catch checkpoints from 1.7/1.8
             ConversionRule(
                 [
                     EquivalentSubkey("", "model."),
@@ -661,6 +685,30 @@ class Converter_GPT2LMHeadModel_HF_CS18(BaseCheckpointConverter_HF_CS):
                 action=None,
             ),
         ]
+
+    def post_model_convert(
+        self,
+        old_state_dict,
+        new_state_dict,
+        configs,
+        from_index,
+        drop_unmatched_keys,
+    ):
+        if from_index == 0:
+            lm_head_weight_key = "lm_head.weight"
+            embed_key = "transformer.wte.weight"
+            if (
+                lm_head_weight_key not in new_state_dict
+                and embed_key in old_state_dict
+            ):
+                new_state_dict[lm_head_weight_key] = old_state_dict[embed_key]
+        super().post_model_convert(
+            old_state_dict,
+            new_state_dict,
+            configs,
+            from_index,
+            drop_unmatched_keys,
+        )
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
@@ -677,6 +725,92 @@ class Converter_GPT2LMHeadModel_HF_CS18(BaseCheckpointConverter_HF_CS):
         return ConfigConverter_GPT2Model_HF_CS18
 
 
+class Converter_GPT2LMHeadModel_CS18_CS20(BaseCheckpointConverter_CS_CS):
+    def __init__(self):
+        super().__init__()
+        # Model didn't change between 1.8/1.9 and 2.0. Copy all keys.
+        self.rules = [
+            ConversionRule([".*"], action=self.replaceKey),
+        ]
+
+    @classmethod
+    def converter_note(cls) -> str:
+        return "GPT2LMHeadModel class"
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("cs-1.8", "cs-1.9"), FormatVersions("cs-2.0"))
+
+    @staticmethod
+    def get_config_converter_class() -> BaseConfigConverter:
+        return ConfigConverter_GPT2Model_CS18_CS20
+
+
+class ConfigConverter_GPT2Model_CS18_CS20(BaseConfigConverter_CS_CS):
+    def __init__(self):
+        super().__init__()
+        # Only difference between 1.8/1.9 and 2.0 is introduction of norm_type
+        self.rules = [
+            ConversionRule(
+                [EquivalentSubkey("use_rms_norm", "norm_type")],
+                action=self.convert_use_rms_layer_norm,
+            ),
+            ConversionRule([".*"], action=self.replaceKey),
+        ]
+
+        self.pre_convert_defaults[0]["use_rms_norm"] = False
+        self.pre_convert_defaults[1]["norm_type"] = "layernorm"
+
+    def convert_use_rms_layer_norm(self, *args):
+        convert_use_rms_layer_norm_helper(self, *args)
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("cs-1.8", "cs-1.9"), FormatVersions("cs-2.0"))
+
+
+class Converter_GPT2Model_HF_CS20(Converter_GPT2Model_HF_CS18):
+    def __init__(self):
+        super().__init__()
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-2.0"))
+
+    @staticmethod
+    def get_config_converter_class() -> BaseConfigConverter:
+        return ConfigConverter_GPT2Model_HF_CS20
+
+
+class Converter_GPT2LMHeadModel_HF_CS20(Converter_GPT2LMHeadModel_HF_CS18):
+    def __init__(self):
+        super().__init__()
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-2.0"))
+
+    @staticmethod
+    def get_config_converter_class() -> BaseConfigConverter:
+        return ConfigConverter_GPT2Model_HF_CS20
+
+
+class ConfigConverter_GPT2Model_HF_CS20(ConfigConverter_GPT2Model_HF_CS18):
+    def __init__(self):
+        super().__init__()
+        self.rules = [
+            ConversionRule(
+                ["norm_type"],
+                action=BaseConfigConverter.assert_factory_fn(1, "layernorm"),
+            ),
+            *self.rules,
+        ]
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-2.0"))
+
+
 #### Action Helper Functions
 
 
@@ -689,7 +823,7 @@ def transpose_key_if_2D(
     action_fn_args,
 ):
     # HF checkpoint stores some layers as Conv2D instead of Linear.
-    # In those cases, we need to tranpsose the weight matrix for the
+    # In those cases, we need to transpose the weight matrix for the
     # dimensions to line up when converting.
     x = old_state_dict[old_key]
     if len(x.shape) == 2:

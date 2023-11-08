@@ -11,7 +11,7 @@ train_input:
     data_dir: "./falcon_data_test/val"
     shuffle: False
     shuffle_seed: 1
-    batch_size: 16
+    batch_size: 98
     num_workers: 8
     prefetch_factor: 10
     persistent_workers: True
@@ -21,7 +21,7 @@ eval_input:
     data_dir: "./falcon_data_test/test"
     shuffle: False
     shuffle_seed: 1
-    batch_size: 16
+    batch_size: 98
     num_workers: 8
     prefetch_factor: 10
     persistent_workers: True
@@ -58,38 +58,34 @@ model:
     use_bias_in_output: False
     initializer_range: 0.02
 
-    loss_scaling: "batch_size"
-    loss_weight: 0.00048828125
-
     # initialization of falcon based on HF repo is all normal with mean = 0.0 & std=0.02
     # reference: https://huggingface.co/tiiuae/falcon-7b-instruct/blob/main/modelling_RW.py#L434
 
     mixed_precision: True
     use_bfloat16: True
-    precision_opt_level: 1
     dropout_rate: 0.0
 
 optimizer:
     optimizer_type: "adamw"
-    beta1: 0.9
-    beta2: 0.999
+    betas: [0.9, 0.999]
     eps: 1.0e-8
-    weight_decay_rate: 0.1
+    weight_decay: 0.1
     max_gradient_norm: 1.0
     correct_bias: True
     learning_rate:
-    - steps: 13540 # 1% of max_steps
+    - total_iters: 2188
       scheduler: "Linear"
       initial_learning_rate: 0.0
-      end_learning_rate: 6.0e-4
+      end_learning_rate: 1.484e-3 # sqrt(batch_size / 16) * (6.0e-4)
     - scheduler: "CosineDecay"
-      initial_learning_rate: 6.0e-4
-      steps: 5362037 # 5416198 - 54161
-      end_learning_rate: 1.2e-5 # (1 - 0.9) * 4.9e-5
+      initial_learning_rate: 1.484e-3 # sqrt(batch_size / 16) * (6.0e-4)
+      total_iters: 866591
+      end_learning_rate: 1.484e-4 # (1 - 0.9) * 6.0e-4 * sqrt(batch_size / 16)
 
 runconfig:
-    max_steps: 5416198 # 320000 * 512 / 121
+    max_steps: 868779 
     log_steps: 100
     checkpoint_steps: 5000
+    eval_steps: 2833 # 277822 // batch_size - 1
     use_cs_grad_accum: True
     seed: 1

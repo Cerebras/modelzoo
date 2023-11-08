@@ -14,8 +14,6 @@
 
 import os
 
-from modelzoo import CSOFT_PACKAGE, CSoftPackage
-
 
 def get_default_inis():
     return {
@@ -25,27 +23,29 @@ def get_default_inis():
         "ws_run_memoize_actv_mem_mapping": True,
         "ws_opt_bidir_act": False,
         "ws_variable_lanes": True,
-        "ws_matmul_half_prec_acc_len": 0,
-        "ws_dmatmul_half_prec_acc_len": 0,
     }
 
 
 def update_runconfig_debug_args_path(params, default_inis_dict):
-    if CSOFT_PACKAGE != CSoftPackage.NONE:
-        from cerebras_appliance.run_utils import (
-            DebugArgs,
-            set_ini,
-            write_debug_args,
+    from cerebras_appliance.run_utils import (
+        DebugArgs,
+        get_debug_args,
+        set_default_ini,
+        write_debug_args,
+    )
+
+    if not params["runconfig"].get("debug_args_path"):
+        debug_args = DebugArgs()
+        # in the case debug_args_path is not set
+        # create a default debug_args file in the debug_args_dir
+        debug_args_path = os.path.join(
+            params["runconfig"]["model_dir"], ".debug_args.proto"
         )
 
-        if not params["runconfig"].get("debug_args_path"):
-            debug_args = DebugArgs()
-            set_ini(debug_args, **default_inis_dict)
+    else:
+        debug_args_path = params["runconfig"]["debug_args_path"]
+        debug_args = get_debug_args(debug_args_path)
 
-            # in the case debug_args_path is not set
-            # create a default debug_args file in the debug_args_dir
-            debug_args_path = os.path.join(
-                params["runconfig"]["model_dir"], ".debug_args.proto"
-            )
-            write_debug_args(debug_args, debug_args_path)
-            params["runconfig"]["debug_args_path"] = debug_args_path
+    set_default_ini(debug_args, **default_inis_dict)
+    write_debug_args(debug_args, debug_args_path)
+    params["runconfig"]["debug_args_path"] = debug_args_path

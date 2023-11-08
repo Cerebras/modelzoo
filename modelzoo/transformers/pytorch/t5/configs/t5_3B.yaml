@@ -8,7 +8,8 @@ train_input:
     shuffle: True
     shuffle_seed: 1
     shuffle_buffer: 16384 # large buffer size allows batches to contain samples from multiple documents
-    batch_size: 682 # this is more than 2**16 tokens per batch (ref batch size = 216) for perf reasons on CS system
+    # The effective batch size, which is evenly divided across "num_csx" systems used for the run
+    batch_size: 495 # this is more than 2**16 tokens per batch (ref batch size = 216) for perf reasons on CS system
     num_workers: 8
     prefetch_factor: 10
     persistent_workers: True
@@ -22,7 +23,8 @@ eval_input:
     tgt_max_sequence_length: 114
     shuffle: False
     shuffle_seed: 1 # also for deterministic masking
-    batch_size: 682
+    # The effective batch size, which is evenly divided across "num_csx" systems used for the run
+    batch_size: 495
     num_workers: 8
     prefetch_factor: 10
     persistent_workers: True
@@ -47,8 +49,7 @@ model:
     share_embedding_weights: True
     share_encoder_decoder_embedding: True
 
-    # T5 layer norm (no mean subtraction, and bias correction)
-    use_t5_layer_norm: False
+    norm_type: "layernorm" # Disable T5 style layer norm (RMSNorm)
 
     # Encoder -- ffn
     d_ff: 16384 # Size of the intermediate feed forward layer in t5 blocks.
@@ -69,20 +70,16 @@ model:
 
 optimizer:
     optimizer_type: "AdaFactor"
-    disable_lr_steps_reset: True
     learning_rate:
     - scheduler: "InverseSquareRootDecay"
-      warmup_steps: 3167
+      warmup_steps: 4363
       scale: 1.0
-    loss_scaling_factor: 1
 
 runconfig:
-    max_steps: 166050 # (524288 * 216 / 682)
+    max_steps: 228780 # (524288 * 216 / 495)
     log_steps: 100
     checkpoint_steps: 10000
     eval_steps: 703
     seed: 1
     model_dir: "./model_dir"
-    show_debug_metrics: False
-    save_losses: True
     compile_crd_memory_gi: 95  # 2023-04 - requires ~90Gi

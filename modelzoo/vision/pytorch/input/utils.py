@@ -22,7 +22,8 @@ import torch
 import torch.distributed as dist
 from tqdm import tqdm
 
-from modelzoo.common.pytorch import cb_model as cm
+import cerebras_pytorch as cstorch
+import cerebras_pytorch.distributed as dist
 
 
 def is_gpu_distributed():
@@ -35,8 +36,8 @@ def is_gpu_distributed():
 
 
 def task_id():
-    if cm.is_streamer():
-        return cm.get_streaming_rank()
+    if dist.is_streamer():
+        return dist.get_streaming_rank()
     elif is_gpu_distributed():
         return dist.get_rank()
     else:
@@ -44,8 +45,8 @@ def task_id():
 
 
 def num_tasks():
-    if cm.is_streamer():
-        return cm.num_streamers()
+    if dist.is_streamer():
+        return dist.num_streamers()
     elif is_gpu_distributed():
         return dist.get_world_size()
     else:
@@ -81,7 +82,7 @@ class ShardedSampler(torch.utils.data.Sampler):
         self.dataset_len = len(self.dataset)
         self.drop_last = drop_last
 
-        if cm.use_cs() and not self.drop_last:
+        if cstorch.use_cs() and not self.drop_last:
             raise ValueError(
                 "On CS2 we do not support unequal batch sizes so `drop_last` "
                 "must be set to `True`."
@@ -170,7 +171,7 @@ class FastDataLoader(torch.utils.data.DataLoader):
 def _get_worker_cache_dir(src_dir):
     """Gets the path to worker cache dir corresponding to the src_dir"""
     src_dir = os.path.abspath(src_dir)
-    cache_dir = os.path.normpath("/".join([cm.WORKER_CACHE_ROOT, src_dir]))
+    cache_dir = os.path.normpath("/".join([dist.WORKER_CACHE_ROOT, src_dir]))
     os.makedirs(cache_dir, exist_ok=True)
     return cache_dir
 
@@ -219,14 +220,14 @@ def create_worker_cache(src_dir: str, force_overwrite: bool = False):
     from filelock import FileLock
 
     if (
-        os.path.commonprefix([src_dir, cm.WORKER_CACHE_ROOT])
-        == cm.WORKER_CACHE_ROOT
+        os.path.commonprefix([src_dir, dist.WORKER_CACHE_ROOT])
+        == dist.WORKER_CACHE_ROOT
     ):
         raise RuntimeError(
-            "Ensure that the src_dir path does not have "
-            "a worker_cache path prefix: {cm.WORKER_CACHE_ROOT}"
+            f"Ensure that the src_dir path does not have "
+            f"a worker_cache path prefix: {dist.WORKER_CACHE_ROOT}"
         )
-    if not cm.is_streamer():
+    if not dist.is_streamer():
         raise RuntimeError(
             "Ensure that create_worker_cache is called only for a worker node."
         )
@@ -240,7 +241,7 @@ def create_worker_cache(src_dir: str, force_overwrite: bool = False):
                 is_limit_hit,
                 dir_size,
                 available_space_for_copy,
-            ) = cm.hit_worker_cache_limit(src_dir, dest_dir)
+            ) = dist.hit_worker_cache_limit(src_dir, dest_dir)
             if is_limit_hit:
                 raise RuntimeError(
                     f"Failed when copying the directory to the worker cache: {src_dir},"

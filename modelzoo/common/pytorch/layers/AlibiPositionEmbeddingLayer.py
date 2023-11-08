@@ -35,8 +35,6 @@ class AlibiPositionEmbeddingLayer(nn.Module):
         slopes (Tensor): slope values to use for alibi heads. Shape: [num_heads, 1]. Default to `None`.
         alibi_trainable_slopes (bool): whether the alibi slopes are trainable parameters.
         slopes_initializer (str): initializer for alibi slopes if it's trainable. Defaults to ``xavier_uniform``.
-        alibi_implementation (str): variant name for alibi implementation. Currently
-            accepts ``embedding`` and ``expand``. Defaults to ``expand``.
     Returns:
         position_bias (Tensor): Relative position bias, to be used in attention masking
     """
@@ -47,19 +45,13 @@ class AlibiPositionEmbeddingLayer(nn.Module):
         slopes=None,
         alibi_trainable_slopes=False,
         slopes_initializer="xavier_uniform",
-        alibi_implementation="expand",
     ):
         super(AlibiPositionEmbeddingLayer, self).__init__()
 
-        _SUPPORTED_ALIBI_IMPLEMENTATIONS = ["embedding", "expand"]
-        assert (
-            alibi_implementation in _SUPPORTED_ALIBI_IMPLEMENTATIONS
-        ), f"Alibi implementation {alibi_implementation} is not supported."
         assert slopes is None, "Customized slope is not supported yet."
 
         self.num_heads = num_heads
         self.alibi_trainable_slopes = alibi_trainable_slopes
-        self.use_embedding_implementation = alibi_implementation == "embedding"
         if not slopes:
             if self.alibi_trainable_slopes:
                 slopes = torch.zeros([num_heads, 1])
@@ -127,33 +119,6 @@ class AlibiPositionEmbeddingLayer(nn.Module):
                 )[0::2][: n - closest_power_of_2]
             )
 
-    def _alibi_implementation_embedding(self, seq_length, key_length, slopes):
-        # 1D tensor range(key_length): [0, 1, ... key_length - 1]
-        range_k = torch.arange(
-            key_length, dtype=torch.int32, device=slopes.device
-        )
-
-        # Compute bias for each head: slopes[head_index] * [0, 1, ... key_length - 1]
-        # Shape: (key_length, num_heads)
-        bias = slopes.permute([1, 0]) * range_k.unsqueeze(-1) * -1.0
-
-        # Construct the broadcasting with compute_raw_relative_positions from RelativePositionEmbedding
-        # Shape: (seq_length, key_length)
-        relative_position = RelativePositionEmbeddingLayer.compute_raw_relative_positions(
-            seq_length, key_length, device=slopes.device
-        )
-        # casting to int32 to bypass the wgt kernel gather limitation
-        relative_position = torch.abs(relative_position).to(torch.int32)
-
-        # Use embedding as a 2D to 3D broadcast.
-        # Shape: (seq_length, key_length, num_heads)
-        bias = nn.functional.embedding(relative_position, bias)
-
-        # Transpose to the expected output order.
-        # Shape: (num_heads, seq_length, key_length)
-        bias = bias.permute([2, 0, 1])
-        return bias
-
     def _alibi_implementation_expand(self, seq_length, key_length, slopes):
         relative_position = RelativePositionEmbeddingLayer.compute_raw_relative_positions(
             seq_length, key_length, device=slopes.device
@@ -170,11 +135,4 @@ class AlibiPositionEmbeddingLayer(nn.Module):
         if slopes is None:
             slopes = self.slopes
 
-        if self.use_embedding_implementation:
-            return self._alibi_implementation_embedding(
-                seq_length, key_length, slopes
-            )
-        else:
-            return self._alibi_implementation_expand(
-                seq_length, key_length, slopes
-            )
+        return self._alibi_implementation_expand(seq_length, key_length, slopes)

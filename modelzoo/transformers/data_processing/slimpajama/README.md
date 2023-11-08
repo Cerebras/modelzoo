@@ -16,6 +16,9 @@ This directory contains scripts to pre-process SlimPajama end-to-end. Our datase
 
 
 # Environment Setup
+
+**NOTE:** Skip this if you have already setup the model zoo environment as described in [PYTHON-SETUP.md](../../../../PYTHON-SETUP.md) if you're running on a Cerebras Wafer-Scale Cluster. If trying to run this locally, please follow the below steps.
+
 The file [requirements.txt](./requirements.txt) contains the pre-requisites that are needed to enable a clean run of the scripts. Below is how to setup the environment:
 ```bash
 virtualenv <env_name>

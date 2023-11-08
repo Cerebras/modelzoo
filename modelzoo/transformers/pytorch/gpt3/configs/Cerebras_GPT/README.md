@@ -12,10 +12,10 @@ First, download the weights to your desired directory:
 wget -O my_checkpoint_directory/my_checkpoint_name.mdl <URL>
 ```
 
-Next, call `run.py` with the `--checkpoint_path` and `--is_pretrained_checkpoint` flags:
+Next, call `run.py` with the `--checkpoint_path` flag:
 
 ```bash
-python run.py CSX {pipeline,weight_streaming} --checkpoint_path /path/to/checkpoint --is_pretrained_checkpoint ... <remaining arguments>
+python run.py CSX {pipeline,weight_streaming} --checkpoint_path /path/to/checkpoint ... <remaining arguments>
 ```
 
 | Model family | Parameters | Checkpoint URL |

@@ -132,7 +132,7 @@ Please check [YAML config section](#yaml-config-file-description) for details on
 
 Please follow the instructions on our [quickstart in the Developer Docs](https://docs.cerebras.net/en/latest/wsc/getting-started/cs-appliance.html).
 
-> **Note**: To specify a BERT pretrained checkpoint use: `--checkpoint_path` is the path to the saved checkpoint from BERT pre-training,`--is_pretrained_checkpoint` flag is needed for loading the pre-trained BERT model for fine-tuning.
+> **Note**: To specify a BERT pretrained checkpoint use: `--checkpoint_path` is the path to the saved checkpoint from BERT pre-training,`--load_checkpoint_states="model"` setting is needed for loading the pre-trained BERT model for fine-tuning and `--disable_strict_checkpoint_loading` is needed to be able to only partially load a model.
 
 ## To run train and eval on GPU/CPU
 

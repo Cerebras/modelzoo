@@ -25,12 +25,105 @@ import h5py
 import numpy as np
 import torch
 
+from cerebras_pytorch.distributed import get_worker_state
 from modelzoo.common.pytorch.input_utils import get_streaming_batch_size
 from modelzoo.transformers.pytorch.input_utils import (
-    num_tasks,
+    cluster_config,
     shard_list_of_chunks_contiguous,
-    task_id,
 )
+
+
+class RestartableDataLoader(torch.utils.data.DataLoader):
+    """
+    This custom dataloader class specifies the  'state_dict', 'aggregate_state_dict',
+    'load_state_dict' and 'deaggregate_state_dict' methods.
+    These methods dictate what worker state information  is stored
+    (local or global streaming info) and how it is to be aggregated and retrieved.
+    To deterministically restart an instance of HDF5IterableDataset, it requires the
+    number of samples already seen in the previous run. This info is stored in the
+    `samples_streamed` key inside the worker state dict. Upon restart, the
+    `load_state_dict` method sets the `samples_seen` class variable which determines
+    the number of samples to be skipped.
+    """
+
+    def __init__(self, *args, **kwargs):
+        # keep track of how many samples were streamed in the previous portion
+        # of the run so that we can track cumulative samples streamed in the
+        # state_dict
+        self.previous_samples_streamed = 0
+        super().__init__(*args, **kwargs)
+
+    def state_dict(self):
+        worker_state = get_worker_state()
+        return {
+            "samples_streamed": worker_state.samples_streamed
+            + self.previous_samples_streamed,
+            "shard_index": self.dataset.shard_index,
+        }
+
+    def load_state_dict(self, state_dict):
+        if (
+            len(state_dict) != 2
+            or "samples_streamed" not in state_dict
+            or "shard_index" not in state_dict
+        ):
+            raise RuntimeError(
+                "The state dict must contain keys 'samples_streamed',  and 'shard_index' "
+                f"found {state_dict.keys()}. This means that the dataloader "
+                "state in the checkpoint you are loading from is not compatible"
+                " with the dataloader currently in use. Consider re-running "
+                "without loading the dataloader state."
+            )
+        self.previous_samples_streamed = state_dict["samples_streamed"]
+        self.dataset.set_state(
+            state_dict["samples_streamed"], state_dict["shard_index"]
+        )
+
+    def aggregate_state_dict(self, worker_states):
+        worker_states.sort(key=lambda x: x["shard_index"])
+        return {"all_worker_states": worker_states}
+
+    def deaggregate_state_dict(self, aggregated_state_dict):
+        if (
+            len(aggregated_state_dict) != 1
+            or "all_worker_states" not in aggregated_state_dict
+        ):
+            raise RuntimeError(
+                "The aggregated state dict must contain a single key "
+                f"'all_worker_states', found {aggregated_state_dict.keys()}. "
+                "This means that the dataloader state in the checkpoint you are "
+                "loading from is not compatible with the dataloader currently "
+                "in use. Consider re-running without loading the dataloader "
+                "state."
+            )
+        all_worker_states = aggregated_state_dict["all_worker_states"]
+        # For deterministic restart to work, the num_tasks for the previous run should
+        # match with the restart run's num_tasks. If that condition is not met,
+        # the dataloader would start from sample `0`.
+        num_tasks_prev_run = len(all_worker_states)
+        num_tasks = self.dataset.num_tasks
+        task_id = self.dataset.task_id
+        if num_tasks != num_tasks_prev_run:
+            logging.warning(
+                f"number of workers for the initial run = {num_tasks_prev_run}"
+                f" do not match number of workers in the restart run = {num_tasks}."
+                f" The dataloader restart won't be deterministic; so the dataloader"
+                " will start streaming samples from the beginning of the data chunk. "
+            )
+            # return empty state dict
+            return {}
+
+        worker_index_offset = None
+        min_samples = None
+        for i, sd in enumerate(all_worker_states):
+            if (
+                worker_index_offset is None
+                or sd["samples_streamed"] < min_samples
+            ):
+                worker_index_offset = i
+                min_samples = sd["samples_streamed"]
+
+        return all_worker_states[(task_id + worker_index_offset) % num_tasks]
 
 
 class HDF5IterableDataset(torch.utils.data.IterableDataset):
@@ -59,7 +152,6 @@ class HDF5IterableDataset(torch.utils.data.IterableDataset):
 
         self.num_workers = params.get("num_workers", 0)
         self.drop_last = params.get("drop_last", True)
-        self.dataloader_state = params.get('cerebras', {})
         self.features_list = params.get(
             "features", ["input_ids", "attention_mask", "labels"]
         )
@@ -77,30 +169,52 @@ class HDF5IterableDataset(torch.utils.data.IterableDataset):
                 except:
                     pass
 
-        assert self.batch_size > 0, "Batch size should be a positive number."
+        if self.batch_size <= 0:
+            raise ValueError(
+                f"Batch size should be a positive number, but got value {self.batch_size}."
+            )
 
         if not isinstance(self.data_dir, list):
             self.data_dir = [self.data_dir]
 
-        files = []
+        self.files = []
         for directory in self.data_dir:
             p = Path(directory)
-            assert (
-                p.is_dir()
-            ), f"The path {directory} does not exist or is not a directory."
-            files.extend(p.glob('*.h5'))
+            if not p.is_dir():
+                raise FileNotFoundError(
+                    f"The path {directory} does not exist or is not a directory."
+                )
+            self.files.extend(p.glob('*.h5'))
 
-        files = sorted(files)
-        if not files:
+        self.files = sorted(self.files)
+        if not self.files:
             raise RuntimeError("No .h5 dataset files found.")
 
-        self.num_tasks = num_tasks()
-        self.task_id = task_id()
+        cluster_spec, worker_spec = cluster_config()
+        self.num_tasks = cluster_spec.num_tasks()
+        self.task_id = worker_spec.rank
+
+        # initialize state with 0 samples seen and shard_index = task_id
+        self.set_state(0, self.task_id)
+
+    def set_state(self, samples_seen, shard_index):
+        """
+        This method sets the state of the dataloader's samples_seen variable that controls
+        how many samples are to be skipped for determinisitic restart.
+        This is called by the load_state_dict method of the RestartableDataLoader.
+
+        Args:
+            samples_seen (int): number of samples streamed by the dataloader
+            shard_index (int): the index of the shard of data that this worker
+                is responsible for streaming
+        """
+        self._samples_seen = samples_seen
+        self.shard_index = shard_index
 
         # Shard H5 files between the tasks and resolve the paths
         files_in_this_task = [
             str(file.resolve())
-            for file in files[self.task_id :: self.num_tasks]
+            for file in self.files[shard_index :: self.num_tasks]
         ]
 
         self.files_in_this_task = []
@@ -117,67 +231,15 @@ class HDF5IterableDataset(torch.utils.data.IterableDataset):
             random.seed(self.shuffle_seed)
             random.shuffle(self.files_in_this_task)
 
-        # Single worker
-        # load dataloader state from previous run for restart
-        self.dataloader_state_path = self.dataloader_state.get(
-            'save_iter_state_path', None
-        )
-        self.num_workers_prev_state = self.dataloader_state.get(
-            'num_workers', None
-        )
-        if self.num_workers_prev_state is not None:
-            assert (
-                self.num_workers == self.num_workers_prev_state
-            ), "num_workers should be the same at the restart"
-
-        self.prev_worker_iter_index = 0
-        if self.dataloader_state_path is not None:
-            if os.path.exists(self.dataloader_state_path):
-                # check if state file is available that contains iter to start from
-                if os.path.isfile(
-                    os.path.join(
-                        self.dataloader_state_path,
-                        'data_iter_checkpoint_state_file_global',
-                    )
-                ):
-                    with open(
-                        os.path.join(
-                            self.dataloader_state_path,
-                            'data_iter_checkpoint_state_file_global',
-                        ),
-                        'r',
-                    ) as f:
-                        try:
-                            global_ckpt_step = int(f.readline())
-                        except IOError as error:
-                            logging.error(
-                                'Caught this error: '
-                                + repr(error)
-                                + f'not able to read data iter ckpt step'
-                            )
-                    # add worker_id suffix to correctly load state for the current task/worker
-                    self.dataloader_state_file = os.path.join(
-                        self.dataloader_state_path,
-                        f'data_iter_state_file_worker_{self.task_id}_step_{global_ckpt_step}.txt',
-                    )
-                    if os.path.isfile(self.dataloader_state_file):
-                        with open(self.dataloader_state_file, 'r') as f:
-                            samples_seen = int(f.readline())
-                            if samples_seen % self.batch_size == 0:
-                                self.prev_worker_iter_index = int(
-                                    samples_seen / self.batch_size
-                                )
-                            else:
-                                self.prev_worker_iter_index = (
-                                    math.floor(samples_seen / self.batch_size)
-                                    + 1
-                                )
+    @property
+    def samples_seen(self):
+        return self._samples_seen % self.__len__()
 
     def _load_buffer(self, data_partitions):
         # partition id should default to 0 if not reading iter from file
+        self.prev_worker_iter_index = self.samples_seen // self.batch_size
         restart_iter_partition_id = 0
         restart_iter_start_idx = 0  # start_idx should default to 0
-        # Sanity check whether or not "dataloader_state_file" is readable
         if self.prev_worker_iter_index > 0:
             # check total number of iterations/steps in the data partitions
             # This is required to determine the epoch of the restart iter
@@ -267,9 +329,8 @@ class HDF5IterableDataset(torch.utils.data.IterableDataset):
                     for i in range(load_len):
                         yield load_data[i]
 
-        # reset dataloader state so that subsequent epochs start
-        # from the first batch
-        self.prev_worker_iter_index = 0
+        l = self.__len__()
+        self._samples_seen = l * math.ceil((self._samples_seen + 1) / l)
 
     def __iter__(self):
         """

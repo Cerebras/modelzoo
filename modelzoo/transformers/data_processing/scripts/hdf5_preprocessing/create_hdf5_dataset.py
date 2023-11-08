@@ -40,6 +40,15 @@ from modelzoo.transformers.data_processing.scripts.hdf5_preprocessing.hdf5_datas
     SummarizationPreprocessor,
 )
 
+# Custom preprocessors
+from modelzoo.transformers.data_processing.scripts.hdf5_preprocessing.hdf5_curation_corpus_preprocessor import (  # noqa
+    CurationCorpusPreprocessor,
+)
+from modelzoo.transformers.data_processing.scripts.hdf5_preprocessing.hdf5_nlg_preprocessor import (  # noqa
+    NLGPreprocessor,
+)
+
+
 logging.basicConfig()
 logger = logging.getLogger(__file__)
 logger.setLevel(logging.INFO)
@@ -48,7 +57,6 @@ logger.setLevel(logging.INFO)
 def main():
     """Main function for execution."""
     params = get_params(desc="Create HDF5 dataset for language models")
-    args = get_verification_args(params)
 
     output_dir = params["setup"].get("output_dir", "./data_dir/")
     if not params["processing"].get("resume_from_checkpoint", False):
@@ -86,13 +94,8 @@ def main():
         )
 
     results = process_dataset(input_files, dataset_processor, processes)
-    dump_result(
-        results,
-        json_params_file,
-        dataset_processor.eos_id,
-        dataset_processor.pad_id,
-        dataset_processor.get_vocab_size(),
-    )
+    vocab_size = dataset_processor.get_vocab_size()
+
     logger.info(
         f"\nFinished writing data to {output_dir}."
         f" Runtime arguments and outputs can be found at {json_params_file}."
@@ -100,8 +103,22 @@ def main():
 
     logger.info(f"Verifying the converted dataset at: {output_dir}")
     output_files = list(Path(output_dir).glob("*.h5"))
-    verify_saved_hdf5_files_mp(output_files, args)
+    verification_args = get_verification_args(
+        processes, dataset_processor
+    )  # for verify_saved_hdf5_files_mp
+    dataset_stats = verify_saved_hdf5_files_mp(
+        output_files, verification_args, vocab_size
+    )
     logger.info("Done verifying the converted dataset.")
+
+    dump_result(
+        results,
+        dataset_stats,
+        json_params_file,
+        dataset_processor.eos_id,
+        dataset_processor.pad_id,
+        vocab_size,
+    )
 
 
 if __name__ == "__main__":

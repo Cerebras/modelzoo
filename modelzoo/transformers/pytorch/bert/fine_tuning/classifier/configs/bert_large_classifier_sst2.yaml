@@ -43,12 +43,12 @@ model:
 
 optimizer:
     optimizer_type: "AdamW"
-    weight_decay_rate: 0.01
-    epsilon: 1e-6
+    weight_decay: 0.01
+    eps: 1.0e-6
     max_gradient_norm: 1.0
     learning_rate:
         - scheduler: "Linear"
-          steps: 2000
+          total_iters: 2000
           initial_learning_rate: 0.0
           end_learning_rate: 0.000005
         - scheduler: "Constant"
@@ -60,8 +60,6 @@ runconfig:
     log_steps: 1000
     checkpoint_steps: 5000
     seed: 1
-    show_debug_metrics: False
-    save_losses: True
     model_dir: "./model_dir"
     save_initial_checkpoint: True
     eval_steps: 71

@@ -70,6 +70,7 @@ class GPTJDecoderLayer(TransformerDecoderLayer):
         cache_present_kv: bool = False,
         self_attn_position_bias: Optional[Tensor] = None,
         cross_attn_position_bias: Optional[Tensor] = None,
+        layer_idx: Optional[int] = None,
     ) -> Tensor:
         """GPTJ layer with rotary position embeddings and parallel decoder architecture
 
@@ -108,6 +109,7 @@ class GPTJDecoderLayer(TransformerDecoderLayer):
             past_kv=past_kv[:2] if past_kv is not None else None,
             cache_present_kv=cache_present_kv,
             self_attn_position_bias=self_attn_position_bias,
+            layer_idx=layer_idx,
         )
 
         # Apply untied layernorm in neox

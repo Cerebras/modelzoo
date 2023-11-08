@@ -16,6 +16,8 @@ import logging
 import random
 from inspect import getfullargspec, signature
 
+import numpy as np
+from PIL import Image
 from torchvision.transforms import autoaugment, transforms
 from torchvision.transforms.functional import InterpolationMode
 
@@ -45,6 +47,8 @@ SUPPORTED_TRANSFORMS = [
     "randaug",
     "trivialaug",
     # "augmix", # available from torchvision 0.13
+    # transforms on PIL image only
+    "resize_center_crop_pil_image",
 ]
 
 
@@ -183,6 +187,12 @@ def create_transform(transform_spec):
     elif name == "to_tensor":
         return transforms.ToTensor()
 
+    elif name == "resize_center_crop_pil_image":
+        # Used to DiT model image transform
+        return LambdaWithParam(
+            resize_center_crop_pil_image, transform_spec.get("size")
+        )
+
     # Automatic augmentation transforms
     elif name == "autoaug":
         policy = get_or_use_default(transform_spec, "policy", "imagenet")
@@ -266,6 +276,37 @@ def create_transform(transform_spec):
 
 def dtype_transform(x, mp_type, *args, **kwargs):
     return x.to(mp_type)
+
+
+def resize_center_crop_pil_image(pil_image, image_size, *args, **kwargs):
+    """
+    Using same cropping mechanism as source DiT repo
+    https://github.com/facebookresearch/DiT/blob/main/train.py#L85
+
+    Based on Center cropping implementation from ADM.
+    https://github.com/openai/guided-diffusion/blob/8fb3ad9197f16bbc40620447b2742e13458d2831/guided_diffusion/image_datasets.py#L126
+    """
+    assert (
+        image_size[0] == image_size[1]
+    ), f"This transform is supported only for resizing to square shapes"
+    image_size = image_size[0]
+
+    while min(*pil_image.size) >= 2 * image_size:
+        pil_image = pil_image.resize(
+            tuple(x // 2 for x in pil_image.size), resample=Image.BOX
+        )
+
+    scale = image_size / min(*pil_image.size)
+    pil_image = pil_image.resize(
+        tuple(round(x * scale) for x in pil_image.size), resample=Image.BICUBIC
+    )
+
+    arr = np.array(pil_image)
+    crop_y = (arr.shape[0] - image_size) // 2
+    crop_x = (arr.shape[1] - image_size) // 2
+    return Image.fromarray(
+        arr[crop_y : crop_y + image_size, crop_x : crop_x + image_size]
+    )
 
 
 class LambdaWithParam(object):

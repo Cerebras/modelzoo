@@ -16,8 +16,8 @@ import logging
 from typing import Tuple
 
 from modelzoo.common.pytorch.model_utils.checkpoint_converters.base_converter import (
+    BaseCheckpointConverter_CS_CS,
     BaseCheckpointConverter_HF_CS,
-    BaseCheckpointConverter_PT_PT,
     BaseConfigConverter,
     BaseConfigConverter_CS_CS,
     BaseConfigConverter_HF_CS,
@@ -26,9 +26,12 @@ from modelzoo.common.pytorch.model_utils.checkpoint_converters.base_converter im
     EquivalentSubkey,
     FormatVersions,
 )
+from modelzoo.common.pytorch.model_utils.checkpoint_converters.helper import (
+    convert_use_rms_layer_norm_helper,
+)
 
 
-class Converter_T5_CS16_CS17(BaseCheckpointConverter_PT_PT):
+class Converter_T5_CS16_CS17(BaseCheckpointConverter_CS_CS):
     def __init__(self):
         super().__init__()
         self.rules = [
@@ -416,16 +419,21 @@ class Converter_T5_CS16_CS17(BaseCheckpointConverter_PT_PT):
             )
             new_state_dict[new_key] = old_state_dict[old_key]
 
-    def post_checkpoint_convert(
-        self, checkpoint, from_index: int,
+    def pre_checkpoint_convert(
+        self,
+        input_checkpoint,
+        output_checkpoint,
+        configs: Tuple[dict, dict],
+        from_index: int,
     ):
+        # Don't copy non model keys like optimizer state:
         logging.warning(
             "The T5 model changed significantly between {} and {}. As a result, the"
             " optimizer state won't be included in the converted checkpoint.".format(
                 *self.formats()
             )
         )
-        return {"model": checkpoint["model"]}
+        output_checkpoint["model"] = {}
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
@@ -440,13 +448,13 @@ class Converter_T5_CS16_CS17(BaseCheckpointConverter_PT_PT):
         return ConfigConverter_T5_CS16_CS17
 
 
-class Converter_T5_CS17_CS18(BaseCheckpointConverter_PT_PT):
+class Converter_T5_CS17_CS18(BaseCheckpointConverter_CS_CS):
     def __init__(self):
         super().__init__()
         self.rules = [
             # Catch checkpoints from Pytorch 2.0 API
             ConversionRule(["(?!model\.).*"], action=self.replaceKey,),
-            # Catch checkpoints from depricated PyTorchBaseModel
+            # Catch checkpoints from 1.7/1.8
             ConversionRule(
                 [EquivalentSubkey("", "model."), ".*"], action=self.replaceKey,
             ),
@@ -454,7 +462,7 @@ class Converter_T5_CS17_CS18(BaseCheckpointConverter_PT_PT):
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("cs-1.7"), FormatVersions("cs-1.8", "cs-1.9"))
+        return (FormatVersions("cs-1.7"), FormatVersions("cs-1.8"))
 
     @classmethod
     def converter_note(cls) -> str:
@@ -465,33 +473,38 @@ class Converter_T5_CS17_CS18(BaseCheckpointConverter_PT_PT):
         return ConfigConverter_T5_CS17_CS18
 
 
-class Converter_T5_CS16_CS18(BaseCheckpointConverter_PT_PT):
+class Converter_T5_CS16_CS18(BaseCheckpointConverter_CS_CS):
     def __init__(self):
         super().__init__()
         self.rules = [
             # Catch checkpoints from Pytorch 2.0 API
             ConversionRule([Converter_T5_CS16_CS17(),], action=None,),
-            # Catch checkpoints from depricated PyTorchBaseModel
+            # Catch checkpoints from 1.7/1.8
             ConversionRule(
                 [EquivalentSubkey("", "model."), Converter_T5_CS16_CS17()],
                 action=None,
             ),
         ]
 
-    def post_checkpoint_convert(
-        self, checkpoint, from_index: int,
+    def pre_checkpoint_convert(
+        self,
+        input_checkpoint,
+        output_checkpoint,
+        configs: Tuple[dict, dict],
+        from_index: int,
     ):
+        # Don't copy non model keys like optimizer state:
         logging.warning(
             "The T5 model changed significantly between {} and {}. As a result, the"
             " optimizer state won't be included in the converted checkpoint.".format(
                 *self.formats()
             )
         )
-        return {"model": checkpoint["model"]}
+        output_checkpoint["model"] = {}
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("cs-1.6"), FormatVersions("cs-1.8", "cs-1.9"))
+        return (FormatVersions("cs-1.6"), FormatVersions("cs-1.8"))
 
     @classmethod
     def converter_note(cls) -> str:
@@ -542,7 +555,7 @@ class ConfigConverter_T5_CS17_CS18(BaseConfigConverter_CS_CS):
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("cs-1.7"), FormatVersions("cs-1.8", "cs-1.9"))
+        return (FormatVersions("cs-1.7"), FormatVersions("cs-1.8"))
 
 
 class ConfigConverter_T5_CS16_CS18(ConfigConverter_T5_CS16_CS17,):
@@ -558,7 +571,7 @@ class ConfigConverter_T5_CS16_CS18(ConfigConverter_T5_CS16_CS17,):
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("cs-1.6"), FormatVersions("cs-1.8", "cs-1.9"))
+        return (FormatVersions("cs-1.6"), FormatVersions("cs-1.8"))
 
 
 ### T5ForConditional Generation HF <-> CS1.7
@@ -585,6 +598,13 @@ class Converter_T5_HF_CS17(
                 ],
                 exists="right",
                 action=self.convert_relative_attention_bias_cs17_to_hf,
+            ),
+            ConversionRule(
+                [
+                    "decoder\.block\.\d+\.layer\.1\.EncDecAttention\.relative_attention_bias\.(?:weight|bias)"
+                ],
+                exists="left",
+                action=None,
             ),
             *self.rules,
         ]
@@ -690,12 +710,15 @@ class Converter_T5_HF_CS17(
                     "decoder_embeddings.position_embeddings.weight"
                 ] = old_state_dict["lm_head.weight"]
 
-    def post_checkpoint_convert(
-        self, checkpoint, from_index: int,
+    def pre_checkpoint_convert(
+        self, *args,
     ):
-        return BaseCheckpointConverter_HF_CS.post_checkpoint_convert(
-            self, checkpoint, from_index
+        return BaseCheckpointConverter_HF_CS.pre_checkpoint_convert(
+            self, *args,
         )
+
+    def extract_model_dict(self, *args):
+        return BaseCheckpointConverter_HF_CS.extract_model_dict(self, *args)
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
@@ -718,7 +741,7 @@ class Converter_T5_HF_CS18(BaseCheckpointConverter_HF_CS):
         self.rules = [
             # Catch checkpoints from Pytorch 2.0 API
             ConversionRule([Converter_T5_HF_CS17(),], action=None,),
-            # Catch checkpoints from depricated PyTorchBaseModel
+            # Catch checkpoints from 1.7/1.8
             ConversionRule(
                 [EquivalentSubkey("", "model."), Converter_T5_HF_CS17()],
                 action=None,
@@ -727,7 +750,7 @@ class Converter_T5_HF_CS18(BaseCheckpointConverter_HF_CS):
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-1.8", "cs-1.9"))
+        return (FormatVersions("hf"), FormatVersions("cs-1.8"))
 
     @classmethod
     def converter_note(cls) -> str:
@@ -744,6 +767,10 @@ class ConfigConverter_T5_HF_CS17(BaseConfigConverter_HF_CS):
     def __init__(self):
         super().__init__()
         self.rules = [
+            ConversionRule(
+                ["model_type"],
+                action=BaseConfigConverter.assert_factory_fn(0, "t5"),
+            ),
             # Embedding
             ConversionRule(
                 [EquivalentSubkey("vocab_size", "src_vocab_size")],
@@ -794,6 +821,12 @@ class ConfigConverter_T5_HF_CS17(BaseConfigConverter_HF_CS):
                 [EquivalentSubkey("feed_forward_proj", "encoder_nonlinearity")],
                 action=self.convert_nonlinearity,
             ),
+            # HF uses dense_act_fn which is a subset of the information stored
+            # in feed_forward_proj
+            ConversionRule(["dense_act_fn"], exists="left", action=None,),
+            # HF uses is_gated_act which is a subset of the information stored
+            # in feed_forward_proj
+            ConversionRule(["is_gated_act"], exists="left", action=None,),
             ConversionRule(
                 ["decoder_nonlinearity"],
                 action=self.assert_decoder_nonlinearity,
@@ -842,6 +875,49 @@ class ConfigConverter_T5_HF_CS17(BaseConfigConverter_HF_CS):
             ),
         ]
 
+        self.pre_convert_defaults[0].update(
+            {
+                "vocab_size": 32128,
+                "d_model": 512,
+                "d_kv": 64,
+                "d_ff": 2048,
+                "num_layers": 6,
+                "num_heads": 8,
+                "relative_attention_num_buckets": 32,
+                "relative_attention_max_distance": 128,
+                "dropout_rate": 0.1,
+                "layer_norm_epsilon": 1e-6,
+                "initializer_factor": 1,
+                "feed_forward_proj": "relu",
+                "tie_word_embeddings": True,
+            }
+        )
+
+        self.pre_convert_defaults[1].update(
+            {
+                "use_projection_bias_in_attention": False,
+                "relative_attention_num_buckets": 32,
+                "share_embedding_weights": True,
+                "use_t5_layer_norm": True,
+                "layer_norm_epsilon": 1.0e-5,
+                "position_embedding_type": "relative",
+                "use_dropout_outside_residual_path": True,
+                "share_encoder_decoder_embedding": True,
+                "use_pre_encoder_decoder_dropout": False,
+                "use_pre_encoder_decoder_layer_norm": False,
+                "use_ffn_bias": False,
+                "use_transformer_initialization": False,
+            },
+        )
+
+        self.post_convert_defaults[0].update({"model_type": "t5"})
+        self.post_convert_defaults[1].update(
+            {
+                "src_max_position_embeddings": 512,
+                "tgt_max_position_embeddings": 512,
+            },
+        )
+
     def convert_nonlinearity(
         self,
         old_key,
@@ -852,6 +928,9 @@ class ConfigConverter_T5_HF_CS17(BaseConfigConverter_HF_CS):
         action_fn_args,
     ):
         activation = old_state_dict[old_key]
+        if activation.startswith("gated-"):
+            activation = activation[6:]
+            old_state_dict["is_gated_act"] = True
         is_gated = False
         if from_index == 0 and old_state_dict.get("is_gated_act", False):
             is_gated = True
@@ -896,43 +975,6 @@ class ConfigConverter_T5_HF_CS17(BaseConfigConverter_HF_CS):
     ):
         config = super().pre_config_convert(config, from_index)
 
-        defaults = [
-            {
-                "vocab_size": 32128,
-                "d_model": 512,
-                "d_kv": 64,
-                "d_ff": 2048,
-                "num_layers": 6,
-                "num_heads": 8,
-                "relative_attention_num_buckets": 32,
-                "relative_attention_max_distance": 128,
-                "dropout_rate": 0.1,
-                "layer_norm_epsilon": 1e-6,
-                "initializer_factor": 1,
-                "feed_forward_proj": "relu",
-                "tie_word_embeddings": True,
-            },
-            {
-                "use_projection_bias_in_attention": False,
-                "relative_attention_num_buckets": 32,
-                "share_embedding_weights": True,
-                "use_t5_layer_norm": True,
-                "layer_norm_epsilon": 1.0e-5,
-                "position_embedding_type": "relative",
-                "use_dropout_outside_residual_path": True,
-                "share_encoder_decoder_embedding": True,
-                "use_pre_encoder_decoder_dropout": False,
-                "use_pre_encoder_decoder_layer_norm": False,
-                "use_ffn_bias": False,
-                "use_transformer_initialization": False,
-            },
-        ]
-
-        # Apply defaults
-        for key in defaults[from_index]:
-            if key not in config:
-                config[key] = defaults[from_index][key]
-
         if from_index == 1:
             if "tgt_vocab_size" in config:
                 if (
@@ -953,27 +995,6 @@ class ConfigConverter_T5_HF_CS17(BaseConfigConverter_HF_CS):
 
         return config
 
-    def post_config_convert(
-        self,
-        original_config,
-        old_config,
-        new_config,
-        from_index,
-        drop_unmatched_keys,
-    ):
-        if from_index == 0:
-            if "src_max_position_embeddings" not in new_config:
-                new_config["src_max_position_embeddings"] = 512
-            if "tgt_max_position_embeddings" not in new_config:
-                new_config["tgt_max_position_embeddings"] = 512
-        return super().post_config_convert(
-            original_config,
-            old_config,
-            new_config,
-            from_index,
-            drop_unmatched_keys,
-        )
-
 
 class ConfigConverter_T5_HF_CS18(ConfigConverter_T5_HF_CS17):
     def __init__(self):
@@ -987,15 +1008,83 @@ class ConfigConverter_T5_HF_CS18(ConfigConverter_T5_HF_CS17):
             ),
             *self.rules,
         ]
-
-    def pre_config_convert(
-        self, config, from_index,
-    ):
-        if from_index == 1:
-            if "use_pre_encoder_decoder_layer_norm" not in config["model"]:
-                config["model"]["use_pre_encoder_decoder_layer_norm"] = True
-        return super().pre_config_convert(config, from_index)
+        self.pre_convert_defaults[1][
+            "use_pre_encoder_decoder_layer_norm"
+        ] = True
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-1.8", "cs-1.9"))
+        return (FormatVersions("hf"), FormatVersions("cs-1.8"))
+
+
+class Converter_T5_CS18_CS20(BaseCheckpointConverter_CS_CS):
+    def __init__(self):
+        super().__init__()
+        # Model didn't change between 1.8/1.9 and 2.0. Copy all keys.
+        self.rules = [
+            ConversionRule([".*"], action=self.replaceKey),
+        ]
+
+    @classmethod
+    def converter_note(cls) -> str:
+        return "T5ForConditionalGeneration class"
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("cs-1.8", "cs-1.9"), FormatVersions("cs-2.0"))
+
+    @staticmethod
+    def get_config_converter_class() -> BaseConfigConverter:
+        return ConfigConverter_T5_CS18_CS20
+
+
+class ConfigConverter_T5_CS18_CS20(BaseConfigConverter_CS_CS):
+    def __init__(self):
+        super().__init__()
+        # Only difference between 1.8/1.9 and 2.0 is introduction of norm_type
+        self.rules = [
+            ConversionRule(
+                [EquivalentSubkey("use_t5_layer_norm", "norm_type")],
+                action=self.convert_use_t5_layer_norm,
+            ),
+            ConversionRule([".*"], action=self.replaceKey),
+        ]
+
+    def convert_use_t5_layer_norm(self, *args):
+        convert_use_rms_layer_norm_helper(self, *args)
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("cs-1.8", "cs-1.9"), FormatVersions("cs-2.0"))
+
+
+class Converter_T5_HF_CS20(Converter_T5_HF_CS18):
+    def __init__(self):
+        super().__init__()
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-2.0"))
+
+    @staticmethod
+    def get_config_converter_class() -> BaseConfigConverter:
+        return ConfigConverter_T5_HF_CS20
+
+
+class ConfigConverter_T5_HF_CS20(ConfigConverter_T5_HF_CS18):
+    def __init__(self):
+        super().__init__()
+        self.rules = [
+            ConversionRule(
+                ["norm_type"],
+                action=BaseConfigConverter.assert_factory_fn(1, "rmsnorm"),
+            ),
+            *self.rules,
+        ]
+        del self.pre_convert_defaults[1]["use_t5_layer_norm"]
+        self.pre_convert_defaults[1]["norm_type"] = "rmsnorm"
+        self.post_convert_defaults[1]["norm_type"] = "rmsnorm"
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-2.0"))

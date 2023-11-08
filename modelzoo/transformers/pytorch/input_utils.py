@@ -19,8 +19,9 @@ from typing import Iterator, Sized
 import numpy as np
 import torch
 
+import cerebras_pytorch as cstorch
+import cerebras_pytorch.distributed as dist
 from cerebras_pytorch.distributed.cluster_resolver import ClusterSpec, TaskSpec
-from modelzoo.common.pytorch import cb_model as cm
 
 
 def get_data_for_task(
@@ -36,13 +37,13 @@ def get_data_for_task(
 
     Args:
         task_id (int): Integer id for a task.
-        meta_data_values_cum_sum (int): Cumulative sum of the file sizes in 
+        meta_data_values_cum_sum (int): Cumulative sum of the file sizes in
             lines from meta data file.
-        num_examples_per_task (int): Number of the examples specified per  
+        num_examples_per_task (int): Number of the examples specified per
             slurm task. Equal to `batch_size` * `num_batch_per_task`.
-        meta_data_values (list[int]): List of the files sizes in lines in the 
+        meta_data_values (list[int]): List of the files sizes in lines in the
             meta data file.
-        meta_data_filenames (list[str]): List with file names in the meta data 
+        meta_data_filenames (list[str]): List with file names in the meta data
             file.
 
     Returns:
@@ -134,8 +135,8 @@ def is_distributed():
 
 
 def task_id():
-    if cm.is_streamer():
-        return cm.get_streaming_rank()
+    if dist.is_streamer():
+        return dist.get_streaming_rank()
     elif is_distributed():
         return dist.get_rank()
     else:
@@ -143,8 +144,8 @@ def task_id():
 
 
 def num_tasks():
-    if cm.is_streamer():
-        return cm.num_streamers()
+    if dist.is_streamer():
+        return dist.num_streamers()
     elif is_distributed():
         return dist.get_world_size()
     else:
@@ -153,7 +154,7 @@ def num_tasks():
 
 def cluster_config():
     """
-    Returns (ClusterSpec, TaskSpec). The TaskSpec contians the following fields:
+    Returns (ClusterSpec, TaskSpec). The TaskSpec contains the following fields:
         - rank: the global rank of the current worker
         - local_rank: the rank of the current worker among workers who feed
             the same system as the current worker
@@ -161,7 +162,7 @@ def cluster_config():
             associated with
     The ClusterSpec contains the following fields:
         - tasks: a list of TaskSpecs for each task running on the cluster
-        - rank: the rank of the curent process's task in the cluster
+        - rank: the rank of the current process's task in the cluster
         - num_csx: the number of CSX systems in the cluster
         - num_workers_per_csx: the number of worker tasks per CSX
     If the current job is running on GPU instead of CS system, then
@@ -169,8 +170,8 @@ def cluster_config():
     rank and world size.
 
     """
-    if cm.use_cs() and cm.is_streamer():
-        cluster_spec = cm.service_resolver().cluster_spec
+    if cstorch.use_cs() and dist.is_streamer():
+        cluster_spec = dist.service_resolver().cluster_spec
         task_spec = cluster_spec.task()
         return cluster_spec, task_spec
     elif is_distributed():
@@ -186,7 +187,7 @@ def cluster_config():
         return cluster_spec, task_spec
     else:
         task_spec = TaskSpec(
-            rank=0, local_rank=0, wse_id=0, node_name="unknown",
+            rank=0, local_rank=0, wse_id=0, node_name="unknown"
         )
         cluster_spec = ClusterSpec([task_spec], 0, 1, 1)
         return cluster_spec, task_spec
@@ -202,7 +203,7 @@ class ShardedSampler(torch.utils.data.Sampler):
 
     Args:
         dataset (torch.utils.data.Dataset): Dataset used for sampling.
-        shuffle (bool, optional): If `True` (default), sampler will shuffle 
+        shuffle (bool, optional): If `True` (default), sampler will shuffle
             the indices.
         seed (int, optional): Random seed used to shuffle the sampler if
             :attr:`shuffle=True`. This number should be identical across all
@@ -220,7 +221,7 @@ class ShardedSampler(torch.utils.data.Sampler):
         self.dataset_len = len(self.dataset)
         self.drop_last = drop_last
 
-        if cm.use_cs() and not self.drop_last:
+        if cstorch.use_cs() and not self.drop_last:
             raise ValueError(
                 "On CS2 we do not support unequal batch sizes so `drop_last` "
                 "must be set to `True`."
@@ -327,7 +328,7 @@ def shard_list_contiguous(input_list, worker_id, num_workers):
 
         Args:
             input_list (list): list to shard into contiguous segments
-            worker_id (int): index of shard to return 
+            worker_id (int): index of shard to return
             num_workers (int): number of shards to create
 
         Returns:
@@ -361,7 +362,7 @@ def shard_list_interleaved(input_list, worker_id, num_workers):
 
         Args:
             input_list (list): list to shard in an interleaved fashion
-            worker_id (int): index of shard to return 
+            worker_id (int): index of shard to return
             num_workers (int): number of shards to create
 
         Returns:
@@ -400,7 +401,7 @@ def shard_list_of_chunks_contiguous(
         Args:
             input_list (list of tuples): list of chunks to shard. List should be of format
                 `[... (chunk_i, length_of_chunk_i), ...]`
-            worker_id (int): index of shard to return 
+            worker_id (int): index of shard to return
             num_workers (int): number of shards to create
 
         Returns:

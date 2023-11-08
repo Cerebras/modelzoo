@@ -61,12 +61,21 @@ class LMDataPreprocessor(HDF5BasePreprocessor):
         if self.wikitext_detokenize:
             text = wikitext_detokenizer(text)
         # tokenize text
-        tokenized_text = self.tokenizer.encode(text)
+        if self.split_text_to_tokenize:
+            # TODO: implement a better fix for this by updating the tokenizer
+            # normalization rules. This is a temporary fix and it may
+            # cause issues with the spacing tokens being repeated.
+            tokenized_text = split_text_and_tokenize(
+                text,
+                self.tokenizer,
+                max_tok_len=self.chunk_len_to_split,
+                remove_bos_in_chunks=self.remove_bos_in_chunks,
+            )
+        else:
+            tokenized_text = self.tokenizer.encode(text)
 
         if self.eos_id is not None:
-            tokenized_text += (
-                self.eos_id if isinstance(self.eos_id, list) else [self.eos_id]
-            )
+            tokenized_text += [self.eos_id]
 
         all_text = self.prefix + tokenized_text
         tokenized_text_chunks = [
@@ -106,6 +115,9 @@ class LMDataPreprocessor(HDF5BasePreprocessor):
     def file_read_generator(self, file):
         reader = Reader(file)
         for doc in reader.stream_data(jsonl_key=self.jsonl_key):
+            # update chars and bytes stats on base processor
+            self.raw_chars_count += len(doc)
+            self.raw_bytes_count += len(doc.encode("utf-8"))
             yield doc
 
     def preprocessing_generator(self, doc):
@@ -132,11 +144,17 @@ class SummarizationPreprocessor(HDF5BasePreprocessor):
 
         self.prompt_key = params["dataset"].pop("prompt_key")
         self.completion_key = params["dataset"].pop("completion_key")
+        assert self.eos_id is not None, "eos_id must be set for summarization."
         self.sep_token = params["dataset"].pop("sep_token", None)
         self.sep_id = None
         if self.sep_token:
             self.add_token(self.sep_token)
             self.sep_id = self.tokenizer.get_token_id(self.sep_token)
+            logging.warning(
+                f"A sep token {self.sep_token} was added to tokenizer. This "
+                "will change the vocab size. If you are using a pretrained "
+                "model, you will need to avoid adding this."
+            )
 
         if params["dataset"]:
             logger.warning(
@@ -154,6 +172,10 @@ class SummarizationPreprocessor(HDF5BasePreprocessor):
                 continue
             prompt = doc[self.prompt_key]
             completion = doc[self.completion_key]
+            self.raw_chars_count += len(prompt) + len(completion)
+            self.raw_bytes_count += len(prompt.encode("utf-8")) + len(
+                completion.encode("utf-8")
+            )
             yield prompt, completion
 
     def preprocessing_generator(self, doc):
@@ -174,9 +196,7 @@ class SummarizationPreprocessor(HDF5BasePreprocessor):
             prompt_encoded,
             completion_encoded,
             self.max_seq_length,
-            self.eos_id
-            if not isinstance(self.eos_id, list)
-            else self.eos_id[0],
+            self.eos_id,
             self.sep_id,
             self.pad_id,
             min_len=self.min_sequence_len,
@@ -190,3 +210,47 @@ class SummarizationPreprocessor(HDF5BasePreprocessor):
             self.discarded_files += 1
 
         yield sample
+
+
+# routine to split the text into smaller sequences
+def split_text_and_tokenize(
+    text, tokenizer, max_tok_len=2000, remove_bos_in_chunks=True
+):
+    """Function to split the text into smaller sequences of length max_tok_len
+    and then tokenize each of the smaller sequences. This is done to avoid
+    performance issues with tokenizers like LlamaTokenizer which are slow for
+    long sequences.
+
+    Args:
+        text (str): text to be tokenized
+        tokenizer (Tokenizer): tokenizer to be used
+        max_tok_len (int, optional): max length of each sequence. Defaults to 2000.
+        remove_bos_in_chunks (bool, optional): whether to ignore bos token id in 
+            chunks. Defaults to True.
+    Returns:
+        tok_ids (list): list of token ids for the text
+    """
+    curr_start = 0
+    tok_ids = []
+    while curr_start < len(text):
+        curr_end = min(text.find(' ', curr_start + max_tok_len), len(text))
+        if curr_end < 0:
+            curr_substr = text[curr_start:]
+            curr_end = len(text)
+        else:
+            curr_substr = text[curr_start:curr_end]
+        if curr_start == 0:
+            # keep special tokens for the first chunk
+            bos_token_id = [tokenizer.encode(curr_substr)[0]]
+        curr_tok_ids = (
+            tokenizer.encode(curr_substr)[1:]
+            if remove_bos_in_chunks
+            else tokenizer.encode(curr_substr)
+        )
+        tok_ids.extend(curr_tok_ids)
+        curr_start = curr_end
+    # concatenated tok_ids chunks together by using `extend` to return full sequence of tokens
+
+    # NOTE: add bos token id if it is needed here, eos id is added in the next line
+    # which calls this function
+    return bos_token_id + tok_ids if remove_bos_in_chunks else tok_ids

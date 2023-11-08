@@ -47,6 +47,7 @@ class EmbeddingLayer(nn.Module):
         using model.
     :param str position_embedding_type: 'learned', 'fixed' or 'rotary'. Defaults to "learned",
         for 'rotary' embeddings, embeddings are not created at bottom but computed with key&query embeddings by RotaryPositionEmbeddingHelper
+    :param int position_embedding_offset: Offset for position embeddings. Default to 0.
     :param Optional[int] min_timescale: The scale of the shortest sinusoid. Default to 1.0. (only need to be specified when position_embedding_type is fixed).
     :param Optional[int] max_timescale: The scale of the longest sinusoid. Default to 1.0e4. (only need to be specified when position_embedding_type is fixed).
     :param Optional[str,Callable] position_embeddings_initializer: Position
@@ -69,6 +70,8 @@ class EmbeddingLayer(nn.Module):
         embeddings_initializer='uniform',
         max_position_embeddings=None,
         position_embedding_type="learned",
+        position_embedding_offset=0,
+        mask_padding_in_positional_embed=False,
         min_timescale=1.0,
         max_timescale=1.0e4,
         position_embeddings_initializer='uniform',
@@ -87,10 +90,17 @@ class EmbeddingLayer(nn.Module):
         self.embeddings_initializer = embeddings_initializer
         self.position_embeddings_initializer = position_embeddings_initializer
         self.segment_embeddings_initializer = segment_embeddings_initializer
+        self.position_embedding_offset = position_embedding_offset
 
         self.max_position_embeddings = max_position_embeddings
         self.position_embedding_type = position_embedding_type
         self.pad_token_id = pad_token_id
+        self.mask_padding_in_positional_embed = mask_padding_in_positional_embed
+        if self.mask_padding_in_positional_embed:
+            assert (
+                self.position_embedding_type == "learned"
+            ), "Masking padding tokens in positional embeddings is only supported in learned position embeddings"
+
         self.word_embeddings = nn.Embedding(
             vocab_size,
             embedding_size,
@@ -99,12 +109,31 @@ class EmbeddingLayer(nn.Module):
         )
 
         if position_embedding_type is not None:
+            assert position_embedding_offset >= 0, (
+                f"Position embedding offset should be non-negative, but it is "
+                f"{position_embedding_offset}."
+            )
+
+            if position_embedding_type != "learned":
+                assert position_embedding_offset == 0, (
+                    f"For {position_embedding_type} embeddings, position "
+                    f"embedding offset must be 0, but it is "
+                    f"{position_embedding_offset}."
+                )
+
             if max_position_embeddings is None:
                 raise ValueError("max_position_embeddings should be specified.")
 
             if position_embedding_type == "learned":
+                num_pos_embeddings = (
+                    max_position_embeddings + self.position_embedding_offset
+                )
+                if mask_padding_in_positional_embed:
+                    num_pos_embeddings += (
+                        1  # Corresponds to extra embedding for padding token
+                    )
                 self.position_embeddings = nn.Embedding(
-                    max_position_embeddings,
+                    num_pos_embeddings,
                     positional_embedding_size,
                     device=device,
                 )
@@ -184,7 +213,6 @@ class EmbeddingLayer(nn.Module):
         # alibi
         alibi_slopes=None,
         alibi_trainable_slopes=False,
-        alibi_implementation="expand",
     ):
         embedding_helper = None
         if self.position_embedding_type == "rotary":
@@ -217,7 +245,6 @@ class EmbeddingLayer(nn.Module):
                 slopes=alibi_slopes,
                 alibi_trainable_slopes=alibi_trainable_slopes,
                 slopes_initializer=initializer,
-                alibi_implementation=alibi_implementation,
             )
 
         return embedding_helper
@@ -249,7 +276,7 @@ class EmbeddingLayer(nn.Module):
                     self.position_embeddings.padding_idx
                 ].zero_()
 
-            if self.pad_token_id:
+            if self.segment_embeddings:
                 self.segment_embeddings.weight.data[
                     self.segment_embeddings.padding_idx
                 ].zero_()
@@ -307,9 +334,30 @@ class EmbeddingLayer(nn.Module):
         position_embeddings = None
         if self.position_embedding_type == "learned":
             if position_ids is None:
-                position_ids = torch.arange(
-                    past_length, input_shape[-1] + past_length, device=device,
-                ).expand((batch_size, -1))
+                if not self.mask_padding_in_positional_embed:
+                    position_ids = (
+                        torch.arange(
+                            past_length,
+                            input_shape[-1] + past_length,
+                            device=device,
+                        )
+                        + self.position_embedding_offset
+                    ).expand((batch_size, -1))
+                else:
+                    mask = input_ids.ne(self.pad_token_id)
+                    unmasked_position_ids = torch.arange(
+                        past_length + 1,
+                        input_shape[-1] + past_length + 1,
+                        device=device,
+                    )
+                    # WARNING: the following line assumes that padding tokens
+                    # always appear at the end of a sequence.
+                    position_ids = (
+                        torch.where(mask, unmasked_position_ids, 0)
+                        + self.position_embedding_offset
+                    )
+                    position_ids = position_ids.expand((batch_size, -1))
+
             position_embeddings = self.position_embeddings(position_ids)
         elif self.position_embedding_type == "fixed":
             position_embeddings = self.position_embeddings.to(dtype=embed_dtype)

@@ -46,9 +46,6 @@ def set_defaults(params):
     )
     params["model"]["to_float16"] = model_params.get("to_float16", False)
     params["model"]["use_bfloat16"] = model_params.get("use_bfloat16", False)
-    params["optimizer"]["disable_lr_steps_reset"] = params["optimizer"].get(
-        "disable_lr_steps_reset", True
-    )
     params["optimizer"]["log_summaries"] = params["optimizer"].get(
         "log_summaries", False
     )
@@ -59,29 +56,6 @@ def set_defaults(params):
     # Attention softmax is bf16 for precision_opt_level: 2
     if params["runconfig"].get("precision_opt_level", 1) == 2:
         params["model"]["attention_softmax_fp32"] = False
-
-
-def set_custom_stack_params(params):
-    from modelzoo.common.pytorch import cb_model as cm
-
-    if cm.use_cs():
-        from modelzoo.common.pytorch import cbtorch
-
-        state = cbtorch.state()
-        state.full_config.placement.optimize_buses.deltat_relative_margin = 0.5
-        if params["train_input"]["max_sequence_length"] <= 512:
-            state.full_config.matching.kernel.no_dcache_spill_splits = True
-
-        runconfig_params = params["runconfig"]
-        from modelzoo.common.pytorch import modes
-
-        if runconfig_params["mode"] == modes.EVAL:
-            state.full_config.matching.add_pack_and_unpack.max_egress_per_pack = (
-                1
-            )
-            state.full_config.placement.prep_recolor_kernels.wrap_pack_kernel = (
-                True
-            )
 
 
 def check_unused_model_params(model_params):

@@ -16,12 +16,11 @@ import logging
 
 import torch
 
-from modelzoo.common.pytorch.metrics import AccuracyMetric, PerplexityMetric
+from cerebras_pytorch.metrics import AccuracyMetric, PerplexityMetric
 from modelzoo.common.pytorch.model_utils.GPTLMHeadModelLoss import (
     GPTLMHeadModelLoss,
 )
 from modelzoo.transformers.pytorch.gpt2.gpt2_model import GPT2LMHeadModel
-from modelzoo.transformers.pytorch.gpt2.utils import set_custom_stack_params
 
 
 class Gpt2Model(torch.nn.Module):
@@ -44,9 +43,6 @@ class Gpt2Model(torch.nn.Module):
         if self.compute_eval_metrics:
             self.perplexity_metric = PerplexityMetric(name="eval/lm_perplexity")
             self.accuracy_metric = AccuracyMetric(name="eval/accuracy")
-
-        # Add custom Cerebras stack flags
-        set_custom_stack_params()
 
     def _post_device_transfer(self):
         self.model.tie_weights()
@@ -90,6 +86,9 @@ class Gpt2Model(torch.nn.Module):
             ),
             embd_pdrop=embedding_dropout_rate,
             position_embedding_type=position_embedding_type,
+            position_embedding_offset=model_params.pop(
+                "position_embedding_offset", 0
+            ),
             hidden_size=model_params.pop("hidden_size"),
             share_embedding_weights=model_params.pop(
                 "share_embedding_weights", True
@@ -104,7 +103,7 @@ class Gpt2Model(torch.nn.Module):
             # Encoder
             num_hidden_layers=model_params.pop("num_hidden_layers"),
             dropout_rate=default_dropout_rate,
-            use_rms_norm=model_params.pop("use_rms_norm", False),
+            norm_type=model_params.pop("norm_type", "layernorm"),
             layer_norm_epsilon=float(
                 model_params.pop("layer_norm_epsilon", 1.0e-5),
             ),
@@ -150,14 +149,11 @@ class Gpt2Model(torch.nn.Module):
             output_logits_scale=self.output_logits_scale,
             embeddings_scale=self.embeddings_scale,
             scale_qk_dot_by_d=self.scale_qk_dot_by_d,
-            scale_glu_initialization=model_params.pop(
-                "scale_glu_initialization", False
-            ),
             alibi_trainable_slopes=model_params.pop(
                 "alibi_trainable_slopes", False
             ),
-            alibi_implementation=model_params.pop(
-                "alibi_implementation", "expand"
+            scale_qk_dot_by_layer_idx=model_params.pop(
+                "scale_qk_dot_by_layer_idx", False
             ),
         )
 
@@ -215,7 +211,7 @@ class Gpt2Model(torch.nn.Module):
 
             if self.loss_scaling == "num_tokens":
                 unscaled_loss = loss * torch.sum(
-                    data["attention_mask"].clone(), dtype=torch.float32
+                    lm_weights, dtype=torch.float32
                 )
             elif self.loss_scaling == "batch_size":
                 unscaled_loss = loss * torch.tensor(

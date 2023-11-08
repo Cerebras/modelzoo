@@ -16,7 +16,7 @@ train_input:
         - "./language/datasets/pile_original/hdf5_dataset/train_neox_msl2048/8/"
         - "./language/datasets/pile_original/hdf5_dataset/train_neox_msl2048/9/"
     # The effective batch size, which is evenly divided across "num_csx" systems used for the run
-    batch_size: 45
+    batch_size: 77
     shuffle: True
     shuffle_seed: 1337
     num_workers: 8
@@ -27,7 +27,7 @@ eval_input:
     data_processor: "GptHDF5DataProcessor"
     data_dir: "./language/datasets/pile_original/hdf5_dataset/val_neox_msl2048/"
     # The effective batch size, which is evenly divided across "num_csx" systems used for the run
-    batch_size: 45
+    batch_size: 77
     shuffle: False
     num_workers: 8
     prefetch_factor: 10
@@ -92,26 +92,25 @@ model:
 
 optimizer:
     optimizer_type: "adamw"
-    beta1: 0.9
-    beta2: 0.95
+    betas: [0.9, 0.95]
     eps: 1.0e-8
-    weight_decay_rate: 0.01
+    weight_decay: 0.01
     max_gradient_norm: 1.0
     correct_bias: True
     # we want to keep the same number of tokens consistent with Eleuther gpt-neox 20B
     # Eleuther gpt-neox: steps * batch_size (1538) * seq_len (2048)
     learning_rate:
-        - steps: 46140 # warm-up 0.01, 1500 * 1538 / 50
+        - total_iters: 29961 # warm-up 0.01, 1500 * 1538 / 77
           scheduler: "Linear"
           initial_learning_rate: 0.0
-          end_learning_rate: 1.75e-5 # sqrt(50 / 1538) * 0.97e-4
+          end_learning_rate: 2.17e-5 # sqrt(77 / 1538) * 0.97e-4
         - scheduler: "CosineDecay"
-          initial_learning_rate: 1.75e-5
-          steps: 4567860 # 148500 * 1538 / 50
-          end_learning_rate: 1.75e-6 # end_learning_rate = initial_learning_rate * alpha. alpha = 1.0 - beta1, # sqrt(50 / 1538) * 0.97e-5
+          initial_learning_rate: 2.17e-5
+          total_iters: 1966142 # 148500 * 1538 / 77
+          end_learning_rate: 2.17e-6 # end_learning_rate = initial_learning_rate * alpha. alpha = 1.0 - beta1, # sqrt(77 / 1538) * 0.97e-5
 
 runconfig:
-    max_steps: 4614000 # 150000 * 1538 / 50
+    max_steps: 2996103 # 150000 * 1538 / 77
     log_steps: 100
     checkpoint_steps: 10000
     use_cs_grad_accum: True

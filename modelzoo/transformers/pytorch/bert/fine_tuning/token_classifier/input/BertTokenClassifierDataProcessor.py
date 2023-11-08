@@ -22,7 +22,7 @@ import os
 import numpy as np
 import torch
 
-from modelzoo.common.pytorch import cb_model as cm
+import cerebras_pytorch.distributed as dist
 from modelzoo.common.pytorch.input_utils import get_streaming_batch_size
 from modelzoo.transformers.pytorch.bert.input.utils import (
     build_vocab,
@@ -81,7 +81,7 @@ class BertTokenClassifierDataProcessor(torch.utils.data.IterableDataset):
         assert (
             self.num_batches > 0
         ), "Dataset does not contain enough samples for one batch. Please choose a smaller batch size"
-        self.num_tasks = cm.num_streamers() if cm.is_streamer() else 1
+        self.num_tasks = dist.num_streamers() if dist.is_streamer() else 1
         self.num_batch_per_task = self.num_batches // self.num_tasks
 
         assert (

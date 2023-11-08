@@ -1,15 +1,5 @@
 # Shuffling Samples for HDF5 dataset of GPT Models
 
-## Environment Setup
-
-The following pre-requisites are needed to enable a clean run of the script. Below is a setup for a conda environment:
-
-```bash
-conda create --name data_env python=3.8.16 pip -y
-conda activate data_env
-pip install h5py
-```
-
 ## Input files format
 
 The script expects the dataset files to be in `.h5` file format. They can be located either in the `input_dir` or one of its subdirectories.

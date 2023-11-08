@@ -20,9 +20,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
-from modelzoo.common.pytorch import cb_model as cm
-from modelzoo.common.pytorch import cbtorch
-
 from .AlibiPositionEmbeddingLayer import AlibiPositionEmbeddingLayer
 from .RelativePositionEmbeddingLayer import RelativePositionEmbeddingLayer
 
@@ -44,15 +41,6 @@ def _get_activation_fn(activation: str) -> Callable[[Tensor], Tensor]:
     )
 
 
-def apply_loss_reduction(loss, reduction):
-    if reduction == 'mean':
-        return torch.mean(loss)
-    elif reduction == 'sum':
-        return torch.sum(loss)
-    else:
-        return loss
-
-
 def apply_position_bias(embedding_helper, seq_length, key_length, past_kv=None):
     self_attn_position_bias = None
     if isinstance(
@@ -65,42 +53,94 @@ def apply_position_bias(embedding_helper, seq_length, key_length, past_kv=None):
     return self_attn_position_bias
 
 
-# Since we do not have automatic loss scope detection yet, some changes in user model would
-# be required to tag the ops belong to loss.
-# A wrapper to wrap loss function for Autogen support, so that loss function
-# will be handled by Autogen.
-# To use this Autogen loss function wrapper, when initializing the loss function,
-# using our loss in Layer API, and adding a keyword arguement 'use_autogen=True' (the default is False).
-# For example:
-#   loss = MSELoss(..., use_autogen=True)
-#
-# To apply the Autogen loss wrapper to any custom loss function, just add this wrapper as the decorator
-# of the custom loss class.
-# For example:
-#   @autogen_loss
-#   class CustomLoss(nn.Module):
-#       def __init__(...):
-#
-# In the future, we may remove this temporary wrapper after we developed better technics to support Autogen.
-def autogen_loss(loss_cls):
-    loss_cls._old_init = loss_cls.__init__
-    loss_cls._old_forward = loss_cls.forward
+def patchify_helper(input_image, patch_size):
+    batch_size, num_channels, height, width = input_image.shape
+    num_patches = [
+        (height // patch_size[0]),
+        (width // patch_size[1]),
+    ]
 
-    def autogen_init(self, *args, **kwargs):
-        self.autogen_enabled = kwargs.pop("use_autogen", False)
-        self._old_init(*args, **kwargs)
-        if self.autogen_enabled and cm.use_cs():
-            self.mark_with_autogen = cbtorch.nn.Scope(scope_name=LOSS_SCOPE)
+    assert (
+        height % patch_size[0] == 0 and width % patch_size[1] == 0
+    ), f"image size {height, width} is not divisible by patch_size {patch_size}"
 
-    def autogen_forward(self, *args, **kwargs):
-        if self.autogen_enabled and cm.use_cs():
-            args = [self.mark_with_autogen(arg) for arg in args]
-            kwargs = {k: self.mark_with_autogen(v) for k, v in kwargs.items()}
-            loss = self._old_forward(*args, **kwargs)
-            return self.mark_with_autogen.exit(loss)
-        else:
-            return self._old_forward(*args, **kwargs)
+    sequence_length = num_patches[0] * num_patches[1]
+    patchified_image = input_image.reshape(
+        batch_size,
+        num_channels,
+        num_patches[0],
+        patch_size[0],
+        num_patches[1],
+        patch_size[1],
+    )
+    patchified_image = patchified_image.permute(
+        0, 2, 4, 3, 5, 1
+    )  # output shape = [bs,
+    # num_patches_vertical, num_patches_horizontal,
+    # patch_size_vertical, patch_size_horizontal,
+    # num_channels]
+    patchified_image = patchified_image.reshape(batch_size, sequence_length, -1)
 
-    loss_cls.__init__ = autogen_init
-    loss_cls.forward = autogen_forward
-    return loss_cls
+    return patchified_image
+
+
+def get_2d_fixed_position_embeddings(
+    num_patches, hidden_size, add_cls_token=False
+):
+    position_ids_width = (
+        torch.arange(0, num_patches[0]).expand(num_patches[1], -1).permute(1, 0)
+    )
+    position_ids_height = torch.arange(0, num_patches[1]).expand(
+        (num_patches[0], -1)
+    )
+
+    # divide between width/height
+    freq_embedding = hidden_size // 2
+    # divide between sin/cos
+    assert freq_embedding % 2 == 0, "freq_embedding must be even"
+
+    inv_freq = 1.0 / (
+        10000 ** (torch.arange(0, freq_embedding // 2) / (freq_embedding / 2.0))
+    )
+
+    out_width = torch.einsum(
+        "m,d->md", position_ids_width.reshape(-1), inv_freq
+    )
+    out_height = torch.einsum(
+        "m,d->md", position_ids_height.reshape(-1), inv_freq
+    )
+
+    pe_width = torch.cat([torch.sin(out_width), torch.cos(out_width),], dim=1,)
+    pe_height = torch.cat(
+        [torch.sin(out_height), torch.cos(out_height),], dim=1,
+    )
+    pe_seq = torch.cat([pe_height, pe_width,], dim=1,)
+
+    if add_cls_token:
+        pe_cls = torch.zeros(1, hidden_size)
+        pe_seq = torch.cat(
+            [pe_seq, pe_cls], dim=0
+        )  # [seq_length+1, hidden_size]
+
+    return pe_seq
+
+
+class ModuleWrapperClass(nn.Module):
+    def __init__(self, fcn, name=None, kwargs=None):
+        self.fcn = fcn
+        self.name = name
+        self.kwargs = kwargs
+        super(ModuleWrapperClass, self).__init__()
+
+    def extra_repr(self) -> str:
+        repr_str = 'fcn={}'.format(
+            self.name if self.name is not None else self.fcn.__name__
+        )
+        if self.kwargs is not None:
+            for k, val in self.kwargs.items():
+                repr_str += f", {k}={val}"
+
+        return repr_str
+
+    def forward(self, input):
+        return self.fcn(input)

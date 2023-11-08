@@ -106,7 +106,7 @@ class TransformerDecoderLayer(nn.Module):
         attention_softmax_fp32: Optional[bool] = True,
         attention_type="scaled_dot_product",
         scale_qk_dot_by_d=False,
-        ffn_scale_glu_initialization=False,
+        scale_qk_dot_by_layer_idx=False,
         attention_inner_dim=None,
         use_projection_bias_in_attention=False,
         use_ffn_bias_in_attention=False,
@@ -143,6 +143,7 @@ class TransformerDecoderLayer(nn.Module):
             attention_initializer=attention_initializer,
             attention_q_initializer=attention_q_initializer,
             output_layer_initializer=attention_output_layer_initializer,
+            scale_qk_dot_by_layer_idx=scale_qk_dot_by_layer_idx,
             device=device,
             **extra_attention_params,
         )
@@ -166,6 +167,7 @@ class TransformerDecoderLayer(nn.Module):
                 attention_initializer=attention_initializer,
                 attention_q_initializer=attention_q_initializer,
                 output_layer_initializer=attention_output_layer_initializer,
+                scale_qk_dot_by_layer_idx=scale_qk_dot_by_layer_idx,
                 device=device,
                 **extra_attention_params,
             )
@@ -186,7 +188,6 @@ class TransformerDecoderLayer(nn.Module):
             use_bias=use_ffn_bias,
             kernel_initializer=ffn_initializer,
             output_layer_initializer=ffn_output_layer_initializer,
-            scale_glu_initialization=ffn_scale_glu_initialization,
             bias_initializer="zeros",
             device=device,
         )
@@ -200,16 +201,23 @@ class TransformerDecoderLayer(nn.Module):
         self.ffn.reset_parameters()
         if hasattr(self.norm1, 'bias'):
             self.norm1.bias.data.zero_()
-        self.norm1.weight.data.fill_(1.0)
+        if hasattr(self.norm1, 'weight') and hasattr(self.norm1.weight, 'data'):
+            self.norm1.weight.data.fill_(1.0)
         if self.norm3 is not None:
             if hasattr(self.norm3, 'bias'):
                 self.norm3.bias.data.zero_()
-            self.norm3.weight.data.fill_(1.0)
+            if hasattr(self.norm3, 'weight') and hasattr(
+                self.norm3.weight, 'data'
+            ):
+                self.norm3.weight.data.fill_(1.0)
         if self.add_cross_attention:
             self.multihead_attn.reset_parameters()
             if hasattr(self.norm2, 'bias'):
                 self.norm2.bias.data.zero_()
-            self.norm2.weight.data.fill_(1.0)
+            if hasattr(self.norm2, 'weight') and hasattr(
+                self.norm2.weight, 'data'
+            ):
+                self.norm2.weight.data.fill_(1.0)
 
     def forward(
         self,
@@ -226,6 +234,7 @@ class TransformerDecoderLayer(nn.Module):
         cache_present_kv: bool = False,
         self_attn_position_bias: Optional[Tensor] = None,
         cross_attn_position_bias: Optional[Tensor] = None,
+        layer_idx: Optional[int] = None,
         **extra_args,
     ) -> Union[Tensor, Tuple[Tensor, Union[SelfAttnKV, SelfAndCrossAttnKV]]]:
         r"""Pass the inputs (and mask) through the decoder layer.
@@ -237,7 +246,7 @@ class TransformerDecoderLayer(nn.Module):
             memory_mask: the mask for the memory sequence (optional).
             tgt_key_padding_mask: the mask for the tgt keys per batch (optional).
             memory_key_padding_mask: the mask for the memory keys per batch (optional).
-            rotary_position_embedding_helper (Optional[RotaryPositionEmbeddingHelper]): 
+            rotary_position_embedding_helper (Optional[RotaryPositionEmbeddingHelper]):
                 A helper class to apply rotary embedding on the input tensor.
             past_kv: Past keys and values for self attention and (if applicable) cross
                 attention modules. Key/value tensors have shape
@@ -246,7 +255,7 @@ class TransformerDecoderLayer(nn.Module):
                 must be cached and returned. Needed to speed up the
                 computations when the decoder is called within an
                 autoregressive loop. (optional).
-            self_attn_position_bias: the tensor containing position bias to apply in self-attention, 
+            self_attn_position_bias: the tensor containing position bias to apply in self-attention,
                 can be obtained from relative or alibi position embeddings.
 
         Shape:
@@ -268,6 +277,7 @@ class TransformerDecoderLayer(nn.Module):
                 past_kv=past_kv[:2] if past_kv is not None else None,
                 cache_present_kv=cache_present_kv,
                 self_attn_position_bias=self_attn_position_bias,
+                layer_idx=layer_idx,
                 **extra_args,
             )
 
@@ -282,6 +292,7 @@ class TransformerDecoderLayer(nn.Module):
                     past_kv=past_kv[2:] if past_kv is not None else None,
                     cache_present_kv=cache_present_kv,
                     cross_attn_position_bias=cross_attn_position_bias,
+                    layer_idx=layer_idx,
                     **extra_args,
                 )
 
@@ -300,6 +311,7 @@ class TransformerDecoderLayer(nn.Module):
                 past_kv=past_kv[:2] if past_kv is not None else None,
                 cache_present_kv=cache_present_kv,
                 self_attn_position_bias=self_attn_position_bias,
+                layer_idx=layer_idx,
                 **extra_args,
             )
 
@@ -313,6 +325,7 @@ class TransformerDecoderLayer(nn.Module):
                     past_kv=past_kv[2:] if past_kv is not None else None,
                     cache_present_kv=cache_present_kv,
                     cross_attn_position_bias=cross_attn_position_bias,
+                    layer_idx=layer_idx,
                     **extra_args,
                 )
                 x = self.norm2(x + attn2_out[0])
@@ -344,6 +357,7 @@ class TransformerDecoderLayer(nn.Module):
         past_kv: Optional[SelfAttnKV] = None,
         cache_present_kv: bool = False,
         self_attn_position_bias: Optional[Tensor] = None,
+        layer_idx: Optional[int] = None,
         **extra_args,
     ) -> Tensor:
         attn_out = self.self_attn(
@@ -357,6 +371,7 @@ class TransformerDecoderLayer(nn.Module):
             past_kv=past_kv,
             cache_present_kv=cache_present_kv,
             position_bias=self_attn_position_bias,
+            layer_idx=layer_idx,
             **extra_args,
         )
 
@@ -379,6 +394,7 @@ class TransformerDecoderLayer(nn.Module):
         past_kv: Optional[CrossAttnKV] = None,
         cache_present_kv: bool = False,
         cross_attn_position_bias: Optional[Tensor] = None,
+        layer_idx: Optional[int] = None,
         **extra_args,
     ) -> Tensor:
         attn_out = self.multihead_attn(
@@ -392,6 +408,7 @@ class TransformerDecoderLayer(nn.Module):
             cache_present_kv=cache_present_kv,
             past_kv_self_attn=False,
             position_bias=cross_attn_position_bias,
+            layer_idx=layer_idx,
             **extra_args,
         )
 

@@ -14,13 +14,13 @@ In order to get started with running your models on a Cerebras system, please re
 
 For a list of all supported models, please check [models in this repository](#models-in-this-repository).
 
-## Supported frameworks
-
-We support the models developed in [PyTorch](https://pytorch.org/).
-
 ## Installation
 
 To install the Cerebras Model Zoo on the CSX system, please follow the instructions in [PYTHON-SETUP.md](./PYTHON-SETUP.md).
+
+## Supported frameworks
+
+We support the models developed in [PyTorch](https://pytorch.org/).
 
 ## Basic workflow
 
@@ -38,13 +38,12 @@ For advanced use cases and porting your existing code please refer to the [devel
 | BERT (fine-tuning) Summarization | [Code](./modelzoo/transformers/pytorch/bert/fine_tuning/extractive_summarization/) |
 | BERT (fine-tuning) Question Answering | [Code](./modelzoo/transformers/pytorch/bert/fine_tuning/qa/) |
 | BLOOM | [Code](./modelzoo/transformers/pytorch/bloom/) |
-| LLaMA | [Code](./modelzoo/transformers/pytorch/llama/) |
+| BTLM  | [Code](./modelzoo/transformers/pytorch/btlm/) |
 | GPT-2 | [Code](./modelzoo/transformers/pytorch/gpt2/) |
 | GPT-3 | [Code](./modelzoo/transformers/pytorch/gpt3/) |
 | GPT-J | [Code](./modelzoo/transformers/pytorch/gptj/) |
 | GPT-NeoX | [Code](./modelzoo/transformers/pytorch/gptj/) |
-| GPT-J (fine-tuning) Summarization |[Code](./modelzoo/transformers/pytorch/gptj/fine_tuning/abstractive_summarization/) |
-| Falcon | [Code](./modelzoo/transformers/pytorch/falcon/) |
+| GPT-J (fine-tuning) Summarization |[Code](./modelzoo/transformers/pytorch/gptj/fine_tuning/continuous_pretraining/) |
 | RoBERTa | [Code](./modelzoo/transformers/pytorch/bert/) |
 | T5 | [Code](./modelzoo/transformers/pytorch/t5/) |
 | Transformer | [Code](./modelzoo/transformers/pytorch/transformer/) |

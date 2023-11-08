@@ -60,7 +60,7 @@
 | use_pre_encoder_decoder_dropout | Whether to use dropout layer after positional embedding layer and encoder/decoder. (`bool`, optional) Default: `False` | T5, Transformer |
 | use_pre_encoder_decoder_layer_norm | Whether to use layer norm before passing input tensors into encoder/decoder. (`bool`, optional) Default: `True` | T5, Transformer |
 | use_projection_bias_in_attention | Whether to include bias in the attention layer for projection.  (`bool`, optional) Default: varies per model | All |
-| use_t5_layer_norm | Whether to use T5 layer norm (with no mean subtraction and bias correction) or use the regular `nn.LayerNorm` module. (`bool`, optional) Default: `False` | T5, Transformer |
+| norm_type | Whether to use T5 layer norm (a.k.a `rmsnorm`, with no mean subtraction and bias correction) or use the regular `nn.LayerNorm` module. (`str`, optional) Default: `layernorm` | T5, Transformer |
 | use_transformer_initialization | The Transformer model tends to converge best with a scaled variant on Xavier uniform initialization used for linear layers. This contrasts the initialization used for the original T5 paper, which uses He normal initialization for linear layers. Setting this flag to `True` switches the initialization to the Transformer specific scaled Xavier initialization. (`bool`, optional) Default: `False` | T5, Transformer |
 | use_untied_layer_norm | Whether to use untied layer normalization. (`bool`, optional) Default: `False` | GPTJ |
 | vocab_size | The size of the vocabulary used in the model. Max supported value: `512000`. (`int`, optional) Default: varies per model | All |
@@ -85,10 +85,42 @@
 | loss |  Loss type, supported: values: `"bce"`, `"multilabel_bce"`, `"ssce"` (`str`, required) | UNet |
 | nonlinearity | Activation function used in the model following convolutions in the encoder and decoder. (`str`, required) | UNet |
 | norm_kwargs | args to be passed to norm layers during initialization. For <br>`norm_type` = `group`, `norm_kwargs` must include `num_groups` key value pair. <br>`norm_type` = `layer`, `norm_kwargs` must include `normalized_shape` key value pair. <br>(`dict`, optional) Default: `None` | UNet |
-| norm_layer | Type of normalization to be used. See [supported norm layers]](./vision/pytorch/layers/normalizations.py). (`str`, optional) Default: `"batchnorm2d"` | UNet |
+| norm_layer | Type of normalization to be used. See [supported norm layers]](./common/pytorch/model_utils/norms.py). (`str`, optional) Default: `"batchnorm2d"` | UNet |
 | residual_blocks | Flag for using residual connections at the end of each block. (`bool`, optional) Default: `False` | UNet |
 | skip_connect | Flag for if the model concatenates encoder outputs to decoder inputs. (`bool`, optional) Default: `True` | UNet |
 | use_conv3d | Whether to use 3D convolutions in the model. (`bool`, optional) Default: `False` | UNet |
+| frequency_embedding_size | Size of Sinusoidal Timestep embeddings. (`int`, required) Default: `256` | DiT |
+| label_dropout_rate | probability of dropout applied to label tensor. (`float`, required) Default: `0.1` | DiT |
+| patch_size | Size of patch used to convert image to tokens. (`[int, int]`, required)| DiT |
+| use_conv_patchified_embedding |  If True, use conv2D to convert image to patches (`bool`, option) Default: `True` | DiT |
+| block_type | DiT Block variant. Accepted values: `adaln_zero`. (`str`, optional) Default: `adaln_zero` | DiT |
+| | | |
+| vae |Params related to Pretrained Variational Auto Encoder(VAE). | DiT |
+| vae.down_block_types | List of downsample block types used in Encoder of VAE. (`List[DownEncoderBlock2D]`, optional) Default: `[DownEncoderBlock2D]`  | DiT |
+| vae.up_block_types | List of upsample block types used in Decoder of VAE. (`List[UpDecoderBlock2D]`, optional) Default: `[UpDecoderBlock2D]` | DiT |
+| vae.block_out_channels | Number of output channels after each of downsample(upsample) blocks in Encoder(Decoder). (`List[int]`, optional) Default: `[64, ]` | DiT |
+| vae.layers_per_block | Number of ResNet2D blocks(`norm->conv2D->norm->conv2D->activation`) per downsample(upsample) blocks. (`int`, optional) Default: `1` | DiT |
+| vae.act_fn | Activation function to use in VAEModel. (`str`, optional) Default: `silu` | DiT |
+| vae.latent_size | Latent Tensor(output of VAEEncoder) [height, width]. (`List[int]`, required) Default: `[32, 32]` | DiT |
+| vae.latent_channels | Number of channels in Latent Tensor. (`int`, optional) Default: `4` | DiT |
+| vae.norm_num_groups | Number of groups in GroupNorm of ResNet2D block. (`int`, optional) Default: `32` | DiT |
+| vae.scaling_factor | The component-wise standard deviation of the trained latent space computed using the first batch of the training set. This is used to scale the latent space to have unit variance when training the diffusion model. The latents are scaled with the formula `z = z * scaling_factor` before being passed to the diffusion model. When decoding, the latents are scaled back to the original scale with the formula: `z = 1/ scaling_factor * z`. For more details, refer to sections 4.3.2 and D.1 of the [High-Resolution Image Synthesis with Latent Diffusion Models](https://arxiv.org/abs/2112.10752) paper. (`float`, optional) Default: `0.18215` | DiT |
+| vae.sample_size | size of tiles when VAE is used with tiling where input tensor is split into tiles for forward pass(`int`, optional) Default: `256` | DiT |
+| | | |
+| reverse_process | Params related to Reverse Diffusion Process | DiT |
+| | | |
+| reverse_process.sampler | Params related to the sampler being used (required) | DiT |
+| reverse_process.sampler.name | Name of sampler to use (`str`, required). Accepted values: `ddpm`, `ddim`| DiT |
+| reverse_process.sampler.beta_start | The starting `beta` value of inference. (`float`, optional) Default: `0.0001` | DiT |
+| reverse_process.sampler.beta_end | The final `beta` value. (`float`, optional) Default: `0.02` | DiT |
+| reverse_process.sampler.num_inference_steps | Number of intermediate diffusion timesteps. (`List[int] (or) int`, optional) Default: `250` | DiT |
+| reverse_process.sampler.custom_timesteps | List of timesteps to be used during sampling. Should be in decreasing order.Can either pass `custom_timesteps` (or) `num_inference_steps`, but not both. (`List[int]`, optional) Default: `None` | DiT |
+| | | |
+| reverse_process.pipeline | Diffusion Pipeline params that ties samplers and generation of multiple samples. | DiT |
+| reverse_process.pipeline.guidance_scale | Controls classifier free guidance scale. guidance_scale = `1.0` disables guidance (`float`, required) | DiT |
+| reverse_process.pipeline.num_cfg_channels | Number of latent channels to use for classifier free guidance. (`int`, optional) Default: `3` | DiT |
+| reverse_process.pipeline.custom_labels | Generate samples from this label subset if provided.  (`List[int]`, optional) Default: `None` | DiT |
+
 
 ## Data loader params
 
@@ -96,10 +128,11 @@
 
 | Parameter Name | Description |
 | --- | --- |
-| batch_size | Batch size of the data. (`int`, required) |
+| batch_size | Effective batch size of the input data. (`int`, required) |
 | data_dir | Path/s to the data files to use. (`str`/`List[str]`, required) |
 | data_processor | Name of the data processor to be used. (`str`, required)  |
-| mixed_precision | Flag to cast input to fp16. (`bool`, optional) Default: `None` | All |
+| mixed_precision | Flag to cast input to fp16. (`bool`, optional) Default: `None` |
+| micro_batch_size | Micro batch size to force for gradient accumulation. Only applies to 'CSX' runs. Please set `num_csx` and `batch_size` such that `batch_size//num_csx` is a multiple of `micro_batch_size`.  (`int`, optional) Default: `None` |
 | num_workers | Number of workers to use in the dataloader. See [more](https://pytorch.org/docs/stable/data.html#torch.utils.data.DataLoader). (`int`, optional) Default: `0` |
 | persistent_workers | For multi-worker dataloader controls if the workers are recreated at the end of each epoch (see [PyTorch docs](https://pytorch.org/docs/stable/data.html#torch.utils.data.DataLoader)). (`bool`, optional) Default: `True` |
 | prefetch_factor |  Number of samples loaded in advance by each worker. (`int`, optional) Default: `10` |
@@ -141,6 +174,9 @@
 | train_test_split | Percentage of data to be used in the training dataset. | UNet |
 | use_fast_dataloader | If set to True, mapstyle datasets that use the UNetDataProcessor perform faster data processing. (`bool`, optional) Default: `False` | UNet |
 | use_worker_cache | If set to True data will be read from local SSD memory on the individual worker nodes during training. If the data does not exist on the worker nodes it will be automatically copied from the host node. This will cause a slowdown the first time this copy takes place. (`bool`, optional) Default: `True` | UNet |
+| num_diffusion_steps | Number of timesteps in the diffusion forward process(`int`, required) | DiT |
+| split | Dataset split to use(`str`, required) | DiT |
+
 
 ## Optimizer params
 
@@ -161,23 +197,24 @@
 | --- | --- | --- |
 | autogen_policy | The autogen policy to be used for the given run. <br>Can be one of: `"default"`, `"disabled"`, `"mild"`, `"medium"`, `"aggressive"`. See [more](https://docs.cerebras.net/en/latest/wsc/general/autogen.html).<br> (`str`, optional) Default: `None` | CSX |
 | autoload_last_checkpoint | Flag to automatically load the last checkpoint in the `model_dir`. (`bool`, optional) Default: `True` | All |
-| check_loss_values | Flag to check the loss values to see if it is `Nan/inf`. (`bool`, optional) Default: `True` | All | 
+| check_loss_values | Flag to check the loss values to see if it is `Nan/inf`. (`bool`, optional) Default: `True` | All |
 | checkpoint_path | The path to load checkpoints from during training. (`str`, optional) Default: `None` | All |
 | checkpoint_steps | The number of steps between saving model checkpoints during training. `0` means no checkpoints saved. (`int`, optional) Default: `0` | All |
 | compile_dir | Compile directory where compile artifacts will be written. (`str`, optional) Default: `None` | All |
 | compile_only | Enables compile only workflow. (`bool`, optional) Default: `False` | All |
 | credentials_path | Credentials for cluster access. If `None`, the value from a pre-configured location will be used if available. (`str`, optional) Default: `None`| CSX |
 | debug_args_path | ath to debugs args file.  (`str`, optional) Default: `None` | CSX |
+| disable_strict_checkpoint_loading | Flag used in conjunction with `checkpoint_path`, to avoid enforcing strict model state loading. (`bool`, optional) Default: `False`    | All            |
 | dist_addr | To init master_addr and master_port of distributed. (`str`, optional) Default: `localhost:8888` | GPU |
 | dist_backend | Distributed backend engine. (`str`, optional) Default: `"nccl"` | GPU |
 | enable_distributed | Flag to enable distributed training on GPU. (`bool`, optional) Default: `False` | GPU |
 | enable_summaries | Enable summaries when running on CS-X hardware. (`bool`, optional) Default: `False` | CSX |
 | eval_frequency | Specifies the evaluation frequency during training. Only used for `train_and_eval` mode.  (`int`, optional) Default: `None` | All |
 | eval_steps | Specifies the number of steps to run the model evaluation. (`int`, optional) Default: `None` | All |
-| experimental_api | Flag to enable experimental PyTorch API. (`bool`, optional) Default: `False` | CSX |
 | init_method | URL specifying how to initialize the process group. (`str`, optional) Default: `"env://"` | GPU |
-| is_pretrained_checkpoint | Flag used in conjunction with `checkpoint_path`, to enforce resetting of optimizer states and training steps after loading a given checkpoint. By setting this flag, matching weights are initialized from checkpoint provided by `checkpoint_path`, training starts from step 0, and optimizer states present in the checkpoint are ignored. Useful for fine-tuning runs on different tasks (e.g., classification, Q&A, etc.) where weights from a pre-trained model trained on language modeling (LM) tasks are loaded or fine-tuning on a different dataset on the same LM task. (`bool`, optional) Default: `False` | All |
 | job_labels | A list of equal-sign-separated key value pairs served as job labels. (`str`, optional) Default: `None` | CSX |
+| load_checkpoint_states | Comma-separated string of keys used in conjunction with `checkpoint_path` to explicitly specify what components' state should be loaded if present in a checkpoint. If this flag is used, any component whose key isn't specified will not load state from the checkpoint. For example, if `load_checkpoint_states` is `"model"`, we only load the model state and enforce resetting of optimizer states and training steps after loading a given checkpoint; i.e., matching weights are initialized from checkpoint provided by `checkpoint_path`, training starts from step 0, and optimizer states present in the checkpoint are ignored. This is useful for fine-tuning runs on different tasks (e.g., classification, Q&A, etc.) where weights from a pre-trained model trained on language modeling (LM) tasks are loaded or fine-tuning on a different dataset on the same LM task. If `dataloader` state exists in the checkpoint, that will also be ignored. In this case, the dataloaders will yield samples from the beginning. However, if `load_checkpoint_states` is `"model,dataloader"`then only the model and dataloader states will be loaded. By default, this config is `None` meaning that we load state for every compononent found in the checkpoint. (`str`, optional) Default: `None` | All |
+| steps_per_epoch | The number of steps per epoch. (`int`, optional) Default: `None` | All |
 | log_steps | Specifies the number of steps between logging during training. Same number controls the summary steps in Tensorboard. (`int`, optional) Default: `None` | All |
 | logging | Specifies the logging level during training. (`str`, optional) Default: `"INFO"` | All |
 | max_steps | Specifies the maximum number of steps for training. `max_steps` is optional unless neither `num_epochs` nor `num_steps` are provided, in which case `max_steps` must be provided. (`int`, required) | All |
@@ -194,9 +231,7 @@
 | precision_opt_level | Setting to control the level of numerical precision used for training runs for large NLP models. See [more](https://docs.cerebras.net/en/latest/general/performance-optimization.html?#precision-optimization-level). (`int`, optional) Default: `1` | CSX |
 | python_paths | A list of paths to be exported into `PYTHONPATH` for worker containers. It should generally contain path to the directory containing the Cerebras model zoo. (`List[str]`, optional) Default: `None` | CSX |
 | save_initial_checkpoint | Whether to save an initial checkpoint before training starts. (`bool`, optional) Default: `False` | All |
-| save_losses | Whether to save the loss values during training. (`bool`, optional) Default: `True` | All |
 | seed | The seed to use for random number generation for reproducibility. (`int`, optional) Default: `None` | All |
-| steps_per_epoch | The number of steps per epoch. (`int`, optional) Default: `None` | All |
 | sync_batchnorm | Whether to use synchronized batch normalization on multi GPU setup. (`bool`, optional) Default: `False` | GPU |
 | target_device | The target device to run the training on. One of: `CPU`, `GPU`, `CSX`. Required in command line. (`str`, optional) Default: command line value | All |
 | use_cs_grad_accum | Whether to use gradient accumulation to support larger batch sizes. (`bool`, optional) Default: `False` | CSX |

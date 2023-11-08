@@ -12,20 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import logging
-
-
-def set_custom_stack_params():
-    from modelzoo.common.pytorch import cb_model as cm
-
-    if cm.use_cs():
-        from modelzoo.common.pytorch import AP_DISABLED, cbtorch
-
-        state = cbtorch.state()
-        state.full_config.matching.kernel.inc_pwt_estimate = True
-        state.full_config.matching.kernel.enable_pipelined_mlm_loss = True
-        state.full_config.matching.autogen_policy = AP_DISABLED
-
 
 def set_attention_kernel(params):
     '''
@@ -97,23 +83,3 @@ def set_defaults(params):
         "precision_opt_level", 1
     )
     set_attention_kernel(params)
-
-    loss_scaling = params["model"].get("loss_scaling", "num_tokens")
-    use_cs_grad_accum = params["runconfig"].get("use_cs_grad_accum", False)
-    num_csx = params["runconfig"].get("num_csx")  # default from command line
-    target_device = params["runconfig"].get("target_device")
-    if (
-        loss_scaling == "num_tokens"
-        and use_cs_grad_accum
-        and num_csx > 1
-        and target_device == "CSX"
-    ):
-        logging.warning(
-            "Using loss scaling by num_tokens with use_cs_grad_accum is not "
-            "recommended and may lead to instabilities in the training in "
-            "distributed runs.\n"
-            "Please use loss_scaling='batch_size' instead and provide value "
-            "for 'loss_weight'.\n"
-            "Loss weight is 1/(average number of non-masked, non-padded tokens per sequence)."
-            " e.g. '1/max_sequence_length' when all sequences are fully packed."
-        )

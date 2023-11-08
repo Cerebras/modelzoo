@@ -16,6 +16,8 @@ from typing import Optional, Tuple
 
 import torch
 
+import cerebras_pytorch as cstorch
+
 
 def _extend_mask_to_shape_of_4(mask: torch.Tensor):
     assert len(mask.shape) in [
@@ -174,6 +176,34 @@ def create_2D_autoregressive_mask(
     return causal_mask
 
 
+def create_2D_full_mask(
+    src_sequence_length: int,
+    target_sequence_length: int,
+    dtype=None,
+    device=None,
+):
+    """Create autoregressive (triangular) mask.
+
+    Args:
+        batch_size (int): Batch size.
+        src_sequence_length (int): Sequence length of the source (num query vectors).
+        target_sequence_length (int): Sequence length of the target (num key vectors).
+        dtype (torch.dtype): Dtype of the resulting mask.
+        device: (torch.device): The device of the input to the model, used for causal mask creation.
+
+    Returns:
+        The causal mask of shape [src_seq_len, target_seq_len].
+    """
+    if dtype is None:
+        dtype = torch.float16
+    full_mask = torch.ones(
+        (src_sequence_length, target_sequence_length),
+        device=device,
+        dtype=dtype,
+    )
+    return full_mask
+
+
 def make_sparse_mask_broadcastable(
     sparse_mask: torch.Tensor,
     key_padding_mask: torch.Tensor,
@@ -202,12 +232,10 @@ def make_sparse_mask_broadcastable(
     if revert_mask:
         sparse_mask = 1.0 - sparse_mask
 
-    from modelzoo.common.pytorch import cb_model as cm
-
     # When running on CS, move constant from CPU to device wrapped with
     # XLA literal
-    if cm.use_cs():
-        fixed_sparsity = cm.make_constant(sparse_mask.to(dtype=dtype))
+    if cstorch.use_cs():
+        fixed_sparsity = cstorch.make_constant(sparse_mask.to(dtype=dtype))
     else:
         # When running on GPU, move constant from CPU to GPU
         fixed_sparsity = sparse_mask.to(device=device)

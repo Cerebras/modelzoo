@@ -15,12 +15,12 @@
 import torch
 import torch.nn as nn
 
+from cerebras_pytorch.nn import DiceCELoss
+from modelzoo.common.pytorch.layers.ConvNormActBlock import ConvNormActBlock
 from modelzoo.common.pytorch.model_utils.create_initializer import (
     create_initializer,
 )
 from modelzoo.common.pytorch.run_utils import half_dtype_instance
-from modelzoo.vision.pytorch.layers.ConvNormActBlock import ConvNormActBlock
-from modelzoo.vision.pytorch.losses.dice_loss import DiceCELoss
 from modelzoo.vision.pytorch.unet.layers.Decoder import Decoder
 from modelzoo.vision.pytorch.unet.layers.Encoder import Encoder
 from modelzoo.vision.pytorch.unet.layers.UNetBlock import UNetBlock

@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
+
 import numpy as np
 import torch
 import torchvision
@@ -24,15 +26,13 @@ from modelzoo.vision.pytorch.input.classification.mixup import (
     RandomCutmix,
     RandomMixup,
 )
-from modelzoo.vision.pytorch.input.classification.preprocessing import (
-    get_preprocess_transform,
-)
 from modelzoo.vision.pytorch.input.classification.sampler import (
     RepeatedAugSampler,
 )
 from modelzoo.vision.pytorch.input.classification.utils import (
     create_preprocessing_params_with_defaults,
 )
+from modelzoo.vision.pytorch.input.preprocessing import get_preprocess_transform
 from modelzoo.vision.pytorch.input.transforms import LambdaWithParam
 from modelzoo.vision.pytorch.input.utils import is_gpu_distributed, task_id
 
@@ -139,9 +139,17 @@ class Processor:
         return np.int32(x)
 
     def process_transform(self, use_training_transforms=True):
-        transform = get_preprocess_transform(
-            self.image_size, self.pp_params, use_training_transforms
-        )
+        if self.pp_params["noaugment"]:
+            transform_specs = [
+                {"name": "resize", "size": self.image_size},
+                {"name": "to_tensor"},
+            ]
+            logging.warning(
+                "User specified `noaugment=True`. The input data will only be "
+                "resized to `image_size` and converted to tensor."
+            )
+            self.pp_params["transforms"] = transform_specs
+        transform = get_preprocess_transform(self.pp_params)
         target_transform = LambdaWithParam(self._get_target_transform)
 
         return transform, target_transform

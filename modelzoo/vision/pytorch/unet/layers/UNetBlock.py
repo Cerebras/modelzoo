@@ -17,7 +17,7 @@ import warnings
 
 import torch.nn as nn
 
-from modelzoo.vision.pytorch.layers.ConvNormActBlock import ConvNormActBlock
+from modelzoo.common.pytorch.layers.ConvNormActBlock import ConvNormActBlock
 
 
 class UNetBlock(nn.Module):

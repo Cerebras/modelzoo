@@ -12,8 +12,6 @@ processing:
     tokenizer_type: "GPT2Tokenizer"
     vocab_file: "../../../vocab/gpt2-vocab.bpe"
     encoder_file: "../../../vocab/gpt2-encoder.json"
-    eos_id: 0
-    pad_id: 0
 
     max_seq_length: 2048
     short_seq_prob: 0.0
@@ -22,7 +20,6 @@ processing:
     files_per_record: 50000
     write_in_batch: True
     
-
     write_remainder: True
     resume_from_checkpoint: False
     display_pbar: True

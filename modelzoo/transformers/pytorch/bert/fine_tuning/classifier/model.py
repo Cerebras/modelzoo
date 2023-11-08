@@ -14,7 +14,7 @@
 
 import torch
 
-from modelzoo.common.pytorch.metrics import AccuracyMetric, FBetaScoreMetric
+from cerebras_pytorch.metrics import AccuracyMetric, FBetaScoreMetric
 from modelzoo.transformers.pytorch.bert.bert_finetune_models import (
     BertForSequenceClassification,
     BertForSequenceClassificationLoss,

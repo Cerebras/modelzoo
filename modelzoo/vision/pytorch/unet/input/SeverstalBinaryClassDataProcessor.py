@@ -22,7 +22,8 @@ from PIL import Image
 from torchvision import transforms
 from torchvision.datasets import VisionDataset
 
-from modelzoo.common.pytorch import cb_model as cm
+import cerebras_pytorch as cstorch
+import cerebras_pytorch.distributed as dist
 from modelzoo.vision.pytorch.input.utils import create_worker_cache
 from modelzoo.vision.pytorch.unet.input.UNetDataProcessor import (
     UNetDataProcessor,
@@ -48,10 +49,10 @@ class SeverstalBinaryClassDataset(VisionDataset):
         assert class_id_to_consider <= 4, "Maximum 4 available classes."
         self.class_id_to_consider = class_id_to_consider
 
-        if use_worker_cache and cm.is_streamer():
-            if not cm.is_appliance():
+        if use_worker_cache and dist.is_streamer():
+            if not cstorch.use_cs():
                 raise RuntimeError(
-                    "use_worker_cache not supported for non-appliance runs"
+                    "use_worker_cache not supported for non-CS runs"
                 )
             else:
                 self.root = create_worker_cache(self.root)

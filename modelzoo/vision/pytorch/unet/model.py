@@ -14,7 +14,7 @@
 
 import torch
 
-from modelzoo.common.pytorch.metrics import (
+from cerebras_pytorch.metrics import (
     AccuracyMetric,
     DiceCoefficientMetric,
     MeanIOUMetric,
@@ -98,7 +98,7 @@ class UNetModel(torch.nn.Module):
                     eval_labels.to(half_dtype_instance.half_dtype), dim=1
                 ).to(torch.int16)
 
-            for _metric_name, metric_obj in self.eval_metrics_objs.items():
+            for metric_obj in self.eval_metrics_objs.values():
                 metric_obj(labels=eval_labels, predictions=predictions)
 
         return loss

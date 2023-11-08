@@ -75,11 +75,6 @@ To use the alibi embedding in the bloom model, you need to pay attention to the 
 -   `alibi_trainable_slopes (bool)`: whether the slopes of the alibi embedding is trainable (default to False). 
 Note that based on the analysis of the original alibi paper, trainable slopes did not yield strong results (on-par with fixed slopes).
 
--   `alibi_implementation (str)`: We support `2` types of implementations `embedding` and `expand` with default set to `expand`. 
-We support the implementations to deal with issues like tensor broadcasting on the attention bias. 
-Two implementations are numerically the same but may give different training performance among model variants. 
-We may consider removing one of the implementations in the future release.
-
 # References
 
 **Reference**: 

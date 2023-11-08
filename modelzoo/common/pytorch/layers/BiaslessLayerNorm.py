@@ -68,8 +68,10 @@ class BiaslessLayerNorm(nn.Module):
         self.weight = nn.Parameter(
             torch.empty(self.normalized_shape, **factory_kwargs)
         )
+
         self.bias = nn.Parameter(
-            torch.empty(self.normalized_shape, **factory_kwargs)
+            torch.empty(self.normalized_shape, **factory_kwargs),
+            requires_grad=False,
         )
 
         self.reset_parameters()

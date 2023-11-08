@@ -14,6 +14,7 @@
 
 import os
 import shutil
+from typing import Optional
 
 import yaml
 
@@ -69,3 +70,24 @@ def save_params(params, model_dir, fname="params.yaml"):
 
     with open(params_fname, "w+") as _fout:
         yaml.dump(params, _fout, default_flow_style=False)
+
+
+def update_debug_args_with_mem_limits(
+    debug_args: 'DebugArgs', runconfig: Optional[dict] = None
+):
+    """Update debug args with runconfig memory limits"""
+    if not runconfig:
+        return
+
+    prop_to_pb_attr = {
+        "compile_crd_memory_gi": debug_args.debug_usr.compile_coord_resource,
+        "execute_crd_memory_gi": debug_args.debug_usr.execute_coord_resource,
+        "wrk_memory_gi": debug_args.debug_usr.worker_resource,
+        "act_memory_gi": debug_args.debug_usr.activation_resource,
+        "cmd_memory_gi": debug_args.debug_usr.command_resource,
+        "wgt_memory_gi": debug_args.debug_usr.weight_resource,
+    }
+
+    for prop, pb_attr in prop_to_pb_attr.items():
+        if prop in runconfig:
+            pb_attr.memory_bytes = runconfig[prop] << 30  # gi to bytes

@@ -27,34 +27,7 @@ import torch
 import yaml
 from jsonschema import validate
 
-
-def get_input_dtype(to_float16: bool):
-    """Determine input datatype based on environment"""
-    from modelzoo.common.pytorch import cb_model as cm
-
-    try:
-        from modelzoo.common.pytorch import amp
-
-        # pylint: disable=protected-access
-        half_dtype = amp._amp_state.half_dtype
-    except:  # pylint: disable=bare-except
-        from modelzoo.common.pytorch.run_utils import half_dtype_instance
-
-        half_dtype = half_dtype_instance.half_dtype
-
-    if (
-        to_float16
-        and not cm.use_cs()
-        and not cm.is_appliance()
-        and not torch.cuda.is_available()
-    ):
-        print(
-            f"to_float16 == True for input dtype is not supported with vanilla "
-            f"PyTorch CPU workflow. Setting to_float16 to False."
-        )
-        to_float16 = False
-    dtype = half_dtype if to_float16 else torch.float32
-    return dtype
+import cerebras_pytorch.distributed as dist
 
 
 def visit_structure(
@@ -221,16 +194,15 @@ def setup_logging(
     logging_dir: Optional[str] = None,
 ):
     """Configure default logging format"""
-    from modelzoo.common.pytorch import cb_model as cm
 
     class CustomFormatter(logging.Formatter):
         """Cerebras Preferred Log Formatting"""
 
         def __init__(self):
-            ordinal = cm.get_ordinal()
-            num_tasks = cm.num_tasks() - 1
+            ordinal = dist.get_ordinal()
+            num_tasks = dist.num_tasks() - 1
 
-            if num_tasks > 1 and cm.is_streamer():
+            if num_tasks > 1 and dist.is_streamer():
                 ordinal_msg = f"[{ordinal}/{num_tasks}]"
             else:
                 ordinal_msg = ""
@@ -297,7 +269,7 @@ def setup_logging(
 
         return level
 
-    if cm.is_master_ordinal():
+    if dist.is_master_ordinal():
         level = get_level_name(chief_logging_level or "info")
     else:
         level = get_level_name(streamer_logging_level or "error")
@@ -321,197 +293,6 @@ def setup_logging(
             original_hook(exc_type, exc_value, exc_traceback)
 
     sys.excepthook = cerebras_logging_hook
-
-
-def named_parameters_requiring_grad(model):
-    """
-    Returns the named paramters that should be passed to the optimizer
-    i.e. are trainable because they require gradients.
-    """
-    for name, param in model.named_parameters():
-        if param.requires_grad:
-            yield name, param
-
-
-def get_adaptive_lr_layers(model, lr_adjustment_layer_type):
-    """
-    Args:
-        model: Pytorch model
-        lr_adjustment_layer_type list: type of layer for which lr scaler is provided
-
-    Returns:
-        list: list of layer names for the given lr_adjustment_layer_type
-    """
-    adaptive_lr_layers = []
-    for n, _ in model.named_parameters():
-        if lr_adjustment_layer_type == 'decoder_kernel':
-            if 'weight' in n:
-                if 'linear' in n or 'dense' in n:
-                    adaptive_lr_layers.append(n)
-        elif lr_adjustment_layer_type == 'embedding':
-            if 'embedding' in n and 'weight' in n:
-                adaptive_lr_layers.append(n)
-    return adaptive_lr_layers
-
-
-def should_apply_weight_decay(model, param_name):
-    """
-
-    Args:
-        model: Pytorch model
-        param_name (torch.nn.Parameter): model param name
-
-    Returns:
-        bool: whether to apply weight decay for the give param_name
-    """
-    norm_modules = (
-        torch.nn.LayerNorm,
-        torch.nn.BatchNorm1d,
-        torch.nn.BatchNorm2d,
-        torch.nn.BatchNorm3d,
-        torch.nn.InstanceNorm1d,
-        torch.nn.InstanceNorm2d,
-        torch.nn.InstanceNorm3d,
-        torch.nn.GroupNorm,
-        torch.nn.SyncBatchNorm,
-    )
-    if 'bias' in param_name:
-        return False
-    for name, module in model.named_modules():
-        if name in param_name:
-            if isinstance(module, norm_modules):
-                return False
-    return True
-
-
-def partition_params_groups_with_weight_decay(
-    model, param_groups, weight_decay_rate
-):
-    """
-
-    Args:
-        model : Pytorch model
-        param_groups (list): optimizer param_groups. Currently it will be just 1 group
-        weight_decay_rate (float): value of weight decay rate from yaml
-
-    Returns:
-        list: param_groups as list of dicts, split based on the weight_decay rate
-    """
-    refined_params_groups = []
-    for _ in range(2 * len(param_groups)):
-        refined_params_groups.append({"params": []})
-    for idx, param_group_ in enumerate(param_groups):
-        # Set group's weight decay params
-        refined_params_groups[2 * idx]["weight_decay"] = weight_decay_rate
-        refined_params_groups[2 * idx + 1]["weight_decay"] = 0.0
-        for name, param in param_group_["params"]:
-            if should_apply_weight_decay(model, name):
-                refined_params_groups[2 * idx]["params"].append((name, param))
-            else:
-                refined_params_groups[2 * idx + 1]["params"].append(
-                    (name, param)
-                )
-
-    return refined_params_groups
-
-
-def partition_params_groups_with_adjusted_lr(
-    model, param_optimizer_grouped, lr_adjustment_layers, lr_adjustment_scalars,
-):
-    """
-    Generates param_groups based on the lr_adjustment_layers
-    Each lr adjustment layer_type will have a group asociated with it.
-
-    Args:
-        model : Pytorch model
-        param_optimizer_grouped (list): param_groups before the split based on lr_adjustment_layers
-        lr_adjustment_layers (list): list of layer types with different lr adjustment scalars
-        lr_adjustment_scalars (list): lr adjustment scalars
-
-    Returns:
-        list: list of dicts of param groups
-    """
-    if lr_adjustment_layers:
-        param_groups_with_lr_adjustment = []
-        for param_group in param_optimizer_grouped:
-            refined_param_groups = []
-            for idx in range(len(lr_adjustment_layers) + 1):
-                refined_param_groups.append(
-                    {
-                        "params": [],
-                        "weight_decay": param_group["weight_decay"],
-                        "adjust_learning_rate": lr_adjustment_scalars[idx]
-                        if idx < len(lr_adjustment_layers)
-                        else 1.0,
-                    }
-                )
-            # collect all the params whose layer_type is not in lr_adjustment_layers
-            # in the last param group
-            adaptive_lr_layers = [
-                get_adaptive_lr_layers(model, lr_adjust_layer_type_)
-                for lr_adjust_layer_type_ in lr_adjustment_layers
-            ]
-            for name, param in param_group["params"]:
-                param_in_adjust_lr_groups = False
-                for idx, _ in enumerate(lr_adjustment_layers):
-                    # check if param belongs to one of the adaptive lr layer types
-                    if any(
-                        adaptive_lr_layer_ in name
-                        for adaptive_lr_layer_ in adaptive_lr_layers[idx]
-                    ):
-                        refined_param_groups[idx]["params"].append(
-                            (name, param)
-                        )
-                        param_in_adjust_lr_groups = True
-                # if param doesn't belongs to one of the adaptive lr layer types,
-                # put it in the last refined_param_group
-                if not param_in_adjust_lr_groups:
-                    refined_param_groups[-1]["params"].append((name, param))
-
-            # remove empty param groups
-            refined_param_groups = [
-                param_group_
-                for param_group_ in refined_param_groups
-                if param_group_["params"]
-            ]
-            param_groups_with_lr_adjustment.append(refined_param_groups)
-
-    else:
-        param_groups_with_lr_adjustment = param_optimizer_grouped
-
-    # flatten the param group list if nested
-    param_groups_with_lr_adjustment_flattened = []
-    for groups in param_groups_with_lr_adjustment:
-        if isinstance(groups, list):
-            for group_ in groups:
-                param_groups_with_lr_adjustment_flattened.append(group_)
-        else:
-            param_groups_with_lr_adjustment_flattened.append(groups)
-
-    return param_groups_with_lr_adjustment_flattened
-
-
-def monkeypatch_grad_scaler_step_if_finite():
-    """
-    Add torch.cuda.amp.GradScaler.step_if_finite API to match
-    cbtorch.amp.GradScaler.
-    """
-    from torch.cuda.amp import GradScaler
-
-    def _step_if_finite(self, optimizer, *args, **kwargs):
-        # slightly modified GradScaler._maybe_opt_step, but considering all
-        # optimizers' grads' finiteness.
-        retval = None
-        # pylint: disable=protected-access
-        if not sum(
-            v.item()
-            for state in self._per_optimizer_states.values()
-            for v in state["found_inf_per_device"].values()
-        ):
-            retval = optimizer.step(*args, **kwargs)
-        return retval
-
-    GradScaler.step_if_finite = _step_if_finite
 
 
 class SampleGenerator(object):

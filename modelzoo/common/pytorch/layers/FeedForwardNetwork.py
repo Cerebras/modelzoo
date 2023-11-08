@@ -109,7 +109,6 @@ class FeedForwardNetwork(nn.Module):
         kernel_initializer: str = "xavier_uniform",
         bias_initializer: str = "zeros",
         output_layer_initializer: Optional[str] = None,
-        scale_glu_initialization=False,
         device=None,
     ):
         """
@@ -126,7 +125,6 @@ class FeedForwardNetwork(nn.Module):
 
         self.use_bias = use_bias
         self.kernel_initializer = kernel_initializer
-        self.scale_glu_initialization = scale_glu_initialization
         self.bias_initializer = bias_initializer
         self.device = device
 
@@ -193,15 +191,12 @@ class FeedForwardNetwork(nn.Module):
                 weight_initializer = create_initializer(
                     self.output_layer_initializer
                 )
-            else:
-                # Scale the initialization of linear layer weights associated with the
-                # 'GLU' type activation function by 1/sqrt(d)
-                if self.scale_glu_initialization:
-                    if hasattr(linear_layer_module, 'linear_layer_for_glu'):
-                        weight_initializer(
-                            linear_layer_module.linear_layer_for_glu.weight.data
-                        )
-
+            # Initialize linear layer weights associated with the
+            # 'GLU' type activation function with the kernel_initializer
+            if hasattr(linear_layer_module, 'linear_layer_for_glu'):
+                weight_initializer(
+                    linear_layer_module.linear_layer_for_glu.weight.data
+                )
             weight_initializer(linear_layer_module.linear_layer.weight.data)
             if self.use_bias:
                 create_initializer(self.bias_initializer)(

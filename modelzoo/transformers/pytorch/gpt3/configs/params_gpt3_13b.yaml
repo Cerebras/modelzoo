@@ -3,7 +3,7 @@
 ##############################################################
 
 train_input:
-    data_processor: "GptHDF5DataProcessor"
+    data_processor: "GptHDF5MapDataProcessor"
     data_dir:
         - "./language/datasets/pile_original/hdf5_dataset/train_shuffled_msl2048/0/"
         - "./language/datasets/pile_original/hdf5_dataset/train_shuffled_msl2048/1/"
@@ -15,21 +15,22 @@ train_input:
         - "./language/datasets/pile_original/hdf5_dataset/train_shuffled_msl2048/7/"
         - "./language/datasets/pile_original/hdf5_dataset/train_shuffled_msl2048/8/"
         - "./language/datasets/pile_original/hdf5_dataset/train_shuffled_msl2048/9/"
-    shuffle: True
+    shuffle: False # data is expected to be shuffled during preprocessing
     shuffle_seed: 0
     # The effective batch size, which is evenly divided across "num_csx" systems used for the run
     batch_size: 1080 # 1080 global = (90 micro)*(num_csx)*(grad accum steps)
-    num_workers: 1
+    micro_batch_size: 90 # forcing this micro batch size will lead to best performance but could be changed for better convergence
+    num_workers: 8
     prefetch_factor: 10
     persistent_workers: True # Important to avoid seeding at each epoch
 
 eval_input:
-    data_processor: "GptHDF5DataProcessor"
+    data_processor: "GptHDF5MapDataProcessor"
     data_dir: "./language/datasets/pile_original/hdf5_dataset/val_msl2048/"
     # The effective batch size, which is evenly divided across "num_csx" systems used for the run
-    batch_size: 120
+    batch_size: 90
     shuffle: False
-    num_workers: 1
+    num_workers: 8
 
 ### Model
 model:
@@ -92,30 +93,28 @@ model:
 ### Optimization
 optimizer:
     optimizer_type: "AdamW"
-    beta1: 0.9
-    beta2: 0.95
+    betas: [0.9, 0.95]
     eps: 1.0e-9
     max_gradient_norm: 1.0
     learning_rate:
       - scheduler: "Linear"
         initial_learning_rate: 0.0
         end_learning_rate: 0.00012
-        steps: 169
+        total_iters: 169
       - scheduler: "CosineDecay"
         initial_learning_rate: 0.00012
         end_learning_rate: 1.2000e-05
-        steps: 116054
-    weight_decay_rate: 0.1
+        total_iters: 116054
+    weight_decay: 0.1
     log_summaries: True
     correct_bias: True
 
 ### Cerebras parameters
 runconfig:
     max_steps: 116223
-    eval_steps: 1507 # 180956 / 120
+    eval_steps: 2009 # 180956 / 120
     checkpoint_steps: 500
     enable_distributed: False
-    save_losses: True
     log_steps: 1
     save_initial_checkpoint: False
     use_cs_grad_accum: True

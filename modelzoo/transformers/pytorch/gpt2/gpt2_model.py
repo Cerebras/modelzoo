@@ -19,11 +19,11 @@ import torch.nn as nn
 
 from modelzoo.common.pytorch.layers import (
     EmbeddingLayer,
-    RMSNorm,
     TransformerDecoder,
     TransformerDecoderLayer,
 )
 from modelzoo.common.pytorch.layers.utils import apply_position_bias
+from modelzoo.common.pytorch.model_utils.norms import get_norm
 from modelzoo.common.pytorch.model_utils.RotaryPositionEmbeddingHelper import (
     RotaryPositionEmbeddingHelper,
 )
@@ -48,6 +48,7 @@ class GPT2LMHeadModel(nn.Module):
         max_position_embeddings=1024,
         embd_pdrop=0.1,
         position_embedding_type="learned",
+        position_embedding_offset=0,
         hidden_size=768,
         share_embedding_weights=True,
         embedding_layer_norm=False,
@@ -56,7 +57,7 @@ class GPT2LMHeadModel(nn.Module):
         # Encoder
         num_hidden_layers=12,
         dropout_rate=0.1,
-        use_rms_norm=False,
+        norm_type="layernorm",
         layer_norm_epsilon=1.0e-5,
         # Encoder - Attention
         num_heads=12,
@@ -82,10 +83,9 @@ class GPT2LMHeadModel(nn.Module):
         # muP (maximal update parameterization)  parameters
         output_logits_scale=None,
         embeddings_scale=1.0,
-        scale_glu_initialization=False,
         scale_qk_dot_by_d=False,
         alibi_trainable_slopes=False,
-        alibi_implementation="expand",
+        scale_qk_dot_by_layer_idx=False,
     ):
         super(GPT2LMHeadModel, self).__init__()
 
@@ -127,7 +127,7 @@ class GPT2LMHeadModel(nn.Module):
                 "std": self.initializer_range,
             }
 
-        norm_class = RMSNorm if use_rms_norm else nn.LayerNorm
+        norm_class = get_norm(norm_type)
 
         self.embedding_layer = EmbeddingLayer(
             vocab_size=vocab_size,
@@ -136,6 +136,7 @@ class GPT2LMHeadModel(nn.Module):
             position_embedding_type=position_embedding_type,
             position_embeddings_initializer=embedding_initializer,
             max_position_embeddings=max_position_embeddings,
+            position_embedding_offset=position_embedding_offset,
         )
 
         if self.embedding_layer_norm:
@@ -159,7 +160,6 @@ class GPT2LMHeadModel(nn.Module):
             num_relative_attention_buckets=num_relative_attention_buckets,
             rotary_dim=rotary_dim,
             alibi_trainable_slopes=alibi_trainable_slopes,
-            alibi_implementation=alibi_implementation,
         )
 
         self.rotary_pe_helper = None
@@ -187,7 +187,7 @@ class GPT2LMHeadModel(nn.Module):
             add_cross_attention=False,
             attention_type=attention_type,
             scale_qk_dot_by_d=scale_qk_dot_by_d,
-            ffn_scale_glu_initialization=scale_glu_initialization,
+            scale_qk_dot_by_layer_idx=scale_qk_dot_by_layer_idx,
             attention_module=attention_module,
             attention_dropout_rate=attention_dropout_rate,
             attention_softmax_fp32=attention_softmax_fp32,
@@ -275,9 +275,7 @@ class GPT2LMHeadModel(nn.Module):
     def get_input_embeddings(self):
         return self.embedding_layer.get_input_embeddings()
 
-    def forward(
-        self, input_ids=None, attention_mask=None,
-    ):
+    def compute_input_embeddings(self, input_ids):
         hidden_states = self.embedding_layer(input_ids)
         if self.embedding_layer_norm:
             hidden_states = self.embedding_ln_f(hidden_states)
@@ -285,6 +283,12 @@ class GPT2LMHeadModel(nn.Module):
             float(self.embeddings_scale), dtype=hidden_states.dtype
         )
         hidden_states = self.drop_embd(hidden_states)
+        return hidden_states
+
+    def forward(
+        self, input_ids=None, attention_mask=None,
+    ):
+        hidden_states = self.compute_input_embeddings(input_ids)
 
         causal_attention_mask = build_broadcastable_attention_mask(
             attention_mask,

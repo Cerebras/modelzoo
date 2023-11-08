@@ -14,7 +14,6 @@
 
 import torch
 
-from modelzoo.common.pytorch.metrics import RougeScoreMetric
 from modelzoo.transformers.pytorch.bert.bert_finetune_models import (
     BertForSummarization,
     BertForSummarizationLoss,
@@ -71,6 +70,10 @@ class BertSummarizationModel(torch.nn.Module):
         self.vocab_file = model_params.pop("vocab_file")
         check_unused_model_params(model_params)
         if self.compute_eval_metrics:
+            raise NotImplementedError(
+                "RougeScoreMetric not yet supported in weight streaming"
+            )
+
             self.rouge1_score = RougeScoreMetric(
                 max_n=1, vocab_file=self.vocab_file, name="eval/rouge1"
             )

@@ -21,7 +21,7 @@ This directory contains the PyTorch ML reference for GPT-2 and GPT-3 models.
 
 ## Overview of the model
 
-[GPT-3](https://arxiv.org/abs/2005.14165) is a very similar architecture to [GPT-2](https://d4mucfpksywv.cloudfront.net/better-language-models/language-models.pd) except that every other self-attention layer in GPT-3 uses locally banded sparse attention in which tokens only attend to each other if they are nearby in the sequence
+[GPT-3](https://arxiv.org/abs/2005.14165) is a very similar architecture to [GPT-2](https://d4mucfpksywv.cloudfront.net/better-language-models/language-models.pdf) except that every other self-attention layer in GPT-3 uses locally banded sparse attention in which tokens only attend to each other if they are nearby in the sequence
 (see section 2.1 of the [GPT-3 paper](https://arxiv.org/abs/2005.14165) for more details). Figure below describes a high level model architecture of GPT3 model.
 
 ![GPT3 Architecture Diagram](./images/architecture_diagram.png)
@@ -37,7 +37,7 @@ The larger versions of GPT-3 range from 1.3B to 175B parameters.
 
 ## Prepare the data
 
-You need to download your raw data and create preprocessed dataloader using [`create_hdf5_dataset.py`](../gpt2/input/scripts/create_hdf5_dataset.py). 
+You need to download raw PILE data following [these instructions](../../data_processing/scripts/pile/) and create preprocessed dataset files using [`create_hdf5_dataset.py`](../../data_processing/scripts/hdf5_preprocessing/).
 
 #### GPT-3 DataProcessor output
   The `GptHDF5DataProcessor` class in [`GptHDF5DataProcessor.py`](input/GptHDF5DataProcessor.py) creates `example_dict` iterative from the `self.features_list` which is returned on the call iteratively. 
@@ -103,7 +103,8 @@ For convenience, we provide different configurations of common model setups desi
 
 Additionally, the configs under [Cerebras_GPT](./configs/Cerebras_GPT/) are the configurations necessary to reproduce the results in our [Cerebras-GPT Blog](https://www.cerebras.net/cerebras-gpt).
 
-**NOTE**: In absence of banded sparse attention feature, the GPT3 small, medium and large models are equivalent to the corresponding GPT2 variants available in [gpt2 configs](../gpt2/configs/) directory.
+> **NOTE:** The 1.3b(xl), 2.7b, 6.7b and 13b configs above show an example of setting micro batch size explicitly in the `train_input` section of the config. Without this setting, the best micro batch size search will be performed automatically during compilation which could take long time for larger models.
+> **NOTE**: In absence of banded sparse attention feature, the GPT3 small, medium and large models are equivalent to the corresponding GPT2 variants available in [gpt2 configs](../gpt2/configs/) directory.
 
 ## Maximal Update Parameterization
 [&mu;P (Maximal Update Parameterization)](https://arxiv.org/abs/2203.03466) benefits in two ways: i) Stable training dynamics at large scale by controlling the initialization, activations magnitude and layer-wise adaptive learning rates independent of model width, ii) it allows for zero-shot hyperparameter transfer from a smaller model to larger models. Essentially, muP facilitates width invariance to the model’s hyperparameters. 
@@ -214,7 +215,7 @@ All the remaining parameters are *optional*. They need to be determined by a hyp
 #### Example of the script usage
 Example usage of the script with input configuration file provided and rest of the optional arguments will assume default values:
 ```bash
-$$ python convert_config_to_mup.py --input_yaml </path/to/config>/params_gpt3_2p7b.yaml
+python convert_config_to_mup.py --input_yaml </path/to/config>/params_gpt3_2p7b.yaml
 muP config saved to </path/to/config>/params_gpt3_2p7b_mup.yaml
 ```
 
