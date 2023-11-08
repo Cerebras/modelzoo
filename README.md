@@ -51,7 +51,7 @@ For advanced use cases and porting your existing code please refer to the [devel
 | UNet | [Code](./modelzoo/vision/pytorch/unet/) |
 | Falcon | [Code](./modelzoo/transformers/pytorch/falcon) |
 | StarCoder | [Code](./modelzoo/transformers/pytorch/starcoder) |
-| LLaMA | [Code](./modelzoo/transformers/pytorch/llama) |
+| LLaMA and LLaMA-2 | [Code](./modelzoo/transformers/pytorch/llama) |
 
 ## License
 
