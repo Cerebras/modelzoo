@@ -12,7 +12,6 @@ The following are the release notes for the Model Zoo repository.
 #### Sparsity
 
 - With release 2.0.2, we introduce [Sparse Pretraining and Dense Finetuning (SPDF)](https://arxiv.org/abs/2303.10464), a technique designed to accelerate pretraining by incorporating high levels of sparsity while maintaining downstream task accuracy through dense finetuning. To get started with SPDF, we have provided a comprehensive [Sparsity how-to-guide](https://docs.cerebras.net/en/latest/wsc/how_to_guides/sparsity.html). Additionally, you can explore reference configurations in the Model Zoo to leverage SPDF effectively in your projects. The Model Zoo reference configuration is accessible in the Cerebras Model Zoo [here](./transformers/pytorch/gpt3/configs/sparsity). For more information, contact our support team.
-- We are introducing [Sparse-Iso Flop Transformation (Sparse-IFT)](https://arxiv.org/abs/2303.11525), a technique that leverages sparsification to enhance model accuracy without the need to increase training FLOPs (floating-point operations). To help you make the most of Sparse-IFT, we have prepared a detailed [Sparsity how-to-guide](https://docs.cerebras.net/en/latest/wsc/how_to_guides/sparsity.html). Additionally, you can find reference configurations in the Cerebras Model Zoo [here](./transformers/pytorch/gpt3/configs/sparsity/). For more information, contact our support team.
 
 #### Large Language Models
 
