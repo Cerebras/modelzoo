@@ -49,10 +49,6 @@ For advanced use cases and porting your existing code please refer to the [devel
 | Transformer | [Code](./modelzoo/transformers/pytorch/transformer/) |
 | MNIST (fully connected) | [Code](./modelzoo/fc_mnist/pytorch/) |
 | UNet | [Code](./modelzoo/vision/pytorch/unet/) |
-| Falcon | [Code](./modelzoo/transformers/pytorch/falcon) |
-| StarCoder | [Code](./modelzoo/transformers/pytorch/starcoder) |
-| LLaMA and LLaMA-2 | [Code](./modelzoo/transformers/pytorch/llama) |
-| DiT | [Code](./modelzoo/vision/pytorch/dit) |
 
 ## License
 
