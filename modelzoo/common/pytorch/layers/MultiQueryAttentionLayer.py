@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import logging
-from typing import Optional
 
 import torch
 import torch.nn as nn
@@ -57,10 +56,6 @@ class MultiQueryAttention(MultiheadAttention):
             accepts ``dot_product`` and ``scaled_dot_product``. Defaults to
             ``scaled_dot_product``.
         softmax_dtype_fp32 (bool): Use an FP32 softmax implementation.
-        attention_kernel (str | None): Kernel to use. Uses ``default`` if None.
-            See accepted values below.
-                ``default`` - Optimized implementation.
-                ``compatible`` - Non-optimized but most compatible implementation.
         device (optional): Device to create the model parameters on, can be a cuda device or CS device.
     """
 
@@ -84,7 +79,6 @@ class MultiQueryAttention(MultiheadAttention):
         attention_type="scaled_dot_product",
         scale_qk_dot_by_d=False,
         softmax_dtype_fp32=True,
-        attention_kernel: Optional[str] = None,
         scale_qk_dot_by_layer_idx=False,
         device=None,
         # MQA specific
@@ -109,7 +103,6 @@ class MultiQueryAttention(MultiheadAttention):
             attention_type=attention_type,
             scale_qk_dot_by_d=scale_qk_dot_by_d,
             softmax_dtype_fp32=softmax_dtype_fp32,
-            attention_kernel=attention_kernel,
             scale_qk_dot_by_layer_idx=scale_qk_dot_by_layer_idx,
             device=device,
         )
@@ -124,13 +117,13 @@ class MultiQueryAttention(MultiheadAttention):
 
         # assuming only 1 head for key and value projections
         self.proj_k_dense_layer = nn.Linear(
-            self.embed_dim,
+            self.kdim,
             self.num_kv_groups * self.head_dim,
             bias=use_projection_bias,
             device=device,
         )
         self.proj_v_dense_layer = nn.Linear(
-            self.embed_dim,
+            self.vdim,
             self.num_kv_groups * self.head_dim,
             bias=use_projection_bias,
             device=device,
@@ -166,9 +159,9 @@ class MultiQueryAttention(MultiheadAttention):
             )  # [batch_size, seq_length, 1, kv_channels]
 
         batch_size, seq_length, _ = k.shape
+        # [batch_size, seq_length, self.num_kv_groups, self.head_dim]
         k = k.reshape(batch_size, seq_length, self.num_kv_groups, self.head_dim)
 
-        # [batch_size, seq_length, self.num_kv_groups, self.head_dim]
         return k
 
     def construct_value_vector(self, v, attn_mask=None, key_padding_mask=None):

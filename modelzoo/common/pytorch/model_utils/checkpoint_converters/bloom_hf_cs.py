@@ -20,49 +20,53 @@ from typing import Tuple
 import torch
 
 from modelzoo.common.pytorch.model_utils.checkpoint_converters.base_converter import (
-    BaseCheckpointConverter_CS_CS,
     BaseCheckpointConverter_HF_CS,
     BaseConfigConverter,
-    BaseConfigConverter_CS_CS,
     BaseConfigConverter_HF_CS,
     ConfigConversionError,
     ConversionRule,
     EquivalentSubkey,
     FormatVersions,
 )
+from modelzoo.common.pytorch.model_utils.checkpoint_converters.gpt2_hf_cs import (
+    ConfigConverter_GPT2Model_CS18_CS20,
+    Converter_GPT2LMHeadModel_CS18_CS20,
+    Converter_GPT2LMHeadModel_CS20_CS21,
+)
 from modelzoo.common.pytorch.model_utils.checkpoint_converters.helper import (
-    convert_use_rms_layer_norm_helper,
+    Build_HF_CS_Converter_WithOptionalModel,
 )
 
 
 class Converter_Bloom_Attention_HF_CS17(BaseCheckpointConverter_HF_CS):
     def __init__(self,):
+        super().__init__()
         self.rules = [
             ConversionRule(
                 [
                     EquivalentSubkey("dense", "proj_output_dense_layer"),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.replaceKey,
             ),
             ConversionRule(
                 [
                     EquivalentSubkey("query_key_value", "proj_q_dense_layer"),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.qkv_converter,
             ),
             ConversionRule(
                 [
                     EquivalentSubkey("query_key_value", "proj_k_dense_layer"),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.assert_already_converted,
             ),
             ConversionRule(
                 [
                     EquivalentSubkey("query_key_value", "proj_v_dense_layer"),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.assert_already_converted,
             ),
@@ -92,8 +96,8 @@ class Converter_Bloom_Attention_HF_CS17(BaseCheckpointConverter_HF_CS):
         # HF represents Q, K, and V in a packed format. We need to unpack the
         # weight and bias tensor for CS format.
         q_key = new_key
-        k_key = re.sub("\.proj_q_dense_layer\.", ".proj_k_dense_layer.", q_key)
-        v_key = re.sub("\.proj_q_dense_layer\.", ".proj_v_dense_layer.", q_key)
+        k_key = re.sub(r"\.proj_q_dense_layer\.", ".proj_k_dense_layer.", q_key)
+        v_key = re.sub(r"\.proj_q_dense_layer\.", ".proj_v_dense_layer.", q_key)
         num_heads = action_fn_args["configs"][1]["model"]["num_heads"]
         hidden_size = action_fn_args["configs"][1]["model"]["hidden_size"]
 
@@ -125,8 +129,8 @@ class Converter_Bloom_Attention_HF_CS17(BaseCheckpointConverter_HF_CS):
     ):
         # HF represents Q, K, and V in a packed format.
         q_key = old_key
-        k_key = re.sub("\.proj_q_dense_layer\.", ".proj_k_dense_layer.", q_key)
-        v_key = re.sub("\.proj_q_dense_layer\.", ".proj_v_dense_layer.", q_key)
+        k_key = re.sub(r"\.proj_q_dense_layer\.", ".proj_k_dense_layer.", q_key)
+        v_key = re.sub(r"\.proj_q_dense_layer\.", ".proj_v_dense_layer.", q_key)
 
         assert (
             k_key in old_state_dict
@@ -186,6 +190,7 @@ class Converter_Bloom_Attention_HF_CS17(BaseCheckpointConverter_HF_CS):
                 old_key, new_key
             )
 
+    @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (FormatVersions("hf"), FormatVersions("cs-1.7"))
 
@@ -197,13 +202,14 @@ class Converter_Bloom_Attention_HF_CS17(BaseCheckpointConverter_HF_CS):
 class Converter_BloomModel_HF_CS17(BaseCheckpointConverter_HF_CS):
     def __init__(self):
         super().__init__()
+        self.cs_slopes_key = "relative_pe_helper.slopes"
         self.rules = [
             ConversionRule(
                 [
                     EquivalentSubkey(
                         "word_embeddings", "embedding_layer.word_embeddings"
                     ),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.replaceKey,
             ),
@@ -212,14 +218,14 @@ class Converter_BloomModel_HF_CS17(BaseCheckpointConverter_HF_CS):
                     EquivalentSubkey(
                         "word_embeddings_layernorm", "embedding_ln_f"
                     ),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.replaceKey,
             ),
             ConversionRule(
                 [
                     EquivalentSubkey("h", "transformer_decoder.layers"),
-                    "\.\d+\.",
+                    r"\.\d+\.",
                     EquivalentSubkey("self_attention.", "self_attn."),
                     Converter_Bloom_Attention_HF_CS17(),
                 ],
@@ -228,53 +234,53 @@ class Converter_BloomModel_HF_CS17(BaseCheckpointConverter_HF_CS):
             ConversionRule(
                 [
                     EquivalentSubkey("h", "transformer_decoder.layers"),
-                    "\.\d+\.",
+                    r"\.\d+\.",
                     EquivalentSubkey("input_layernorm", "norm1"),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.replaceKey,
             ),
             ConversionRule(
                 [
                     EquivalentSubkey("h", "transformer_decoder.layers"),
-                    "\.\d+\.",
+                    r"\.\d+\.",
                     EquivalentSubkey("post_attention_layernorm", "norm3"),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.replaceKey,
             ),
             ConversionRule(
                 [
                     EquivalentSubkey("h", "transformer_decoder.layers"),
-                    "\.\d+\.",
+                    r"\.\d+\.",
                     EquivalentSubkey(
                         "mlp.dense_h_to_4h", "ffn.ffn.0.linear_layer"
                     ),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.replaceKey,
             ),
             ConversionRule(
                 [
                     EquivalentSubkey("h", "transformer_decoder.layers"),
-                    "\.\d+\.",
+                    r"\.\d+\.",
                     EquivalentSubkey(
                         "mlp.dense_4h_to_h", "ffn.ffn.1.linear_layer"
                     ),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.replaceKey,
             ),
             ConversionRule(
                 [
                     EquivalentSubkey("ln_f", "transformer_decoder.norm"),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.replace_final_norm,
             ),
-            ConversionRule(["lm_head\.(?:weight|bias)"], exists="right"),
-            ConversionRule(["ln_f\.(?:weight|bias)"], exists="right"),
-            ConversionRule(["relative_pe_helper\.slopes",], exists="right"),
+            ConversionRule([r"lm_head\.(?:weight|bias)"], exists="right"),
+            ConversionRule([r"ln_f\.(?:weight|bias)"], exists="right"),
+            ConversionRule([r"relative_pe_helper\.slopes",], exists="right"),
         ]
 
     def replace_final_norm(
@@ -290,7 +296,7 @@ class Converter_BloomModel_HF_CS17(BaseCheckpointConverter_HF_CS):
         # CS 1.7 has both "ln_f" and "transformer_decoder.norm"
         # we need to copy the original ("ln_f") too:
         if from_index == 0:
-            ln_f_key = re.sub("transformer_decoder\.norm\.", "ln_f.", new_key)
+            ln_f_key = re.sub(r"transformer_decoder\.norm\.", "ln_f.", new_key)
             new_state_dict[ln_f_key] = old_state_dict[old_key]
 
     @staticmethod
@@ -300,14 +306,13 @@ class Converter_BloomModel_HF_CS17(BaseCheckpointConverter_HF_CS):
             ratio = start
             return [start * ratio ** i for i in range(n)]
 
+        # In the paper, we only train models that have 2^a heads for some a. This function has
+        # some good properties that only occur when the input is a power of 2. To maintain that even
+        # when the number of heads is not a power of 2, we use this workaround.
         if math.log2(n).is_integer():
-            slopes_list = get_slopes_power_of_2(
-                n
-            )  # In the paper, we only train models that have 2^a heads for some a. This function has
-        else:  # some good properties that only occur when the input is a power of 2. To maintain that even
-            closest_power_of_2 = 2 ** math.floor(
-                math.log2(n)
-            )  # when the number of heads is not a power of 2, we use this workaround.
+            slopes_list = get_slopes_power_of_2(n)
+        else:
+            closest_power_of_2 = 2 ** math.floor(math.log2(n))
             slopes_list = (
                 get_slopes_power_of_2(closest_power_of_2)
                 + Converter_BloomModel_HF_CS17.get_alibi_slopes(
@@ -348,6 +353,7 @@ class Converter_BloomModel_HF_CS17(BaseCheckpointConverter_HF_CS):
         configs,
         from_index,
         drop_unmatched_keys,
+        key_prefix="",
     ):
         if from_index == 0:
             # We are converting from HF GPT2Model (which is headless) -> CS GPT2LMHeadModel
@@ -364,12 +370,12 @@ class Converter_BloomModel_HF_CS17(BaseCheckpointConverter_HF_CS):
             else:
                 lm_head_weight = torch.zeros((vocab_size, embed_dim))
                 lm_head_weight.normal_(mean=0.0, std=0.02)
-            new_state_dict["lm_head.weight"] = lm_head_weight
+            new_state_dict[key_prefix + "lm_head.weight"] = lm_head_weight
             if use_bias_in_output:
                 lm_head_bias = torch.zeros(vocab_size)
-                new_state_dict["lm_head.bias"] = lm_head_bias
+                new_state_dict[key_prefix + "lm_head.bias"] = lm_head_bias
             new_state_dict[
-                "relative_pe_helper.slopes"
+                key_prefix + self.cs_slopes_key
             ] = Converter_BloomModel_HF_CS17.get_alibi_slopes(
                 cs_config["model"]["num_heads"]
             )
@@ -379,6 +385,7 @@ class Converter_BloomModel_HF_CS17(BaseCheckpointConverter_HF_CS):
             configs,
             from_index,
             drop_unmatched_keys,
+            key_prefix=key_prefix,
         )
 
     @staticmethod
@@ -678,9 +685,6 @@ class ConfigConverter_BloomModel_HF_CS17(BaseConfigConverter_HF_CS):
 
 
 class ConfigConverter_BloomModel_HF_CS19(ConfigConverter_BloomModel_HF_CS17):
-    def __init__(self):
-        super().__init__()
-
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (FormatVersions("hf"), FormatVersions("cs-1.9"))
@@ -689,9 +693,10 @@ class ConfigConverter_BloomModel_HF_CS19(ConfigConverter_BloomModel_HF_CS17):
 class Converter_BloomLMHeadModel_HF_CS17(BaseCheckpointConverter_HF_CS):
     def __init__(self):
         super().__init__()
+        self.cs_slopes_key = "relative_pe_helper.slopes"
         self.rules = [
             ConversionRule(
-                ["lm_head\.(?:weight|bias)"], action=self.replaceKey,
+                [r"lm_head\.(?:weight|bias)"], action=self.replaceKey,
             ),
             ConversionRule(
                 [
@@ -727,11 +732,12 @@ class Converter_BloomLMHeadModel_HF_CS17(BaseCheckpointConverter_HF_CS):
         configs,
         from_index,
         drop_unmatched_keys,
+        key_prefix="",
     ):
         if from_index == 0:
             cs_config = configs[1]
             new_state_dict[
-                "relative_pe_helper.slopes"
+                key_prefix + self.cs_slopes_key
             ] = Converter_BloomModel_HF_CS17.get_alibi_slopes(
                 cs_config["model"]["num_heads"]
             )
@@ -741,6 +747,7 @@ class Converter_BloomLMHeadModel_HF_CS17(BaseCheckpointConverter_HF_CS):
             configs,
             from_index,
             drop_unmatched_keys,
+            key_prefix=key_prefix,
         )
 
     @staticmethod
@@ -761,6 +768,7 @@ class Converter_BloomLMHeadModel_HF_CS17(BaseCheckpointConverter_HF_CS):
 class Converter_BloomLMHeadModel_HF_CS19(BaseCheckpointConverter_HF_CS):
     def __init__(self):
         super().__init__()
+        self.cs_slopes_key = "relative_pe_helper.slopes"
         self.rules = [
             # Catch checkpoints from Pytorch 2.0 API
             ConversionRule(
@@ -783,11 +791,12 @@ class Converter_BloomLMHeadModel_HF_CS19(BaseCheckpointConverter_HF_CS):
         configs,
         from_index,
         drop_unmatched_keys,
+        key_prefix="",
     ):
         if from_index == 0:
             cs_config = configs[1]
             new_state_dict[
-                "relative_pe_helper.slopes"
+                key_prefix + self.cs_slopes_key
             ] = Converter_BloomModel_HF_CS17.get_alibi_slopes(
                 cs_config["model"]["num_heads"]
             )
@@ -797,6 +806,7 @@ class Converter_BloomLMHeadModel_HF_CS19(BaseCheckpointConverter_HF_CS):
             configs,
             from_index,
             drop_unmatched_keys,
+            key_prefix=key_prefix,
         )
 
     @staticmethod
@@ -814,13 +824,10 @@ class Converter_BloomLMHeadModel_HF_CS19(BaseCheckpointConverter_HF_CS):
         return ConfigConverter_BloomModel_HF_CS19
 
 
-class Converter_BloomLMHeadModel_CS19_CS20(BaseCheckpointConverter_CS_CS):
-    def __init__(self):
-        super().__init__()
-        # Model didn't change between 1.9 and 2.0. Copy all keys.
-        self.rules = [
-            ConversionRule([".*"], action=self.replaceKey),
-        ]
+class Converter_BloomLMHeadModel_CS19_CS20(Converter_GPT2LMHeadModel_CS18_CS20):
+    r"""
+    Bloom uses the GPT2 backbone
+    """
 
     @classmethod
     def converter_note(cls) -> str:
@@ -835,23 +842,12 @@ class Converter_BloomLMHeadModel_CS19_CS20(BaseCheckpointConverter_CS_CS):
         return ConfigConverter_BloomLMHeadModel_CS19_CS20
 
 
-class ConfigConverter_BloomLMHeadModel_CS19_CS20(BaseConfigConverter_CS_CS):
-    def __init__(self):
-        super().__init__()
-        # Only difference between 1.9 and 2.0 is introduction of norm_type
-        self.rules = [
-            ConversionRule(
-                [EquivalentSubkey("use_rms_norm", "norm_type")],
-                action=self.convert_use_rms_layer_norm,
-            ),
-            ConversionRule([".*"], action=self.replaceKey),
-        ]
-
-        self.pre_convert_defaults[0]["use_rms_norm"] = False
-        self.pre_convert_defaults[1]["norm_type"] = "layernorm"
-
-    def convert_use_rms_layer_norm(self, *args):
-        convert_use_rms_layer_norm_helper(self, *args)
+class ConfigConverter_BloomLMHeadModel_CS19_CS20(
+    ConfigConverter_GPT2Model_CS18_CS20
+):
+    r"""
+    Bloom uses the GPT2 backbone
+    """
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
@@ -859,9 +855,6 @@ class ConfigConverter_BloomLMHeadModel_CS19_CS20(BaseConfigConverter_CS_CS):
 
 
 class Converter_BloomModel_HF_CS20(Converter_BloomModel_HF_CS19):
-    def __init__(self):
-        super().__init__()
-
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (FormatVersions("hf"), FormatVersions("cs-2.0"))
@@ -872,9 +865,6 @@ class Converter_BloomModel_HF_CS20(Converter_BloomModel_HF_CS19):
 
 
 class Converter_BloomLMHeadModel_HF_CS20(Converter_BloomLMHeadModel_HF_CS19):
-    def __init__(self):
-        super().__init__()
-
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (FormatVersions("hf"), FormatVersions("cs-2.0"))
@@ -898,3 +888,97 @@ class ConfigConverter_BloomModel_HF_CS20(ConfigConverter_BloomModel_HF_CS19):
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (FormatVersions("hf"), FormatVersions("cs-2.0"))
+
+
+###########################################################
+# In CS 2.1, we refactored the embedding layer.
+# CS 2.0 <> CS 2.1, and HF <> CS 2.1 converters:
+###########################################################
+
+
+class Converter_BloomLMHeadModel_CS20_CS21(Converter_GPT2LMHeadModel_CS20_CS21):
+    def __init__(self):
+        super().__init__()
+
+    @classmethod
+    def converter_note(cls) -> str:
+        return "GPT2LMHeadModel class (configured as Bloom)"
+
+
+class ConfigConverter_BloomModel_HF_CS21(ConfigConverter_BloomModel_HF_CS20):
+    "CS 2.1 config is the same as CS 2.0"
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-2.1"))
+
+    def supports_mup_conversion(self):
+        return True
+
+
+class Converter_BloomModel_WithoutOptionalModel_HF_CS21(
+    Converter_BloomModel_HF_CS17
+):
+    def __init__(self):
+        super().__init__()
+        self.cs_slopes_key = "embedding_layer.position_embed_helper.slopes"  # used in post_model_convert fn
+        self.rules = [
+            ConversionRule(
+                ["embedding_layer\.position_embed_helper\.slopes"],
+                exists="right",
+            ),
+            *self.rules,
+        ]
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-2.1"))
+
+    @staticmethod
+    def get_config_converter_class() -> BaseConfigConverter:
+        return ConfigConverter_BloomModel_HF_CS21
+
+
+Converter_BloomModel_HF_CS21 = Build_HF_CS_Converter_WithOptionalModel(
+    "Converter_BloomModel_HF_CS21",
+    Converter_BloomModel_WithoutOptionalModel_HF_CS21,
+    derived_class=Converter_BloomModel_WithoutOptionalModel_HF_CS21,
+)
+
+
+class Converter_BloomLMHeadModel_WithoutOptionalModel_HF_CS21(
+    Converter_BloomLMHeadModel_HF_CS20
+):
+    def __init__(self):
+        super().__init__()
+        self.cs_slopes_key = "embedding_layer.position_embed_helper.slopes"  # used in post_model_convert fn
+        self.rules = [
+            ConversionRule(
+                ["lm_head\.(?:weight|bias)"], action=self.replaceKey,
+            ),
+            ConversionRule(
+                [
+                    EquivalentSubkey("transformer.", ""),
+                    Converter_BloomModel_WithoutOptionalModel_HF_CS21(),
+                ],
+                action=None,
+            ),
+        ]
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-2.1"))
+
+    @staticmethod
+    def get_config_converter_class() -> BaseConfigConverter:
+        return ConfigConverter_BloomModel_HF_CS21
+
+    def supports_mup_conversion(self):
+        return True
+
+
+Converter_BloomLMHeadModel_HF_CS21 = Build_HF_CS_Converter_WithOptionalModel(
+    "Converter_BloomLMHeadModel_HF_CS21",
+    Converter_BloomLMHeadModel_WithoutOptionalModel_HF_CS21,
+    derived_class=Converter_BloomLMHeadModel_WithoutOptionalModel_HF_CS21,
+)

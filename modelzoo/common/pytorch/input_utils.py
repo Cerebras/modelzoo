@@ -14,8 +14,10 @@
 
 import logging
 import random
+from typing import Literal, Union
 
 import numpy as np
+import torch
 from torch.utils.data._utils.collate import default_collate
 
 import cerebras_pytorch as cstorch
@@ -157,7 +159,9 @@ def get_streaming_batch_size(effective_batch_size: int) -> int:
 
 
 def validate_streaming_and_micro_batch_size(
-    batch_size: int, micro_batch_size: int, num_csx: int
+    batch_size: int,
+    micro_batch_size: Union[int, Literal["explore"]],
+    num_csx: int,
 ) -> None:
     """Validates the streaming and micro batch sizes.
 
@@ -166,6 +170,16 @@ def validate_streaming_and_micro_batch_size(
         micro_batch_size: The micro batch size of the model.
         num_csx: The number of CSX in the cluster.
     """
+    if micro_batch_size == "explore":
+        # If we want to run quick batch exploration, then the batch size and num_csx
+        # can be anything. We don't need to validate anything.
+        return
+    elif not isinstance(micro_batch_size, int):
+        raise TypeError(
+            f"Expected micro_batch_size to be an integer or 'explore'. "
+            f"Got {micro_batch_size}."
+        )
+
     if micro_batch_size < 1:
         raise ValueError(
             f"micro_batch_size must be a positive integer. "
@@ -186,3 +200,14 @@ def validate_streaming_and_micro_batch_size(
             f"please set num_csx and batch_size such that batch_size//num_csx "
             f"is a multiple of micro_batch_size."
         )
+
+
+class PaddingSample(torch.Tensor):
+    def __new__(cls, shape, dtype, require_grad=False):
+        return cls._make_subclass(
+            cls, torch.empty(shape, dtype=dtype), require_grad=require_grad
+        )
+
+    @property
+    def is_padding(self):
+        return True

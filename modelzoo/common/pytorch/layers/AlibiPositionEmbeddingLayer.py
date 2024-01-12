@@ -45,6 +45,7 @@ class AlibiPositionEmbeddingLayer(nn.Module):
         slopes=None,
         alibi_trainable_slopes=False,
         slopes_initializer="xavier_uniform",
+        scaling_factor=1.0,
     ):
         super(AlibiPositionEmbeddingLayer, self).__init__()
 
@@ -67,6 +68,8 @@ class AlibiPositionEmbeddingLayer(nn.Module):
         self.slopes = nn.parameter.Parameter(
             slopes, requires_grad=self.alibi_trainable_slopes
         )
+
+        self.scaling_factor = scaling_factor
 
         self.__reset_parameters()
 
@@ -128,7 +131,7 @@ class AlibiPositionEmbeddingLayer(nn.Module):
             .unsqueeze(0)
             .expand(self.num_heads, -1, -1)
         )
-        alibi = (slopes * -1.0).unsqueeze(1) * relative_position
+        alibi = (slopes / -self.scaling_factor).unsqueeze(1) * relative_position
         return alibi
 
     def _compute_alibi_bias(self, seq_length, key_length, slopes=None):

@@ -36,6 +36,7 @@ import logging
 import torch
 import torch.nn as nn
 
+import cerebras_pytorch as cstorch
 from modelzoo.common.pytorch.layers import (
     EmbeddingLayer,
     TransformerDecoder,
@@ -115,7 +116,7 @@ class T5ForConditionalGeneration(nn.Module):
         share_encoder_decoder_embedding (:obj:`bool`, `optional`, defaults to :obj: True):
             Whether to share encoder/decoder embedding layer.
             Set to `True` for both T5 and Transformer models.
-        tie_word_embeddings (:obj:`bool`, `optional`, defaults to :obj: True):
+        share_embedding_weights (:obj:`bool`, `optional`, defaults to :obj: True):
             Whether to share embedding weights between decoder and language model head.
         relu_dropout_rate (:obj:`int`, `optional`, defaults to :obj: 0.1):
             Dropout rate utilized in the FFN layer after applying relu activation function.
@@ -163,7 +164,6 @@ class T5ForConditionalGeneration(nn.Module):
         decoder_nonlinearity="relu",
         use_projection_bias_in_attention=False,
         attention_softmax_fp32=True,
-        attention_kernel=None,
         use_cache=False,
         decoder_start_token_id=None,
         pad_token_id=0,
@@ -172,13 +172,15 @@ class T5ForConditionalGeneration(nn.Module):
         tgt_max_position_embeddings=512,
         use_dropout_outside_residual_path=True,
         share_encoder_decoder_embedding=True,
-        tie_word_embeddings=True,
+        share_embedding_weights=True,
         tie_encoder_decoder=False,
         use_pre_encoder_decoder_dropout=False,
         use_pre_encoder_decoder_layer_norm=True,
         use_ffn_bias=False,
         label_smoothing=0.0,
         use_transformer_initialization=False,
+        attention_module="aiayn_attention",
+        extra_attention_params={},
         **kwargs,
     ):
         super().__init__()
@@ -190,7 +192,7 @@ class T5ForConditionalGeneration(nn.Module):
         self.initializer_factor = initializer_factor
         self.use_cache = use_cache
         self.share_encoder_decoder_embedding = share_encoder_decoder_embedding
-        self.tie_word_embeddings = tie_word_embeddings
+        self.share_embedding_weights = share_embedding_weights
         self.tie_encoder_decoder = tie_encoder_decoder
         self.decoder_start_token_id = decoder_start_token_id
         self.pad_token_id = pad_token_id
@@ -233,6 +235,10 @@ class T5ForConditionalGeneration(nn.Module):
             },
             max_position_embeddings=src_max_position_embeddings,
             position_embedding_type=position_embedding_type,
+            # RPE:
+            num_heads=num_heads,
+            bidirectional=True,
+            num_relative_attention_buckets=relative_attention_num_buckets,
         )
 
         self.decoder_embeddings = EmbeddingLayer(
@@ -253,6 +259,10 @@ class T5ForConditionalGeneration(nn.Module):
             },
             max_position_embeddings=tgt_max_position_embeddings,
             position_embedding_type=position_embedding_type,
+            # RPE:
+            num_heads=num_heads,
+            bidirectional=False,
+            num_relative_attention_buckets=relative_attention_num_buckets,
         )
 
         if self.share_encoder_decoder_embedding:
@@ -261,23 +271,6 @@ class T5ForConditionalGeneration(nn.Module):
             ), "Cannot share embeddings between encoder and decoder due to different vocab sizes"
             self.decoder_embeddings.set_input_embeddings(
                 self.encoder_embeddings.get_input_embeddings()
-            )
-
-        self.relative_position_encoder = None
-        self.relative_position_decoder = None
-        if position_embedding_type == "relative":
-            # we use bidirectional relative attention for encoder and unidirectional
-            # for decoder
-            self.relative_position_encoder = self.encoder_embeddings.position_embedding_helper(
-                num_heads=num_heads,
-                bidirectional=True,
-                num_relative_attention_buckets=relative_attention_num_buckets,
-            )
-
-            self.relative_position_decoder = self.decoder_embeddings.position_embedding_helper(
-                num_heads=num_heads,
-                bidirectional=False,
-                num_relative_attention_buckets=relative_attention_num_buckets,
             )
 
         self.pre_encoder_dropout = None
@@ -327,10 +320,11 @@ class T5ForConditionalGeneration(nn.Module):
             layer_norm_eps=layer_norm_epsilon,
             norm_first=use_pre_encoder_decoder_layer_norm,
             batch_first=True,
-            extra_attention_params={"attention_kernel": attention_kernel},
+            extra_attention_params={**extra_attention_params,},
             attention_type="scaled_dot_product"
             if use_transformer_initialization
             else "dot_product",
+            attention_module=attention_module,
             attention_inner_dim=self.attention_inner_dim,
             attention_softmax_fp32=attention_softmax_fp32,
             use_projection_bias_in_attention=use_projection_bias_in_attention,
@@ -401,10 +395,11 @@ class T5ForConditionalGeneration(nn.Module):
             layer_norm_eps=layer_norm_epsilon,
             norm_first=use_pre_encoder_decoder_layer_norm,
             batch_first=True,
-            extra_attention_params={"attention_kernel": attention_kernel},
+            extra_attention_params={**extra_attention_params,},
             attention_type="scaled_dot_product"
             if use_transformer_initialization
             else "dot_product",
+            attention_module=attention_module,
             attention_inner_dim=self.attention_inner_dim,
             use_projection_bias_in_attention=use_projection_bias_in_attention,
             attention_softmax_fp32=attention_softmax_fp32,
@@ -486,7 +481,7 @@ class T5ForConditionalGeneration(nn.Module):
 
     def __reset_parameters(self):
         # Initialize LM head
-        if not self.tie_word_embeddings:
+        if not self.share_embedding_weights:
             self.lm_head.weight.data.normal_(
                 mean=0.0, std=self.initializer_factor * 1.0
             )
@@ -494,18 +489,52 @@ class T5ForConditionalGeneration(nn.Module):
     # Helper function `forward` for computing everything up to (but not
     # including) the model head. This is helpful for models that inherit from
     # T5 that apply a different head at the end of the model
-    def compute_sequence_output(
+    def compute_hidden_states(
+        self, input_ids=None, attention_mask=None, prepend_embeddings=None,
+    ):
+
+        src = self.encoder_embeddings(input_ids)
+
+        if prepend_embeddings is not None:
+            src = torch.cat([prepend_embeddings, src], dim=1)
+
+        # Transformer uses pre-encoder dropout
+        if self.pre_encoder_dropout:
+            src = self.pre_encoder_dropout(src)
+
+        # Compute relative position bias for the encoder block if applicable
+        encoder_self_attn_position_bias = self.encoder_embeddings.compute_position_bias(
+            src.shape[1], src.shape[1]
+        )
+        src = self.dropout_before_encoder(src)
+        if attention_mask is not None:
+            attention_mask = make_key_padding_mask_broadcastable(
+                attention_mask, dtype=src.dtype
+            )
+
+        # Convert encoder inputs in embeddings if needed
+        hidden_states = self.encoder(
+            src,
+            mask=attention_mask,
+            self_attn_position_bias=encoder_self_attn_position_bias,
+        )
+        if self.dropout_after_encoder:
+            hidden_states = self.dropout_after_encoder(
+                hidden_states
+            )  # HF T5 Decoder also applies dropout at the end
+
+        return hidden_states
+
+    def compute_decoder_states(
         self,
-        input_ids=None,
-        attention_mask=None,
+        hidden_states=None,
+        memory_mask=None,
         decoder_input_ids=None,
         decoder_attention_mask=None,
-        encoder_outputs=None,
         past_key_values=None,
         labels=None,
         use_cache=None,
     ):
-
         assert (
             past_key_values is None
         ), "past_key_values should be None since inference is not supported yet"
@@ -515,38 +544,6 @@ class T5ForConditionalGeneration(nn.Module):
         assert (
             not use_cache
         ), "cannot enable use_cache because inference is not supported yet"
-
-        # Encode if needed (training, first prediction pass)
-        if encoder_outputs is None:
-            src = self.encoder_embeddings(input_ids)
-            # Transformer uses pre-encoder dropout
-            if self.pre_encoder_dropout:
-                src = self.pre_encoder_dropout(src)
-
-            # Compute relative position bias for the encoder block if applicable
-            encoder_self_attn_position_bias = None
-            if self.relative_position_encoder:
-                encoder_self_attn_position_bias = self.relative_position_encoder(
-                    src.shape[1], src.shape[1]
-                )
-            src = self.dropout_before_encoder(src)
-            if attention_mask is not None:
-                attention_mask = make_key_padding_mask_broadcastable(
-                    attention_mask, dtype=src.dtype
-                )
-
-            # Convert encoder inputs in embeddings if needed
-            encoder_outputs = self.encoder(
-                src,
-                mask=attention_mask,
-                self_attn_position_bias=encoder_self_attn_position_bias,
-            )
-            if self.dropout_after_encoder:
-                encoder_outputs = self.dropout_after_encoder(
-                    encoder_outputs
-                )  # HF T5 Decoder also applies dropout at the end
-
-        hidden_states = encoder_outputs
 
         if (
             labels is not None
@@ -567,10 +564,13 @@ class T5ForConditionalGeneration(nn.Module):
 
         batch_size, decoder_seq_length = decoder_inputs_embeds.size()[:2]
 
-        decoder_self_attn_position_bias = None
-        if self.relative_position_decoder:
-            decoder_self_attn_position_bias = self.relative_position_decoder(
-                decoder_seq_length, decoder_seq_length
+        decoder_self_attn_position_bias = self.decoder_embeddings.compute_position_bias(
+            decoder_seq_length, decoder_seq_length
+        )
+
+        if memory_mask is not None:
+            memory_mask = make_key_padding_mask_broadcastable(
+                memory_mask, dtype=hidden_states.dtype
             )
 
         if decoder_attention_mask is None:
@@ -594,11 +594,12 @@ class T5ForConditionalGeneration(nn.Module):
         decoder_inputs_embeds = self.dropout_before_decoder(
             decoder_inputs_embeds
         )
+
         decoder_outputs = self.decoder(
             decoder_inputs_embeds,
             memory=hidden_states,
             tgt_mask=extended_decoder_attention_mask,
-            memory_mask=attention_mask,
+            memory_mask=memory_mask,
             past_kv=past_key_values,
             cache_present_kv=use_cache,
             self_attn_position_bias=decoder_self_attn_position_bias,
@@ -612,6 +613,40 @@ class T5ForConditionalGeneration(nn.Module):
 
         return sequence_output
 
+    def compute_sequence_output(
+        self,
+        input_ids=None,
+        attention_mask=None,
+        decoder_input_ids=None,
+        decoder_attention_mask=None,
+        encoder_outputs=None,
+        past_key_values=None,
+        labels=None,
+        use_cache=None,
+        prepend_embeddings=None,
+    ):
+
+        if encoder_outputs is None:
+            hidden_states = self.compute_hidden_states(
+                input_ids,
+                attention_mask,
+                prepend_embeddings=prepend_embeddings,
+            )
+        else:
+            hidden_states = encoder_outputs
+
+        sequence_output = self.compute_decoder_states(
+            hidden_states=hidden_states,
+            memory_mask=attention_mask,
+            decoder_input_ids=decoder_input_ids,
+            decoder_attention_mask=decoder_attention_mask,
+            past_key_values=past_key_values,
+            labels=labels,
+            use_cache=use_cache,
+        )
+
+        return sequence_output
+
     def forward(
         self,
         input_ids=None,
@@ -622,6 +657,7 @@ class T5ForConditionalGeneration(nn.Module):
         past_key_values=None,
         labels=None,
         use_cache=None,
+        prepend_embeddings=None,
     ):
         r"""
         labels (:obj:`torch.LongTensor` of shape :obj:`(batch_size,)`, `optional`):
@@ -661,15 +697,20 @@ class T5ForConditionalGeneration(nn.Module):
             past_key_values=past_key_values,
             labels=labels,
             use_cache=use_cache,
+            prepend_embeddings=prepend_embeddings,
         )
 
-        if self.tie_word_embeddings:
+        if self.share_embedding_weights:
             # Rescale output before projecting on vocab
             # See https://github.com/tensorflow/mesh/blob/fa19d69eafc9a482aff0b59ddd96b025c0cb207d/mesh_tensorflow/transformer/transformer.py#L586
             sequence_output = sequence_output * (self.d_model ** -0.5)
 
-        lm_logits = self.lm_head(sequence_output)
-        return lm_logits
+        if (
+            cstorch.use_cs()
+            and cstorch.current_executor().cs_config.precision_opt_level == 1
+        ):
+            return cstorch.pol(bwd_level=0)(self.lm_head)(sequence_output)
+        return self.lm_head(sequence_output)
 
     def tie_weights(self):
         """
@@ -677,7 +718,7 @@ class T5ForConditionalGeneration(nn.Module):
         and (if enabled) tie encoder/decoder weights.
         """
         output_embeddings = self.get_output_embeddings()
-        if output_embeddings is not None and self.tie_word_embeddings:
+        if output_embeddings is not None and self.share_embedding_weights:
             self._tie_or_clone_weights(
                 output_embeddings, self.get_input_embeddings()
             )
@@ -807,7 +848,7 @@ class T5ForConditionalGeneration(nn.Module):
 
     def set_input_embeddings(self, new_embeddings):
         self.decoder_embeddings.set_input_embeddings(new_embeddings)
-        if self.share_encoder_decoder_embedding:
+        if self.share_embedding_weights:
             self.encoder_embeddings.set_input_embeddings(new_embeddings)
 
     def set_output_embeddings(self, new_embeddings):

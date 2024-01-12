@@ -16,7 +16,6 @@ import logging
 
 import torch.nn as nn
 
-import cerebras_pytorch as cstorch
 from cerebras_pytorch.metrics import AccuracyMetric, PerplexityMetric
 from modelzoo.common.pytorch.model_utils.T5ForConditionalGenerationLoss import (
     T5ForConditionalGenerationLoss,
@@ -52,6 +51,9 @@ class T5ForConditionalGenerationModel(nn.Module):
     def _post_device_transfer(self):
         self.model.tie_weights()
 
+    def model_class(self):
+        return T5ForConditionalGeneration
+
     def build_model(self, model_params):
         model = None
         kwargs = {
@@ -69,7 +71,7 @@ class T5ForConditionalGenerationModel(nn.Module):
                 "encoder_num_hidden_layers"
             ),
             "decoder_num_hidden_layers": model_params.pop(
-                "decoder_num_hidden_layers"
+                "decoder_num_hidden_layers", None
             ),
             "num_heads": model_params.pop("num_heads"),
             "use_projection_bias_in_attention": model_params.pop(
@@ -80,7 +82,7 @@ class T5ForConditionalGenerationModel(nn.Module):
             ),
             # This param ties weights between lm_head and
             # decoder.embed_tokens layers.
-            "tie_word_embeddings": model_params.pop(
+            "share_embedding_weights": model_params.pop(
                 "share_embedding_weights", True,
             ),
             "norm_type": model_params.pop("norm_type", "rmsnorm"),
@@ -122,7 +124,6 @@ class T5ForConditionalGenerationModel(nn.Module):
             "attention_softmax_fp32": model_params.pop(
                 "attention_softmax_fp32", True
             ),
-            "attention_kernel": model_params.pop("attention_kernel", None),
         }
 
         # Updating input and model params to account extra ids
@@ -147,20 +148,11 @@ class T5ForConditionalGenerationModel(nn.Module):
         model_params.pop("to_float16", None)
         model_params.pop("mixed_precision", None)
 
-        model = T5ForConditionalGeneration(**kwargs)
+        cls = self.model_class()
+        model = cls(**kwargs)
 
-        self.enable_vts = model_params.pop("enable_vts", False)
-        if self.enable_vts:
-            self.vts = cstorch.nn.StripPadding()
-        else:
-            self.vts = None
-
-        # `precision_opt_level` is accessed later,
-        # so we remove it from the list of unused params
         unused_params = [
-            key
-            for key in model_params.keys()
-            if key not in ["precision_opt_level", "use_bfloat16"]
+            key for key in model_params.keys() if key not in ["fp16_type"]
         ]
         if unused_params:
             logging.warning(
@@ -192,22 +184,6 @@ class T5ForConditionalGenerationModel(nn.Module):
         return loss.sum()
 
     def forward(self, data):
-        if self.enable_vts and not self.model.training:
-            self.enable_vts = False
-            logging.info(
-                "VTS is only supported in train mode. Disabling for the "
-                "current run."
-            )
-        if self.enable_vts:
-            data["input_ids"] = self.vts(
-                data["input_ids"], data["attention_mask"]
-            )
-            data["decoder_input_ids"] = self.vts(
-                data["decoder_input_ids"], data["decoder_attention_mask"]
-            )
-            data["labels"] = self.vts(
-                data["labels"], data["decoder_attention_mask"]
-            )
         kwargs = {
             "input_ids": data["input_ids"],
             "attention_mask": data["attention_mask"],

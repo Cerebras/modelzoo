@@ -84,18 +84,35 @@ class GptHDF5MapDataProcessor:
             - "sort_files" (bool): whether or not the reader should sort the input
                 files. This is included for backwards compatibility and should
                 almost always be set to `True`.
+            - "use_vsl" (bool): Flag to enable variable sequence length training. 
+                It requires the dataset to have two extra features: the 
+                `attention_span` of keys and the `position_ids` of tokens.
+                Defaults to `False`.
     """
 
     def __init__(self, params):
         # Note: attention_mask is a misnomer and serves as a loss mask in the
         # model itself. This naming will change in 2.0.
         self.dataset = HDF5Dataset(params)
-        if self.dataset.by_sample:
+
+        use_vsl = params.get("use_vsl", False)
+        features_list = ["input_ids", "attention_mask", "labels"]
+        if use_vsl:
+            if self.dataset.by_sample:
+                features_list.extend(["attention_span", "position_ids"])
+            else:
+                raise NotImplementedError(
+                    "Variable sequence length (VSL) training is not "
+                    "currently supported with 'corpus' format data. Please "
+                    "switch to 'sample' format data to use VSL."
+                )
+
+        if "dataset_map_fn" in params:
+            self.dataset.map(params["dataset_map_fn"])
+        elif self.dataset.by_sample:
             self.dataset.map(
                 lambda x: {
-                    "input_ids": x[0],
-                    "attention_mask": x[1],
-                    "labels": x[2],
+                    feature: x[idx] for idx, feature in enumerate(features_list)
                 }
             )
         else:

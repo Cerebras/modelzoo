@@ -13,12 +13,11 @@
 # limitations under the License.
 
 import math
-from typing import Optional
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
-import cerebras_pytorch as cstorch
 from modelzoo.common.pytorch.model_utils.create_initializer import (
     create_initializer,
 )
@@ -39,8 +38,8 @@ class MultiheadAttention(nn.Module):
         add_bias_kv (bool): If specified, adds bias to the key and value sequences at dim=0. Default: False.
         add_zero_attn (bool): If specified, adds a new batch of zeros to the key and value
             sequences at dim=1. Default: False
-        kdim (int):  Number of output units in key projection
-        vdim (int):  Number of output units in  projection
+        kdim (int):  Number of input units in the key projection
+        vdim (int):  Number of input units in the value projection
         use_projection_bias (bool): Whether to use bias in the key, query, and
             value projections.
         use_ffn_bias (bool): Whether to use bias in the output projection.
@@ -56,10 +55,6 @@ class MultiheadAttention(nn.Module):
             ``scaled_dot_product``.
         scale_qk_dot_by_d (bool): If ``True`` scales QK^T dot product by d(=hidden/d_head) instead of sqrt(d).
         softmax_dtype_fp32 (bool): Use an FP32 softmax implementation.
-        attention_kernel (str | None): Kernel to use. Uses ``default`` if None.
-            See accepted values below.
-                ``default`` - Optimized implementation.
-                ``compatible`` - Non-optimized but most compatible implementation.
         device (optional): Device to create the model parameters on, can be a cuda device or CS device.
     """
 
@@ -83,7 +78,6 @@ class MultiheadAttention(nn.Module):
         attention_type="scaled_dot_product",
         scale_qk_dot_by_d=False,
         softmax_dtype_fp32=True,
-        attention_kernel: Optional[str] = None,
         scale_qk_dot_by_layer_idx=False,
         device=None,
     ):
@@ -107,11 +101,11 @@ class MultiheadAttention(nn.Module):
         assert batch_first, "Currently, only batch_first=True is supported"
         assert not add_bias_kv, "add_bias_kv=True is not supported."
         assert not add_zero_attn, "add_zero_attn=True is not supported."
-        assert kdim is None, "kdim should be set to None."
-        assert vdim is None, "vdim should be set to None."
         super(MultiheadAttention, self).__init__()
 
         self.embed_dim = embed_dim
+        self.kdim = kdim if kdim is not None else embed_dim
+        self.vdim = vdim if vdim is not None else embed_dim
         self.inner_dim = inner_dim if inner_dim is not None else embed_dim
 
         self.num_heads = num_heads
@@ -128,16 +122,10 @@ class MultiheadAttention(nn.Module):
             device=device,
         )
         self.proj_k_dense_layer = nn.Linear(
-            self.embed_dim,
-            self.inner_dim,
-            bias=use_projection_bias,
-            device=device,
+            self.kdim, self.inner_dim, bias=use_projection_bias, device=device,
         )
         self.proj_v_dense_layer = nn.Linear(
-            self.embed_dim,
-            self.inner_dim,
-            bias=use_projection_bias,
-            device=device,
+            self.vdim, self.inner_dim, bias=use_projection_bias, device=device,
         )
 
         if self.attention_type == "scaled_cosine":
@@ -164,9 +152,6 @@ class MultiheadAttention(nn.Module):
         self.bias_initializer = bias_initializer
         self.softmax_dtype_fp32 = softmax_dtype_fp32
 
-        self._scope = None
-        if attention_kernel and cstorch.use_cs():
-            self._scope = cstorch.nn.Scope(attention_kernel.upper())
         self.scale_qk_dot_by_d = scale_qk_dot_by_d
 
         self.scale_qk_dot_by_layer_idx = scale_qk_dot_by_layer_idx
@@ -252,11 +237,6 @@ class MultiheadAttention(nn.Module):
         Returns:
             Attention output tensor with shape ``[batch_size, seq_length, embed_dim]``.
         """
-        if self._scope:
-            q = self._scope(q)
-            k = self._scope(k)
-            v = self._scope(v)
-
         assert not (
             rotary_position_embedding_helper and position_bias
         ), "Cannot specify both rotary and relative position embeddings, pick one!"
@@ -295,8 +275,8 @@ class MultiheadAttention(nn.Module):
             self.scale_qk_dot_by_d
             and self.attention_type == "scaled_dot_product"
         ):
-            depth = self.embed_dim // self.num_heads
-            k *= torch.tensor(1 / float(depth) ** 0.5, dtype=k.dtype)
+            depth = self.inner_dim // self.num_heads
+            k = k * torch.tensor(1 / float(depth) ** 0.5, dtype=k.dtype)
 
         # rotary embedding helper
         k = self.apply_rotary_position_embedding(
@@ -331,9 +311,6 @@ class MultiheadAttention(nn.Module):
 
         attention_scores = self.calculate_attention_scores(logits)
         attention_output = self.calculate_attention_output(attention_scores, v)
-
-        if self._scope:
-            attention_output = self._scope.exit(attention_output)
 
         if cache_present_kv:
             return attention_output, present_kv
@@ -462,8 +439,8 @@ class MultiheadAttention(nn.Module):
             depth = self.inner_dim // self.num_heads
             q = q * torch.tensor(1 / float(depth) ** 0.5, dtype=q.dtype,)
         elif self.attention_type == "scaled_cosine":
-            q = q / q.norm(p=2, dim=-1, keepdim=True)
-            k = k / k.norm(p=2, dim=-1, keepdim=True)
+            q = F.normalize(q, p=2.0, dim=-1)
+            k = F.normalize(k, p=2.0, dim=-1)
 
         if self.scale_qk_dot_by_layer_idx:
             q = q * torch.tensor(1 / float(layer_idx + 1), dtype=q.dtype,)
@@ -674,7 +651,7 @@ class MultiheadAttention(nn.Module):
     def apply_position_bias(self, logits, position_bias):
         # Add relative position bias, if any
         if position_bias is not None:
-            logits += position_bias.type_as(logits).unsqueeze(0)
+            logits += position_bias.type_as(logits).broadcast_to(logits.shape)
         return logits
 
     def calculate_attention_scores(self, logits):
@@ -700,6 +677,6 @@ class MultiheadAttention(nn.Module):
         return attention_output
 
     def check_extra_params(params):
-        assert all(
-            k in {"attention_kernel"} for k in params.keys()
+        assert (
+            len(params) == 0
         ), "Overflow extra params for attention module `MultiheadAttention`"

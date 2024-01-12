@@ -102,7 +102,7 @@ You may choose to stream samples directly from your HuggingFace dataset without 
 
 The class [`HuggingFaceDataProcessor.py`](./HuggingFaceDataProcessor.py) provides the required tools (sharding between the workers, shuffling and etc.) to connect any HuggingFace dataset (Map-Style or Iterable) to CS GPT models.
 
-The DataProcessor [`HuggingFaceDataProcessorEli5`](../../pytorch/gpt2/input/HuggingFaceDataProcessorEli5.py) showcases HuggingFace Eli5 (Map-Style) dataset directly streamed to GPT-2 model and the DataProcessor [`HuggingFaceIterableDataProcessorEli5`](../../pytorch/gpt2/input/HuggingFaceIterableDataProcessorEli5.py) is an example of using teh same dataset in Iterable format. The following code snippet shows how to define `HuggingFaceDataProcessorEli5` to be used by GPT models:
+The DataProcessor [`HuggingFaceDataProcessorEli5`](../../pytorch/gpt2/input/HuggingFaceDataProcessorEli5.py) showcases HuggingFace Eli5 (Map-Style) dataset directly streamed to GPT-2 model and the DataProcessor [`HuggingFaceIterableDataProcessorEli5`](../../pytorch/gpt2/input/HuggingFaceIterableDataProcessorEli5.py) is an example of using the same dataset in Iterable format. The following code snippet shows how to define `HuggingFaceDataProcessorEli5` to be used by GPT models:
 
 ```python
 class HuggingFaceDataProcessorEli5(HuggingFaceDataProcessor):
@@ -130,7 +130,7 @@ class HuggingFaceDataProcessorEli5(HuggingFaceDataProcessor):
             split=split, num_workers=num_workers, sequence_length=128
         )
 
-        # The supper class will take care of sharding the dataset and creating the dataloader
+        # The super class will take care of sharding the dataset and creating the dataloader
         super().__init__(params)
 ```
 

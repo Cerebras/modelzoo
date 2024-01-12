@@ -23,7 +23,6 @@ eval_input:
 model:
     # Embedding
     hidden_size: 2560
-    use_position_embedding: True
     position_embedding_type: "alibi"
     alibi_implementation: "expand"
     share_embedding_weights: True
@@ -74,8 +73,7 @@ model:
 
     # Cerebras parameters
     mixed_precision: True
-    use_bfloat16: True
-    attention_kernel: optimized_beta
+    fp16_type: "cbfloat16"
 
     output_logits_scale: 0.22200000000000003
     scale_qk_dot_by_d: True
@@ -87,15 +85,16 @@ optimizer:
     betas: [0.9, 0.95]
     eps: 1.0e-8
     max_gradient_norm: 1.0
+    loss_scaling_factor: "dynamic"
     learning_rate:
-        - scheduler: "Linear"
-          initial_learning_rate: 0.0
-          end_learning_rate: 0.012
-          total_iters: 95
-        - scheduler: "Linear"
-          initial_learning_rate: 0.012
-          end_learning_rate: 1.0138e-04
-          total_iters: 159541
+      - scheduler: "Linear"
+        initial_learning_rate: 0.0
+        end_learning_rate: 0.012
+        total_iters: 95
+      - scheduler: "Linear"
+        initial_learning_rate: 0.012
+        end_learning_rate: 1.0138e-04
+        total_iters: 159541
     adjust_learning_rate:
         decoder_kernel: 0.1
     weight_decay: 0.1
@@ -110,7 +109,5 @@ runconfig:
     checkpoint_steps: 200
     log_steps: 1
     save_initial_checkpoint: False
-    use_appliance_data: True
     seed: 1
-    use_cs_grad_accum: True
     precision_opt_level: 1

@@ -30,12 +30,10 @@ def set_defaults(params):
 
     model_params = params["model"]
     params["model"]["disable_nsp"] = model_params.get("disable_nsp", False)
-    params["model"]["enable_vts"] = model_params.get("enable_vts", False)
     # Pass settings into data loader.
     for model_key in (
         "disable_nsp",
         "vocab_size",
-        "enable_vts",
         "mixed_precision",
     ):
         for input_key in ("train_input", "eval_input"):
@@ -45,7 +43,7 @@ def set_defaults(params):
         "max_position_embeddings", params["train_input"]["max_sequence_length"],
     )
     params["model"]["to_float16"] = model_params.get("to_float16", False)
-    params["model"]["use_bfloat16"] = model_params.get("use_bfloat16", False)
+    params["model"]["fp16_type"] = model_params.get("fp16_type", "float16")
     params["optimizer"]["log_summaries"] = params["optimizer"].get(
         "log_summaries", False
     )
@@ -57,6 +55,12 @@ def set_defaults(params):
     if params["runconfig"].get("precision_opt_level", 1) == 2:
         params["model"]["attention_softmax_fp32"] = False
 
+    if (
+        params["model"].get("fp16_type", "bfloat16") == "cbfloat16"
+        and params["runconfig"].get("precision_opt_level", 1) == 1
+    ):
+        params["model"]["attention_softmax_fp32"] = False
+
 
 def check_unused_model_params(model_params):
     """
@@ -65,15 +69,10 @@ def check_unused_model_params(model_params):
     """
     model_params.pop("to_float16", None)
     model_params.pop("mixed_precision", None)
-    # `precision_opt_level` is accessed later,
-    # so we remove it from the list of unused params
     unused_params = [
-        key
-        for key in model_params.keys()
-        if key not in ["precision_opt_level", "use_bfloat16"]
+        key for key in model_params.keys() if key not in ["fp16_type"]
     ]
     if unused_params:
         logging.warning(
             "The following model params are unused: " + ", ".join(unused_params)
         )
-    logging.root.setLevel(logging.INFO)

@@ -12,12 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import logging
-
 import torch
 from torch.nn import CrossEntropyLoss
 
-import cerebras_pytorch as cstorch
 from cerebras_pytorch.metrics import AccuracyMetric, PerplexityMetric
 from modelzoo.common.pytorch.model_utils.BertPretrainModelLoss import (
     BertPretrainModelLoss,
@@ -62,7 +59,16 @@ class BertForPreTrainingModel(torch.nn.Module):
     def _post_device_transfer(self):
         self.model.tie_weights()
 
+    def model_class(self):
+        return BertPretrainModel
+
     def build_model(self, model_params):
+        cls = self.model_class()
+        args = self.build_model_args(model_params)
+        check_unused_model_params(model_params)
+        return cls(**args)
+
+    def build_model_args(self, model_params):
         self.disable_nsp = model_params.pop("disable_nsp", False)
         self.mlm_loss_weight = model_params.pop("mlm_loss_weight", 1.0)
         self.label_smoothing = model_params.pop("label_smoothing", 0.0)
@@ -72,70 +78,99 @@ class BertForPreTrainingModel(torch.nn.Module):
             "position_embedding_type", "learned"
         ).lower()
 
-        assert (
-            position_embedding_type == "fixed"
-            or position_embedding_type == "learned"
-        ), f"Only fixed or learned position embedding is supported by Bert for now, but got {position_embedding_type}"
+        rotary_dim = None
+        if position_embedding_type == "rotary":
+            # rotary_dim defaults to 25% of head dim (hidden_size / num_heads)
+            # similar to other models that use RoPE like GPT-NeoX
+            rotary_dim = model_params.pop(
+                "rotary_dim",
+                int(
+                    model_params["hidden_size"]
+                    // model_params["num_heads"]
+                    * 0.25
+                ),
+            )
+            # https://github.com/huggingface/transformers/blob/f0577df6de36e7e7f28e90fa76da0657de038a39/src/transformers/models/gpt_neox/modeling_gpt_neox.py#L84-L85
+            # https://arxiv.org/pdf/2104.09864.pdf Section 3.3
+            assert (
+                rotary_dim
+                <= model_params["hidden_size"] / model_params["num_heads"]
+            ), "Rotary dimensions should be <= hidden size divided by number of attention heads."
+            assert (
+                rotary_dim % 2 == 0
+            ), "Rotary dimension must be an even number."
 
-        model = BertPretrainModel(
-            disable_nsp=self.disable_nsp,
-            num_classes=model_params.pop("num_classes", 2),
-            vocab_size=self.vocab_size,
-            max_position_embeddings=model_params.pop("max_position_embeddings"),
-            position_embedding_type=position_embedding_type,
-            embedding_pad_token_id=model_params.pop("pad_token_id", 0),
-            mask_padding_in_positional_embed=model_params.pop(
+        return {
+            "disable_nsp": self.disable_nsp,
+            "num_classes": model_params.pop("num_classes", 2),
+            "vocab_size": self.vocab_size,
+            "max_position_embeddings": model_params.pop(
+                "max_position_embeddings"
+            ),
+            "position_embedding_type": position_embedding_type,
+            "embedding_pad_token_id": model_params.pop("pad_token_id", 0),
+            "mask_padding_in_positional_embed": model_params.pop(
                 "mask_padding_in_positional_embed", False
             ),
-            hidden_size=model_params.pop("hidden_size"),
-            share_embedding_weights=model_params.pop(
+            "rotary_dim": rotary_dim,
+            "rope_theta": model_params.pop("rope_theta", 10000),
+            "num_relative_attention_buckets": model_params.pop(
+                "num_relative_attention_buckets", 32
+            ),
+            "alibi_trainable_slopes": model_params.pop(
+                "alibi_trainable_slopes", False
+            ),
+            "pos_scaling_factor": float(
+                model_params.pop("pos_scaling_factor", 1.0)
+            ),
+            "hidden_size": model_params.pop("hidden_size"),
+            "share_embedding_weights": model_params.pop(
                 "share_embedding_weights", True
             ),
-            num_hidden_layers=model_params.pop("num_hidden_layers"),
-            layer_norm_epsilon=float(model_params.pop("layer_norm_epsilon")),
+            "num_hidden_layers": model_params.pop("num_hidden_layers"),
+            "layer_norm_epsilon": float(model_params.pop("layer_norm_epsilon")),
             # Encoder Attn
-            num_heads=model_params.pop("num_heads"),
-            attention_type=model_params.pop(
+            "num_heads": model_params.pop("num_heads"),
+            "attention_module": model_params.pop(
+                "attention_module", "aiayn_attention"
+            ),
+            "extra_attention_params": model_params.pop(
+                "extra_attention_params", {}
+            ),
+            "attention_type": model_params.pop(
                 "attention_type", "scaled_dot_product"
             ),
-            dropout_rate=model_params.pop("dropout_rate"),
-            nonlinearity=model_params.pop("encoder_nonlinearity", "gelu"),
-            mlm_nonlinearity=model_params.pop("mlm_nonlinearity", None),
-            pooler_nonlinearity=model_params.pop("pooler_nonlinearity", None),
-            attention_dropout_rate=model_params.pop("attention_dropout_rate"),
-            attention_softmax_fp32=model_params.pop(
+            "dropout_rate": model_params.pop("dropout_rate"),
+            "nonlinearity": model_params.pop("encoder_nonlinearity", "gelu"),
+            "mlm_nonlinearity": model_params.pop("mlm_nonlinearity", None),
+            "pooler_nonlinearity": model_params.pop(
+                "pooler_nonlinearity", None
+            ),
+            "attention_dropout_rate": model_params.pop(
+                "attention_dropout_rate"
+            ),
+            "attention_softmax_fp32": model_params.pop(
                 "attention_softmax_fp32", True
             ),
-            use_projection_bias_in_attention=model_params.pop(
+            "use_projection_bias_in_attention": model_params.pop(
                 "use_projection_bias_in_attention", True
             ),
-            use_ffn_bias_in_attention=model_params.pop(
+            "use_ffn_bias_in_attention": model_params.pop(
                 "use_ffn_bias_in_attention", True
             ),
-            filter_size=model_params.pop("filter_size"),
-            use_ffn_bias=model_params.pop("use_ffn_bias", True),
-            use_ffn_bias_in_mlm=model_params.pop("use_ffn_bias_in_mlm", True),
-            use_output_bias_in_mlm=model_params.pop(
+            "filter_size": model_params.pop("filter_size"),
+            "use_ffn_bias": model_params.pop("use_ffn_bias", True),
+            "use_ffn_bias_in_mlm": model_params.pop(
+                "use_ffn_bias_in_mlm", True
+            ),
+            "use_output_bias_in_mlm": model_params.pop(
                 "use_output_bias_in_mlm", True
             ),
-            initializer_range=model_params.pop("initializer_range", 0.02),
-            num_segments=model_params.pop(
+            "initializer_range": model_params.pop("initializer_range", 0.02),
+            "num_segments": model_params.pop(
                 "num_segments", None if self.disable_nsp else 2
             ),
-            extra_attention_params={
-                "attention_kernel": model_params.pop("attention_kernel", None)
-            },
-        )
-
-        enable_vts = model_params.pop("enable_vts")
-        if enable_vts:
-            self.vts = cstorch.nn.StripPadding()
-        else:
-            self.vts = None
-
-        check_unused_model_params(model_params)
-
-        return model
+        }
 
     def mlm_xentropy_loss(self, labels, logits, weights=None):
         """
@@ -160,36 +195,6 @@ class BertForPreTrainingModel(torch.nn.Module):
         return loss.sum()
 
     def forward(self, data):
-
-        if self.vts and not self.model.training:
-            self.vts = None
-            logging.info(
-                "VTS is only supported in train mode. Disabling for the "
-                "current run."
-            )
-
-        if self.vts:
-            # always mask the main input
-            masks = {
-                "attention_mask": ["input_ids"],
-            }
-            # if NSP is enabled, mask it with main mask
-            if "token_type_ids" in data:
-                masks["attention_mask"].append("token_type_ids")
-
-            # Check if we're "gathering" MLM predictions:
-            if "masked_lm_positions" in data:
-                # Yes, so use the masked_lm_mask for MLM tensors
-                masks["masked_lm_mask"] = ["masked_lm_positions", "labels"]
-            else:
-                # No, so use main mask for MLM label
-                masks["attention_mask"].append("labels")
-
-            for mask, inputs in masks.items():
-                mask_tensor = data[mask]
-                for name in inputs:
-                    data[name] = self.vts(data[name], mask_tensor)
-
         next_sentence_label = data.pop("next_sentence_label", None)
         # MLM Needs a half precision "weights" tensor; use binary mask for now.
         masked_lm_weights = data.pop("masked_lm_mask")

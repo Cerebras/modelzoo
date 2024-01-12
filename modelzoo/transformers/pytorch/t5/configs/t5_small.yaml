@@ -69,10 +69,11 @@ model:
 
     # Cerebras configs.
     mixed_precision: True
-    use_bfloat16: True
+    fp16_type: "bfloat16"
     
 optimizer:
     optimizer_type: "AdaFactor"
+    loss_scaling_factor: 1.0
     learning_rate:
     - scheduler: "InverseSquareRootDecay"
       warmup_steps: 10000

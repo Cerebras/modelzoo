@@ -41,28 +41,28 @@ class Converter_Falcon_40B_Attention_HF_CS20(
             ConversionRule(
                 [
                     EquivalentSubkey("dense", "proj_output_dense_layer"),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.replaceKey,
             ),
             ConversionRule(
                 [
                     EquivalentSubkey("query_key_value", "proj_q_dense_layer"),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.qkv_converter,
             ),
             ConversionRule(
                 [
                     EquivalentSubkey("query_key_value", "proj_k_dense_layer"),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.assert_already_converted,
             ),
             ConversionRule(
                 [
                     EquivalentSubkey("query_key_value", "proj_v_dense_layer"),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.assert_already_converted,
             ),
@@ -88,9 +88,10 @@ class Converter_Falcon_40B_Attention_HF_CS20(
             )
             interleaved = torch.cat((to_rotate, to_pass), dim=2)
         else:
-            assert (
-                False
-            ), "shape of query, key, value projection tensor has to have shape of length 2 (biases) or 3 (weights) when converting from HF to CS"
+            assert False, (
+                "shape of query, key, value projection tensor has to have shape of length 2 "
+                "(biases) or 3 (weights) when converting from HF to CS"
+            )
         return interleaved
 
     def reverse_interleave_helper(
@@ -100,6 +101,7 @@ class Converter_Falcon_40B_Attention_HF_CS20(
             t = t.reshape(num_groups, group_size, -1, t.shape[-1])
             to_rotate = t[:, :, :rotary_dim, :]
             to_pass = t[:, :, rotary_dim:, :]
+            # pylint: disable=redefined-builtin
             reversed = (
                 to_rotate.reshape(num_groups, group_size, -1, 2, t.shape[-1])
                 .permute(0, 1, 3, 2, 4)  # 2, 1, 3)
@@ -117,26 +119,28 @@ class Converter_Falcon_40B_Attention_HF_CS20(
             )
             reversed = torch.cat((reversed, to_pass), dim=2)
         else:
-            assert (
-                False
-            ), "shape of query, key, value projection tensor has to have shape of length 1 (biases) or 2 (weights) when converting from CS to HF"
+            assert False, (
+                "shape of query, key, value projection tensor has to have shape of length 1 "
+                "(biases) or 2 (weights) when converting from CS to HF"
+            )
         return reversed
 
     def qkv_converter_hf_to_cs(
         self, old_key, new_key, old_state_dict, new_state_dict, action_fn_args,
     ):
-        # HF represents Q, K, and V in a packed format (torch.Size(3*hidden, hidden)). We need to unpack the
-        # weight and bias tensor for CS 1.7 format.
+        # HF represents Q, K, and V in a packed format (torch.Size(3*hidden, hidden)). We need to
+        # unpack the weight and bias tensor for CS 1.7 format.
         q_key = new_key
-        k_key = re.sub("\.proj_q_dense_layer\.", ".proj_k_dense_layer.", q_key)
-        v_key = re.sub("\.proj_q_dense_layer\.", ".proj_v_dense_layer.", q_key)
+        k_key = re.sub(r"\.proj_q_dense_layer\.", ".proj_k_dense_layer.", q_key)
+        v_key = re.sub(r"\.proj_q_dense_layer\.", ".proj_v_dense_layer.", q_key)
 
-        hf_config = action_fn_args["configs"][0]
         cs_config = action_fn_args["configs"][1]
         hidden_size = cs_config["model"]["hidden_size"]
         num_heads = cs_config["model"]["num_heads"]
         head_size = hidden_size // num_heads
-        num_kv_groups = hf_config["n_head_kv"]
+        num_kv_groups = cs_config["model"]["extra_attention_params"][
+            "num_kv_groups"
+        ]
         kv_group_size = num_heads // num_kv_groups
 
         if new_key.endswith(".bias"):
@@ -198,15 +202,16 @@ class Converter_Falcon_40B_Attention_HF_CS20(
         # special ".bias" and ".masked_bias" register buffers that need to be
         # initialized
         q_key = old_key
-        k_key = re.sub("\.proj_q_dense_layer\.", ".proj_k_dense_layer.", q_key)
-        v_key = re.sub("\.proj_q_dense_layer\.", ".proj_v_dense_layer.", q_key)
+        k_key = re.sub(r"\.proj_q_dense_layer\.", ".proj_k_dense_layer.", q_key)
+        v_key = re.sub(r"\.proj_q_dense_layer\.", ".proj_v_dense_layer.", q_key)
 
-        hf_config = action_fn_args["configs"][0]
         cs_config = action_fn_args["configs"][1]
         hidden_size = cs_config["model"]["hidden_size"]
         num_heads = cs_config["model"]["num_heads"]
         head_size = hidden_size // num_heads
-        num_kv_groups = hf_config["n_head_kv"]
+        num_kv_groups = cs_config["model"]["extra_attention_params"][
+            "num_kv_groups"
+        ]
         kv_group_size = num_heads // num_kv_groups
 
         assert (
@@ -278,7 +283,10 @@ class Converter_Falcon_40B_Attention_HF_CS20(
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-1.9", "cs-2.0"))
+        return (
+            FormatVersions("hf"),
+            FormatVersions("cs-1.9", "cs-2.0", "cs-2.1"),
+        )
 
     @staticmethod
     def get_config_converter_class() -> BaseConfigConverter:
@@ -297,25 +305,25 @@ class Converter_Falcon_40B_Headless_WithoutModelPrefix_HF_CS20(
                     EquivalentSubkey(
                         "word_embeddings", "embedding_layer.word_embeddings"
                     ),
-                    "\.weight",
+                    r"\.weight",
                 ],
                 action=self.replaceKey,
             ),
             ConversionRule(
                 [
                     EquivalentSubkey("h", "transformer_decoder.layers"),
-                    "\.\d+\.",
+                    r"\.\d+\.",
                     EquivalentSubkey("ln_attn.", "norm1."),
-                    "(?:weight|bias)",
+                    r"(?:weight|bias)",
                 ],
                 action=self.replaceKey,
             ),
             ConversionRule(
                 [
                     EquivalentSubkey("h", "transformer_decoder.layers"),
-                    "\.\d+\.",
+                    r"\.\d+\.",
                     EquivalentSubkey("ln_mlp.", "norm3."),
-                    "(?:weight|bias)",
+                    r"(?:weight|bias)",
                 ],
                 action=self.replaceKey,
             ),
@@ -323,7 +331,7 @@ class Converter_Falcon_40B_Headless_WithoutModelPrefix_HF_CS20(
             ConversionRule(
                 [
                     EquivalentSubkey("h", "transformer_decoder.layers"),
-                    "\.\d+\.",
+                    r"\.\d+\.",
                     EquivalentSubkey("self_attention.", "self_attn."),
                     Converter_Falcon_40B_Attention_HF_CS20(),
                 ],
@@ -333,22 +341,22 @@ class Converter_Falcon_40B_Headless_WithoutModelPrefix_HF_CS20(
             ConversionRule(
                 [
                     EquivalentSubkey("h", "transformer_decoder.layers"),
-                    "\.\d+\.",
+                    r"\.\d+\.",
                     EquivalentSubkey(
                         "mlp.dense_h_to_4h", "ffn.ffn.0.linear_layer"
                     ),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.replaceKey,
             ),
             ConversionRule(
                 [
                     EquivalentSubkey("h", "transformer_decoder.layers"),
-                    "\.\d+\.",
+                    r"\.\d+\.",
                     EquivalentSubkey(
                         "mlp.dense_4h_to_h", "ffn.ffn.1.linear_layer"
                     ),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.replaceKey,
             ),
@@ -356,13 +364,13 @@ class Converter_Falcon_40B_Headless_WithoutModelPrefix_HF_CS20(
             ConversionRule(
                 [
                     EquivalentSubkey("ln_f", "transformer_decoder.norm"),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.replace_final_norm,
             ),
             # other
-            ConversionRule(["lm_head\.(?:weight|bias)"], exists="right"),
-            ConversionRule(["ln_f\.(?:weight|bias)"], exists="right"),
+            ConversionRule([r"lm_head\.(?:weight|bias)"], exists="right"),
+            ConversionRule([r"ln_f\.(?:weight|bias)"], exists="right"),
         ]
 
     def replace_final_norm(
@@ -378,7 +386,7 @@ class Converter_Falcon_40B_Headless_WithoutModelPrefix_HF_CS20(
         # CS model has both "ln_f" and "transformer_decoder.norm"
         # we need to copy the original ("ln_f") too:
         if from_index == 0:
-            ln_f_key = re.sub("transformer_decoder\.norm\.", "ln_f.", new_key)
+            ln_f_key = re.sub(r"transformer_decoder\.norm\.", "ln_f.", new_key)
             new_state_dict[ln_f_key] = old_state_dict[old_key]
 
     def pre_model_convert(
@@ -414,10 +422,11 @@ class Converter_Falcon_40B_Headless_WithoutModelPrefix_HF_CS20(
         configs,
         from_index,
         drop_unmatched_keys,
+        key_prefix="",
     ):
         if from_index == 0:
-            # We are converting from HF Falcon (which is headless) -> CS GPTJModel (which has a head)
-            # We need to create 'lm_head' and init to default values
+            # We are converting from HF Falcon (which is headless) -> CS GPTJModel (which has a
+            # head). We need to create 'lm_head' and init to default values
             hf_config = configs[0]
             cs_config = configs[1]
             use_bias_in_output = cs_config["model"].get(
@@ -432,32 +441,25 @@ class Converter_Falcon_40B_Headless_WithoutModelPrefix_HF_CS20(
             else:
                 lm_head_weight = torch.zeros((vocab_size, embed_dim))
                 lm_head_weight.normal_(mean=0.0, std=0.02)
-            new_state_dict["lm_head.weight"] = lm_head_weight
+            new_state_dict[key_prefix + "lm_head.weight"] = lm_head_weight
             if use_bias_in_output:
                 lm_head_bias = torch.zeros(vocab_size)
-                new_state_dict["lm_head.bias"] = lm_head_bias
+                new_state_dict[key_prefix + "lm_head.bias"] = lm_head_bias
         super().post_model_convert(
             old_state_dict,
             new_state_dict,
             configs,
             from_index,
             drop_unmatched_keys,
+            key_prefix=key_prefix,
         )
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-1.9", "cs-2.0"))
-
-    @classmethod
-    def converter_note(cls) -> str:
         return (
-            "{} Falcon HF <-> {} GPTJModel (configured as Falcon)\n"
-            "The HF model doesn't contain a language model head while the CS "
-            "one does. When converting to CS, the exported checkpoint will "
-            "contain a language model head initialized to default random "
-            "values. When converting to HF, the language model head will be "
-            "dropped."
-        ).format(cls.formats()[0], cls.formats()[1])
+            FormatVersions("hf"),
+            FormatVersions("cs-1.9", "cs-2.0", "cs-2.1"),
+        )
 
     @staticmethod
     def get_config_converter_class() -> BaseConfigConverter:
@@ -493,7 +495,7 @@ class Converter_Falcon_40B_WithoutModelPrefix_HF_CS20(
         super().__init__()
         self.rules = [
             ConversionRule(
-                ["lm_head", "\.(?:weight|bias)",], action=self.replaceKey,
+                ["lm_head", r"\.(?:weight|bias)",], action=self.replaceKey,
             ),
             ConversionRule(
                 [
@@ -524,12 +526,9 @@ class Converter_Falcon_40B_WithoutModelPrefix_HF_CS20(
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-1.9", "cs-2.0"))
-
-    @classmethod
-    def converter_note(cls) -> str:
-        return "{} Falcon HF <-> {} GPTJModel (configured as Falcon) with LM head".format(
-            cls.formats()[0], cls.formats()[1]
+        return (
+            FormatVersions("hf"),
+            FormatVersions("cs-1.9", "cs-2.0", "cs-2.1"),
         )
 
     @staticmethod
@@ -660,7 +659,9 @@ class ConfigConverter_Falcon_40B_HF_CS20(BaseConfigConverter_HF_CS):
                 "auto_map": {
                     "AutoConfig": "configuration_RW.RWConfig",
                     "AutoModel": "modelling_RW.RWModel",
-                    "AutoModelForSequenceClassification": "modelling_RW.RWForSequenceClassification",
+                    "AutoModelForSequenceClassification": (
+                        "modelling_RW.RWForSequenceClassification"
+                    ),
                     "AutoModelForTokenClassification": "modelling_RW.RWForTokenClassification",
                     "AutoModelForQuestionAnswering": "modelling_RW.RWForQuestionAnswering",
                     "AutoModelForCausalLM": "modelling_RW.RWForCausalLM",
@@ -810,4 +811,7 @@ class ConfigConverter_Falcon_40B_HF_CS20(BaseConfigConverter_HF_CS):
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-1.9", "cs-2.0"))
+        return (
+            FormatVersions("hf"),
+            FormatVersions("cs-1.9", "cs-2.0", "cs-2.1"),
+        )

@@ -21,8 +21,14 @@ from modelzoo.common.pytorch.layers.BatchChannelNorm import BatchChannelNorm2D
 from modelzoo.common.pytorch.layers.BiaslessLayerNorm import BiaslessLayerNorm
 from modelzoo.common.pytorch.layers.EmbeddingLayer import EmbeddingLayer
 from modelzoo.common.pytorch.layers.FeedForwardNetwork import FeedForwardNetwork
+from modelzoo.common.pytorch.layers.FixedPositionEmbeddingLayer import (
+    FixedPositionEmbeddingLayer,
+)
 from modelzoo.common.pytorch.layers.GPTJDecoderLayer import GPTJDecoderLayer
 from modelzoo.common.pytorch.layers.GroupInstanceNorm import GroupInstanceNorm
+from modelzoo.common.pytorch.layers.LearnedPositionEmbeddingLayer import (
+    LearnedPositionEmbeddingLayer,
+)
 from modelzoo.common.pytorch.layers.MultiQueryAttentionLayer import (
     MultiQueryAttention,
 )

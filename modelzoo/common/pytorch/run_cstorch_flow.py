@@ -13,8 +13,10 @@
 # limitations under the License.
 
 """Generic run scripts build using the cstorch API"""
+import copy
 import dataclasses
 import logging
+import numbers
 import os
 import re
 import warnings
@@ -27,42 +29,29 @@ import torch
 from typing_extensions import Self
 
 import cerebras_pytorch as cstorch
+from cerebras_appliance.run_utils import get_debug_args
 from cerebras_pytorch.utils.nest import visit_torch_tensors
 from modelzoo.common.input.utils import update_debug_args_with_mem_limits
 from modelzoo.common.pytorch.dump_context import DumpContext
-from modelzoo.common.pytorch.half_dtype import half_dtype_instance
+from modelzoo.common.pytorch.half_dtype import set_half_dtype_from_params
 from modelzoo.common.pytorch.input_utils import (
     validate_streaming_and_micro_batch_size,
 )
-from modelzoo.common.pytorch.utils import is_mup_run, setup_logging
+from modelzoo.common.pytorch.utils import (
+    is_mup_run,
+    setup_artifact_dir,
+    setup_logging,
+)
 from modelzoo.common.run_utils.utils import DeviceType
 
 
-def run_cstorch_flow(params, model_fn, train_data_fn, eval_data_fn):
-    """
-    Set up the cstorch run and call the appropriate helper based on the mode
-
-    Args:
-        params: the params dictionary extracted from the params.yaml used
-        model_fn: A callable that takes in the params dictionary and returns
-            a torch.nn.Module
-        train_data_fn: A callable that takes in the param dictionary and
-            returns a torch.utils.data.DataLoader
-        eval_data_fn: A callable that takes in the param dictionary and
-            returns a torch.utils.data.DataLoader
-    """
-    from cerebras_appliance.run_utils import get_debug_args
-
+def get_cluster_config(params: dict) -> cstorch.utils.CSConfig:
+    """Sets up CS cluster config for the run."""
     runconfig = params["runconfig"]
-
-    if "seed" in runconfig:
-        # Ensure we set seed before any model initialization
-        cstorch.manual_seed(runconfig["seed"])
 
     debug_args = get_debug_args(runconfig.get("debug_args_path"))
     update_debug_args_with_mem_limits(debug_args, runconfig)
 
-    # Configure the Cerebras Wafer Scale cluster
     cs_config = cstorch.utils.CSConfig(
         num_csx=runconfig.get("num_csx"),
         max_wgt_servers=runconfig.get("num_wgt_servers"),
@@ -79,12 +68,51 @@ def run_cstorch_flow(params, model_fn, train_data_fn, eval_data_fn):
         job_time_sec=runconfig.get("job_time_sec"),
         disable_version_check=runconfig["disable_version_check"],
     )
+    if "precision_opt_level" in params["model"]:
+        raise ValueError(
+            "Passing `precision_opt_level` via `model` params is no longer supported. "
+            "Please use `params[\"runconfig\"][\"precision_opt_level\"]` instead."
+        )
+    precision_opt_level = runconfig.get("precision_opt_level")
+    if precision_opt_level is None:
+        precision_opt_level = 1
+
+    cs_config.precision_opt_level = precision_opt_level
+
+    return cs_config
+
+
+def run_cstorch_flow(params, model_fn, train_data_fn, eval_data_fn):
+    """
+    Set up the cstorch run and call the appropriate helper based on the mode
+
+    Args:
+        params: the params dictionary extracted from the params.yaml used
+        model_fn: A callable that takes in the params dictionary and returns
+            a torch.nn.Module
+        train_data_fn: A callable that takes in the param dictionary and
+            returns a torch.utils.data.DataLoader
+        eval_data_fn: A callable that takes in the param dictionary and
+            returns a torch.utils.data.DataLoader
+    """
+    runconfig = params["runconfig"]
+
+    if "seed" in runconfig:
+        # Ensure we set seed before any model initialization
+        torch.manual_seed(runconfig["seed"])
+
+    # Configure the Cerebras Wafer Scale cluster
+    cs_config = get_cluster_config(params)
+
+    artifact_dir = setup_artifact_dir(
+        runconfig.get("model_dir"), runconfig["mode"]
+    )
 
     # Set up logging level
     setup_logging(
         runconfig.get("logging"),
         runconfig.get("streamer_logging"),
-        logging_dir=runconfig.get("model_dir"),
+        logging_dir=artifact_dir,
     )
 
     # check if current run is configured with muP
@@ -92,12 +120,16 @@ def run_cstorch_flow(params, model_fn, train_data_fn, eval_data_fn):
         logging.info(f'This is a muP configured run')
 
     if runconfig["mode"] == "train":
-        run_cstorch_train(params, model_fn, train_data_fn, cs_config)
+        run_cstorch_train(
+            params, model_fn, train_data_fn, cs_config, artifact_dir
+        )
     elif runconfig["mode"] == "eval":
-        run_cstorch_eval(params, model_fn, eval_data_fn, cs_config)
+        run_cstorch_eval(
+            params, model_fn, eval_data_fn, cs_config, artifact_dir
+        )
 
 
-def run_cstorch_train(params, model_fn, input_fn, cs_config):
+def run_cstorch_train(params, model_fn, input_fn, cs_config, artifact_dir):
     """
     Runs the training workflow built using the cstorch API
 
@@ -105,10 +137,12 @@ def run_cstorch_train(params, model_fn, input_fn, cs_config):
         params: the params dictionary extracted from the params.yaml used
         model_fn: A callable that takes in the params dictionary and returns
             a torch.nn.Module
-        input_data_fn: A callable that takes in the param dictionary and
+        input_data: A callable that takes in the param dictionary and
             returns a torch.utils.data.DataLoader
     """
     from cerebras_appliance.errors import ApplianceNanError
+
+    params_copy = copy.deepcopy(params)
 
     if not isinstance(params.get("optimizer"), dict):
         raise ValueError(
@@ -127,54 +161,63 @@ def run_cstorch_train(params, model_fn, input_fn, cs_config):
     num_csx = runconfig.get("num_csx")
     compile_only = runconfig.get("compile_only", False)
     validate_only = runconfig.get("validate_only", False)
-    drop_data = runconfig.get("drop_data", False)
     log_summaries = params["optimizer"].pop("log_summaries", False)
     check_loss_values = runconfig.get("check_loss_values", True)
     log_input_summaries = runconfig.get("log_input_summaries", False)
-    precision_opt_level = None
-    model_pol = params["model"].get("precision_opt_level")
-    if model_pol is not None:
-        warnings.warn(
-            "Passing `precision_opt_level` via `model` params is deprecated. "
-            "Please use `params[\"runconfig\"][\"precision_opt_level\"]`"
-        )
-    precision_opt_level = runconfig.get("precision_opt_level", model_pol)
-    if precision_opt_level != model_pol and model_pol is not None:
-        logging.warning(
-            f"Using `precision_opt_level:{precision_opt_level}` from `runconfig` "
-            f"instead of `{model_pol}` from `model`"
-        )
-    if precision_opt_level is None:
-        precision_opt_level = 1
-
-    cs_config.precision_opt_level = precision_opt_level
-
-    mixed_precision = params["model"].get("mixed_precision", False)
-    use_bfloat16 = params["model"].get("use_bfloat16", False)
-
-    if mixed_precision and not use_bfloat16 and target_device == DeviceType.CPU:
-        warnings.warn(
-            "Mixed precision on CPU is only supported with bfloat16. "
-            "Setting use_bfloat16 in model config to True."
-        )
-        params["model"]["use_bfloat16"] = True
-        use_bfloat16 = True
-
-    half_dtype_instance.use_bfloat16 = use_bfloat16
-    if use_bfloat16:
-        cstorch.amp.use_bfloat16(True)
+    activation_steps = (
+        log_steps if runconfig.get("enable_act_frequency", False) else None
+    )
+    experimental_configs = runconfig.get("experimental", {})
+    listener_configs = experimental_configs.get("listeners", [])
 
     optimizer_params = params["optimizer"]
 
     # Parse grad scaler params and pop them from optimizer params
     grad_scaler = None
     grad_scaler_params = GradScalerParams.from_dict(optimizer_params)
-    if grad_scaler_params.loss_scaling_factor == "dynamic" and use_bfloat16:
+
+    mixed_precision = params["model"].get("mixed_precision", False)
+    mp_dtype = set_half_dtype_from_params(params["model"])
+
+    if params["model"].get("fp16_type") == "cbfloat16":
+        if target_device != DeviceType.CSX:
+            mp_dtype = cstorch.amp.set_half_dtype(torch.bfloat16)
+            msg = f"cbfloat16 is only supported on CSX. Setting half dtype to bfloat16."
+            if grad_scaler_params.loss_scaling_factor == "dynamic":
+                grad_scaler_params.loss_scaling_factor = 1.0
+                msg = (
+                    f"{msg} DLS is not needed in bfloat16 either, so setting "
+                    f"`loss_scaling_factor` to `1.0`."
+                )
+            warnings.warn(msg)
+        elif grad_scaler_params.loss_scaling_factor != "dynamic":
+            raise ValueError(
+                f"In order to use cbfloat16, dynamic loss scaling must be enabled. "
+                f"Otherwise, gradients might underflow/overflow in the middle of "
+                f"training and cause NaNs. Please set `loss_scaling_factor` to "
+                f"`dynamic` to use cbfloat16."
+            )
+
+    if (
+        grad_scaler_params.loss_scaling_factor == "dynamic"
+        and params["model"].get("fp16_type") == "bfloat16"
+    ):
         grad_scaler_params.loss_scaling_factor = 1.0
         logging.info(
-            f"No need to use DLS for loss when `use_bfloat16` is set to"
-            " `True`. Setting `loss_scaling_factor ` to `1.0`."
+            f"No need to use DLS for loss when half dtype is bfloat16. "
+            f"Setting `loss_scaling_factor ` to `1.0`."
         )
+
+    if (
+        mixed_precision
+        and mp_dtype != torch.bfloat16
+        and target_device == DeviceType.CPU
+    ):
+        warnings.warn(
+            "Mixed precision on CPU is only supported with bfloat16. "
+            "Setting half dtype to bfloat16."
+        )
+        mp_dtype = cstorch.amp.set_half_dtype(torch.bfloat16)
 
     use_cstorch_optimizer_step = runconfig.get(
         "use_cstorch_optimizer_step", False
@@ -183,7 +226,7 @@ def run_cstorch_train(params, model_fn, input_fn, cs_config):
     max_checkpoints = runconfig.get("max_checkpoints", 5)
 
     if target_device == DeviceType.CSX:
-        use_cs_grad_accum = runconfig.get("use_cs_grad_accum", False)
+        use_cs_grad_accum = runconfig.get("use_cs_grad_accum", True)
         micro_batch_size = input_params.get("micro_batch_size")
 
         # Checks for invalid setting of num_csx, micro_batch_size and batch_size
@@ -212,25 +255,37 @@ def run_cstorch_train(params, model_fn, input_fn, cs_config):
 
         backend = cstorch.backend(
             "CSX",
-            artifact_dir=os.path.join(model_dir, "cerebras_logs"),
+            artifact_dir=artifact_dir,
             compile_dir=compile_dir,
             compile_only=compile_only,
             validate_only=validate_only,
-            drop_data=drop_data,
             max_checkpoints=max_checkpoints,
             use_cs_grad_accum=use_cs_grad_accum,
             micro_batch_size=micro_batch_size,
             retrace_every_iteration=retrace_every_iteration,
         )
+
+        backend.device.config.lazy_initialization = runconfig.get(
+            "lazy_initialization", True
+        )
+        if not backend.device.config.lazy_initialization:
+            # Drop data only has any effect if we're not tracing the
+            # initialization
+            backend.device.config.drop_data = runconfig.get(
+                "drop_data", compile_only or validate_only
+            )
+
     elif target_device == DeviceType.CPU:
         backend = cstorch.backend(
             "CPU",
+            artifact_dir=artifact_dir,
             max_checkpoints=max_checkpoints,
             mixed_precision=mixed_precision,
         )
     elif target_device == DeviceType.GPU:
         backend = cstorch.backend(
             "GPU",
+            artifact_dir=artifact_dir,
             enable_distributed=runconfig.get("enable_distributed", False),
             main_process_id=runconfig.get("main_process_id", 0),
             dist_backend=runconfig.get("dist_backend", "nccl"),
@@ -243,6 +298,12 @@ def run_cstorch_train(params, model_fn, input_fn, cs_config):
 
     compiled_model = cstorch.compile(model, backend)
     compiled_model.train()
+
+    # Register tensor listeners.
+    listeners = [
+        cstorch.experimental.listener.create_listener(**listener_params)
+        for listener_params in listener_configs
+    ]
 
     # group optimizer params
     param_optimizer_grouped = cstorch.optim.configure_param_groups(
@@ -310,7 +371,6 @@ def run_cstorch_train(params, model_fn, input_fn, cs_config):
                 steps_per_increase=grad_scaler_params.steps_per_increase,
                 min_loss_scale=grad_scaler_params.min_loss_scale,
                 max_loss_scale=grad_scaler_params.max_loss_scale,
-                max_gradient_norm=grad_scaler_params.max_gradient_norm,
             )
         elif backend.is_gpu:
             if grad_scaler_params.loss_scaling_factor == "dynamic":
@@ -363,6 +423,15 @@ def run_cstorch_train(params, model_fn, input_fn, cs_config):
 
         state_dict["global_step"] = step
 
+        # save modelzoo metadata
+        state_dict["__metadata__"] = [
+            {
+                "version": cstorch.__version__,
+                "model_name": model.__class__.__name__,
+                "params": params_copy,
+            }
+        ]
+
         cstorch.save(state_dict, checkpoint_file)
 
         logging.info(f"Saved checkpoint {checkpoint_file}")
@@ -372,7 +441,6 @@ def run_cstorch_train(params, model_fn, input_fn, cs_config):
 
         logging.info(f"Loading weights from checkpoint {checkpoint_path}")
         state_dict = cstorch.load(checkpoint_path)
-
         disable_strict_checkpoint_loading = runconfig.get(
             "disable_strict_checkpoint_loading", False
         )
@@ -430,6 +498,25 @@ def run_cstorch_train(params, model_fn, input_fn, cs_config):
                     strict=not disable_strict_checkpoint_loading,
                 )
 
+        if "global_step" in checkpoint_states_to_load:
+            if "global_step" in state_dict:
+                global_step = state_dict["global_step"]
+                logging.info(
+                    f"Global step {global_step} found in the checkpoint and loaded."
+                )
+            else:
+                global_step = 0
+                logging.info(
+                    f"Global step not found in the checkpoint and not loaded. "
+                    f"Using default initialized global step of {global_step}."
+                )
+        else:
+            global_step = 0
+            logging.info(
+                f"Opting out of loading global step. Using default initialized global step of "
+                f"{global_step}."
+            )
+
         def maybe_load_state(
             component,
             name,
@@ -466,27 +553,21 @@ def run_cstorch_train(params, model_fn, input_fn, cs_config):
         )
         if lr_scheduler:
             maybe_load_state(lr_scheduler, "LR scheduler")
+
+            ckpt_version = cstorch.saver.PyTorchH5Saver.extract_version(
+                checkpoint_path
+            )
+            # Required for backward compatibility with checkpoints saved pre 2.0.0
+            # Setting this will recompute the last_epochs on lr_scheduler.load_state_dict
+            if (
+                ckpt_version
+                and ckpt_version.ckpt_version <= 0.3
+                and int(state_dict["lr_scheduler"]["last_epoch"]) != global_step
+            ):
+                fix_last_epoch(lr_scheduler, global_step)
+
         if grad_scaler:
             maybe_load_state(grad_scaler, "Grad Scaler")
-
-        if "global_step" in checkpoint_states_to_load:
-            if "global_step" in state_dict:
-                global_step = state_dict["global_step"]
-                logging.info(
-                    f"Global step {global_step} found in the checkpoint and loaded."
-                )
-            else:
-                global_step = 0
-                logging.info(
-                    f"Global step not found in the checkpoint and not loaded. "
-                    f"Using default initialized global step of {global_step}."
-                )
-        else:
-            global_step = 0
-            logging.info(
-                f"Opting out of loading global step. Using default initialized global step of "
-                f"{global_step}."
-            )
 
     global_step = 0
 
@@ -514,6 +595,7 @@ def run_cstorch_train(params, model_fn, input_fn, cs_config):
 
     # parameters for numeric debugging
     numeric_debug = lambda f: f
+    numeric_debug.flush = lambda: None
     if runconfig.get("dump_activations", False):
         if not backend.is_csx:
             numeric_debug = DumpContext(
@@ -538,12 +620,13 @@ def run_cstorch_train(params, model_fn, input_fn, cs_config):
         loss = compiled_model(batch)
 
         if log_summaries:
-            compute_params_norm(compiled_model)
+            with cstorch.name_scope("params_norm"):
+                compute_params_norm(compiled_model)
 
         if grad_accum_steps != 1:
             # Normalize loss to account for gradient accumulation
             with cstorch.amp.autocast():
-                loss /= grad_accum_steps
+                loss = loss / grad_accum_steps
 
             if step % grad_accum_steps != 0:
                 # if not on a grad accumulation step, call backwards and return
@@ -559,7 +642,8 @@ def run_cstorch_train(params, model_fn, input_fn, cs_config):
         if not grad_scaler:
             loss.backward()
             if log_summaries:
-                compute_grad_norm(compiled_model)
+                with cstorch.name_scope("grad_norm"):
+                    compute_grad_norm(compiled_model)
 
             optimizer.step()
             optimizer.zero_grad()
@@ -583,7 +667,9 @@ def run_cstorch_train(params, model_fn, input_fn, cs_config):
             )
 
         if lr_scheduler:
-            lr_scheduler.step()
+            with cstorch.name_scope("lr"):
+                log_learning_rate_pre_step(lr_scheduler.get_last_lr())
+                lr_scheduler.step()
 
         if grad_accum_steps != 1:
             loss = accum_loss + loss
@@ -591,25 +677,29 @@ def run_cstorch_train(params, model_fn, input_fn, cs_config):
 
         # Extract the loss scale value from the grad scaler
         loss_scale = None
+        if grad_scaler and log_summaries:
+            loss_scale = grad_scaler.get_scale()
 
         # return final values
         return loss, loss_scale
 
-    # Counts the total number of steps actually executed
-    total_steps = 0
-
-    @cstorch.step_closure
-    def post_training_step(loss, loss_scale):
-        nonlocal total_steps
-
-        is_log_step = executor.on_final_iteration or (
+    def is_log_step():
+        return executor.on_final_iteration or (
             log_steps and global_step % log_steps == 0
         )
 
+    @cstorch.step_closure
+    def log_learning_rate_pre_step(last_lr):
+        if is_log_step():
+            for group, lr in enumerate(last_lr):
+                writer.add_scalar(f"lr/{group}", lr, global_step)
+
+    @cstorch.step_closure
+    def post_training_step(loss, loss_scale):
         # extract the loss scalar
-        if is_log_step:
-            rate = executor.profiler.rate()
-            global_rate = executor.profiler.global_rate()
+        if is_log_step():
+            rate = executor.profiler.rate_tracker.rate
+            global_rate = executor.profiler.rate_tracker.global_rate
 
             # Print some logs to provide an update to the client
             logging.info(
@@ -633,6 +723,14 @@ def run_cstorch_train(params, model_fn, input_fn, cs_config):
             # Save the loss value to be able to plot the loss curve
             writer.add_scalar("loss", loss.item(), global_step)
 
+            if loss_scale is not None:
+                if isinstance(loss_scale, torch.Tensor):
+                    loss_scale = loss_scale.item()
+
+                # Save the loss_scale value to be able to inspect it for
+                # debugging purposes
+                writer.add_scalar("loss_scale", loss_scale, global_step)
+
         if check_loss_values:
             msg_postfix = (
                 "This could potentially be due to selected hyperparameters "
@@ -645,12 +743,6 @@ def run_cstorch_train(params, model_fn, input_fn, cs_config):
                 raise ApplianceNanError(f"NaN loss detected. {msg_postfix}")
             if torch.isinf(loss).any().item():
                 raise ApplianceNanError(f"inf loss detected. {msg_postfix}")
-
-        if is_log_step and lr_scheduler:
-            for group, lr in enumerate(lr_scheduler.get_last_lr()):
-                writer.add_scalar(f"lr.{group}", lr, global_step)
-
-        total_steps += 1
 
     if compile_only or validate_only:
         num_steps = None
@@ -669,8 +761,10 @@ def run_cstorch_train(params, model_fn, input_fn, cs_config):
         dataloader,
         num_steps=num_steps,
         checkpoint_steps=checkpoint_steps,
+        activation_steps=activation_steps,
         cs_config=cs_config,
         writer=writer,
+        listeners=listeners,
     )
 
     try:
@@ -702,11 +796,12 @@ def run_cstorch_train(params, model_fn, input_fn, cs_config):
         if not (compile_only or validate_only):
             logging.info("Training completed successfully!")
     finally:
+        numeric_debug.flush()
         if not (compile_only or validate_only) and executor.profiler:
             # compute the total samples processed based on the number of steps
             # and the number of Cerebras systems in the cluster
-            total_samples = int(executor.profiler.total_samples())
-            total_time = executor.profiler.total_time()
+            total_samples = int(executor.profiler.rate_tracker.total_samples)
+            total_time = executor.profiler.rate_tracker.total_time
 
             logging.info(
                 f"Processed {total_samples} sample(s) "
@@ -714,7 +809,7 @@ def run_cstorch_train(params, model_fn, input_fn, cs_config):
             )
 
 
-def run_cstorch_eval(params, model_fn, input_fn, cs_config):
+def run_cstorch_eval(params, model_fn, input_fn, cs_config, artifact_dir):
     """
     Runs the evaluatiion workflow built using the cstorch API
 
@@ -739,45 +834,38 @@ def run_cstorch_eval(params, model_fn, input_fn, cs_config):
     num_csx = runconfig.get("num_csx")
     compile_only = runconfig.get("compile_only", False)
     validate_only = runconfig.get("validate_only", False)
-    drop_data = runconfig.get("drop_data", False)
     check_loss_values = runconfig.get("check_loss_values", True)
     log_input_summaries = runconfig.get("log_input_summaries", False)
-
-    precision_opt_level = None
-    model_pol = params["model"].get("precision_opt_level")
-    if model_pol is not None:
-        warnings.warn(
-            "Passing `precision_opt_level` via `model` params is deprecated. "
-            "Please use `params[\"runconfig\"][\"precision_opt_level\"]`"
-        )
-    precision_opt_level = runconfig.get("precision_opt_level", model_pol)
-    if precision_opt_level != model_pol and model_pol is not None:
-        logging.warning(
-            f"Using `precision_opt_level:{precision_opt_level}` from `runconfig` "
-            f"instead of `{model_pol}` from `model`"
-        )
-    if precision_opt_level is None:
-        precision_opt_level = 1
-
-    cs_config.precision_opt_level = precision_opt_level
+    experimental_configs = runconfig.get("experimental", {})
+    listener_configs = experimental_configs.get("listeners", [])
+    if runconfig.get("enable_act_frequency", False):
+        logging.warning("Activation frequency is not supported for eval mode.")
 
     mixed_precision = params["model"].get("mixed_precision", False)
-    use_bfloat16 = params["model"].get("use_bfloat16", False)
+    mp_dtype = set_half_dtype_from_params(params["model"])
 
-    if mixed_precision and not use_bfloat16 and target_device == DeviceType.CPU:
+    if (
+        params["model"].get("fp16_type") == "cbfloat16"
+        and target_device != DeviceType.CSX
+    ):
+        mp_dtype = cstorch.amp.set_half_dtype(torch.bfloat16)
+        warnings.warn(
+            f"cbfloat16 is only supported on CSX. Setting half dtype to bfloat16."
+        )
+
+    if (
+        mixed_precision
+        and mp_dtype != torch.bfloat16
+        and target_device == DeviceType.CPU
+    ):
         warnings.warn(
             "Mixed precision on CPU is only supported with bfloat16. "
-            "Setting use_bfloat16 in model config to True."
+            "Setting half dtype to bfloat16."
         )
-        params["model"]["use_bfloat16"] = True
-        use_bfloat16 = True
-
-    half_dtype_instance.use_bfloat16 = use_bfloat16
-    if use_bfloat16:
-        cstorch.amp.use_bfloat16(True)
+        mp_dtype = cstorch.amp.set_half_dtype(torch.bfloat16)
 
     if target_device == DeviceType.CSX:
-        use_cs_grad_accum = runconfig.get("use_cs_grad_accum", False)
+        use_cs_grad_accum = runconfig.get("use_cs_grad_accum", True)
         micro_batch_size = input_params.get("micro_batch_size")
 
         # Checks for invalid setting of num_csx, micro_batch_size and batch_size
@@ -789,19 +877,32 @@ def run_cstorch_eval(params, model_fn, input_fn, cs_config):
 
         backend = cstorch.backend(
             "CSX",
-            artifact_dir=os.path.join(model_dir, "cerebras_logs"),
+            artifact_dir=artifact_dir,
             compile_dir=compile_dir,
             compile_only=compile_only,
             validate_only=validate_only,
-            drop_data=drop_data,
             use_cs_grad_accum=use_cs_grad_accum,
             micro_batch_size=micro_batch_size,
         )
+
+        backend.device.config.lazy_initialization = runconfig.get(
+            "lazy_initialization", True
+        )
+        if not backend.device.config.lazy_initialization:
+            # Drop data only has any effect if we're not tracing the
+            # initialization
+            backend.device.config.drop_data = runconfig.get(
+                "drop_data", compile_only or validate_only
+            )
+
     elif target_device == DeviceType.CPU:
-        backend = cstorch.backend("CPU", mixed_precision=mixed_precision)
+        backend = cstorch.backend(
+            "CPU", mixed_precision=mixed_precision, artifact_dir=artifact_dir
+        )
     elif target_device == DeviceType.GPU:
         backend = cstorch.backend(
             "GPU",
+            artifact_dir=artifact_dir,
             enable_distributed=runconfig.get("enable_distributed", False),
             main_process_id=runconfig.get("main_process_id", 0),
             dist_backend=runconfig.get("dist_backend", "nccl"),
@@ -814,6 +915,12 @@ def run_cstorch_eval(params, model_fn, input_fn, cs_config):
 
     compiled_model = cstorch.compile(model, backend)
     compiled_model.eval()
+
+    # Register tensor listeners.
+    listeners = [
+        cstorch.experimental.listener.create_listener(**listener_params)
+        for listener_params in listener_configs
+    ]
 
     def configure_eval_sparsity(sparsity_config, state_dict):
         # The sparsity_optimizer.hook_module() is needed to inform the compile
@@ -898,6 +1005,8 @@ def run_cstorch_eval(params, model_fn, input_fn, cs_config):
     )
 
     # parameters for numeric debugging
+    numeric_debug = lambda f: f
+    numeric_debug.flush = lambda: None
     if runconfig.get("dump_activations", False):
         if not backend.is_csx:
             numeric_debug = DumpContext(
@@ -908,8 +1017,6 @@ def run_cstorch_eval(params, model_fn, input_fn, cs_config):
                 "Got `dump_activations=True` but activation dumping is not "
                 "supported on CSX. Disabling activation dumping for this run."
             )
-    else:
-        numeric_debug = lambda f: f
 
     @cstorch.trace
     @numeric_debug
@@ -933,8 +1040,8 @@ def run_cstorch_eval(params, model_fn, input_fn, cs_config):
             log_steps and step % log_steps == 0
         )
 
-        rate = executor.profiler.rate()
-        global_rate = executor.profiler.global_rate()
+        rate = executor.profiler.rate_tracker.rate
+        global_rate = executor.profiler.rate_tracker.global_rate
 
         if is_log_step:
             # Print some logs to provide an update to the client
@@ -978,7 +1085,11 @@ def run_cstorch_eval(params, model_fn, input_fn, cs_config):
         )
 
     executor = cstorch.utils.data.DataExecutor(
-        dataloader, num_steps=num_steps, cs_config=cs_config, writer=writer,
+        dataloader,
+        num_steps=num_steps,
+        cs_config=cs_config,
+        writer=writer,
+        listeners=listeners,
     )
 
     try:
@@ -999,11 +1110,12 @@ def run_cstorch_eval(params, model_fn, input_fn, cs_config):
             logging.info("Evaluation completed successfully!")
 
     finally:
+        numeric_debug.flush()
         if not (compile_only or validate_only) and executor.profiler:
             # compute the total samples processed based on the number of steps
             # and the number of Cerebras systems in the cluster
-            total_samples = int(executor.profiler.total_samples())
-            total_time = executor.profiler.total_time()
+            total_samples = int(executor.profiler.rate_tracker.total_samples)
+            total_time = executor.profiler.rate_tracker.total_time
 
             logging.info(
                 f"Processed {total_samples} sample(s) "
@@ -1065,6 +1177,58 @@ def get_model_checkpoint(runconfig: Dict[str, Any]) -> Union[str, None]:
         )
 
     return ckpt_path
+
+
+def fix_last_epoch(lr_scheduler, global_step: int):
+    """
+    Generates a function that can be called repeatedly to fix the last epochs
+    across all LR schedulers
+
+    Args:
+        global_step: The global step value to use to fix up the last epoch values
+    """
+
+    from cerebras_pytorch.backend import current_backend_impl
+    from cerebras_pytorch.optim.lr_scheduler import (
+        ChainedScheduler,
+        ScalePerParamLR,
+        SequentialLR,
+    )
+
+    backend = current_backend_impl()
+    if lr_scheduler.last_epoch != global_step:
+        warn(
+            f"Detected that last_epoch in LR scheduler was not correctly loaded. "
+            f"Fixing according to current global step: {global_step}."
+        )
+        with backend.device:
+            lr_scheduler.last_epoch = torch.tensor(
+                global_step, device=backend.torch_device,
+            )
+
+        if isinstance(lr_scheduler, SequentialLR):
+            # pylint: disable=protected-access
+            milestones = [0] + lr_scheduler._milestones
+            for milestone, scheduler in zip(
+                milestones, lr_scheduler._schedulers
+            ):
+                with backend.device:
+                    scheduler.last_epoch = torch.tensor(
+                        max(global_step - milestone, 0),
+                        device=backend.torch_device,
+                    )
+
+        elif isinstance(lr_scheduler, ChainedScheduler):
+            # pylint: disable=protected-access
+            for scheduler in lr_scheduler._schedulers:
+                scheduler.last_epoch = lr_scheduler.last_epoch
+
+        elif isinstance(lr_scheduler, ScalePerParamLR):
+            # pylint: disable=protected-access
+            with backend.device:
+                lr_scheduler._scheduler_nested.last_epoch = torch.tensor(
+                    global_step, device=backend.torch_device,
+                )
 
 
 def log_input_summary(batch):
@@ -1178,10 +1342,10 @@ class GradScalerParams:
     """Dataclass for parsing grad scaler params from optimizer params."""
 
     loss_scaling_factor: Union[float, str, None] = 1.0
-    initial_loss_scale: Optional[float] = 2.0 ** 15
+    initial_loss_scale: Optional[float] = None  # default set in GradScaler
     steps_per_increase: Optional[int] = 2000
-    min_loss_scale: Optional[float] = None
-    max_loss_scale: Optional[float] = None
+    min_loss_scale: Optional[float] = None  # default set in GradScaler
+    max_loss_scale: Optional[float] = None  # default set in GradScaler
     max_gradient_norm: Optional[float] = None
     max_gradient_value: Optional[float] = None
 
@@ -1196,3 +1360,15 @@ class GradScalerParams:
             if field.name in params:
                 kwargs[field.name] = params.pop(field.name)
         return cls(**kwargs)
+
+    def __post_init__(self):
+        """validate loss_scaling_factor"""
+        if not (
+            isinstance(self.loss_scaling_factor, numbers.Number)
+            or self.loss_scaling_factor is None
+            or self.loss_scaling_factor == "dynamic"
+        ):
+            raise ValueError(
+                f"Optimizer param 'loss_scaling_factor' must be a float, None, or 'dynamic'."
+                f"Got {self.loss_scaling_factor} instead."
+            )

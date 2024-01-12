@@ -10,7 +10,9 @@ properties:
     - string
     - 'null'
   checkpoint_steps:
-    type: integer
+    type:
+    - integer
+    - 'null'
   compile_crd_memory_gi:
     type:
     - integer
@@ -49,6 +51,8 @@ properties:
     - 'null'
   dump_activations:
     type: boolean
+  enable_act_frequency:
+    type: boolean
   enable_distributed:
     type: boolean
   eval_steps:
@@ -79,6 +83,13 @@ properties:
     type:
     - string
     - 'null'
+  wsc_log_level:
+    type:
+    - object
+    - 'null'
+    additionalProperties:
+      type:
+      - "string"
   log_initialization:
     type:
     - boolean
@@ -156,6 +167,8 @@ properties:
   target_device:
     type:
     - string
+  lazy_initialization:
+    type: boolean
   transfer_processes:
     type:
     - integer
@@ -168,17 +181,9 @@ properties:
     type:
     - boolean
     - 'null'
-  keep_checkpoint_max:
-    type:
-    - integer
-    - 'null'
   variant:
     type:
     - string
-    - 'null'
-  use_appliance_data:
-    type:
-    - boolean
     - 'null'
   use_cs_grad_accum:
     type:
@@ -216,5 +221,12 @@ properties:
     type:
     - integer
     - 'null'
+  experimental:
+    listeners:
+      type:
+        - array
+        - 'null'
+    type:
+    - object
 type: object
 additionalProperties: false

@@ -18,8 +18,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+import cerebras_pytorch as cstorch
 from cerebras_pytorch.metrics import AccuracyMetric
-from modelzoo.common.pytorch.run_utils import half_dtype_instance
 
 
 class MNIST(nn.Module):
@@ -97,7 +97,7 @@ class MNISTModel(nn.Module):
 
     def build_model(self, model_params):
         dtype = (
-            half_dtype_instance.half_dtype
+            cstorch.amp.get_half_dtype()
             if model_params["to_float16"]
             else torch.float32
         )

@@ -71,7 +71,11 @@ class HDF5BasePreprocessor(ABC):
             ), "`encoder_file` is missing, please provide it using `args.encoder_file`."
             self.tokenizer = HFTokenizer(encoder_file)
             self.eos_id = self.tokenizer.eos
-            self.pad_id = self.tokenizer.pad
+            self.pad_id = (
+                self.tokenizer.eos
+                if self.tokenizer.pad is None
+                else self.tokenizer.pad
+            )
         elif self.tokenizer_type == "huggingfacetokenizer":
             from transformers import AutoTokenizer
 
@@ -244,7 +248,10 @@ class HDF5BasePreprocessor(ABC):
             compression (string): Compression strategy.
         """
         data_label = "data"
-        data_shape = (n_examples, 3, self.max_seq_length)
+        if getattr(self, "use_vsl", False):
+            data_shape = (n_examples, 5, self.max_seq_length)
+        else:
+            data_shape = (n_examples, 3, self.max_seq_length)
         data_buffer = files
         if self.write_in_batch:
             # Below will convert list of strings into numpy 'U' type and h5py
@@ -311,7 +318,10 @@ class HDF5BasePreprocessor(ABC):
             remainder = []
             files_per_record = len(file_chunks[-1])
 
-        hdf5_chunk_size = (1, 3, self.max_seq_length)
+        if getattr(self, "use_vsl", False):
+            hdf5_chunk_size = (1, 5, self.max_seq_length)
+        else:
+            hdf5_chunk_size = (1, 3, self.max_seq_length)
         hdf5_dtype = "i4"
 
         for files in file_chunks:
@@ -358,6 +368,24 @@ class HDF5BasePreprocessor(ABC):
             checkpoint_path, self.resume_from_checkpoint
         )
 
+        def write_step(df_count, doc_object_array, write_remainder=False):
+            _df_count, remainder = self.write_hdf5_files(
+                doc_object_array,
+                start_number=df_count,
+                write_remainder=write_remainder,
+                process_number=process_no,
+                rng=self.rng,
+            )
+            pbar.update(_df_count - df_count)
+            pbar.set_description(
+                f"Parsed {self.files_processed} input files. Files written "
+            )
+
+            with open(checkpoint_path, "w") as checkpoint_file:
+                checkpoint_file.write(f"{self.files_processed}, {_df_count}")
+
+            return _df_count, remainder
+
         doc_object_array = []
 
         for _file in files:
@@ -369,44 +397,23 @@ class HDF5BasePreprocessor(ABC):
                 doc_object_array.append(doc_object)
 
                 if len(doc_object_array) >= self.files_per_record:
-                    _df_count, remainder = self.write_hdf5_files(
-                        doc_object_array,
-                        start_number=df_count,
-                        process_number=process_no,
-                        rng=self.rng,
-                    )
-                    pbar.update(_df_count - df_count)
-                    pbar.set_description(
-                        f"Parsed {self.files_processed} input files. Files written "
+                    df_count, doc_object_array = write_step(
+                        df_count, doc_object_array
                     )
 
-                    df_count = _df_count
-                    doc_object_array = (
-                        remainder  # add remaining files to next chunk
+        # fetch remaining samples for VSL datasets
+        if getattr(self, "use_vsl", False):
+            for doc_object in self.vsl_sample_generator(self.chunk_count):
+                doc_object_array.append(doc_object)
+                if len(doc_object_array) >= self.files_per_record:
+                    df_count, doc_object_array = write_step(
+                        df_count, doc_object_array
                     )
-                    with open(checkpoint_path, "w") as checkpoint_file:
-                        checkpoint_file.write(
-                            f"{self.files_processed}, {df_count}"
-                        )
-
-        remainder = doc_object_array
 
         n_examples = df_count * self.files_per_record
-        if self.write_remainder and len(remainder) > 0:
-            n_examples += len(remainder)
-            _df_count, _ = self.write_hdf5_files(
-                remainder,
-                start_number=df_count,
-                write_remainder=True,
-                process_number=process_no,
-                rng=self.rng,
-            )
-            pbar.update(_df_count - df_count)
-            pbar.set_description(
-                f"Parsed {self.files_processed} input files. Files written "
-            )
-            with open(checkpoint_path, "w") as checkpoint_file:
-                checkpoint_file.write(f"{self.files_processed}, {_df_count}")
+        if self.write_remainder and len(doc_object_array) > 0:
+            n_examples += len(doc_object_array)
+            write_step(df_count, doc_object_array, True)
 
         successful_files = self.files_processed - self.discarded_files
         return {

@@ -22,14 +22,14 @@ def set_defaults(params):
     """
     params["model"]["src_max_position_embeddings"] = params["model"].get(
         "src_max_position_embeddings",
-        params["train_input"]["src_max_sequence_length"],
+        params["train_input"].get("src_max_sequence_length"),
     )
     params["model"]["tgt_max_position_embeddings"] = params["model"].get(
         "tgt_max_position_embeddings",
-        params["train_input"]["tgt_max_sequence_length"],
+        params["train_input"].get("tgt_max_sequence_length"),
     )
     # Enable bf16 by default and set loss scaling factor to 1.0 when sw-82646 is resolved.
-    params["model"]["use_bfloat16"] = params["model"].get("use_bfloat16", False)
+    params["model"]["fp16_type"] = params["model"].get("fp16_type", "float16")
     params["optimizer"]["loss_scaling_factor"] = params["optimizer"].get(
         "loss_scaling_factor", "dynamic"
     )
@@ -45,7 +45,12 @@ def set_defaults(params):
     # Attention softmax is fp32 by default.
     params["model"]["attention_softmax_fp32"] = True
 
-    # Only WS configs have precision_opt_level setting.
     # Attention softmax is bf16 for precision_opt_level: 2
     if params["runconfig"].get("precision_opt_level", 1) == 2:
+        params["model"]["attention_softmax_fp32"] = False
+
+    if (
+        params["model"].get("fp16_type", "bfloat16") == "cbfloat16"
+        and params["runconfig"].get("precision_opt_level", 1) == 1
+    ):
         params["model"]["attention_softmax_fp32"] = False

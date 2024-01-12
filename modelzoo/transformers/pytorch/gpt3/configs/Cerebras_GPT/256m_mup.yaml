@@ -34,7 +34,6 @@ eval_input:
 model:
     # Embedding
     hidden_size: 1088
-    use_position_embedding: True
     position_embedding_type: "learned"
     share_embedding_weights: True
     max_position_embeddings: 2048
@@ -79,8 +78,8 @@ model:
         b: 0.014667175952451381
 
     # Task-specific
-    loss_scaling: "batch_size" # needed for gradient accumulation
-    loss_weight: 0.00048828125 # = 1/max_sequence_length
+    loss_scaling: "num_tokens"
+    loss_weight: 1.0
     use_bias_in_output: False
 
     # muP
@@ -90,7 +89,7 @@ model:
 
     # Cerebras parameters
     mixed_precision: True
-    use_bfloat16: True
+    fp16_type: "bfloat16"
 
 ### Optimization
 optimizer:
@@ -121,6 +120,4 @@ runconfig:
     enable_distributed: False
     log_steps: 1
     save_initial_checkpoint: False
-    use_cs_grad_accum: True
-    use_appliance_data: True
     precision_opt_level: 0 # also validated with precision_opt_level = 1

@@ -60,8 +60,8 @@ model:
     use_bias_in_output: True
     initializer_range: 0.02
 
-    loss_scaling: "batch_size"
-    loss_weight: 0.00048828125 # = 1/max_sequence_length
+    loss_scaling: "num_tokens"
+    loss_weight: 1.0
 
     # Initializer references: https://github.com/kingoflolz/mesh-transformer-jax/blob/master/mesh_transformer/layers.py
     # We use truncated_normal instead of normal ("ref: https://github.com/kingoflolz/mesh-transformer-jax"),
@@ -88,6 +88,7 @@ model:
         b: 0.00223214284
 
     mixed_precision: True
+    fp16_type: "cbfloat16"
 
 optimizer:
     optimizer_type: "adamw"
@@ -95,6 +96,7 @@ optimizer:
     weight_decay: 0.1
     max_gradient_norm: 1.0
     correct_bias: True
+    loss_scaling_factor: "dynamic"
     # we want to keep the same number of tokens consistent with Eleuther gptj-6B
     # Eleuther batch_size https://github.com/kingoflolz/mesh-transformer-jax/blob/master/train.py#L89-L94
     # Eleuther 6B config https://github.com/kingoflolz/mesh-transformer-jax/blob/master/configs/6B_roto_256.json
@@ -115,5 +117,4 @@ runconfig:
     max_steps: 1493333 # 350000 * 512 / 120
     log_steps: 100
     checkpoint_steps: 10000
-    use_cs_grad_accum: True
     seed: 1

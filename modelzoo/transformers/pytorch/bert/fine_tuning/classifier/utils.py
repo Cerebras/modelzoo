@@ -26,7 +26,7 @@ def set_defaults(params, mode=None):
     )
     data_processor = params["train_input"]["data_processor"]
     params["model"]["is_mnli_dataset"] = "MNLI" in data_processor
-    params["model"]["use_bfloat16"] = params["model"].get("use_bfloat16", False)
+    params["model"]["fp16_type"] = params["model"].get("fp16_type", "float16")
     params["optimizer"]["log_summaries"] = params["optimizer"].get(
         "log_summaries", False
     )

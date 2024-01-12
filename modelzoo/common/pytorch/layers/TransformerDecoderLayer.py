@@ -108,6 +108,7 @@ class TransformerDecoderLayer(nn.Module):
         scale_qk_dot_by_d=False,
         scale_qk_dot_by_layer_idx=False,
         attention_inner_dim=None,
+        cross_attention_kv_dim=None,
         use_projection_bias_in_attention=False,
         use_ffn_bias_in_attention=False,
         use_ffn_bias=False,
@@ -129,6 +130,7 @@ class TransformerDecoderLayer(nn.Module):
         AttentionModule = get_attention_module(
             attention_module, extra_attention_params
         )
+
         self.self_attn = AttentionModule(
             d_model,
             nhead,
@@ -154,9 +156,13 @@ class TransformerDecoderLayer(nn.Module):
         self.norm3 = norm_layer(d_model, eps=layer_norm_eps, device=device,)
 
         if self.add_cross_attention:
+            if cross_attention_kv_dim is None:
+                cross_attention_kv_dim = d_model
             self.multihead_attn = AttentionModule(
                 d_model,
                 nhead,
+                kdim=cross_attention_kv_dim,
+                vdim=cross_attention_kv_dim,
                 inner_dim=attention_inner_dim,
                 dropout=attention_dropout_rate,
                 batch_first=batch_first,

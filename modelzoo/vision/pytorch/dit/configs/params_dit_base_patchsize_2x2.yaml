@@ -75,7 +75,7 @@ model:
     use_conv_patchified_embedding: True
 
     mixed_precision: True
-    use_bfloat16: True
+    fp16_type: "bfloat16"
 
     vae:
       # https://huggingface.co/stabilityai/sd-vae-ft-ema/blob/main/config.json

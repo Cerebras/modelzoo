@@ -113,7 +113,7 @@ class CSDataCollatorForLanguageModeling(DataCollatorForLanguageModeling):
                 (
                     torch.full(
                         [batch_size, 1],
-                        self.tokenizer.eos_token_id,
+                        self.tokenizer.bos_token_id,
                         dtype=batch["input_ids"].dtype,
                     ),
                     batch["input_ids"][:, :-1],

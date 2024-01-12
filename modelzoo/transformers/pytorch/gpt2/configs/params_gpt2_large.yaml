@@ -37,7 +37,6 @@ model:
     # Embedding
     vocab_size: 50257
     hidden_size: 1280
-    use_position_embedding: True
     position_embedding_type: "learned"
     share_embedding_weights: True
     max_position_embeddings: 1024
@@ -61,8 +60,8 @@ model:
 
     # Task-specific
     use_bias_in_output: False
-    loss_scaling: "batch_size"
-    loss_weight: 0.0009765625 # = 1/max_sequence_length
+    loss_scaling: "num_tokens"
+    loss_weight: 1.0
 
     # Cerebras parameters
     mixed_precision: True

@@ -52,7 +52,7 @@ def set_defaults(params):
                 params["model"]["max_position_embeddings"],
             )
 
-    params["model"]["use_bfloat16"] = params["model"].get("use_bfloat16", True)
+    params["model"]["fp16_type"] = params["model"].get("fp16_type", "bfloat16")
     params["optimizer"]["loss_scaling_factor"] = params["optimizer"].get(
         "loss_scaling_factor", 1.0
     )
@@ -64,6 +64,6 @@ def set_defaults(params):
         "precision_opt_level", 1
     )
 
-    from modelzoo.transformers.pytorch.gpt2.utils import set_attention_kernel
+    from modelzoo.transformers.pytorch.gpt2.utils import set_attention_params
 
-    set_attention_kernel(params)
+    set_attention_params(params)

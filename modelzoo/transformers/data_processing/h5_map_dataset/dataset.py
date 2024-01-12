@@ -14,12 +14,16 @@
 
 import logging
 
+import numpy
 import torch
 
 import cerebras_pytorch as cstorch
 import cerebras_pytorch.distributed as dist
 from cerebras_pytorch.distributed import get_worker_state
-from modelzoo.common.pytorch.input_utils import get_streaming_batch_size
+from modelzoo.common.pytorch.input_utils import (
+    PaddingSample,
+    get_streaming_batch_size,
+)
 from modelzoo.vision.pytorch.input.utils import create_worker_cache
 
 from .readers import H5Reader, Mixture
@@ -172,6 +176,13 @@ class HDF5Dataset(torch.utils.data.Dataset):
             - "sort_files" (bool): whether or not the reader should sort the input
                 files. This is included for backwards compatibility and should
                 almost always be set to `True`.
+            - "use_vsl" (bool): Flag to enable variable sequence length training. 
+                It requires the dataset to have two extra features: the 
+                `attention_span` of keys and the `position_ids` of tokens.
+                Defaults to `False`.
+            - "pad_last" (bool): Flag to enable padding of the last batch so
+                that the last batch has the same batch size as the rest of the
+                batches. Defaults to `False`.
     """
 
     def __init__(self, params):
@@ -186,6 +197,14 @@ class HDF5Dataset(torch.utils.data.Dataset):
         drop_last = params.get("drop_last", True)
         num_samples = params.get("num_samples", None)
         self.sort_files = params.get("sort_files", True)
+        self.use_vsl = params.get("use_vsl", False)
+        self.pad_last = params.get("pad_last", False)
+
+        if drop_last and self.pad_last:
+            logging.warning(
+                "Both drop_last and pad_last were specified to be True. "
+                "Note that pad_last only has any effect when drop_last is False."
+            )
 
         if data_dir and mixture_params:
             raise ValueError(
@@ -216,6 +235,7 @@ class HDF5Dataset(torch.utils.data.Dataset):
             batch_size=batch_size,
             drop_last=drop_last,
             num_samples=num_samples,
+            pad_last=self.pad_last,
         )
 
         self.map_fn = None
@@ -228,6 +248,16 @@ class HDF5Dataset(torch.utils.data.Dataset):
                 "storage setups, shuffling at runtime can cause performance "
                 "degredation."
             )
+
+    def generate_sample(self):
+        """
+        Generates an empty tensor with the same shape and dtype
+        as a sample from its dataset.
+        """
+        shape = self.reader.vdataset.shape[1:]
+        np_dtype = self.reader.vdataset.dtype
+        dtype = cstorch.from_numpy(numpy.empty(0).astype(np_dtype)).dtype
+        return PaddingSample(shape, dtype)
 
     @property
     def by_sample(self):
@@ -250,11 +280,26 @@ class HDF5Dataset(torch.utils.data.Dataset):
         if self.use_worker_cache and cstorch.use_cs() and dist.is_streamer():
             data_dir = [create_worker_cache(d) for d in data_dir]
 
-        reader = H5Reader(data_dir, self.msl, True, subset, self.sort_files)
+        reader = H5Reader(
+            data_dirs=data_dir,
+            sequence_length=self.msl,
+            read_extra_token=True,
+            data_subset=subset,
+            sort=self.sort_files,
+            use_vsl=self.use_vsl,
+        )
         return reader
 
     def __getitem__(self, i):
-        x = self.reader[i]
+        if i == self.sampler.pad_index:
+            if not self.pad_last:
+                raise RuntimeError(
+                    "Unexpectedly encountered the pad index when pad_last was False"
+                )
+            x = self.generate_sample()
+        else:
+            x = self.reader[i]
+
         if self.map_fn is not None:
             return self.map_fn(x)
         return x

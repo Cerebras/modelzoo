@@ -19,18 +19,18 @@ from typing import Tuple
 import torch
 
 from modelzoo.common.pytorch.model_utils.checkpoint_converters.base_converter import (
-    BaseCheckpointConverter_CS_CS,
     BaseCheckpointConverter_HF_CS,
     BaseConfigConverter,
-    BaseConfigConverter_CS_CS,
     BaseConfigConverter_HF_CS,
     ConfigConversionError,
     ConversionRule,
     EquivalentSubkey,
     FormatVersions,
 )
-from modelzoo.common.pytorch.model_utils.checkpoint_converters.helper import (
-    convert_use_biasless_layer_norm_helper,
+from modelzoo.common.pytorch.model_utils.checkpoint_converters.gptj_hf_cs import (
+    ConfigConverter_GPTJModel_CS18_CS20,
+    Converter_GPTJ_LMHeadModel_CS18_CS20,
+    Converter_GPTJ_LMHeadModel_CS20_CS21,
 )
 
 
@@ -42,32 +42,33 @@ class Converter_Codegen_Attention_HF_CS17(BaseCheckpointConverter_HF_CS):
             ConversionRule(
                 [
                     EquivalentSubkey("qkv_proj", "proj_q_dense_layer"),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.qkv_converter,
             ),
             ConversionRule(
                 [
                     EquivalentSubkey("qkv_proj", "proj_k_dense_layer"),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.assert_already_converted,
             ),
             ConversionRule(
                 [
                     EquivalentSubkey("qkv_proj", "proj_v_dense_layer"),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.assert_already_converted,
             ),
             ConversionRule(
                 [
                     EquivalentSubkey("out_proj", "proj_output_dense_layer"),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
-                # This is a hacky way to initialize bias and masked_bias when converting from CS to Huggingface
-                # However, based on huggingface implementation this is unavoidable in order to initialize
-                # attn.bias and attn.masked_bias, which we intiantiate when we capture the `out_proj` key
+                # This is a hacky way to initialize bias and masked_bias when converting from CS to
+                # Huggingface. However, based on huggingface implementation this is unavoidable in
+                # order to initialize attn.bias and attn.masked_bias, which we intiantiate when we
+                # capture the `out_proj` key
                 action=self.replace_or_fill_masked_bias,
             ),
         ]
@@ -109,11 +110,11 @@ class Converter_Codegen_Attention_HF_CS17(BaseCheckpointConverter_HF_CS):
     def qkv_converter_hf_to_cs17(
         self, old_key, new_key, old_state_dict, new_state_dict, action_fn_args,
     ):
-        # HF represents Q, K, and V in a packed format (torch.Size(3*hidden, hidden)). We need to unpack the
-        # weight and bias tensor for CS 1.7 format.
+        # HF represents Q, K, and V in a packed format (torch.Size(3*hidden, hidden)). We need to
+        # unpack the weight and bias tensor for CS 1.7 format.
         q_key = new_key
-        k_key = re.sub("\.proj_q_dense_layer\.", ".proj_k_dense_layer.", q_key)
-        v_key = re.sub("\.proj_q_dense_layer\.", ".proj_v_dense_layer.", q_key)
+        k_key = re.sub(r"\.proj_q_dense_layer\.", ".proj_k_dense_layer.", q_key)
+        v_key = re.sub(r"\.proj_q_dense_layer\.", ".proj_v_dense_layer.", q_key)
 
         if new_key.endswith(".bias"):
             assert (
@@ -121,10 +122,10 @@ class Converter_Codegen_Attention_HF_CS17(BaseCheckpointConverter_HF_CS):
             ), "Codegen model doesn't support bias with attention projection"
         elif new_key.endswith(".weight"):
             packed_dim, embed_dim = old_state_dict[old_key].shape
-            assert (
-                3 * embed_dim == packed_dim
-            ), "Invalid tensor shape {} at {}. The first dimension (packed_dim) should be 3x the second dimension (embed_dim) since Q, K, and V are packed".format(
-                old_state_dict[old_key].shape, old_key
+            assert 3 * embed_dim == packed_dim, (
+                f"Invalid tensor shape {old_state_dict[old_key].shape} at {old_key}. The first "
+                f"dimension (packed_dim) should be 3x the second dimension (embed_dim) since "
+                f"Q, K, and V are packed"
             )
 
             packed_dim = old_state_dict[old_key].shape[0]
@@ -151,8 +152,8 @@ class Converter_Codegen_Attention_HF_CS17(BaseCheckpointConverter_HF_CS):
         # special ".bias" and ".masked_bias" register buffers that need to be
         # initalized
         q_key = old_key
-        k_key = re.sub("\.proj_q_dense_layer\.", ".proj_k_dense_layer.", q_key)
-        v_key = re.sub("\.proj_q_dense_layer\.", ".proj_v_dense_layer.", q_key)
+        k_key = re.sub(r"\.proj_q_dense_layer\.", ".proj_k_dense_layer.", q_key)
+        v_key = re.sub(r"\.proj_q_dense_layer\.", ".proj_v_dense_layer.", q_key)
 
         assert (
             k_key in old_state_dict
@@ -184,16 +185,18 @@ class Converter_Codegen_Attention_HF_CS17(BaseCheckpointConverter_HF_CS):
             hf_config = action_fn_args["configs"][0]
             rotary_emb_base = hf_config["rotary_emb_base"]
 
-            attn_bias_key = re.sub("\.query_key_value\.", ".", new_key)
+            attn_bias_key = re.sub(r"\.query_key_value\.", ".", new_key)
             new_state_dict[attn_bias_key] = torch.tril(
                 torch.ones((max_positions, max_positions), dtype=torch.uint8)
             ).view(1, 1, max_positions, max_positions)
 
-            masked_bias_key = re.sub("\.query_key_value\.", ".masked_", new_key)
+            masked_bias_key = re.sub(
+                r"\.query_key_value\.", ".masked_", new_key
+            )
             new_state_dict[masked_bias_key] = torch.tensor(-1e9)
 
             inv_freq_key = re.sub(
-                "\.query_key_value\.bias", ".rotary_emb.inv_freq", new_key
+                r"\.query_key_value\.bias", ".rotary_emb.inv_freq", new_key
             )
             new_state_dict[inv_freq_key] = 1.0 / (
                 rotary_emb_base
@@ -217,7 +220,9 @@ class Converter_Codegen_Attention_HF_CS17(BaseCheckpointConverter_HF_CS):
             max_positions = action_fn_args["configs"][1]["model"][
                 "max_position_embeddings"
             ]
-            causal_mask_key = re.sub("out_proj\.weight", "causal_mask", new_key)
+            causal_mask_key = re.sub(
+                r"out_proj\.weight", "causal_mask", new_key
+            )
             new_state_dict[causal_mask_key] = torch.tril(
                 torch.ones((max_positions, max_positions), dtype=torch.uint8)
             ).view(1, 1, max_positions, max_positions)
@@ -256,7 +261,7 @@ class Converter_Codegen_Headless_HF_CS17(BaseCheckpointConverter_HF_CS):
             ConversionRule(
                 [
                     EquivalentSubkey("wte", "embedding_layer.word_embeddings"),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.replaceKey,
             ),
@@ -264,7 +269,7 @@ class Converter_Codegen_Headless_HF_CS17(BaseCheckpointConverter_HF_CS):
             ConversionRule(
                 [
                     EquivalentSubkey("ln_f", "transformer_decoder.norm"),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.replace_final_norm,
             ),
@@ -272,7 +277,7 @@ class Converter_Codegen_Headless_HF_CS17(BaseCheckpointConverter_HF_CS):
             ConversionRule(
                 [
                     EquivalentSubkey("h", "transformer_decoder.layers"),
-                    "\.\d+\.",
+                    r"\.\d+\.",
                     EquivalentSubkey("attn.", "self_attn."),
                     Converter_Codegen_Attention_HF_CS17(),
                 ],
@@ -282,9 +287,9 @@ class Converter_Codegen_Headless_HF_CS17(BaseCheckpointConverter_HF_CS):
             ConversionRule(
                 [
                     EquivalentSubkey("h", "transformer_decoder.layers"),
-                    "\.\d+\.",
+                    r"\.\d+\.",
                     EquivalentSubkey("ln_1", "norm1"),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.replaceKey,
             ),
@@ -292,27 +297,27 @@ class Converter_Codegen_Headless_HF_CS17(BaseCheckpointConverter_HF_CS):
             ConversionRule(
                 [
                     EquivalentSubkey("h", "transformer_decoder.layers"),
-                    "\.\d+\.",
+                    r"\.\d+\.",
                     EquivalentSubkey("mlp.fc_in", "ffn.ffn.0.linear_layer"),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.replaceKey,
             ),
             ConversionRule(
                 [
                     EquivalentSubkey("h", "transformer_decoder.layers"),
-                    "\.\d+\.",
+                    r"\.\d+\.",
                     EquivalentSubkey("mlp.fc_out", "ffn.ffn.1.linear_layer"),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.replaceKey,
             ),
-            ConversionRule(["lm_head\.(?:weight|bias)"], exists="right"),
-            ConversionRule(["ln_f\.(?:weight|bias)"], exists="right"),
+            ConversionRule([r"lm_head\.(?:weight|bias)"], exists="right"),
+            ConversionRule([r"ln_f\.(?:weight|bias)"], exists="right"),
             ConversionRule(
-                ["h\.\d+\.attn\.(?:masked_bias|bias)",], exists="left"
+                [r"h\.\d+\.attn\.(?:masked_bias|bias)",], exists="left"
             ),
-            ConversionRule(["h\.\d+\.attn\.causal_mask",], exists="left"),
+            ConversionRule([r"h\.\d+\.attn\.causal_mask",], exists="left"),
         ]
 
     def replace_final_norm(
@@ -328,7 +333,7 @@ class Converter_Codegen_Headless_HF_CS17(BaseCheckpointConverter_HF_CS):
         # CS 1.7 has both "ln_f" and "transformer_decoder.norm"
         # we need to copy the original ("ln_f") too:
         if from_index == 0:
-            ln_f_key = re.sub("transformer_decoder\.norm\.", "ln_f.", new_key)
+            ln_f_key = re.sub(r"transformer_decoder\.norm\.", "ln_f.", new_key)
             new_state_dict[ln_f_key] = old_state_dict[old_key]
 
     def pre_model_convert(
@@ -364,10 +369,11 @@ class Converter_Codegen_Headless_HF_CS17(BaseCheckpointConverter_HF_CS):
         configs,
         from_index,
         drop_unmatched_keys,
+        key_prefix="",
     ):
         if from_index == 0:
-            # We are converting from HF CodeGenModel (which is headless) -> CS GPTJModel (which has a head)
-            # We need to create 'lm_head' and init to default values
+            # We are converting from HF CodeGenModel (which is headless) -> CS GPTJModel
+            # (which has a head). We need to create 'lm_head' and init to default values
             hf_config = configs[0]
             cs_config = configs[1]
             use_bias_in_output = cs_config["model"].get(
@@ -380,16 +386,17 @@ class Converter_Codegen_Headless_HF_CS17(BaseCheckpointConverter_HF_CS):
             else:
                 lm_head_weight = torch.zeros((vocab_size, embed_dim))
                 lm_head_weight.normal_(mean=0.0, std=0.02)
-            new_state_dict["lm_head.weight"] = lm_head_weight
+            new_state_dict[key_prefix + "lm_head.weight"] = lm_head_weight
             if use_bias_in_output:
                 lm_head_bias = torch.zeros(vocab_size)
-                new_state_dict["lm_head.bias"] = lm_head_bias
+                new_state_dict[key_prefix + "lm_head.bias"] = lm_head_bias
         super().post_model_convert(
             old_state_dict,
             new_state_dict,
             configs,
             from_index,
             drop_unmatched_keys,
+            key_prefix=key_prefix,
         )
 
     @staticmethod
@@ -455,7 +462,7 @@ class Converter_Codegen_LMHeadModel_HF_CS17(BaseCheckpointConverter_HF_CS):
         super().__init__()
         self.rules = [
             ConversionRule(
-                ["lm_head\.(?:weight|bias)"], action=self.replaceKey,
+                [r"lm_head\.(?:weight|bias)"], action=self.replaceKey,
             ),
             ConversionRule(
                 [
@@ -724,64 +731,39 @@ class ConfigConverter_Codegen_Model_HF_CS17(BaseConfigConverter_HF_CS):
 class ConfigConverter_Codegen_Model_HF_CS18(
     ConfigConverter_Codegen_Model_HF_CS17
 ):
-    def __init__(self):
-        super().__init__()
-
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (FormatVersions("hf"), FormatVersions("cs-1.8", "cs-1.9"))
 
 
-class Converter_Codegen_LMHeadModel_CS18_CS20(BaseCheckpointConverter_CS_CS):
-    def __init__(self):
-        super().__init__()
-        # Model didn't change between 1.8/1.9 and 2.0. Copy all keys.
-        self.rules = [
-            ConversionRule([".*"], action=self.replaceKey),
-        ]
+class Converter_Codegen_LMHeadModel_CS18_CS20(
+    Converter_GPTJ_LMHeadModel_CS18_CS20
+):
+    r"""
+    Codegen uses the GPTJ backbone
+    """
 
     @classmethod
     def converter_note(cls) -> str:
-        return "{} <-> {} GPTJModel (configured as codegen)".format(
-            cls.formats()[0], cls.formats()[1]
-        )
-
-    @staticmethod
-    def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("cs-1.8", "cs-1.9"), FormatVersions("cs-2.0"))
+        return "GPTJModel (configured as codegen)"
 
     @staticmethod
     def get_config_converter_class() -> BaseConfigConverter:
         return ConfigConverter_Codegen_Model_CS18_CS20
 
 
-class ConfigConverter_Codegen_Model_CS18_CS20(BaseConfigConverter_CS_CS):
-    def __init__(self):
-        super().__init__()
-        # Only difference between 1.8/1.9 and 2.0 is introduction of norm_type
-        self.rules = [
-            ConversionRule(
-                [EquivalentSubkey("use_biasless_norm", "norm_type")],
-                action=self.convert_use_biasless_layer_norm,
-            ),
-            ConversionRule([".*"], action=self.replaceKey),
-        ]
-
-    def convert_use_biasless_layer_norm(self, *args):
-        convert_use_biasless_layer_norm_helper(self, *args)
-
-    @staticmethod
-    def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("cs-1.8", "cs-1.9"), FormatVersions("cs-2.0"))
+class ConfigConverter_Codegen_Model_CS18_CS20(
+    ConfigConverter_GPTJModel_CS18_CS20
+):
+    r"""
+    Codegen uses the GPTJ backbone
+    """
 
 
 class Converter_Codegen_Headless_HF_CS20(Converter_Codegen_Headless_HF_CS18):
-    def __init__(self):
-        super().__init__()
-
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-2.0"))
+        return (FormatVersions("hf"), FormatVersions("cs-2.0", "cs-2.1"))
 
     @staticmethod
     def get_config_converter_class() -> BaseConfigConverter:
@@ -791,12 +773,9 @@ class Converter_Codegen_Headless_HF_CS20(Converter_Codegen_Headless_HF_CS18):
 class Converter_Codegen_LMHeadModel_HF_CS20(
     Converter_Codegen_LMHeadModel_HF_CS18
 ):
-    def __init__(self):
-        super().__init__()
-
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-2.0"))
+        return (FormatVersions("hf"), FormatVersions("cs-2.0", "cs-2.1"))
 
     @staticmethod
     def get_config_converter_class() -> BaseConfigConverter:
@@ -818,4 +797,22 @@ class ConfigConverter_Codegen_Model_HF_CS20(
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-2.0"))
+        return (FormatVersions("hf"), FormatVersions("cs-2.0", "cs-2.1"))
+
+
+###########################################################
+# In CS 2.1, we refactored the embedding layer.
+# CS 2.0 <> CS 2.1. We don't need a separate HF <> CS 2.1 converters since
+# HF only supports RoPE which doesn't produce any checkpoint keys.
+###########################################################
+
+
+class Converter_Codegen_LMHeadModel_CS20_CS21(
+    Converter_GPTJ_LMHeadModel_CS20_CS21
+):
+    def __init__(self):
+        super().__init__()
+
+    @classmethod
+    def converter_note(cls) -> str:
+        return "GPTJLMHeadModel class (configured as codegen)"

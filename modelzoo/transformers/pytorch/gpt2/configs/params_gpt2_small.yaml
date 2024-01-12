@@ -40,7 +40,6 @@ model:
     # Embedding
     hidden_size: 768
     vocab_size: 50257
-    use_position_embedding: True
     position_embedding_type: "learned"
     share_embedding_weights: True
     max_position_embeddings: 2048
@@ -49,8 +48,8 @@ model:
     num_hidden_layers: 12
     dropout_rate: 0.1
     layer_norm_epsilon: 1.0e-5
-    loss_scaling: "batch_size"
-    loss_weight: 0.00048828125
+    loss_scaling: "num_tokens"
+    loss_weight: 1.0
 
     # Encoder - Attention
     num_heads: 12
@@ -88,7 +87,6 @@ optimizer:
       - scheduler: "Linear" # Cosine not supported
         initial_learning_rate: 0.0006
         end_learning_rate: 0.0
-        alpha: 0.1 # Decay by 10x
         total_iters: 150000
     weight_decay: 0.01
     initial_loss_scale: 2147483648.0

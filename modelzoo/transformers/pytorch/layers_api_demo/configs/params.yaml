@@ -22,6 +22,7 @@ model:
 
     # Cerebras parameters
     mixed_precision: True
+    fp16_type: "cbfloat16"
 
 optimizer:
     optimizer_type: "Adam"

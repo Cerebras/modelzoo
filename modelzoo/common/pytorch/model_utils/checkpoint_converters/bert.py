@@ -29,6 +29,10 @@ from modelzoo.common.pytorch.model_utils.checkpoint_converters.base_converter im
     EquivalentSubkey,
     FormatVersions,
 )
+from modelzoo.common.pytorch.model_utils.checkpoint_converters.helper import (
+    Build_HF_CS_Converter_WithOptionalModel,
+    maybe_tie_lm_head,
+)
 
 
 class Converter_BertLayerNorm_HF_CS(BaseCheckpointConverter_HF_CS):
@@ -37,7 +41,7 @@ class Converter_BertLayerNorm_HF_CS(BaseCheckpointConverter_HF_CS):
         self.rules = [
             # torch.nn.LayerNorm has .weight & .bias properties
             ConversionRule(
-                [EquivalentSubkey(hf_name, cs_name), "\.(?:weight|bias)",],
+                [EquivalentSubkey(hf_name, cs_name), r"\.(?:weight|bias)",],
                 action=self.replaceKey,
             ),
             # Old HF implementation uses .gamma instead of .weight
@@ -75,14 +79,14 @@ class Converter_BertModel_CS16_CS17(BaseCheckpointConverter_CS_CS):
             ConversionRule(
                 [
                     EquivalentSubkey("embeddings", "embedding_layer"),
-                    "\.word_embeddings\.weight",
+                    r"\.word_embeddings\.weight",
                 ],
                 action=self.replaceKey,
             ),
             ConversionRule(
                 [
                     EquivalentSubkey("embeddings", "embedding_layer"),
-                    "\.position_embeddings\.weight",
+                    r"\.position_embeddings\.weight",
                 ],
                 action=self.position_embeddings_convert,
             ),
@@ -92,11 +96,11 @@ class Converter_BertModel_CS16_CS17(BaseCheckpointConverter_CS_CS):
                         "embeddings.token_type_embeddings",
                         "embedding_layer.segment_embeddings",
                     ),
-                    "\.weight",
+                    r"\.weight",
                 ],
                 action=self.replaceKey,
             ),
-            ConversionRule(["embeddings\.position_ids",], exists="left",),
+            ConversionRule([r"embeddings\.position_ids",], exists="left",),
             ConversionRule(
                 [
                     EquivalentSubkey("embeddings.", ""),
@@ -110,11 +114,11 @@ class Converter_BertModel_CS16_CS17(BaseCheckpointConverter_CS_CS):
                     EquivalentSubkey(
                         "encoder.layer", "transformer_encoder.layers",
                     ),
-                    "\.\d+\.",
+                    r"\.\d+\.",
                     EquivalentSubkey(
                         "attention.self.query", "self_attn.proj_q_dense_layer"
                     ),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.replaceKey,
             ),
@@ -123,11 +127,11 @@ class Converter_BertModel_CS16_CS17(BaseCheckpointConverter_CS_CS):
                     EquivalentSubkey(
                         "encoder.layer", "transformer_encoder.layers",
                     ),
-                    "\.\d+\.",
+                    r"\.\d+\.",
                     EquivalentSubkey(
                         "attention.self.key", "self_attn.proj_k_dense_layer"
                     ),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.replaceKey,
             ),
@@ -136,11 +140,11 @@ class Converter_BertModel_CS16_CS17(BaseCheckpointConverter_CS_CS):
                     EquivalentSubkey(
                         "encoder.layer", "transformer_encoder.layers",
                     ),
-                    "\.\d+\.",
+                    r"\.\d+\.",
                     EquivalentSubkey(
                         "attention.self.value", "self_attn.proj_v_dense_layer"
                     ),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.replaceKey,
             ),
@@ -149,12 +153,12 @@ class Converter_BertModel_CS16_CS17(BaseCheckpointConverter_CS_CS):
                     EquivalentSubkey(
                         "encoder.layer", "transformer_encoder.layers",
                     ),
-                    "\.\d+\.",
+                    r"\.\d+\.",
                     EquivalentSubkey(
                         "attention.output.dense",
                         "self_attn.proj_output_dense_layer",
                     ),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.replaceKey,
             ),
@@ -163,7 +167,7 @@ class Converter_BertModel_CS16_CS17(BaseCheckpointConverter_CS_CS):
                     EquivalentSubkey(
                         "encoder.layer", "transformer_encoder.layers",
                     ),
-                    "\.\d+\.",
+                    r"\.\d+\.",
                     EquivalentSubkey("attention.output.", ""),
                     Converter_BertLayerNorm_HF_CS("LayerNorm", "norm1"),
                 ],
@@ -174,11 +178,11 @@ class Converter_BertModel_CS16_CS17(BaseCheckpointConverter_CS_CS):
                     EquivalentSubkey(
                         "encoder.layer", "transformer_encoder.layers",
                     ),
-                    "\.\d+\.",
+                    r"\.\d+\.",
                     EquivalentSubkey(
                         "intermediate.dense", "ffn.ffn.0.linear_layer"
                     ),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.replaceKey,
             ),
@@ -187,9 +191,9 @@ class Converter_BertModel_CS16_CS17(BaseCheckpointConverter_CS_CS):
                     EquivalentSubkey(
                         "encoder.layer", "transformer_encoder.layers",
                     ),
-                    "\.\d+\.",
+                    r"\.\d+\.",
                     EquivalentSubkey("output.dense", "ffn.ffn.1.linear_layer"),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.replaceKey,
             ),
@@ -198,7 +202,7 @@ class Converter_BertModel_CS16_CS17(BaseCheckpointConverter_CS_CS):
                     EquivalentSubkey(
                         "encoder.layer", "transformer_encoder.layers",
                     ),
-                    "\.\d+\.",
+                    r"\.\d+\.",
                     EquivalentSubkey("output.", ""),
                     Converter_BertLayerNorm_HF_CS("LayerNorm", "norm2"),
                 ],
@@ -207,13 +211,39 @@ class Converter_BertModel_CS16_CS17(BaseCheckpointConverter_CS_CS):
             # Head:
             ConversionRule(
                 [
-                    "pooler\.",
+                    r"pooler\.",
                     EquivalentSubkey("dense", "pooler.ffn.0.linear_layer"),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
-                action=self.replaceKey,
+                action=self.convert_pooler_factory_fn(),
             ),
         ]
+
+    def convert_pooler_factory_fn(self):
+        """
+        DPR, which uses two BERT sub-converters, requires different 
+        behavior of the pooler conversion, so we generalize to allow 
+        overriding. 
+        """
+
+        def bert_pooler_convert(
+            old_key,
+            new_key,
+            old_state_dict,
+            new_state_dict,
+            from_index,
+            action_fn_args,
+        ):
+            return self.replaceKey(
+                old_key,
+                new_key,
+                old_state_dict,
+                new_state_dict,
+                from_index,
+                action_fn_args,
+            )
+
+        return bert_pooler_convert
 
     def position_embeddings_convert(
         self,
@@ -230,7 +260,7 @@ class Converter_BertModel_CS16_CS17(BaseCheckpointConverter_CS_CS):
         if from_index == 1:
             # HF stores an register buffer with position_ids
             position_id_key = re.sub(
-                "\.position_embeddings\.weight", ".position_ids", new_key
+                r"\.position_embeddings\.weight", ".position_ids", new_key
             )
             if "max_position_embeddings" in action_fn_args["configs"][0]:
                 max_position_embeddings = action_fn_args["configs"][0][
@@ -295,9 +325,6 @@ class Converter_BertModel_CS16_CS18(BaseCheckpointConverter_CS_CS):
 
 
 class ConfigConverter_Bert_CS16_CS18(ConfigConverter_Bert_CS16_CS17):
-    def __init__(self):
-        super().__init__()
-
     def pre_config_convert(
         self, config, from_index,
     ):
@@ -309,19 +336,22 @@ class ConfigConverter_Bert_CS16_CS18(ConfigConverter_Bert_CS16_CS17):
                 != config["encoder_nonlinearity"]
             ):
                 raise ConfigConversionError(
-                    "pooler_nonlinearity was introduced in CS 1.8. Prior to that, the pooler nonlinearity must be the same as encoder_nonlinearity"
+                    "pooler_nonlinearity was introduced in CS 1.8. Prior to that, the pooler "
+                    "nonlinearity must be the same as encoder_nonlinearity."
                 )
             if "mlm_nonlinearity" in config:
                 if config["mlm_nonlinearity"] != "gelu":
                     raise ConfigConversionError(
-                        "mlm_nonlinearity was introduced in CS 1.8. Prior to that, the mlm nonlinearity must be gelu"
+                        "mlm_nonlinearity was introduced in CS 1.8. Prior to that, the mlm "
+                        "nonlinearity must be gelu."
                     )
             else:
                 if config["encoder_nonlinearity"] != "gelu":
                     raise ConfigConversionError(
-                        "mlm_nonlinearity was introduced in CS 1.8. Prior to that, the mlm nonlinearity must be gelu. However, the input config has an mlm_nonlinearity which defaults to encoder_nonlinearity = {}".format(
-                            config["encoder_nonlinearity"]
-                        )
+                        f"mlm_nonlinearity was introduced in CS 1.8. Prior to that, the mlm "
+                        f"nonlinearity must be gelu. However, the input config has an "
+                        f"mlm_nonlinearity which defaults to encoder_nonlinearity = "
+                        f"{config['encoder_nonlinearity']}"
                     )
         return config
 
@@ -382,12 +412,9 @@ class Converter_Bert_CS17_CS18(BaseCheckpointConverter_CS_CS):
         return ConfigConverter_Bert_CS17_CS18
 
 
+# Config didn't change between 1.6 and 1.7. Therefore 1.7 <-> 1.8
+# converter is equivalent to 1.6 <-> 1.8 converter.
 class ConfigConverter_Bert_CS17_CS18(ConfigConverter_Bert_CS16_CS18):
-    def __init__(self):
-        # Config didn't change between 1.6 and 1.7. Therefore 1.7 <-> 1.8
-        # converter is equivalent to 1.6 <-> 1.8 converter.
-        super().__init__()
-
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
@@ -399,9 +426,6 @@ class ConfigConverter_Bert_CS17_CS18(ConfigConverter_Bert_CS16_CS18):
 class Converter_BertModel_HF_CS17(
     Converter_BertModel_CS16_CS17, BaseCheckpointConverter_HF_CS
 ):
-    def __init__(self):
-        super().__init__()
-
     def pre_model_convert(
         self,
         old_state_dict,
@@ -485,7 +509,7 @@ class Converter_BertPretrainModel_CS16_CS17(BaseCheckpointConverter_CS_CS):
                         "cls.predictions.transform.dense",
                         "bert_mlm_head.mlm_transform.ffn.ffn.0.linear_layer",
                     ),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.replaceKey,
             ),
@@ -505,7 +529,7 @@ class Converter_BertPretrainModel_CS16_CS17(BaseCheckpointConverter_CS_CS):
                         "cls.predictions.decoder",
                         "bert_mlm_head.classifier.ffn.0.linear_layer",
                     ),
-                    "\.weight",
+                    r"\.weight",
                 ],
                 action=self.replaceKey,
             ),
@@ -515,18 +539,18 @@ class Converter_BertPretrainModel_CS16_CS17(BaseCheckpointConverter_CS_CS):
                         "cls.predictions.decoder",
                         "bert_mlm_head.classifier.ffn.0.linear_layer",
                     ),
-                    "\.bias",
+                    r"\.bias",
                 ],
                 action=self.convert_cls_predictions_bias,
             ),
-            ConversionRule(["cls\.predictions\.bias"], exists="left"),
+            ConversionRule([r"cls\.predictions\.bias"], exists="left"),
             ConversionRule(
                 [
                     EquivalentSubkey(
                         "cls.seq_relationship",
                         "bert_cls_head.classifier.ffn.0.linear_layer",
                     ),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.replaceKey,
             ),
@@ -551,7 +575,7 @@ class Converter_BertPretrainModel_CS16_CS17(BaseCheckpointConverter_CS_CS):
         )
         if from_index == 1:
             # HF stores an extra copy of the decoder bias in the predictions object itself
-            bias_key = re.sub("\.decoder\.", ".", new_key)
+            bias_key = re.sub(r"\.decoder\.", ".", new_key)
             self.replaceKey(
                 old_key,
                 bias_key,
@@ -643,9 +667,6 @@ class Converter_BertPretrainModel_CS16_CS18(BaseCheckpointConverter_CS_CS):
 class Converter_BertPretrainModel_HF_CS17(
     Converter_BertPretrainModel_CS16_CS17, BaseCheckpointConverter_HF_CS
 ):
-    def __init__(self):
-        super().__init__()
-
     def pre_model_convert(
         self,
         old_state_dict,
@@ -732,10 +753,16 @@ class Converter_BertPretrainModel_HF_CS18(Converter_BertPretrainModel_HF_CS17):
 class ConfigConverter_Bert_HF_CS17(BaseConfigConverter_HF_CS):
     def __init__(self):
         super().__init__()
+        # allows DPR child class to set model_type without being
+        # overriden in the super().init() call
+        if not hasattr(self, "model_type"):
+            self.model_type = "bert"
         self.rules = [
             ConversionRule(
                 ["model_type"],
-                action=BaseConfigConverter.assert_factory_fn(0, "bert"),
+                action=BaseConfigConverter.assert_factory_fn(
+                    0, self.model_type
+                ),
             ),
             # Embedding
             ConversionRule(["vocab_size"], action=self.replaceKey),
@@ -926,9 +953,9 @@ class ConfigConverter_Bert_HF_CS17(BaseConfigConverter_HF_CS):
                 and new_config["encoder_nonlinearity"] != "gelu"
             ):
                 logging.warning(
-                    "HF used a mlm_nonlinearity of {} while CS 1.7 is fixed to gelu. Please use CS 1.8 if you want to control mlm_nonlinearity".format(
-                        new_config["encoder_nonlinearity"]
-                    )
+                    f"HF used a mlm_nonlinearity of {new_config['encoder_nonlinearity']} while "
+                    f"CS 1.7 is fixed to gelu. Please use CS 1.8 if you want to control "
+                    f"mlm_nonlinearity."
                 )
                 new_config["mlm_nonlinearity"] = "gelu"
 
@@ -946,9 +973,6 @@ class ConfigConverter_Bert_HF_CS17(BaseConfigConverter_HF_CS):
 
 
 class ConfigConverter_Bert_HF_CS18(ConfigConverter_Bert_HF_CS17):
-    def __init__(self):
-        super().__init__()
-
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
@@ -964,9 +988,9 @@ class ConfigConverter_Bert_HF_CS18(ConfigConverter_Bert_HF_CS17):
             if "pooler_nonlinearity" not in config:
                 if config["encoder_nonlinearity"] != "tanh":
                     raise ConfigConversionError(
-                        "CS Model used a pooler_nonlinearity of {} according to encoder_nonlinearity. HF only supports tanh in the pooler nonlinearity".format(
-                            config["encoder_nonlinearity"]
-                        )
+                        f"CS Model used a pooler_nonlinearity of {config['encoder_nonlinearity']} "
+                        f"according to encoder_nonlinearity. HF only supports tanh in the pooler "
+                        f"nonlinearity."
                     )
         return config
 
@@ -992,3 +1016,208 @@ class ConfigConverter_Bert_HF_CS18(ConfigConverter_Bert_HF_CS17):
             from_index,
             drop_unmatched_keys,
         )
+
+
+class Converter_Bert_CS18_CS20(BaseCheckpointConverter_CS_CS):
+    def __init__(self):
+        super().__init__()
+        # Checkpoint didn't change between 1.8/1.9 and 2.0. Handle weight tying
+        # and copy all keys.
+        self.rules = [
+            ConversionRule(
+                [
+                    "(?:model.|)",
+                    EquivalentSubkey(
+                        "bert_encoder.embedding_layer.word_embeddings",
+                        "bert_mlm_head.classifier.ffn.0.linear_layer",
+                    ),
+                    "\.weight",
+                ],
+                action=maybe_tie_lm_head,
+            ),
+            ConversionRule(
+                [
+                    "(?:model.|)",
+                    EquivalentSubkey(
+                        "bert_mlm_head.classifier.ffn.0.linear_layer",
+                        "bert_encoder.embedding_layer.word_embeddings",
+                    ),
+                    "\.weight",
+                ],
+                action=maybe_tie_lm_head,
+            ),
+            ConversionRule([".*"], action=self.replaceKey),
+        ]
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (
+            FormatVersions("cs-1.8", "cs-1.9"),
+            FormatVersions("cs-2.0"),
+        )
+
+    @classmethod
+    def converter_note(cls) -> str:
+        return "BertForPreTraining class"
+
+    @staticmethod
+    def get_config_converter_class() -> BaseConfigConverter:
+        return ConfigConverter_Bert_CS18_CS20
+
+
+# Config didn't change between 1.8/1.9 and 2.0.
+class ConfigConverter_Bert_CS18_CS20(BaseConfigConverter_CS_CS):
+    def __init__(self):
+        super().__init__()
+        self.rules = [
+            ConversionRule([".*"], action=self.replaceKey),
+        ]
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (
+            FormatVersions("cs-1.8", "cs-1.9"),
+            FormatVersions("cs-2.0"),
+        )
+
+
+###########################################################
+# In CS 2.1, we refactored the embedding layer.
+# CS 2.0 <> CS 2.1, and HF <> CS 2.1 converters:
+###########################################################
+
+
+class Converter_Bert_CS20_CS21(BaseCheckpointConverter_CS_CS):
+    def __init__(self):
+        super().__init__()
+        self.rules = [
+            # Refactored embeddings (BERT only supported fixed):
+            ConversionRule(
+                [
+                    "(?:model\.|)",
+                    "(?:bert_encoder|bert)\.",
+                    EquivalentSubkey(
+                        "embedding_layer.position_embeddings.weight",
+                        "embedding_layer.position_embeddings.embed.weight",
+                    ),
+                ],
+                action=self.replaceKey,
+            ),
+            ConversionRule(
+                [
+                    "(?:model\.|)",
+                    "(?:bert_encoder|bert)\.",
+                    EquivalentSubkey(
+                        "embedding_layer.position_embeddings",
+                        "embedding_layer.position_embeddings.fpe",
+                    ),
+                ],
+                action=self.replaceKey,
+            ),
+            # Copy everything else
+            ConversionRule([".*"], action=self.replaceKey),
+        ]
+
+    @classmethod
+    def converter_note(cls) -> str:
+        return (
+            "BertForPreTraining, BertForSequenceClassification, "
+            "BertForQuestionAnswering, and BertForSummarization classes"
+        )
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("cs-2.0"), FormatVersions("cs-2.1"))
+
+    @staticmethod
+    def get_config_converter_class() -> BaseConfigConverter:
+        return ConfigConverter_BertModel_CS20_CS21
+
+
+class ConfigConverter_BertModel_CS20_CS21(BaseConfigConverter_CS_CS):
+    def __init__(self):
+        super().__init__()
+        # No differences in config
+        self.rules = [
+            ConversionRule([".*"], action=self.replaceKey),
+        ]
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("cs-2.0"), FormatVersions("cs-2.1"))
+
+
+class ConfigConverter_Bert_HF_CS21(ConfigConverter_Bert_HF_CS18):
+    "CS 2.1 config is the same as CS 2.0"
+
+    def __init__(self):
+        super().__init__()
+        del self.post_convert_defaults[1]["enable_vts"]
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-2.1"))
+
+
+class Converter_BertModel_WithoutOptionalModel_HF_CS21(
+    Converter_BertModel_HF_CS17
+):
+    def __init__(self):
+        super().__init__()
+        self.rules = [
+            ConversionRule(
+                [
+                    EquivalentSubkey("embeddings", "embedding_layer"),
+                    "\.position_embeddings",
+                    EquivalentSubkey("", ".embed"),
+                    "\.weight",
+                ],
+                action=self.position_embeddings_convert,
+            ),
+            *self.rules,
+        ]
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (
+            FormatVersions("hf"),
+            FormatVersions("cs-2.1"),
+        )
+
+    @staticmethod
+    def get_config_converter_class() -> BaseConfigConverter:
+        return ConfigConverter_Bert_HF_CS21
+
+
+class Converter_BertPretrainModel_WithoutOptionalModel_HF_CS21(
+    Converter_BertPretrainModel_HF_CS17
+):
+    def __init__(self):
+        super().__init__()
+        self.rules = [
+            ConversionRule(
+                [
+                    EquivalentSubkey("bert.", "bert_encoder."),
+                    Converter_BertModel_WithoutOptionalModel_HF_CS21(),
+                ],
+            ),
+            *self.rules,
+        ]
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (
+            FormatVersions("hf"),
+            FormatVersions("cs-2.1"),
+        )
+
+    @staticmethod
+    def get_config_converter_class() -> BaseConfigConverter:
+        return ConfigConverter_Bert_HF_CS21
+
+
+Converter_BertPretrainModel_HF_CS21 = Build_HF_CS_Converter_WithOptionalModel(
+    "Converter_BertPretrainModel_HF_CS21",
+    Converter_BertPretrainModel_WithoutOptionalModel_HF_CS21,
+    derived_class=Converter_BertPretrainModel_WithoutOptionalModel_HF_CS21,
+)

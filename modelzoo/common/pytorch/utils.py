@@ -21,6 +21,7 @@ import re
 import sys
 import time
 import traceback
+from pathlib import Path
 from typing import Any, Callable, Generator, List, Optional, Tuple, Union
 
 import torch
@@ -225,16 +226,26 @@ def setup_logging(
 
             return super().format(record)
 
+    def build_block_filter(handler_type: str):
+        """Build a filter to block records from a specific handler."""
+
+        def block_filter(record):
+            if hasattr(record, "block"):
+                return record.block != handler_type
+            return True
+
+        return block_filter
+
     handlers = []
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(CustomFormatter())
+    handler.addFilter(build_block_filter("console"))
     handlers.append(handler)
     if logging_dir:
-        os.makedirs(logging_dir, exist_ok=True)
-        time_stamp = time.strftime("%Y%m%d_%H%M%S")
-        logging_file = os.path.join(logging_dir, f"run_{time_stamp}.log")
+        logging_file = os.path.join(logging_dir, f"run.log")
         handler = logging.FileHandler(logging_file)
         handler.setFormatter(CustomFormatter())
+        handler.addFilter(build_block_filter("file"))
         handlers.append(handler)
 
     def get_level_name(level):
@@ -285,14 +296,31 @@ def setup_logging(
         msg = "".join(
             traceback.format_exception(exc_type, exc_value, exc_traceback)
         )
-        logging.error(f"Uncaught exception:\n{msg}")
-        if (
-            original_hook != sys.__excepthook__
-            and original_hook != cerebras_logging_hook
-        ):
-            original_hook(exc_type, exc_value, exc_traceback)
+        # Block console logging to avoid duplicate messages since exceptions
+        # are logged by python interpreter by default anyways.
+        logging.error(f"Uncaught exception:\n{msg}", extra={"block": "console"})
+
+        # Run the original except hook which prints the exception to stderr
+        original_hook(exc_type, exc_value, exc_traceback)
 
     sys.excepthook = cerebras_logging_hook
+
+
+def setup_artifact_dir(model_dir: str, mode: str):
+    """
+    Create a unique subdirectory for this run by generating a time stamp so
+    that parallel runs using the same model_dir don't overwrite common files.
+    """
+    time_stamp = time.strftime("%Y%m%d_%H%M%S")
+    artifact_dir = Path(model_dir) / "cerebras_logs" / mode / time_stamp
+    artifact_dir.mkdir(parents=True)
+
+    # Create a symlink to the artifact_dir so that it's easy to find the latest run.
+    # The symlink needs to be at the same level as the subdirectories.
+    latest = artifact_dir.parent.parent.joinpath("latest")
+    latest.unlink(missing_ok=True)
+    latest.symlink_to(artifact_dir.resolve())
+    return str(artifact_dir)
 
 
 class SampleGenerator(object):

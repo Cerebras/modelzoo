@@ -14,6 +14,7 @@
 
 import json
 import os
+from collections import OrderedDict, defaultdict
 from typing import Union
 
 import h5py
@@ -25,11 +26,18 @@ from modelzoo.common.input.utils import check_and_create_output_dirs
 
 
 def write_hdf5_file(
-    file_path, data, n_examples, chunks, dtype="i4", compression="gzip"
+    file_path,
+    dataset_name,
+    data,
+    n_examples,
+    chunks,
+    dtype="i4",
+    compression="gzip",
 ):
     """Write data to HDF5 file.
 
     Args:
+        dataset_name (string): HDF5 dataset name
         file_path (string): HDF5 file path.
         data (numpy array): Input features and labels that will be written to HDF5.
         n_examples (int): Number of examples that will be written in the file.
@@ -37,10 +45,10 @@ def write_hdf5_file(
         dtype (string): Data type for the HDF5 dataset.
         compression (string): Compression strategy.
     """
-    with h5py.File(file_path, mode='w') as h5_file:
+    with h5py.File(file_path, mode='a') as h5_file:
         h5_file.attrs["n_examples"] = n_examples
         h5_file.create_dataset(
-            "data",
+            dataset_name,
             data=data,
             dtype=dtype,
             chunks=chunks,
@@ -87,62 +95,99 @@ def convert_dataset_to_HDF5(
     writer_index = 1
     total_written = 0
     example_index = 0
-    data_buffer = []
+    feature_groups = defaultdict(list)
 
     for batch in tqdm(dataloader):
-        # Examine shapes and features
+        # Examine shapes and features to determine how many datasets/groups are required in the HDF5 file
         if total_written == 0:
-            features_len = len(batch)
-            for _, value in batch.items():
-                max_seq_length = value.shape[1]
+            # store all feature names together that have same shape
+            for feature, value in batch.items():
+                # Drop the batch dimension from shape
+                shape = value.shape[1:]
+                feature_groups[shape].append(feature)
 
-        batch_np_array = np.concatenate(
-            [np.expand_dims(batch[feature], axis=1) for feature in batch],
-            axis=1,
-        )
-        batch_np_array = np.split(
-            batch_np_array, batch_np_array.shape[0], axis=0
-        )
+            feature_groups = OrderedDict(feature_groups)
+            num_groups = len(feature_groups)
+            data_buffer = [[] for _ in range(num_groups)]
 
-        for example in batch_np_array:
-            data_buffer.append(np.squeeze(example, axis=0))
+        feature_groups_np_arrays = []
+        for group, features in feature_groups.items():
+            # batch starts as dictionary of key (str): value (torch.Tensor)
+            # where value may have arbitrary dimensions
+            # Then we stack all features that have the same shape
+            batch_np_array = np.concatenate(
+                [
+                    np.expand_dims(batch[feature], axis=1)
+                    for feature in features
+                ],
+                axis=1,
+            )
+            # split the batch into a list of single elements
+            batch_np_array = np.split(
+                batch_np_array, batch_np_array.shape[0], axis=0
+            )
+            feature_groups_np_arrays.append(batch_np_array)
+
+        # collect elements from batch into a buffer until we reach
+        # samples_per_file, then clear buffer and continue adding
+        for group_examples in zip(*feature_groups_np_arrays):
+            for i, example in enumerate(group_examples):
+                data_buffer[i].append(np.squeeze(example, axis=0))
+
             example_index += 1
             if example_index == samples_per_file:
-                file_samples = np.stack(data_buffer, axis=0)
                 fp = os.path.join(output_dir, f"{name}-{writer_index}.h5")
-                write_hdf5_file(
-                    file_path=fp,
-                    data=file_samples,
-                    n_examples=example_index,
-                    chunks=(1, features_len, max_seq_length),
-                    dtype=dtype,
-                    compression=compression,
-                )
+
+                for i in range(num_groups):
+                    file_samples = np.stack(data_buffer[i], axis=0)
+                    chunk_size = (1, *file_samples.shape[1:])
+
+                    write_hdf5_file(
+                        dataset_name="data" if num_groups == 1 else f"data_{i}",
+                        file_path=fp,
+                        data=file_samples,
+                        n_examples=example_index,
+                        chunks=chunk_size,
+                        dtype=dtype,
+                        compression=compression,
+                    )
+
                 example_index = 0
-                data_buffer = []
+                data_buffer = [[] for _ in range(num_groups)]
                 writer_index += 1
             total_written += 1
 
-    # write the last file if there are examples in data_buffer,
-    # then break the infinite loop and exit
+    # write the last file if there are examples in data_buffer
     if example_index > 0:
-        file_samples = np.stack(data_buffer, axis=0)
         fp = os.path.join(output_dir, f"{name}-{writer_index}.h5")
-        write_hdf5_file(
-            file_path=fp,
-            data=file_samples,
-            n_examples=example_index,
-            chunks=(1, features_len, max_seq_length),
-            dtype=dtype,
-            compression=compression,
-        )
+        for i in range(num_groups):
+            file_samples = np.stack(data_buffer[i], axis=0)
+            chunk_size = (1, *file_samples.shape[1:])
+            write_hdf5_file(
+                dataset_name="data" if num_groups == 1 else f"data_{i}",
+                file_path=fp,
+                data=file_samples,
+                n_examples=example_index,
+                chunks=chunk_size,
+                dtype=dtype,
+                compression=compression,
+            )
 
     params = {}
     params["n_examples"] = total_written
-    params["features"] = [key for key in batch.keys()]
+    # For backward compatibility
+    if num_groups == 1:
+        params[f"features"] = list(feature_groups.values())[0]
+        params["features_len"] = len(params[f"features"])
+        params["max_sequence_length"] = list(feature_groups.keys())[0][0]
+    else:
+        for i, (group, features) in enumerate(feature_groups.items()):
+            params[f"data_{i}_features"] = features
+            params[f"data_{i}_features_len"] = len(features)
+            params[f"data_{i}_max_sequence_length"] = list(group)[-1]
+            params[f"data_{i}_shape"] = list(group)
+
     params["output_dir"] = output_dir
-    params["features_len"] = features_len
-    params["max_seq_length"] = max_seq_length
     params["dtype"] = dtype
     params["compression"] = compression
     params["samples_per_file"] = samples_per_file

@@ -2,6 +2,22 @@
 
 The following are the release notes for the Model Zoo repository.
 
+## Version 2.1.0
+
+### New features and enhancements
+
+#### Large language models
+
+* [MPT](./modelzoo/transformers/pytorch/mpt) and [Mistral](./modelzoo/transformers/pytorch/mistral) are now part of Model Zoo models.
+* Release 2.1.0 introduces dynamic loss scaling for [cbfloat16](https://docs.cerebras.net/en/latest/wsc/how_to_guides/cs-1-data-formats.html#ref-cbfloat16) training. When initializing from ``bfloat`` checkpoints from past releases without loss scaling, explicitly specify ``--load_checkpoint_states`` or its ``runconfig`` equivalent to ensure parameter loading from ``params.yaml``. Subsequent checkpoints will inherit dynamic loss scaling and not require this.
+* Release 2.1.0 includes support for running non-generative (non-autoregressive) evaluation tasks in [Eleuther AI's Evaluation Harness (EEH)](https://docs.cerebras.net/en/latest/wsc/general/eval_harness.html) on the Cerebras Wafer-Scale cluster. The supported EEH version is v0.3.0. Supported Model Zoo models are GPT2, GPT3, BTLM, BLOOM, LLaMA, Mistral, MPT, StarCoder, and SantaCoder on CS-2.
+* Release 2.1.0 introduces [Map and Iterable dataloaders](https://docs.cerebras.net/en/latest/wsc/tutorials/dataloader-checkpointing.html) for large language models in Model Zoo, enhancing training workflow efficiency.
+* Cerebras now enables direct HDF5 generation from raw sources, streamlining workflow efficiency and enabling unparalleled control over data format and granularity. Check out our [detailed guide](https://docs.cerebras.net/en/latest/wsc/port/prepare-data/chunk_preprocessing.html) to learn about the process.
+
+#### Sparsity
+
+* In release 2.1.0, we introduce [Sparse Iso-FLOP Transformations for Maximizing Training Efficiency](https://arxiv.org/abs/2303.11525), a technique designed to improve model quality over dense without increasing training FLOPs. To get started with Sparse-IFT, we have provided a comprehensive [Sparsity how-to-guide](https://docs.cerebras.net/en/latest/wsc/how_to_guides/sparsity.html). Additionally, you can explore reference configurations in the Model Zoo to leverage it effectively in your projects. The Model Zoo reference configuration is accessible [SPDF Model Zoo configuration](./modelzoo/transformers/pytorch/gpt3/configs/sparsity/pretraining). For more information, you can read our [blog](https://www.cerebras.net/blog/can-sparsity-make-ai-models-more-accurate) or contact the support team.
+
 ## Release 2.0.2
 
 ### New features and enhancements

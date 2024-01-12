@@ -24,7 +24,12 @@ from modelzoo.common.pytorch.model_utils.checkpoint_converters.base_converter im
 )
 from modelzoo.common.pytorch.model_utils.checkpoint_converters.gpt2_hf_cs import (
     ConfigConverter_GPT2Model_HF_CS20,
+    Converter_GPT2_Attention_HF_CS17,
+    Converter_GPT2LMHeadModel_CS20_CS21,
     Converter_GPT2Model_HF_CS17,
+)
+from modelzoo.common.pytorch.model_utils.checkpoint_converters.helper import (
+    Build_HF_CS_Converter_WithOptionalModel,
 )
 
 
@@ -45,16 +50,19 @@ class Converter_BTLMModel_WithoutModelPrefix_HF_CS20(
             ConversionRule(
                 [
                     EquivalentSubkey("h", "transformer_decoder.layers"),
-                    "\.\d+\.",
+                    r"\.\d+\.",
                     EquivalentSubkey(
                         "mlp.c_fc2", "ffn.ffn.0.linear_layer_for_glu"
                     ),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.ffn_converter(),
             ),
             *self.rules,
         ]
+
+    def attention_converter_class(self):
+        return Converter_GPT2_Attention_HF_CS17(generate_hf_biases=False)
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
@@ -75,6 +83,9 @@ class Converter_BTLMModel_WithoutModelPrefix_HF_CS20(
     def get_config_converter_class() -> BaseConfigConverter:
         return ConfigConverter_BTLMModel_HF_CS20
 
+    def attempt_mup_to_sp(self) -> bool:
+        return False
+
 
 class Converter_BTLMLMHeadModel_WithoutModelPrefix_HF_CS20(
     BaseCheckpointConverter_HF_CS
@@ -83,7 +94,7 @@ class Converter_BTLMLMHeadModel_WithoutModelPrefix_HF_CS20(
         super().__init__()
         self.rules = [
             ConversionRule(
-                ["lm_head\.(?:weight|bias)"], action=self.replaceKey,
+                [r"lm_head\.(?:weight|bias)"], action=self.replaceKey,
             ),
             ConversionRule(
                 [
@@ -108,49 +119,22 @@ class Converter_BTLMLMHeadModel_WithoutModelPrefix_HF_CS20(
     def get_config_converter_class() -> BaseConfigConverter:
         return ConfigConverter_BTLMModel_HF_CS20
 
-
-class Converter_BTLMModel_HF_CS20(
-    Converter_BTLMModel_WithoutModelPrefix_HF_CS20
-):
-    def __init__(self):
-        super().__init__()
-        self.rules = [
-            # Catch checkpoints from Pytorch 2.0 API
-            ConversionRule(
-                [Converter_BTLMModel_WithoutModelPrefix_HF_CS20(),],
-                action=None,
-            ),
-            # Catch checkpoints from 1.7/1.8
-            ConversionRule(
-                [
-                    EquivalentSubkey("", "model."),
-                    Converter_BTLMModel_WithoutModelPrefix_HF_CS20(),
-                ],
-                action=None,
-            ),
-        ]
+    def attempt_mup_to_sp(self) -> bool:
+        return False
 
 
-class Converter_BTLMLMHeadModel_HF_CS20(
-    Converter_BTLMLMHeadModel_WithoutModelPrefix_HF_CS20
-):
-    def __init__(self):
-        super().__init__()
-        self.rules = [
-            # Catch checkpoints from Pytorch 2.0 API
-            ConversionRule(
-                [Converter_BTLMLMHeadModel_WithoutModelPrefix_HF_CS20(),],
-                action=None,
-            ),
-            # Catch checkpoints from 1.7/1.8
-            ConversionRule(
-                [
-                    EquivalentSubkey("", "model."),
-                    Converter_BTLMLMHeadModel_WithoutModelPrefix_HF_CS20(),
-                ],
-                action=None,
-            ),
-        ]
+Converter_BTLMModel_HF_CS20 = Build_HF_CS_Converter_WithOptionalModel(
+    "Converter_BTLMModel_HF_CS20",
+    Converter_BTLMModel_WithoutModelPrefix_HF_CS20,
+    derived_class=Converter_BTLMModel_WithoutModelPrefix_HF_CS20,
+)
+
+
+Converter_BTLMLMHeadModel_HF_CS20 = Build_HF_CS_Converter_WithOptionalModel(
+    "Converter_BTLMLMHeadModel_HF_CS20",
+    Converter_BTLMLMHeadModel_WithoutModelPrefix_HF_CS20,
+    derived_class=Converter_BTLMLMHeadModel_WithoutModelPrefix_HF_CS20,
+)
 
 
 class ConfigConverter_BTLMModel_HF_CS20(ConfigConverter_GPT2Model_HF_CS20):
@@ -186,6 +170,15 @@ class ConfigConverter_BTLMModel_HF_CS20(ConfigConverter_GPT2Model_HF_CS20):
                 [EquivalentSubkey("mup_embeddings_scale", "embeddings_scale")],
                 action=self.replaceKey,
             ),
+            ConversionRule(
+                [
+                    EquivalentSubkey(
+                        "scale_attn_by_inverse_layer_idx",
+                        "scale_qk_dot_by_layer_idx",
+                    )
+                ],
+                action=self.replaceKey,
+            ),
             *self.rules,
         ]
 
@@ -199,7 +192,9 @@ class ConfigConverter_BTLMModel_HF_CS20(ConfigConverter_GPT2Model_HF_CS20):
                 "auto_map": {
                     "AutoConfig": "cerebras/btlm-3b-8k-base--configuration_btlm.BTLMConfig",
                     "AutoModel": "cerebras/btlm-3b-8k-base--modeling_btlm.BTLMModel",
-                    "AutoModelForCausalLM": "cerebras/btlm-3b-8k-base--modeling_btlm.BTLMLMHeadModel",
+                    "AutoModelForCausalLM": (
+                        "cerebras/btlm-3b-8k-base--modeling_btlm.BTLMLMHeadModel"
+                    ),
                 },
             }
         )
@@ -214,7 +209,7 @@ class ConfigConverter_BTLMModel_HF_CS20(ConfigConverter_GPT2Model_HF_CS20):
                 or "decoder_kernel"
                 not in config["optimizer"]["adjust_learning_rate"]
             ):
-                logging.warn(
+                logging.warning(
                     "The provided config is missing the following muP parameter"
                     " (which is required for BTLM):\noptimizer:\n"
                     "\tadjust_learning_rate:\n\t\tdecoder_kernel\n"
@@ -278,3 +273,149 @@ class ConfigConverter_BTLMModel_HF_CS20(ConfigConverter_GPT2Model_HF_CS20):
             wscale = old_state_dict["decoder_kernel"]
             new_state_dict[new_key] = old_state_dict[old_key] / wscale
             new_state_dict["mup_width_scale"] = wscale
+
+    def attempt_mup_to_sp(self) -> bool:
+        return False
+
+
+###########################################################
+# In CS 2.1, we refactored the embedding layer.
+# CS 2.0 <> CS 2.1. We don't need a separate HF <> CS 2.1 converters since
+# HF only supports RoPE which doesn't produce any checkpoint keys.
+###########################################################
+
+
+class Converter_BTLMLMHeadModel_CS20_CS21(Converter_GPT2LMHeadModel_CS20_CS21):
+    @classmethod
+    def converter_note(cls) -> str:
+        return "GPT2LMHeadModel class (configured as BTLM)"
+
+
+class ConfigConverter_BTLMModel_HF_CS21(ConfigConverter_BTLMModel_HF_CS20):
+    def __init__(self):
+        super().__init__()
+        self.rules = [
+            ConversionRule(
+                [EquivalentSubkey("alibi_scaling", "pos_scaling_factor")],
+                action=self.convert_pi,
+            ),
+            *self.rules,
+        ]
+
+        self.pre_convert_defaults[0].update(
+            {"alibi_scaling": None,}
+        )
+        self.pre_convert_defaults[1].update({"pos_scaling_factor": 1.0,},)
+
+    def convert_pi(
+        self,
+        old_key,
+        new_key,
+        old_state_dict,
+        new_state_dict,
+        from_index,
+        action_fn_args,
+    ):
+        if from_index == 0:
+            if old_state_dict[old_key] is None:
+                new_state_dict[new_key] = 1.0
+            else:
+                train_seq_len = old_state_dict[old_key].get(
+                    "train_seq_len", None
+                )
+                if train_seq_len is not None:
+                    raise ValueError(
+                        f"Only `alibi_scaling` fixed linear scaling is currently supported, "
+                        f"but got train_seq_len is `{train_seq_len}` which requires support "
+                        f"for dynamic linear scaling."
+                    )
+                new_state_dict[new_key] = old_state_dict[old_key]["factor"]
+        else:
+            if old_state_dict[old_key] == 1.0:
+                new_state_dict[new_key] = None
+            else:
+                new_state_dict[new_key] = {
+                    "type": "linear",
+                    "factor": old_state_dict[old_key],
+                }
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-2.1"))
+
+
+class Converter_BTLMModel_WithoutModelPrefix_HF_CS21(
+    Converter_BTLMModel_WithoutModelPrefix_HF_CS20
+):
+    def __init__(self):
+        super().__init__()
+        self.rules = [
+            ConversionRule(
+                [
+                    EquivalentSubkey(
+                        "wpe", "embedding_layer.position_embeddings.embed"
+                    ),
+                    "\.(?:weight|bias)",
+                ],
+                action=self.replaceKey,
+            ),
+            ConversionRule(
+                [
+                    EquivalentSubkey(
+                        "relative_pe.slopes",
+                        "embedding_layer.position_embed_helper.slopes",
+                    ),
+                ],
+                action=self.replaceKey,
+            ),
+            *self.rules,
+        ]
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-2.1"))
+
+    @staticmethod
+    def get_config_converter_class() -> BaseConfigConverter:
+        return ConfigConverter_BTLMModel_HF_CS21
+
+
+Converter_BTLMModel_HF_CS21 = Build_HF_CS_Converter_WithOptionalModel(
+    "Converter_BTLMModel_HF_CS21",
+    Converter_BTLMModel_WithoutModelPrefix_HF_CS21,
+    derived_class=Converter_BTLMModel_WithoutModelPrefix_HF_CS21,
+)
+
+
+class Converter_BTLMLMHeadModel_WithoutModelPrefix_HF_CS21(
+    Converter_BTLMLMHeadModel_WithoutModelPrefix_HF_CS20
+):
+    def __init__(self):
+        super().__init__()
+        self.rules = [
+            ConversionRule(
+                ["lm_head\.(?:weight|bias)"], action=self.replaceKey,
+            ),
+            ConversionRule(
+                [
+                    EquivalentSubkey("transformer.", ""),
+                    Converter_BTLMModel_WithoutModelPrefix_HF_CS21(),
+                ],
+                action=None,
+            ),
+        ]
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-2.1"))
+
+    @staticmethod
+    def get_config_converter_class() -> BaseConfigConverter:
+        return ConfigConverter_BTLMModel_HF_CS21
+
+
+Converter_BTLMLMHeadModel_HF_CS21 = Build_HF_CS_Converter_WithOptionalModel(
+    "Converter_BTLMLMHeadModel_HF_CS21",
+    Converter_BTLMLMHeadModel_WithoutModelPrefix_HF_CS21,
+    derived_class=Converter_BTLMLMHeadModel_WithoutModelPrefix_HF_CS21,
+)

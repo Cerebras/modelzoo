@@ -103,7 +103,7 @@ def _set_model_defaults(params):
         )
     logging.info(f"Using DiT block type : {mparams['block_type']}")
 
-    if mparams["use_bfloat16"]:
+    if mparams["fp16_type"] == "bfloat16":
         params["optimizer"]["loss_scaling_factor"] = 1.0
 
     # Regression Head
@@ -222,7 +222,7 @@ def _copy_params_across(params):
         "latent_channels",
         # Other params
         "mixed_precision",
-        "use_bfloat16",
+        "fp16_type",
         # diffusion & related params for performing gd
         "schedule_name",
     ]

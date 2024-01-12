@@ -41,7 +41,6 @@ model:
     # Embedding
     vocab_size: 50257
     hidden_size: 1600
-    use_position_embedding: True
     position_embedding_type: "learned"
     share_embedding_weights: True
     max_position_embeddings: 1024
@@ -65,8 +64,8 @@ model:
     nonlinearity: "gelu"
     use_ffn_bias: True
     use_bias_in_output: False # As used in https://amaarora.github.io/2020/02/18/annotatedGPT2.html
-    loss_scaling: "batch_size"
-    loss_weight: 0.0009765625 # = 1/max_sequence_length
+    loss_scaling: "num_tokens"
+    loss_weight: 1.0
 
     # Following TensorFlow which sets the bounds for truncated normal initialization to [-2*std, 2*std]
     # https://www.tensorflow.org/api_docs/python/tf/keras/initializers/TruncatedNormal

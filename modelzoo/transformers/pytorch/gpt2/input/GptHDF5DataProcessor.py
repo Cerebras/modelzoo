@@ -41,6 +41,10 @@ class GptHDF5DataProcessor(HDF5IterableDataProcessor):
     - "prefetch_factor" (int): Number of batches loaded in advance by each worker.
     - "persistent_workers" (bool): If True, the data loader will not shutdown
        the worker processes after a dataset has been consumed once.
+    - "use_vsl" (bool): Flag to enable variable sequence length training. 
+       It requires the dataset to have two extra features: the 
+       `attention_span` of keys and the `position_ids` of tokens.
+       Defaults to `False`.
     """
 
     def __init__(self, params):
@@ -58,5 +62,5 @@ class GptHDF5DataProcessor(HDF5IterableDataProcessor):
         # and its contents aren't used for any attention masking.
         self.dataset = HDF5IterableDataset(params)
 
-        # The supper class will take care of sharding the dataset and creating the dataloader
+        # The super class will take care of sharding the dataset and creating the dataloader
         super().__init__(params)

@@ -27,6 +27,7 @@ from modelzoo.common.pytorch.model_utils.checkpoint_converters.base_converter im
     FormatVersions,
 )
 from modelzoo.common.pytorch.model_utils.checkpoint_converters.helper import (
+    Build_HF_CS_Converter_WithOptionalModel,
     convert_use_rms_layer_norm_helper,
 )
 
@@ -37,284 +38,288 @@ class Converter_T5_CS16_CS17(BaseCheckpointConverter_CS_CS):
         self.rules = [
             ConversionRule(
                 [
-                    "(?:encoder|decoder)_",
+                    r"(?:encoder|decoder)_",
                     EquivalentSubkey(
                         "token_embedding", "embeddings.word_embeddings"
                     ),
-                    "\.weight",
+                    r"\.weight",
                 ],
                 action=self.replaceKey,
             ),
             ConversionRule(
-                ["(?:encoder|decoder)\.embed_tokens\.weight",], exists="left"
+                [r"(?:encoder|decoder)\.embed_tokens\.weight",], exists="left"
             ),
             ConversionRule(
                 [
-                    "(?:encoder|decoder)",
+                    r"(?:encoder|decoder)",
                     EquivalentSubkey(
                         ".absolute_position_embedding",
                         "_embeddings.position_embeddings",
                     ),
-                    "(?:\.weight|)",  # Fixed position embeddings don't have a .weight suffix while learned absolute does
+                    # Fixed position embeddings don't have a .weight suffix while learned absolute
+                    # does
+                    r"(?:\.weight|)",
                 ],
                 action=self.replaceKey,
             ),
             ConversionRule(
                 [
-                    "(?:encoder|decoder)\.",
+                    r"(?:encoder|decoder)\.",
                     EquivalentSubkey("block", "layers"),
-                    "\.\d+\.",
+                    r"\.\d+\.",
                     EquivalentSubkey("layer.0.SelfAttention", "self_attn"),
-                    "\.",
+                    r"\.",
                     EquivalentSubkey("q", "proj_q_dense_layer"),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.replaceKey,
             ),
             ConversionRule(
                 [
-                    "(?:encoder|decoder)\.",
+                    r"(?:encoder|decoder)\.",
                     EquivalentSubkey("block", "layers"),
-                    "\.\d+\.",
+                    r"\.\d+\.",
                     EquivalentSubkey("layer.0.SelfAttention", "self_attn"),
-                    "\.",
+                    r"\.",
                     EquivalentSubkey("k", "proj_k_dense_layer"),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.replaceKey,
             ),
             ConversionRule(
                 [
-                    "(?:encoder|decoder)\.",
+                    r"(?:encoder|decoder)\.",
                     EquivalentSubkey("block", "layers"),
-                    "\.\d+\.",
+                    r"\.\d+\.",
                     EquivalentSubkey("layer.0.SelfAttention", "self_attn"),
-                    "\.",
+                    r"\.",
                     EquivalentSubkey("v", "proj_v_dense_layer"),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.replaceKey,
             ),
             ConversionRule(
                 [
-                    "(?:encoder|decoder)\.",
+                    r"(?:encoder|decoder)\.",
                     EquivalentSubkey("block", "layers"),
-                    "\.\d+\.",
+                    r"\.\d+\.",
                     EquivalentSubkey("layer.0.SelfAttention", "self_attn"),
-                    "\.",
+                    r"\.",
                     EquivalentSubkey("o", "proj_output_dense_layer"),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.replaceKey,
             ),
             ConversionRule(
                 [
-                    "(?:encoder|decoder)\.",
+                    r"(?:encoder|decoder)\.",
                     EquivalentSubkey("block", "layers"),
-                    "\.\d+\.",
+                    r"\.\d+\.",
                     EquivalentSubkey("layer.0.layer_norm", "norm1"),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.replaceKey,
             ),
             ConversionRule(
                 [
-                    "(?:encoder|decoder)\.",
+                    r"(?:encoder|decoder)\.",
                     EquivalentSubkey("block", "layers"),
-                    "\.\d+\.",
+                    r"\.\d+\.",
                     EquivalentSubkey("layer.1.layer_norm", "norm2"),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.replaceKey,
             ),
             ConversionRule(
                 [
-                    "(?:encoder|decoder)\.",
+                    r"(?:encoder|decoder)\.",
                     EquivalentSubkey("block", "layers"),
-                    "\.\d+\.",
+                    r"\.\d+\.",
                     EquivalentSubkey("layer.2.layer_norm", "norm3"),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.replaceKey,
             ),
             ConversionRule(
                 [
-                    "decoder\.",
+                    r"decoder\.",
                     EquivalentSubkey("block", "layers"),
-                    "\.\d+\.",
+                    r"\.\d+\.",
                     EquivalentSubkey(
                         "layer.1.EncDecAttention", "multihead_attn"
                     ),
-                    "\.",
+                    r"\.",
                     EquivalentSubkey("q", "proj_q_dense_layer"),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.replaceKey,
             ),
             ConversionRule(
                 [
-                    "decoder\.",
+                    r"decoder\.",
                     EquivalentSubkey("block", "layers"),
-                    "\.\d+\.",
+                    r"\.\d+\.",
                     EquivalentSubkey(
                         "layer.1.EncDecAttention", "multihead_attn"
                     ),
-                    "\.",
+                    r"\.",
                     EquivalentSubkey("k", "proj_k_dense_layer"),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.replaceKey,
             ),
             ConversionRule(
                 [
-                    "decoder\.",
+                    r"decoder\.",
                     EquivalentSubkey("block", "layers"),
-                    "\.\d+\.",
+                    r"\.\d+\.",
                     EquivalentSubkey(
                         "layer.1.EncDecAttention", "multihead_attn"
                     ),
-                    "\.",
+                    r"\.",
                     EquivalentSubkey("v", "proj_v_dense_layer"),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.replaceKey,
             ),
             ConversionRule(
                 [
-                    "decoder\.",
+                    r"decoder\.",
                     EquivalentSubkey("block", "layers"),
-                    "\.\d+\.",
+                    r"\.\d+\.",
                     EquivalentSubkey(
                         "layer.1.EncDecAttention", "multihead_attn"
                     ),
-                    "\.",
+                    r"\.",
                     EquivalentSubkey("o", "proj_output_dense_layer"),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.replaceKey,
             ),
             ConversionRule(
                 [
-                    "(?:encoder|decoder)\.block\.\d+\.layer\.0\.SelfAttention\.relative_attention_bias\.(?:weight|bias)"
+                    # pylint: disable=line-too-long
+                    r"(?:encoder|decoder)\.block\.\d+\.layer\.0\.SelfAttention\.relative_attention_bias\.(?:weight|bias)"
                 ],
                 exists="left",
                 action=self.convert_relative_attention_bias_cs16_to_cs17,
             ),
             ConversionRule(
                 [
-                    "relative_position_(?:encoder|decoder)\.relative_attention_bias\.(?:weight|bias)"
+                    # pylint: disable=line-too-long
+                    r"relative_position_(?:encoder|decoder)\.relative_attention_bias\.(?:weight|bias)"
                 ],
                 exists="right",
                 action=self.convert_relative_attention_bias_cs17_to_cs16,
             ),
             ConversionRule(
                 [
-                    "(?:encoder|decoder)\.",
+                    r"(?:encoder|decoder)\.",
                     EquivalentSubkey("block", "layers"),
-                    "\.\d+\.",
+                    r"\.\d+\.",
                     EquivalentSubkey(
                         "layer.1.DenseReluDense.wi", "ffn.ffn.0.linear_layer"
                     ),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.convert_dense_layer,
             ),
             ConversionRule(
                 [
-                    "(?:encoder|decoder)\.",
+                    r"(?:encoder|decoder)\.",
                     EquivalentSubkey("block", "layers"),
-                    "\.\d+\.",
+                    r"\.\d+\.",
                     EquivalentSubkey(
                         "layer.1.DenseReluDense.wi_0",
                         "ffn.ffn.0.linear_layer_for_glu",
                     ),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.convert_dense_layer,
             ),
             ConversionRule(
                 [
-                    "(?:encoder|decoder)\.",
+                    r"(?:encoder|decoder)\.",
                     EquivalentSubkey("block", "layers"),
-                    "\.\d+\.",
+                    r"\.\d+\.",
                     EquivalentSubkey(
                         "layer.1.DenseReluDense.wi_1", "ffn.ffn.0.linear_layer"
                     ),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.convert_dense_layer,
             ),
             ConversionRule(
                 [
-                    "(?:encoder|decoder)\.",
+                    r"(?:encoder|decoder)\.",
                     EquivalentSubkey("block", "layers"),
-                    "\.\d+\.",
+                    r"\.\d+\.",
                     EquivalentSubkey(
                         "layer.1.DenseReluDense.wo", "ffn.ffn.1.linear_layer"
                     ),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.convert_dense_layer,
             ),
             ConversionRule(
                 [
-                    "(?:encoder|decoder)\.",
+                    r"(?:encoder|decoder)\.",
                     EquivalentSubkey("block", "layers"),
-                    "\.\d+\.",
+                    r"\.\d+\.",
                     EquivalentSubkey(
                         "layer.2.DenseReluDense.wi", "ffn.ffn.0.linear_layer"
                     ),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.replaceKey,
             ),
             ConversionRule(
                 [
-                    "(?:encoder|decoder)\.",
+                    r"(?:encoder|decoder)\.",
                     EquivalentSubkey("block", "layers"),
-                    "\.\d+\.",
+                    r"\.\d+\.",
                     EquivalentSubkey(
                         "layer.2.DenseReluDense.wi_0",
                         "ffn.ffn.0.linear_layer_for_glu",
                     ),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.convert_dense_layer,
             ),
             ConversionRule(
                 [
-                    "(?:encoder|decoder)\.",
+                    r"(?:encoder|decoder)\.",
                     EquivalentSubkey("block", "layers"),
-                    "\.\d+\.",
+                    r"\.\d+\.",
                     EquivalentSubkey(
                         "layer.2.DenseReluDense.wi_1", "ffn.ffn.0.linear_layer"
                     ),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.convert_dense_layer,
             ),
             ConversionRule(
                 [
-                    "(?:encoder|decoder)\.",
+                    r"(?:encoder|decoder)\.",
                     EquivalentSubkey("block", "layers"),
-                    "\.\d+\.",
+                    r"\.\d+\.",
                     EquivalentSubkey(
                         "layer.2.DenseReluDense.wo", "ffn.ffn.1.linear_layer"
                     ),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.replaceKey,
             ),
             ConversionRule(
                 [
-                    "(?:encoder|decoder)\.",
+                    r"(?:encoder|decoder)\.",
                     EquivalentSubkey("final_layer_norm", "norm"),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.replaceKey,
             ),
             ConversionRule(
-                ["lm_head\.(?:weight|bias)"], action=self.replaceKey,
+                [r"lm_head\.(?:weight|bias)"], action=self.replaceKey,
             ),
         ]
 
@@ -349,7 +354,12 @@ class Converter_T5_CS16_CS17(BaseCheckpointConverter_CS_CS):
 
             # The ".linear_layer" needs to be mapped differently if we are using
             # a gated attention:
-            if action_fn_args["configs"][0].get("is_gated_act", False):
+            is_gated_act = (
+                action_fn_args["configs"][0]
+                .get("feed_forward_proj", "relu")
+                .startswith("gated-")
+            )
+            if is_gated_act:
                 wi_position = new_key.find(".wi.")
                 if wi_position != -1:
                     new_key = (
@@ -375,8 +385,9 @@ class Converter_T5_CS16_CS17(BaseCheckpointConverter_CS_CS):
         if old_key.find(".block.0.") != -1:
             module = old_key[: old_key.find(".")]  # encoder or decoder
             layer_type = old_key[old_key.rfind(".") + 1 :]  # bias or weight
-            new_key = "relative_position_{}.relative_attention_bias.{}".format(
-                module, layer_type
+            key_prefix = new_key[: new_key.find(module)]
+            new_key = "{}relative_position_{}.relative_attention_bias.{}".format(
+                key_prefix, module, layer_type
             )
             new_state_dict[new_key] = old_state_dict[old_key]
 
@@ -392,8 +403,9 @@ class Converter_T5_CS16_CS17(BaseCheckpointConverter_CS_CS):
         assert (
             from_index == 1
         ), "Shouldn't have matched the following key: {}".format(old_key)
-        # CS 16 stored relative attention bias on every single transformer block event though they weren't used
-        # Extract the text after 'relative_position_' and before the following '.' into module.
+        # CS 16 stored relative attention bias on every single transformer block event though they
+        # weren't used. Extract the text after 'relative_position_' and before the following '.'
+        # into module.
         relative_position_start = old_key.find("relative_position_")
         assert relative_position_start != -1, "Invalid key: {}".format(old_key)
         module = old_key[
@@ -453,7 +465,7 @@ class Converter_T5_CS17_CS18(BaseCheckpointConverter_CS_CS):
         super().__init__()
         self.rules = [
             # Catch checkpoints from Pytorch 2.0 API
-            ConversionRule(["(?!model\.).*"], action=self.replaceKey,),
+            ConversionRule([r"(?!model\.).*"], action=self.replaceKey,),
             # Catch checkpoints from 1.7/1.8
             ConversionRule(
                 [EquivalentSubkey("", "model."), ".*"], action=self.replaceKey,
@@ -583,25 +595,27 @@ class Converter_T5_HF_CS17(
         self.rules = [
             ConversionRule(
                 [
-                    "(?:encoder|decoder)",
+                    r"(?:encoder|decoder)",
                     EquivalentSubkey(
                         ".embed_tokens", "_embeddings.word_embeddings"
                     ),
-                    "\.weight",
+                    r"\.weight",
                 ],
                 action=self.convert_embeddings,
             ),
-            ConversionRule(["shared\.weight"], exists="left"),
+            ConversionRule([r"shared\.weight"], exists="left"),
             ConversionRule(
                 [
-                    "relative_position_(?:encoder|decoder)\.relative_attention_bias\.(?:weight|bias)"
+                    # pylint: disable=line-too-long
+                    r"relative_position_(?:encoder|decoder)\.relative_attention_bias\.(?:weight|bias)"
                 ],
                 exists="right",
                 action=self.convert_relative_attention_bias_cs17_to_hf,
             ),
             ConversionRule(
                 [
-                    "decoder\.block\.\d+\.layer\.1\.EncDecAttention\.relative_attention_bias\.(?:weight|bias)"
+                    # pylint: disable=line-too-long
+                    r"decoder\.block\.\d+\.layer\.1\.EncDecAttention\.relative_attention_bias\.(?:weight|bias)"
                 ],
                 exists="left",
                 action=None,
@@ -643,7 +657,8 @@ class Converter_T5_HF_CS17(
         assert (
             from_index == 1
         ), "Shouldn't have matched the following key: {}".format(old_key)
-        # CS 16 stored relative attention bias on every single transformer block event though they weren't used
+        # CS 16 stored relative attention bias on every single transformer block event though they
+        # weren't used
         relative_position_start = old_key.find("relative_position_")
         assert relative_position_start != -1, "Invalid key: {}".format(old_key)
         module = old_key[
@@ -673,7 +688,10 @@ class Converter_T5_HF_CS17(
                 not in old_state_dict
                 and "decoder_embeddings.position_embeddings.weight"
                 not in old_state_dict
-            ), "Cannot convert to HF because it doesn't support position_embedding_type=\"learned_absolute\""
+            ), (
+                "Cannot convert to HF because it doesn't support "
+                "position_embedding_type=\"learned_absolute\""
+            )
             assert (
                 "encoder_embeddings.position_embeddings" not in old_state_dict
                 and "decoder_embeddings.position_embeddings"
@@ -691,23 +709,23 @@ class Converter_T5_HF_CS17(
                 configs[1]["model"]["share_embedding_weights"]
                 and configs[1]["model"]["share_encoder_decoder_embedding"]
                 and old_state_dict.get(
-                    "encoder_embeddings.position_embeddings.weight", 0
+                    "encoder_embeddings.word_embeddings.weight", 0
                 )
                 is None
             ):
                 old_state_dict[
-                    "encoder_embeddings.position_embeddings.weight"
+                    "encoder_embeddings.word_embeddings.weight"
                 ] = old_state_dict["lm_head.weight"]
             if (
                 configs[1]["model"]["share_embedding_weights"]
                 and configs[1]["model"]["share_encoder_decoder_embedding"]
                 and old_state_dict.get(
-                    "decoder_embeddings.position_embeddings.weight", 0
+                    "decoder_embeddings.word_embeddings.weight", 0
                 )
                 is None
             ):
                 old_state_dict[
-                    "decoder_embeddings.position_embeddings.weight"
+                    "decoder_embeddings.word_embeddings.weight"
                 ] = old_state_dict["lm_head.weight"]
 
     def pre_checkpoint_convert(
@@ -821,12 +839,6 @@ class ConfigConverter_T5_HF_CS17(BaseConfigConverter_HF_CS):
                 [EquivalentSubkey("feed_forward_proj", "encoder_nonlinearity")],
                 action=self.convert_nonlinearity,
             ),
-            # HF uses dense_act_fn which is a subset of the information stored
-            # in feed_forward_proj
-            ConversionRule(["dense_act_fn"], exists="left", action=None,),
-            # HF uses is_gated_act which is a subset of the information stored
-            # in feed_forward_proj
-            ConversionRule(["is_gated_act"], exists="left", action=None,),
             ConversionRule(
                 ["decoder_nonlinearity"],
                 action=self.assert_decoder_nonlinearity,
@@ -930,24 +942,22 @@ class ConfigConverter_T5_HF_CS17(BaseConfigConverter_HF_CS):
         activation = old_state_dict[old_key]
         if activation.startswith("gated-"):
             activation = activation[6:]
-            old_state_dict["is_gated_act"] = True
-        is_gated = False
-        if from_index == 0 and old_state_dict.get("is_gated_act", False):
-            is_gated = True
+        if from_index == 0 and old_state_dict[old_key].startswith("gated-"):
             gated_hf2cs = {"silu": "swiglu", "relu": "reglu", "gelu": "geglu"}
-            assert activation in gated_hf2cs.keys()
+            assert activation in gated_hf2cs
             activation = gated_hf2cs[activation]
         elif from_index == 1 and activation.endswith("glu"):
-            is_gated = True
-            gated_cs2hf = {"swiglu": "silu", "reglu": "relu", "geglu": "gelu"}
-            assert activation in gated_cs2hf.keys()
+            gated_cs2hf = {
+                "swiglu": "gated-silu",
+                "reglu": "gated-relu",
+                "geglu": "gated-gelu",
+            }
+            assert activation in gated_cs2hf
             activation = gated_cs2hf[activation]
 
         new_state_dict[new_key] = activation
         if from_index == 0:
             new_state_dict["decoder_nonlinearity"] = activation
-        else:
-            new_state_dict["is_gated_act"] = is_gated
 
     def assert_decoder_nonlinearity(
         self,
@@ -960,10 +970,8 @@ class ConfigConverter_T5_HF_CS17(BaseConfigConverter_HF_CS):
     ):
         if old_state_dict["encoder_nonlinearity"] != old_state_dict[old_key]:
             raise ConfigConversionError(
-                "Encoder & Decoder nonlinearities must be the same in HF model. Got: {} vs {}".format(
-                    old_state_dict["encoder_nonlinearity"],
-                    old_state_dict[old_key],
-                )
+                f"Encoder & Decoder nonlinearities must be the same in HF model. "
+                f"Got: {old_state_dict['encoder_nonlinearity']} vs {old_state_dict[old_key]}"
             )
 
     @staticmethod
@@ -1022,8 +1030,112 @@ class Converter_T5_CS18_CS20(BaseCheckpointConverter_CS_CS):
         super().__init__()
         # Model didn't change between 1.8/1.9 and 2.0. Copy all keys.
         self.rules = [
+            # Don't copy encoder/decoder word embeddings or lm_head due to tying
+            # These props will be handled in the `post_model_convert`
+            ConversionRule(
+                ["(?:model.|)", "lm_head", "\.weight",], action=None,
+            ),
+            ConversionRule(
+                [
+                    "(?:model.|)",
+                    "encoder_embeddings.word_embeddings",
+                    "\.weight",
+                ],
+                action=None,
+            ),
+            ConversionRule(
+                [
+                    "(?:model.|)",
+                    "decoder_embeddings.word_embeddings",
+                    "\.weight",
+                ],
+                action=None,
+            ),
             ConversionRule([".*"], action=self.replaceKey),
         ]
+
+    def post_model_convert(
+        self,
+        old_state_dict,
+        new_state_dict,
+        configs,
+        from_index,
+        drop_unmatched_keys,
+        key_prefix="",
+    ):
+
+        cs_config = configs[1]
+
+        if "decoder_embeddings.word_embeddings.weight" in old_state_dict:
+            model_prefix = ""
+        elif (
+            "model.decoder_embeddings.word_embeddings.weight" in old_state_dict
+        ):
+            model_prefix = "model."
+        else:
+            raise KeyError(
+                "Unable to find decoder_embeddings.word_embeddings.weight in checkpoint"
+            )
+
+        lm_head = old_state_dict[f"{model_prefix}lm_head.weight"]
+        decoder_embed = old_state_dict[
+            f"{model_prefix}decoder_embeddings.word_embeddings.weight"
+        ]
+        encoder_embed = old_state_dict[
+            f"{model_prefix}encoder_embeddings.word_embeddings.weight"
+        ]
+
+        if cs_config["model"].get(
+            "share_encoder_decoder_embedding", True
+        ) and cs_config["model"].get("share_embedding_weights", True):
+            not_none = list(
+                filter(
+                    lambda e: e is not None,
+                    [lm_head, decoder_embed, encoder_embed],
+                )
+            )
+            if not all(not_none[0].equal(e) for e in not_none):
+                logging.warning(
+                    "When encoder-decoder embeddings & lm_head are tied, all "
+                    "tensors should be the same. However, there is a conflict "
+                    "between some of the tensors. As a result, the output "
+                    "checkpoint may be inconsistent."
+                )
+
+            if len(not_none) > 0:
+                lm_head = not_none[0]
+                decoder_embed = not_none[0]
+                encoder_embed = not_none[0]
+
+        if cs_config["model"].get("share_embedding_weights", True):
+            if lm_head is None:
+                lm_head = decoder_embed
+            if decoder_embed is None:
+                decoder_embed = lm_head
+
+        if cs_config["model"].get("share_encoder_decoder_embedding", True):
+            if encoder_embed is None:
+                encoder_embed = decoder_embed
+            if decoder_embed is None:
+                decoder_embed = encoder_embed
+
+        new_state_dict[f"{model_prefix}lm_head.weight"] = lm_head
+        new_state_dict[
+            f"{model_prefix}decoder_embeddings.word_embeddings.weight"
+        ] = decoder_embed
+        new_state_dict[
+            f"{model_prefix}encoder_embeddings.word_embeddings.weight"
+        ] = encoder_embed
+
+        # Finalize checkpoint:
+        super().post_model_convert(
+            old_state_dict,
+            new_state_dict,
+            configs,
+            from_index,
+            drop_unmatched_keys,
+            key_prefix=key_prefix,
+        )
 
     @classmethod
     def converter_note(cls) -> str:
@@ -1059,9 +1171,6 @@ class ConfigConverter_T5_CS18_CS20(BaseConfigConverter_CS_CS):
 
 
 class Converter_T5_HF_CS20(Converter_T5_HF_CS18):
-    def __init__(self):
-        super().__init__()
-
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (FormatVersions("hf"), FormatVersions("cs-2.0"))
@@ -1088,3 +1197,194 @@ class ConfigConverter_T5_HF_CS20(ConfigConverter_T5_HF_CS18):
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (FormatVersions("hf"), FormatVersions("cs-2.0"))
+
+
+###########################################################
+# In CS 2.1, we refactored the embedding layer.
+# CS 2.0 <> CS 2.1, and HF <> CS 2.1 converters:
+###########################################################
+
+
+class Converter_T5_CS20_CS21(BaseCheckpointConverter_CS_CS):
+    def __init__(self):
+        super().__init__()
+        self.rules = [
+            # Refactored embeddings:
+            ConversionRule(
+                [
+                    "(?:model\.|)",
+                    "(?:encoder|decoder)_embeddings\.",
+                    EquivalentSubkey(
+                        "position_embeddings.weight",
+                        "position_embeddings.embed.weight",
+                    ),
+                ],
+                action=self.replaceKey,
+            ),
+            ConversionRule(
+                [
+                    "(?:model\.|)",
+                    "(?:encoder|decoder)_embeddings\.",
+                    EquivalentSubkey(
+                        "position_embeddings", "position_embeddings.fpe",
+                    ),
+                ],
+                action=self.replaceKey,
+            ),
+            ConversionRule(
+                [
+                    "(?:model\.|)",
+                    EquivalentSubkey(
+                        "relative_position_encoder",
+                        "encoder_embeddings.position_embed_helper",
+                    ),
+                    "\.relative_attention_bias",
+                    "\.(?:weight|bias)",
+                ],
+                action=self.replaceKey,
+            ),
+            ConversionRule(
+                [
+                    "(?:model\.|)",
+                    EquivalentSubkey(
+                        "relative_position_decoder",
+                        "decoder_embeddings.position_embed_helper",
+                    ),
+                    "\.relative_attention_bias",
+                    "\.(?:weight|bias)",
+                ],
+                action=self.replaceKey,
+            ),
+            # T5 <= CS 2.0 didn't support ALIBI or RoPE
+            # Copy everything else
+            ConversionRule([".*"], action=self.replaceKey),
+        ]
+
+    @classmethod
+    def converter_note(cls) -> str:
+        return "T5ForConditionalGeneration class"
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("cs-2.0"), FormatVersions("cs-2.1"))
+
+    @staticmethod
+    def get_config_converter_class() -> BaseConfigConverter:
+        return ConfigConverter_T5_CS20_CS21
+
+
+class ConfigConverter_T5_CS20_CS21(BaseConfigConverter_CS_CS):
+    def __init__(self):
+        super().__init__()
+        # No differences in config
+        self.rules = [
+            ConversionRule([".*"], action=self.replaceKey),
+        ]
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("cs-2.0"), FormatVersions("cs-2.1"))
+
+
+class ConfigConverter_T5_HF_CS21(ConfigConverter_T5_HF_CS20):
+    "CS 2.1 config is the same as CS 2.0"
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-2.1"))
+
+
+class Converter_T5_WithoutOptionalModel_HF_CS21(Converter_T5_HF_CS17):
+    def __init__(self):
+        super().__init__()
+        self.rules = [
+            ConversionRule(
+                [
+                    "(?:encoder|decoder)\.block\.\d+\.layer\.0\.SelfAttention\.relative_attention_bias\.(?:weight|bias)"
+                ],
+                exists="left",
+                action=self.convert_relative_attention_bias_hf_to_cs21,
+            ),
+            ConversionRule(
+                [
+                    "(?:encoder|decoder)_embeddings\.position_embed_helper\.relative_attention_bias\.(?:weight|bias)"
+                ],
+                exists="right",
+                action=self.convert_relative_attention_bias_cs17_to_hf,
+            ),
+            *self.rules,
+        ]
+
+    def convert_relative_attention_bias_hf_to_cs21(
+        self,
+        old_key,
+        new_key,
+        old_state_dict,
+        new_state_dict,
+        from_index,
+        action_fn_args,
+    ):
+        assert (
+            from_index == 0
+        ), "Shouldn't have matched the following key: {}".format(old_key)
+        if old_key.find(".block.0.") != -1:
+            module = old_key[: old_key.find(".")]  # encoder or decoder
+            layer_type = old_key[old_key.rfind(".") + 1 :]  # bias or weight
+            key_prefix = new_key[: new_key.find(module)]
+            new_key = "{}{}_embeddings.position_embed_helper.relative_attention_bias.{}".format(
+                key_prefix, module, layer_type
+            )
+            new_state_dict[new_key] = old_state_dict[old_key]
+
+    def convert_relative_attention_bias_cs17_to_hf(
+        self,
+        old_key,
+        new_key,
+        old_state_dict,
+        new_state_dict,
+        from_index,
+        action_fn_args,
+    ):
+        assert (
+            from_index == 1
+        ), "Shouldn't have matched the following key: {}".format(old_key)
+        # HF stored relative attention bias on every single transformer block event though they weren't used
+        if old_key.find("encoder_embeddings.position_embed_helper.") != -1:
+            module = "encoder"
+        elif old_key.find("decoder_embeddings.position_embed_helper.") != -1:
+            module = "decoder"
+        else:
+            assert False, "Invalid key: {}".format(old_key)
+
+        layer_type = old_key[old_key.rfind(".") + 1 :]
+
+        new_key = "{}.block.0.layer.0.SelfAttention.relative_attention_bias.{}".format(
+            module, layer_type
+        )
+        new_state_dict[new_key] = old_state_dict[old_key]
+
+    # CS 17 converter has custom pre_model_convert logic which CS21 doesn't need
+    def pre_model_convert(
+        self,
+        old_state_dict,
+        new_state_dict,
+        configs,
+        from_index,
+        drop_unmatched_keys,
+    ):
+        pass
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-2.1"))
+
+    @staticmethod
+    def get_config_converter_class() -> BaseConfigConverter:
+        return ConfigConverter_T5_HF_CS21
+
+
+Converter_T5_HF_CS21 = Build_HF_CS_Converter_WithOptionalModel(
+    "Converter_T5_HF_CS21",
+    Converter_T5_WithoutOptionalModel_HF_CS21,
+    derived_class=Converter_T5_WithoutOptionalModel_HF_CS21,
+)

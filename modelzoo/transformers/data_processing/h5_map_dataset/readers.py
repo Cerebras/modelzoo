@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import atexit
 import tempfile
 from pathlib import Path
 from typing import List, Optional, Union
@@ -36,6 +37,7 @@ class H5Reader:
         read_extra_token: bool = False,
         data_subset: Optional[str] = None,
         sort: bool = True,
+        use_vsl: bool = False,
     ):
         """Creates a reader for an HDF5 corpus.
 
@@ -62,6 +64,9 @@ class H5Reader:
             sort: Whether to sort the file paths after reading them. This flag
                 is included for backwards compatibility and should almost always
                 be set to `True`. It will be removed in the future.
+            use_vsl: Flag to enable variable sequence length training. 
+                It requires the dataset to have two extra features: the 
+                `attention_span` of keys and the `position_ids` of tokens.
         """
         files = []
         if not isinstance(data_dirs, list):
@@ -96,7 +101,7 @@ class H5Reader:
                 )
             by_sample = True
         elif len(data_shape) > 1:
-            if sequence_length is not None:
+            if sequence_length is not None and sequence_length != data_shape[1]:
                 raise ValueError(
                     "If loading data that has been preprocessed into sequences "
                     "the sequence length provided must either be None or match "
@@ -105,6 +110,13 @@ class H5Reader:
                     f"{files[0]} is {data_shape}"
                 )
             by_sample = True
+
+        if by_sample and use_vsl and data_shape[1] != 5:
+            raise ValueError(
+                f"Expected all dataset H5 files to have 5 features for "
+                f"variable sequence length training, but got "
+                f"{data_shape[1]} features in {files[0]}."
+            )
 
         if by_sample:
             self._impl = _SequencedH5Reader(files, data_subset=data_subset)
@@ -138,6 +150,15 @@ class H5Reader:
     def __len__(self) -> int:
         """Returns total number of sequences in the dataset."""
         return len(self._impl)
+
+    @property
+    def vdataset(self):
+        v = getattr(self._impl, "_vdataset", None)
+        if v is None:
+            raise AttributeError(
+                "Trying to access virtual dataset attribute, but none was found"
+            )
+        return v
 
 
 class _SequencedH5Reader:
@@ -289,9 +310,10 @@ class _VirtualDataset:
 
         length = sum(s.shape[0] for s in sources)
 
-        layout = h5py.VirtualLayout(
-            shape=(length, *sources[0].shape[1:]), dtype=sources[0].dtype
-        )
+        self._shape = (length, *sources[0].shape[1:])
+        self._dtype = sources[0].dtype
+
+        layout = h5py.VirtualLayout(shape=self._shape, dtype=self._dtype)
 
         start = 0
         for vsource in sources:
@@ -322,6 +344,17 @@ class _VirtualDataset:
         if self.__dataset is None:
             self.__dataset_file = h5py.File(self._dataset_tmpfile.name, "r")
             self.__dataset = self.__dataset_file["data"]
+
+            # h5py >= 3.4 hits a segfault on exit deep within hdf5 libraries if the dataset isn't
+            # freed up before the file is closed and hdf5 atexit handlers run. Just clearing
+            # `self.__dataset` fixes the segfault, but while we're at it, let's also manually close
+            # the file.
+            @atexit.register
+            def _close_at_exit():
+                self.__dataset = None
+                if self.__dataset_file is not None:
+                    self.__dataset_file.close()
+
         return self.__dataset
 
     def __getitem__(self, i) -> np.ndarray:
@@ -331,6 +364,14 @@ class _VirtualDataset:
     def __len__(self):
         """Returns the length of the dataset."""
         return self._dataset.shape[0]
+
+    @property
+    def shape(self):
+        return self._shape
+
+    @property
+    def dtype(self):
+        return self._dtype
 
 
 class _DatasetSegmenter:

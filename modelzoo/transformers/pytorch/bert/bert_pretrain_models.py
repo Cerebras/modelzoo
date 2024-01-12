@@ -151,6 +151,11 @@ class BertPretrainModel(nn.Module):
         position_embedding_type="learned",
         embedding_pad_token_id=0,
         mask_padding_in_positional_embed=False,
+        rotary_dim=None,
+        rope_theta=10000,
+        num_relative_attention_buckets=32,
+        alibi_trainable_slopes=False,
+        pos_scaling_factor=1.0,
         hidden_size=768,
         share_embedding_weights=True,
         # Encoder
@@ -203,6 +208,11 @@ class BertPretrainModel(nn.Module):
             embedding_dropout_rate=dropout_rate,
             embedding_pad_token_id=embedding_pad_token_id,
             mask_padding_in_positional_embed=mask_padding_in_positional_embed,
+            rotary_dim=rotary_dim,
+            rope_theta=rope_theta,
+            num_relative_attention_buckets=num_relative_attention_buckets,
+            alibi_trainable_slopes=alibi_trainable_slopes,
+            pos_scaling_factor=pos_scaling_factor,
             # Encoder
             num_hidden_layers=num_hidden_layers,
             layer_norm_epsilon=layer_norm_epsilon,

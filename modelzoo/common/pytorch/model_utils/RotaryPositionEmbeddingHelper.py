@@ -27,13 +27,21 @@ def _duplicate_interleave(m):
 
 
 class RotaryPositionEmbeddingHelper:
-    def __init__(self, max_position_embeddings, rotary_dim):
+    def __init__(
+        self,
+        max_position_embeddings,
+        rotary_dim,
+        base=10000,
+        scaling_factor=1.0,
+    ):
         super(RotaryPositionEmbeddingHelper, self).__init__()
         self.max_position_embeddings = max_position_embeddings
         self.rotary_dim = rotary_dim
+        self.base = base
         self.sin_cached = None
         self.cos_cached = None
         self.offset = 0
+        self.scaling_factor = scaling_factor
 
     def create_fixed_pos_emb(self, x, offset):
         if self.sin_cached is not None and self.cos_cached is not None:
@@ -46,17 +54,17 @@ class RotaryPositionEmbeddingHelper:
         device = "cpu" if cstorch.use_cs() else x.device
 
         inv_freq = 1.0 / (
-            10000
+            self.base
             ** (
                 torch.arange(0, self.rotary_dim, 2, device=device)
                 / self.rotary_dim
             )
         )
-        sinusoid_inp = torch.einsum(
-            "i , j -> i j",
-            torch.arange(self.max_position_embeddings, device=device),
-            inv_freq,
-        )
+        t = torch.arange(self.max_position_embeddings, device=device)
+        t = t / self.scaling_factor
+
+        sinusoid_inp = torch.einsum("i , j -> i j", t, inv_freq,)
+
         sin, cos = (
             torch.sin(sinusoid_inp).to(x.dtype),
             torch.cos(sinusoid_inp).to(x.dtype),

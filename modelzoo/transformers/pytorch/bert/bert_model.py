@@ -141,9 +141,16 @@ class BertModel(nn.Module):
         embedding_dropout_rate=0.1,  # need to be careful when testing
         embedding_pad_token_id=0,
         mask_padding_in_positional_embed=False,
+        rotary_dim=None,
+        rope_theta=10000,
+        num_relative_attention_buckets=32,
+        alibi_trainable_slopes=False,
+        pos_scaling_factor=1.0,
         # Encoder
         num_hidden_layers=12,
         layer_norm_epsilon=1.0e-5,
+        norm_first=False,
+        embedding_layer_norm=True,
         # Encoder Attn
         num_heads=12,
         attention_module="aiayn_attention",
@@ -168,7 +175,6 @@ class BertModel(nn.Module):
         position_embeddings_initializer=None,
         segment_embeddings_initializer=None,
         add_pooling_layer=True,
-        attention_kernel=None,
         **extra_args,
     ):
         super().__init__()
@@ -212,6 +218,12 @@ class BertModel(nn.Module):
             position_embeddings_initializer=position_embeddings_initializer,
             num_segments=num_segments,
             segment_embeddings_initializer=segment_embeddings_initializer,
+            num_heads=num_heads,
+            num_relative_attention_buckets=num_relative_attention_buckets,
+            rotary_dim=rotary_dim,
+            rope_theta=rope_theta,
+            alibi_trainable_slopes=alibi_trainable_slopes,
+            pos_scaling_factor=pos_scaling_factor,
         )
 
         self.dropout_embd = nn.Dropout(embedding_dropout_rate)
@@ -233,9 +245,13 @@ class BertModel(nn.Module):
             use_ffn_bias=use_ffn_bias,
             attention_initializer=default_initializer,
             ffn_initializer=default_initializer,
+            norm_first=norm_first,
         )
 
-        self.embed_ln_f = nn.LayerNorm(hidden_size, eps=layer_norm_epsilon)
+        if embedding_layer_norm:
+            self.embed_ln_f = nn.LayerNorm(hidden_size, eps=layer_norm_epsilon)
+        else:
+            self.embed_ln_f = None
 
         final_ln_f = None
         if use_final_layer_norm:
@@ -272,15 +288,27 @@ class BertModel(nn.Module):
 
     def __reset_parameters(self):
         # Init norm layers
-        self.embed_ln_f.bias.data.zero_()
-        self.embed_ln_f.weight.data.fill_(1.0)
+        if self.embed_ln_f is not None:
+            self.embed_ln_f.bias.data.zero_()
+            self.embed_ln_f.weight.data.fill_(1.0)
+
+    def compute_input_embeddings(
+        self,
+        input_ids=None,
+        attention_mask=None,
+        position_ids=None,
+        segment_ids=None,
+    ):
+        return self.embedding_layer(
+            input_ids, position_ids=position_ids, segment_ids=segment_ids,
+        )
 
     def forward(
         self,
         input_ids=None,
+        attention_mask=None,
         position_ids=None,
         segment_ids=None,
-        attention_mask=None,
     ):
         """
         Args:
@@ -297,10 +325,14 @@ class BertModel(nn.Module):
         """
         src_key_padding_mask = None
 
-        hidden_states = self.embedding_layer(
-            input_ids, position_ids=position_ids, segment_ids=segment_ids,
+        hidden_states = self.compute_input_embeddings(
+            input_ids,
+            attention_mask=attention_mask,
+            position_ids=position_ids,
+            segment_ids=segment_ids,
         )
-        hidden_states = self.embed_ln_f(hidden_states)
+        if self.embed_ln_f is not None:
+            hidden_states = self.embed_ln_f(hidden_states)
         hidden_states = self.dropout_embd(hidden_states)
         if attention_mask is not None:
             attention_mask = make_key_padding_mask_broadcastable(
@@ -309,10 +341,19 @@ class BertModel(nn.Module):
             if len(attention_mask.size()) == 2:
                 src_key_padding_mask = attention_mask
                 attention_mask = None
+
+        # Compute alibi/relative position embeddings bias
+        length = input_ids.shape[1]
+        self_attn_position_bias = self.embedding_layer.compute_position_bias(
+            length, length
+        )
+
         hidden_states = self.transformer_encoder(
             hidden_states,
             mask=attention_mask,
             src_key_padding_mask=src_key_padding_mask,
+            rotary_position_embedding_helper=self.embedding_layer.get_rope_helper(),
+            self_attn_position_bias=self_attn_position_bias,
         )
         pooled_output = None
         if self.add_pooling_layer:

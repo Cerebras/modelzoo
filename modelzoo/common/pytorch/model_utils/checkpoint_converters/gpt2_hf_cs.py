@@ -30,46 +30,55 @@ from modelzoo.common.pytorch.model_utils.checkpoint_converters.base_converter im
     FormatVersions,
 )
 from modelzoo.common.pytorch.model_utils.checkpoint_converters.helper import (
+    Build_HF_CS_Converter_WithOptionalModel,
     convert_use_rms_layer_norm_helper,
+    maybe_tie_lm_head,
+    tie_none_weights,
+    transpose_key_if_2D,
 )
+
+#########################################################
+# GPT2 HF <> CS17
+#########################################################
 
 
 class Converter_GPT2_Attention_HF_CS17(BaseCheckpointConverter_HF_CS):
-    def __init__(self):
+    def __init__(self, generate_hf_biases=True):
         super().__init__()
+        self.generate_hf_biases = generate_hf_biases
         self.rules = [
             ConversionRule(
                 [
                     EquivalentSubkey("c_proj", "proj_output_dense_layer"),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=transpose_key_if_2D,
             ),
             ConversionRule(
                 [
                     EquivalentSubkey("c_attn", "proj_q_dense_layer"),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.c_attn_converter,
             ),
             ConversionRule(
                 [
                     EquivalentSubkey("q_attn", "proj_q_dense_layer"),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.assert_already_converted,
             ),
             ConversionRule(
                 [
                     EquivalentSubkey("c_attn", "proj_k_dense_layer"),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.assert_already_converted,
             ),
             ConversionRule(
                 [
                     EquivalentSubkey("c_attn", "proj_v_dense_layer"),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.assert_already_converted,
             ),
@@ -107,17 +116,16 @@ class Converter_GPT2_Attention_HF_CS17(BaseCheckpointConverter_HF_CS):
         # HF represents Q, K, and V in a packed format. We need to unpack the
         # weight and bias tensor for CS 1.7 format.
         q_key = new_key
-        k_key = re.sub("\.proj_q_dense_layer\.", ".proj_k_dense_layer.", q_key)
-        v_key = re.sub("\.proj_q_dense_layer\.", ".proj_v_dense_layer.", q_key)
+        k_key = re.sub(r"\.proj_q_dense_layer\.", ".proj_k_dense_layer.", q_key)
+        v_key = re.sub(r"\.proj_q_dense_layer\.", ".proj_v_dense_layer.", q_key)
 
         if new_key.endswith(".bias"):
             assert len(old_state_dict[old_key].shape) == 1
             packed_dim = old_state_dict[old_key].shape[0]
             embed_dim = packed_dim // 3
-            assert (
-                3 * embed_dim == packed_dim
-            ), "Invalid tensor shape {} at {}. Bias should be divisible by 3 since Q, K, and V are packed".format(
-                old_state_dict[old_key].shape, old_key
+            assert 3 * embed_dim == packed_dim, (
+                f"Invalid tensor shape {old_state_dict[old_key].shape} at {old_key}. Bias should "
+                f"be divisible by 3 since Q, K, and V are packed."
             )
 
             (
@@ -127,10 +135,10 @@ class Converter_GPT2_Attention_HF_CS17(BaseCheckpointConverter_HF_CS):
             ) = torch.chunk(old_state_dict[old_key], 3, dim=0)
         elif new_key.endswith(".weight"):
             embed_dim, packed_dim = old_state_dict[old_key].shape
-            assert (
-                3 * embed_dim == packed_dim
-            ), "Invalid tensor shape {} at {}. The second dimension should be 3x the first dimension (embed_dim) since Q, K, and V are packed".format(
-                old_state_dict[old_key].shape, old_key
+            assert 3 * embed_dim == packed_dim, (
+                f"Invalid tensor shape {old_state_dict[old_key].shape} at {old_key}. The second "
+                f"dimension should be 3x the first dimension (embed_dim) since Q, K, and V are "
+                f"packed."
             )
             (
                 new_state_dict[q_key],
@@ -149,8 +157,8 @@ class Converter_GPT2_Attention_HF_CS17(BaseCheckpointConverter_HF_CS):
         # special ".bias" and ".masked_bias" register buffers that need to be
         # initialized
         q_key = old_key
-        k_key = re.sub("\.proj_q_dense_layer\.", ".proj_k_dense_layer.", q_key)
-        v_key = re.sub("\.proj_q_dense_layer\.", ".proj_v_dense_layer.", q_key)
+        k_key = re.sub(r"\.proj_q_dense_layer\.", ".proj_k_dense_layer.", q_key)
+        v_key = re.sub(r"\.proj_q_dense_layer\.", ".proj_v_dense_layer.", q_key)
 
         assert (
             k_key in old_state_dict
@@ -174,18 +182,18 @@ class Converter_GPT2_Attention_HF_CS17(BaseCheckpointConverter_HF_CS):
                 new_state_dict[new_key], 0, 1
             )
 
-        if new_key.endswith(".bias"):
+        if new_key.endswith(".bias") and self.generate_hf_biases:
             max_position_embeddings = action_fn_args["configs"][1]["model"][
                 "max_position_embeddings"
             ]
-            attn_bias_key = re.sub("\.c_attn\.", ".", new_key)
+            attn_bias_key = re.sub(r"\.c_attn\.", ".", new_key)
             new_state_dict[attn_bias_key] = torch.tril(
                 torch.ones(
                     (max_position_embeddings, max_position_embeddings),
                     dtype=torch.uint8,
                 )
             ).view(1, 1, max_position_embeddings, max_position_embeddings)
-            masked_bias_key = re.sub("\.c_attn\.", ".masked_", new_key)
+            masked_bias_key = re.sub(r"\.c_attn\.", ".masked_", new_key)
             new_state_dict[masked_bias_key] = torch.tensor(-1e4)
 
     def assert_already_converted(
@@ -221,7 +229,7 @@ class Converter_GPT2Model_HF_CS17(BaseCheckpointConverter_HF_CS):
             ConversionRule(
                 [
                     EquivalentSubkey("wte", "embedding_layer.word_embeddings"),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.replaceKey,
             ),
@@ -230,14 +238,14 @@ class Converter_GPT2Model_HF_CS17(BaseCheckpointConverter_HF_CS):
                     EquivalentSubkey(
                         "wpe", "embedding_layer.position_embeddings"
                     ),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.replaceKey,
             ),
             ConversionRule(
                 [
                     EquivalentSubkey("h", "transformer_decoder.layers"),
-                    "\.\d+\.",
+                    r"\.\d+\.",
                     EquivalentSubkey("attn.", "self_attn."),
                     self.attention_converter_class(),
                 ],
@@ -246,50 +254,50 @@ class Converter_GPT2Model_HF_CS17(BaseCheckpointConverter_HF_CS):
             ConversionRule(
                 [
                     EquivalentSubkey("h", "transformer_decoder.layers"),
-                    "\.\d+\.",
+                    r"\.\d+\.",
                     EquivalentSubkey("ln_1", "norm1"),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.replaceKey,
             ),
             ConversionRule(
                 [
                     EquivalentSubkey("h", "transformer_decoder.layers"),
-                    "\.\d+\.",
+                    r"\.\d+\.",
                     EquivalentSubkey("ln_2", "norm3"),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.replaceKey,
             ),
             ConversionRule(
                 [
                     EquivalentSubkey("h", "transformer_decoder.layers"),
-                    "\.\d+\.",
+                    r"\.\d+\.",
                     EquivalentSubkey("mlp.c_fc", "ffn.ffn.0.linear_layer"),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.ffn_converter(),
             ),
             ConversionRule(
                 [
                     EquivalentSubkey("h", "transformer_decoder.layers"),
-                    "\.\d+\.",
+                    r"\.\d+\.",
                     EquivalentSubkey("mlp.c_proj", "ffn.ffn.1.linear_layer"),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.ffn_converter(),
             ),
             ConversionRule(
                 [
                     EquivalentSubkey("ln_f", "transformer_decoder.norm"),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.replace_final_norm,
             ),
-            ConversionRule(["lm_head\.(?:weight|bias)"], exists="right"),
-            ConversionRule(["ln_f\.(?:weight|bias)"], exists="right"),
+            ConversionRule([r"lm_head\.(?:weight|bias)"], exists="right"),
+            ConversionRule([r"ln_f\.(?:weight|bias)"], exists="right"),
             ConversionRule(
-                ["h\.\d+\.attn\.(?:masked_bias|bias)",], exists="left"
+                [r"h\.\d+\.attn\.(?:masked_bias|bias)",], exists="left"
             ),
         ]
 
@@ -317,7 +325,7 @@ class Converter_GPT2Model_HF_CS17(BaseCheckpointConverter_HF_CS):
         # CS 1.7 has both "ln_f" and "transformer_decoder.norm"
         # we need to copy the original ("ln_f") too:
         if from_index == 0:
-            ln_f_key = re.sub("transformer_decoder\.norm\.", "ln_f.", new_key)
+            ln_f_key = re.sub(r"transformer_decoder\.norm\.", "ln_f.", new_key)
             new_state_dict[ln_f_key] = old_state_dict[old_key]
 
     def pre_model_convert(
@@ -352,6 +360,7 @@ class Converter_GPT2Model_HF_CS17(BaseCheckpointConverter_HF_CS):
         configs,
         from_index,
         drop_unmatched_keys,
+        key_prefix="",
     ):
         if from_index == 0:
             # We are converting from HF GPT2Model (which is headless) -> CS GPT2LMHeadModel
@@ -368,16 +377,17 @@ class Converter_GPT2Model_HF_CS17(BaseCheckpointConverter_HF_CS):
             else:
                 lm_head_weight = torch.zeros((vocab_size, embed_dim))
                 lm_head_weight.normal_(mean=0.0, std=0.02)
-            new_state_dict["lm_head.weight"] = lm_head_weight
+            new_state_dict[key_prefix + "lm_head.weight"] = lm_head_weight
             if use_bias_in_output:
                 lm_head_bias = torch.zeros(vocab_size)
-                new_state_dict["lm_head.bias"] = lm_head_bias
+                new_state_dict[key_prefix + "lm_head.bias"] = lm_head_bias
         super().post_model_convert(
             old_state_dict,
             new_state_dict,
             configs,
             from_index,
             drop_unmatched_keys,
+            key_prefix=key_prefix,
         )
 
     @staticmethod
@@ -400,40 +410,53 @@ class Converter_GPT2Model_HF_CS17(BaseCheckpointConverter_HF_CS):
         return ConfigConverter_GPT2Model_HF_CS17
 
 
-class Converter_GPT2Model_HF_CS18(Converter_GPT2Model_HF_CS17):
+class Converter_GPT2LMHeadModel_HF_CS17(BaseCheckpointConverter_HF_CS):
     def __init__(self):
         super().__init__()
         self.rules = [
-            # Catch checkpoints from Pytorch 2.0 API
-            ConversionRule([Converter_GPT2Model_HF_CS17(),], action=None,),
-            # Catch checkpoints from 1.7/1.8
+            ConversionRule(
+                ["lm_head\.(?:weight|bias)"], action=self.replaceKey,
+            ),
             ConversionRule(
                 [
-                    EquivalentSubkey("", "model."),
+                    EquivalentSubkey("transformer.", ""),
                     Converter_GPT2Model_HF_CS17(),
                 ],
                 action=None,
             ),
         ]
 
+    def pre_model_convert(
+        self,
+        old_state_dict,
+        new_state_dict,
+        configs,
+        from_index,
+        drop_unmatched_keys,
+    ):
+        # Manually tie weights
+        if from_index == 1 and configs[1]["model"]["share_embedding_weights"]:
+            if (
+                old_state_dict.get("embedding_layer.word_embeddings.weight", 0)
+                is None
+            ):
+                old_state_dict[
+                    "embedding_layer.word_embeddings.weight"
+                ] = old_state_dict["lm_head.weight"]
+
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-1.8", "cs-1.9"))
+        return (FormatVersions("hf"), FormatVersions("cs-1.7"))
 
     @classmethod
     def converter_note(cls) -> str:
-        return (
-            "{} GPT2Model <-> {} GPT2LMHeadModel\n"
-            "The HF model doesn't contain a language model head while the CS "
-            "one does. When converting to CS, the exported checkpoint will "
-            "contain a language model head initialized to default random "
-            "values. When converting to HF, the language model head will be "
-            "dropped."
-        ).format(cls.formats()[0], cls.formats()[1])
+        return "{} GPT2LMHeadModel <-> {} GPT2LMHeadModel".format(
+            cls.formats()[0], cls.formats()[1]
+        )
 
     @staticmethod
     def get_config_converter_class() -> BaseConfigConverter:
-        return ConfigConverter_GPT2Model_HF_CS18
+        return ConfigConverter_GPT2Model_HF_CS17
 
 
 class ConfigConverter_GPT2Model_HF_CS17(BaseConfigConverter_HF_CS):
@@ -610,13 +633,35 @@ class ConfigConverter_GPT2Model_HF_CS17(BaseConfigConverter_HF_CS):
         return (FormatVersions("hf"), FormatVersions("cs-1.7"))
 
 
-class ConfigConverter_GPT2Model_HF_CS18(ConfigConverter_GPT2Model_HF_CS17):
-    def __init__(self):
-        super().__init__()
+#########################################################
+# GPT2 HF <> CS18, CS19
+#########################################################
 
+
+class ConfigConverter_GPT2Model_HF_CS18(ConfigConverter_GPT2Model_HF_CS17):
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (FormatVersions("hf"), FormatVersions("cs-1.8", "cs-1.9"))
+
+    def supports_mup_conversion(self):
+        return True
+
+
+Converter_GPT2Model_HF_CS18 = Build_HF_CS_Converter_WithOptionalModel(
+    "Converter_GPT2Model_HF_CS18",
+    Converter_GPT2Model_HF_CS17,
+    derived_class=Converter_GPT2Model_HF_CS17,
+    config_converter_class=ConfigConverter_GPT2Model_HF_CS18,
+    formats=(FormatVersions("hf"), FormatVersions("cs-1.8", "cs-1.9")),
+    converter_note_fn=lambda cls: (
+        "{} GPT2Model <-> {} GPT2LMHeadModel\n"
+        "The HF model doesn't contain a language model head while the CS "
+        "one does. When converting to CS, the exported checkpoint will "
+        "contain a language model head initialized to default random "
+        "values. When converting to HF, the language model head will be "
+        "dropped."
+    ).format(cls.formats()[0], cls.formats()[1]),
+)
 
 
 class Converter_GPT2LMHeadModel_HF_CS17(BaseCheckpointConverter_HF_CS):
@@ -624,7 +669,7 @@ class Converter_GPT2LMHeadModel_HF_CS17(BaseCheckpointConverter_HF_CS):
         super().__init__()
         self.rules = [
             ConversionRule(
-                ["lm_head\.(?:weight|bias)"], action=self.replaceKey,
+                [r"lm_head\.(?:weight|bias)"], action=self.replaceKey,
             ),
             ConversionRule(
                 [
@@ -693,14 +738,12 @@ class Converter_GPT2LMHeadModel_HF_CS18(BaseCheckpointConverter_HF_CS):
         configs,
         from_index,
         drop_unmatched_keys,
+        key_prefix="",
     ):
         if from_index == 0:
-            lm_head_weight_key = "lm_head.weight"
-            embed_key = "transformer.wte.weight"
-            if (
-                lm_head_weight_key not in new_state_dict
-                and embed_key in old_state_dict
-            ):
+            lm_head_weight_key = key_prefix + "lm_head.weight"
+            embed_key = key_prefix + "transformer.wte.weight"
+            if lm_head_weight_key not in new_state_dict:
                 new_state_dict[lm_head_weight_key] = old_state_dict[embed_key]
         super().post_model_convert(
             old_state_dict,
@@ -708,6 +751,7 @@ class Converter_GPT2LMHeadModel_HF_CS18(BaseCheckpointConverter_HF_CS):
             configs,
             from_index,
             drop_unmatched_keys,
+            key_prefix=key_prefix,
         )
 
     @staticmethod
@@ -724,12 +768,57 @@ class Converter_GPT2LMHeadModel_HF_CS18(BaseCheckpointConverter_HF_CS):
     def get_config_converter_class() -> BaseConfigConverter:
         return ConfigConverter_GPT2Model_HF_CS18
 
+    def supports_mup_conversion(self) -> bool:
+        return True
+
+
+###########################################################
+# In CS 2.0, we changed introduced norm_type in the config.
+# CS 1.8, CS 1.9 <> CS 2.0, and HF <> CS 2.0 converters:
+###########################################################
+
 
 class Converter_GPT2LMHeadModel_CS18_CS20(BaseCheckpointConverter_CS_CS):
     def __init__(self):
         super().__init__()
         # Model didn't change between 1.8/1.9 and 2.0. Copy all keys.
         self.rules = [
+            ConversionRule(
+                [
+                    "(?:model.|)",
+                    EquivalentSubkey(
+                        "lm_head", "embedding_layer.word_embeddings"
+                    ),
+                    "\.weight",
+                ],
+                action=maybe_tie_lm_head,
+            ),
+            ConversionRule(
+                [
+                    "(?:model.|)",
+                    EquivalentSubkey(
+                        "embedding_layer.word_embeddings", "lm_head",
+                    ),
+                    "\.weight",
+                ],
+                action=maybe_tie_lm_head,
+            ),
+            ConversionRule(
+                [
+                    "(?:model.|)",
+                    EquivalentSubkey("transformer_decoder.norm", "ln_f"),
+                    "\.(?:weight|bias)",
+                ],
+                action=tie_none_weights,
+            ),
+            ConversionRule(
+                [
+                    "(?:model.|)",
+                    EquivalentSubkey("ln_f", "transformer_decoder.norm"),
+                    "\.(?:weight|bias)",
+                ],
+                action=tie_none_weights,
+            ),
             ConversionRule([".*"], action=self.replaceKey),
         ]
 
@@ -770,9 +859,6 @@ class ConfigConverter_GPT2Model_CS18_CS20(BaseConfigConverter_CS_CS):
 
 
 class Converter_GPT2Model_HF_CS20(Converter_GPT2Model_HF_CS18):
-    def __init__(self):
-        super().__init__()
-
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (FormatVersions("hf"), FormatVersions("cs-2.0"))
@@ -783,9 +869,6 @@ class Converter_GPT2Model_HF_CS20(Converter_GPT2Model_HF_CS18):
 
 
 class Converter_GPT2LMHeadModel_HF_CS20(Converter_GPT2LMHeadModel_HF_CS18):
-    def __init__(self):
-        super().__init__()
-
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (FormatVersions("hf"), FormatVersions("cs-2.0"))
@@ -811,21 +894,162 @@ class ConfigConverter_GPT2Model_HF_CS20(ConfigConverter_GPT2Model_HF_CS18):
         return (FormatVersions("hf"), FormatVersions("cs-2.0"))
 
 
-#### Action Helper Functions
+###########################################################
+# In CS 2.1, we refactored the embedding layer.
+# CS 2.0 <> CS 2.1, and HF <> CS 2.1 converters:
+###########################################################
 
 
-def transpose_key_if_2D(
-    old_key,
-    new_key,
-    old_state_dict,
-    new_state_dict,
-    from_index,
-    action_fn_args,
+class Converter_GPT2LMHeadModel_CS20_CS21(BaseCheckpointConverter_CS_CS):
+    def __init__(self):
+        super().__init__()
+        self.rules = [
+            # Refactored embeddings:
+            ConversionRule(
+                [
+                    "(?:model\.|)",
+                    EquivalentSubkey(
+                        "embedding_layer.position_embeddings.weight",
+                        "embedding_layer.position_embeddings.embed.weight",
+                    ),
+                ],
+                action=self.replaceKey,
+            ),
+            ConversionRule(
+                [
+                    "(?:model\.|)",
+                    "embedding_layer\.",
+                    EquivalentSubkey(
+                        "position_embeddings", "position_embeddings.fpe",
+                    ),
+                ],
+                action=self.replaceKey,
+            ),
+            ConversionRule(
+                [
+                    "(?:model\.|)",
+                    EquivalentSubkey(
+                        "relative_pe_helper.relative_attention_bias",
+                        "embedding_layer.position_embed_helper.relative_attention_bias",
+                    ),
+                    "\.(?:weight|bias)",
+                ],
+                action=self.replaceKey,
+            ),
+            ConversionRule(
+                [
+                    "(?:model\.|)",
+                    EquivalentSubkey(
+                        "relative_pe_helper.slopes",
+                        "embedding_layer.position_embed_helper.slopes",
+                    ),
+                ],
+                action=self.replaceKey,
+            ),
+            # Copy everything else
+            ConversionRule([".*"], action=self.replaceKey),
+        ]
+
+    @classmethod
+    def converter_note(cls) -> str:
+        return "GPT2LMHeadModel class"
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("cs-2.0"), FormatVersions("cs-2.1"))
+
+    @staticmethod
+    def get_config_converter_class() -> BaseConfigConverter:
+        return ConfigConverter_GPT2Model_CS20_CS21
+
+
+class ConfigConverter_GPT2Model_CS20_CS21(BaseConfigConverter_CS_CS):
+    def __init__(self):
+        super().__init__()
+        # No differences in config
+        self.rules = [
+            ConversionRule([".*"], action=self.replaceKey),
+        ]
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("cs-2.0"), FormatVersions("cs-2.1"))
+
+
+class ConfigConverter_GPT2Model_HF_CS21(ConfigConverter_GPT2Model_HF_CS20):
+    "CS 2.1 config is the same as CS 2.0"
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-2.1"))
+
+
+class Converter_GPT2Model_WithoutOptionalModel_HF_CS21(
+    Converter_GPT2Model_HF_CS17
 ):
-    # HF checkpoint stores some layers as Conv2D instead of Linear.
-    # In those cases, we need to transpose the weight matrix for the
-    # dimensions to line up when converting.
-    x = old_state_dict[old_key]
-    if len(x.shape) == 2:
-        x = x.transpose(0, 1)
-    new_state_dict[new_key] = x
+    def __init__(self):
+        super().__init__()
+        self.rules = [
+            ConversionRule(
+                [
+                    EquivalentSubkey(
+                        "wpe", "embedding_layer.position_embeddings.embed"
+                    ),
+                    "\.(?:weight|bias)",
+                ],
+                action=self.replaceKey,
+            ),
+            *self.rules,
+        ]
+
+    def supports_mup_conversion(self) -> bool:
+        return True
+
+
+Converter_GPT2Model_HF_CS21 = Build_HF_CS_Converter_WithOptionalModel(
+    "Converter_GPT2Model_HF_CS21",
+    Converter_GPT2Model_WithoutOptionalModel_HF_CS21,
+    derived_class=Converter_GPT2Model_WithoutOptionalModel_HF_CS21,
+    config_converter_class=ConfigConverter_GPT2Model_HF_CS21,
+    formats=(FormatVersions("hf"), FormatVersions("cs-2.1")),
+)
+
+
+class Converter_GPT2LMHeadModel_WithoutOptionalModel_HF_CS21(
+    BaseCheckpointConverter_HF_CS
+):
+    def __init__(self):
+        super().__init__()
+        self.rules = [
+            ConversionRule(
+                ["lm_head\.(?:weight|bias)"], action=self.replaceKey,
+            ),
+            ConversionRule(
+                [
+                    EquivalentSubkey("transformer.", ""),
+                    Converter_GPT2Model_WithoutOptionalModel_HF_CS21(),
+                ],
+                action=None,
+            ),
+        ]
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-2.1"))
+
+    @staticmethod
+    def get_config_converter_class() -> BaseConfigConverter:
+        return ConfigConverter_GPT2Model_HF_CS21
+
+    def supports_mup_conversion(self) -> bool:
+        return True
+
+
+Converter_GPT2LMHeadModel_HF_CS21 = Build_HF_CS_Converter_WithOptionalModel(
+    "Converter_GPT2LMHeadModel_HF_CS21",
+    Converter_GPT2LMHeadModel_WithoutOptionalModel_HF_CS21,
+    derived_class=Converter_GPT2LMHeadModel_WithoutOptionalModel_HF_CS21,
+    converter_note_fn=lambda cls: "{} GPT2LMHeadModel <-> {} GPT2LMHeadModel".format(
+        cls.formats()[0], cls.formats()[1]
+    ),
+)

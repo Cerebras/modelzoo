@@ -30,6 +30,10 @@ from modelzoo.common.pytorch.model_utils.checkpoint_converters.bert import (
     ConfigConverter_Bert_HF_CS17,
     ConfigConverter_Bert_HF_CS18,
     Converter_BertModel_CS16_CS17,
+    Converter_BertModel_WithoutOptionalModel_HF_CS21,
+)
+from modelzoo.common.pytorch.model_utils.checkpoint_converters.helper import (
+    Build_HF_CS_Converter_WithOptionalModel,
 )
 
 
@@ -37,9 +41,9 @@ class Converter_BertFinetuneModel_CS16_CS17(BaseCheckpointConverter_CS_CS):
     def __init__(self):
         super().__init__()
         self.rules = [
-            ConversionRule(["bert\.", Converter_BertModel_CS16_CS17(),],),
+            ConversionRule([r"bert\.", Converter_BertModel_CS16_CS17(),],),
             ConversionRule(
-                ["classifier\.(?:weight|bias)"], action=self.replaceKey,
+                [r"classifier\.(?:weight|bias)"], action=self.replaceKey,
             ),
         ]
 
@@ -131,9 +135,6 @@ class Converter_BertFinetuneModel_CS16_CS18(BaseCheckpointConverter_CS_CS):
 class Converter_BertForSequenceClassification_HF_CS17(
     Converter_BertFinetuneModel_CS16_CS17, BaseCheckpointConverter_HF_CS
 ):
-    def __init__(self):
-        super().__init__()
-
     def pre_checkpoint_convert(self, *args):
         return BaseCheckpointConverter_HF_CS.pre_checkpoint_convert(
             self, *args,
@@ -217,6 +218,7 @@ class ConfigConverter_BertForSequenceClassification_HF_CS17(
     ):
         config = super().pre_config_convert(config, from_index)
 
+        # pylint: disable=line-too-long
         # From https://github.com/huggingface/transformers/blob/23c146c38b42d1193849fbd6f2943bf754b7c428/src/transformers/models/bert/modeling_bert.py#L1579
         if from_index == 0:
             if "num_labels" not in config:
@@ -235,7 +237,9 @@ class ConfigConverter_BertForSequenceClassification_HF_CS17(
                     config["problem_type"] = "regression"
                 else:
                     raise ConfigConversionError(
-                        "Cannot infer the problem_type (it is either single_label_classification or multi_label_classification). Please explicitly include the problem_type field before re-running."
+                        "Cannot infer the problem_type (it is either single_label_classification "
+                        "or multi_label_classification). Please explicitly include the "
+                        "problem_type field before re-running."
                     )
 
         return config
@@ -249,9 +253,6 @@ class ConfigConverter_BertForSequenceClassification_HF_CS18(
     ConfigConverter_BertForSequenceClassification_HF_CS17,
     ConfigConverter_Bert_HF_CS18,
 ):
-    def __init__(self):
-        super().__init__()
-
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
@@ -263,9 +264,6 @@ class ConfigConverter_BertForSequenceClassification_HF_CS18(
 class Converter_BertForTokenClassification_HF_CS17(
     Converter_BertFinetuneModel_CS16_CS17, BaseCheckpointConverter_HF_CS
 ):
-    def __init__(self):
-        super().__init__()
-
     def pre_checkpoint_convert(
         self, *args,
     ):
@@ -402,9 +400,6 @@ class ConfigConverter_BertForTokenClassification_HF_CS18(
     ConfigConverter_BertForTokenClassification_HF_CS17,
     ConfigConverter_Bert_HF_CS18,
 ):
-    def __init__(self):
-        super().__init__()
-
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
@@ -417,11 +412,11 @@ class Converter_BertForQuestionAnswering_HF_CS17(BaseCheckpointConverter_HF_CS):
     def __init__(self):
         super().__init__()
         self.rules = [
-            ConversionRule(["bert\.", Converter_BertModel_CS16_CS17(),],),
+            ConversionRule([r"bert\.", Converter_BertModel_CS16_CS17(),],),
             ConversionRule(
                 [
                     EquivalentSubkey("qa_outputs", "classifier"),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.replaceKey,
             ),
@@ -517,12 +512,131 @@ class ConfigConverter_BertForQuestionAnswering_HF_CS18(
     ConfigConverter_BertForQuestionAnswering_HF_CS17,
     ConfigConverter_Bert_HF_CS18,
 ):
-    def __init__(self):
-        super().__init__()
-
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
             FormatVersions("cs-1.8", "cs-1.9", "cs-2.0"),
         )
+
+
+###########################################################
+# In CS 2.1, we refactored the embedding layer.
+# CS 2.0 <> CS 2.1, and HF <> CS 2.1 converters:
+###########################################################
+
+# Converter_Bert_CS17_CS18
+
+
+class ConfigConverter_BertForSequenceClassification_HF_CS21(
+    ConfigConverter_BertForSequenceClassification_HF_CS18
+):
+    "CS 2.1 config is the same as CS 2.0"
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-2.1"))
+
+
+class Converter_BertForSequenceClassification_WithoutOptionalModel_HF_CS21(
+    Converter_BertForSequenceClassification_HF_CS17
+):
+    def __init__(self):
+        super().__init__()
+        self.rules = [
+            ConversionRule(
+                ["bert\.", Converter_BertModel_WithoutOptionalModel_HF_CS21(),],
+            ),
+            *self.rules,
+        ]
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-2.1"))
+
+    @staticmethod
+    def get_config_converter_class() -> BaseConfigConverter:
+        return ConfigConverter_BertForSequenceClassification_HF_CS21
+
+
+Converter_BertForSequenceClassification_HF_CS21 = Build_HF_CS_Converter_WithOptionalModel(
+    "Converter_BertForSequenceClassification_HF_CS21",
+    Converter_BertForSequenceClassification_WithoutOptionalModel_HF_CS21,
+    derived_class=Converter_BertForSequenceClassification_WithoutOptionalModel_HF_CS21,
+)
+
+
+class ConfigConverter_BertForTokenClassification_HF_CS21(
+    ConfigConverter_BertForTokenClassification_HF_CS18
+):
+    "CS 2.1 config is the same as CS 2.0"
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-2.1"))
+
+
+class Converter_BertForTokenClassification_WithoutOptionalModel_HF_CS21(
+    Converter_BertForTokenClassification_HF_CS17
+):
+    def __init__(self):
+        super().__init__()
+        self.rules = [
+            ConversionRule(
+                ["bert\.", Converter_BertModel_WithoutOptionalModel_HF_CS21(),],
+            ),
+            *self.rules,
+        ]
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-2.1"))
+
+    @staticmethod
+    def get_config_converter_class() -> BaseConfigConverter:
+        return ConfigConverter_BertForTokenClassification_HF_CS21
+
+
+Converter_BertForTokenClassification_HF_CS21 = Build_HF_CS_Converter_WithOptionalModel(
+    "Converter_BertForTokenClassification_HF_CS21",
+    Converter_BertForTokenClassification_WithoutOptionalModel_HF_CS21,
+    derived_class=Converter_BertForTokenClassification_WithoutOptionalModel_HF_CS21,
+)
+
+
+class ConfigConverter_BertForQuestionAnswering_HF_CS21(
+    ConfigConverter_BertForQuestionAnswering_HF_CS18
+):
+    "CS 2.1 config is the same as CS 2.0"
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-2.1"))
+
+
+class Converter_BertForQuestionAnswering_WithoutOptionalModel_HF_CS21(
+    Converter_BertForQuestionAnswering_HF_CS17
+):
+    def __init__(self):
+        super().__init__()
+        self.rules = [
+            ConversionRule(
+                ["bert\.", Converter_BertModel_WithoutOptionalModel_HF_CS21(),],
+            ),
+            *self.rules,
+        ]
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-2.1"))
+
+    @staticmethod
+    def get_config_converter_class() -> BaseConfigConverter:
+        return ConfigConverter_BertForQuestionAnswering_HF_CS21
+
+
+Converter_BertForQuestionAnswering_HF_CS21 = Build_HF_CS_Converter_WithOptionalModel(
+    "Converter_BertForQuestionAnswering_HF_CS21",
+    Converter_BertForQuestionAnswering_WithoutOptionalModel_HF_CS21,
+    derived_class=Converter_BertForQuestionAnswering_WithoutOptionalModel_HF_CS21,
+)

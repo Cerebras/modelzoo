@@ -168,7 +168,7 @@ For training the DiT model, we prefetch the latent tensor outputs from a pretrai
 ```
 $ python modelzoo/vision/pytorch/dit/input/scripts/create_imagenet_latents.py -h
 usage: create_imagenet_latents.py [-h] [--checkpoint_path CHECKPOINT_PATH] [--params_path PARAMS_PATH] [--horizontal_flip]
-                                  --image_size {256,512} --src_dir SRC_DIR --dest_dir DEST_DIR [--resume]
+                                  --image_height IMAGE_HEIGHT --image_width IMAGE_WIDTH --src_dir SRC_DIR --dest_dir DEST_DIR [--resume]
                                   [--resume_ckpt RESUME_CKPT] [--log_steps LOG_STEPS]
                                   [--batch_size_per_gpu BATCH_SIZE_PER_GPU] [--num_workers NUM_WORKERS]
                                   [--dataset_split {train,val}]
@@ -180,7 +180,10 @@ optional arguments:
   --params_path PARAMS_PATH
                         Path to VAE model params yaml (default:modelzoo/vision/pytorch/dit/configs/params_dit_small_patchsize_2x2.yaml)
   --horizontal_flip     If passed, flip image horizonatally (default: False)
-  --image_size {256,512}
+  --image_height IMAGE_HEIGHT
+                        Height of the resized image
+  --image_width IMAGE_WIDTH
+                        Width of the resized image
   --src_dir SRC_DIR     source data location (default: None)
   --dest_dir DEST_DIR   Latent data location (default: None)
   --resume              If specified, resumes previous generation process.The dest_dir should point to previous generation
@@ -204,11 +207,11 @@ Sample command is as follows for a single node with 4 GPUs. In the following com
 
 ##### a. Create ImageNet Latent Tensors from VAE for `train` split of dataset
 ```
-torchrun --nnodes 1 --nproc_per_node 4 modelzoo/vision/pytorch/dit/input/scripts/create_imagenet_latents.py --image_size=256 --src_dir=/path/to/imagenet1k_ilsvrc2012 --dest_dir=/path_to_dest_dir --log_steps=10 --dataset_split=train --batch_size_per_gpu=16 --checkpoint_path=/path/to/converted/vae_checkpoint/in_Step2
+torchrun --nnodes 1 --nproc_per_node 4 modelzoo/vision/pytorch/dit/input/scripts/create_imagenet_latents.py --image_height=256 --image_width=256 --src_dir=/path/to/imagenet1k_ilsvrc2012 --dest_dir=/path_to_dest_dir --log_steps=10 --dataset_split=train --batch_size_per_gpu=16 --checkpoint_path=/path/to/converted/vae_checkpoint/in_Step2
 ``` 
 ##### b. Create ImageNet Latent Tensors from VAE for `val` split of dataset
 ```
-torchrun --nnodes 1 --nproc_per_node 4 modelzoo/vision/pytorch/dit/input/scripts/create_imagenet_latents.py --image_size=256 --src_dir=/path/to/imagenet1k_ilsvrc2012 --dest_dir=/path_to_dest_dir --log_steps=10 --dataset_split=val --batch_size_per_gpu=16 --checkpoint_path=/path/to/converted/vae_checkpoint/in_Step2
+torchrun --nnodes 1 --nproc_per_node 4 modelzoo/vision/pytorch/dit/input/scripts/create_imagenet_latents.py --image_height=256 --image_width=256 --src_dir=/path/to/imagenet1k_ilsvrc2012 --dest_dir=/path_to_dest_dir --log_steps=10 --dataset_split=val --batch_size_per_gpu=16 --checkpoint_path=/path/to/converted/vae_checkpoint/in_Step2
 ```
 
 The output folder shown below for reference and will have the same format as shown in Step 1:
@@ -244,12 +247,12 @@ The output folder shown below for reference and will have the same format as sho
 DiT models use horizontal flip of images as augmentation. The script also supports saving latent tensors from horizontally flipped images by passing the flag `--horizontal_flip`
 ##### c. Create ImageNet Latent Tensors with horizontal flip from VAE for `train` split of dataset
 ```
-torchrun --nnodes 1 --nproc_per_node 4 modelzoo/vision/pytorch/dit/input/scripts/create_imagenet_latents.py --image_size=256 --src_dir=/path/to/imagenet1k_ilsvrc2012 --dest_dir=/path_to_hflipped_dest_dir --log_steps=10 --dataset_split=train --batch_size_per_gpu=16 --checkpoint_path=/path/to/converted/vae_checkpoint/in_Step2 --horizontal_flip
+torchrun --nnodes 1 --nproc_per_node 4 modelzoo/vision/pytorch/dit/input/scripts/create_imagenet_latents.py --image_height=256 --image_width=256 --src_dir=/path/to/imagenet1k_ilsvrc2012 --dest_dir=/path_to_hflipped_dest_dir --log_steps=10 --dataset_split=train --batch_size_per_gpu=16 --checkpoint_path=/path/to/converted/vae_checkpoint/in_Step2 --horizontal_flip
 ``` 
 ##### d. Create ImageNet Latent Tensors with horizontal flip from VAE for `val` split of dataset
 
 ```
-torchrun --nnodes 1 --nproc_per_node 4 modelzoo/vision/pytorch/dit/input/scripts/create_imagenet_latents.py --image_size=256 --src_dir=/path/to/imagenet1k_ilsvrc2012 --dest_dir=/path_to_hflipped_dest_dir --log_steps=10 --dataset_split=val --batch_size_per_gpu=16 --checkpoint_path=/path/to/converted/vae_checkpoint/in_Step2 --horizontal_flip
+torchrun --nnodes 1 --nproc_per_node 4 modelzoo/vision/pytorch/dit/input/scripts/create_imagenet_latents.py --image_height=256 --image_width=256 --src_dir=/path/to/imagenet1k_ilsvrc2012 --dest_dir=/path_to_hflipped_dest_dir --log_steps=10 --dataset_split=val --batch_size_per_gpu=16 --checkpoint_path=/path/to/converted/vae_checkpoint/in_Step2 --horizontal_flip
 ```
 
 ### Step 4: Training the model on CS system or GPU using `run.py`
@@ -263,6 +266,7 @@ torchrun --nnodes 1 --nproc_per_node 4 modelzoo/vision/pytorch/dit/input/scripts
 -   The `model.vae.latent_size` parameter corresponds size of latent tensors. 
     -  Set to `[32, 32]` for image size of `256 x 256`
     -  Set to `[64, 64]` for image size of `512 x 512`
+    -  In general, set to `[floor(H / 8), floor(W / 8)]` for an image size of `H x W`
 -   The `model.patch_size` parameter to use different patch sizes
 
 **To use with image size `512 x 512`, please make the following changes:**
@@ -1418,6 +1422,7 @@ The following changes can be made to use other settings of DiT model:
 -   The `model.vae.latent_size` parameter corresponds size of latent tensors. **This is the only param under `model.vae_params` that needs to be changed.**
     -  Set to `[32, 32]` for image size of `256 x 256`
     -  Set to `[64, 64]` for image size of `512 x 512`
+    -  Set to `[floor(H / 8), floor(W / 8)]` for image size of `H x W`
 -   The `model.patch_size` parameter to use different patch sizes
 
 ## DataLoader Features Dictionary

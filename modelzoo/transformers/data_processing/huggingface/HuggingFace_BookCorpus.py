@@ -30,6 +30,9 @@ def HuggingFace_BookCorpus(split="train", num_workers=8, sequence_length=2048):
     bookcorpus = load_dataset("bookcorpus", split=split)
 
     tokenizer = AutoTokenizer.from_pretrained("gpt2", use_fast=True)
+    tokenizer.add_bos_token = (
+        False  # BOS token added in CSDataCollatorForLanguageModeling
+    )
 
     def preprocess_function(examples):
         return tokenizer(

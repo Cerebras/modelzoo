@@ -100,6 +100,9 @@ class DumpContext(ContextDecorator):
         Args:
             model: torch.nn.Module that serves as the root for recursive names
         """
+        if cstorch.use_cs():
+            # Not enabled for CSX, dumping only works on CPU/GPU
+            return
         cstorch.add_debug_name(model)
 
         # Helpers for hooks
@@ -114,81 +117,57 @@ class DumpContext(ContextDecorator):
 
             return name
 
-        def recurse(top_scope, output):
-            for scope, tensor in visit_torch_tensors(output, scope=top_scope):
-                yield ".".join(scope), tensor
+        def save_tensors(top_scope, tensors):
+            for scope, tensor in visit_torch_tensors(tensors, scope=top_scope):
+                tensor = tensor.detach().to("cpu").clone()
+                if tensor.dtype == torch.bfloat16:
+                    warnings.warn(
+                        "Encountered bfloat16 tensor in summary collection. "
+                        "Numpy does not natively support bfloat16, so any "
+                        "torch.bfloat16 tensors will be saved as np.float32."
+                    )
+                    tensor = tensor.float()
+
+                name = ".".join(scope)
+                numpy = tensor.numpy()
+                print(scope)
+
+                self._buffer[name].append(numpy)
 
         # pylint: disable=redefined-builtin
-        if cstorch.use_cs():
+        def save_output(key, module, input, output):
+            """
+            Saves to numpy arrays in the output directory.
+            """
 
-            def fwd_pre_name_scope(module, input):
-                name = get_name(module) + ".fwd"
-                cstorch.set_debug_scope(name)
+            counter_increment = 1
+            if key == "bwd":
+                counter_increment = -1
+                # hook args are `grad_input, grad_output`, where grad_input
+                # is the _gradient_ of the module's input i.e. the output
+                # of the backward pass and the more interesting value to
+                # dump. This way, the dump named `module.fwd` is the output
+                # of the forward pass (i.e. txact), and `module.bwd` is the
+                # output of the backward pass (i.e. txdelta) for the
+                # corresponding kernel
+                output = input
 
-            def fwd_post_name_scope(module, input, output):
-                # This will actually be the name for the bwd pass entered from
-                # the module's output's grad hook.
-                # Also, increment the counter for the next fwd_pre to hit.
-                name = get_name(module, 1) + ".bwd"
+            name = get_name(module, counter_increment)
+            save_tensors([name, key], output)
 
-                for _, tensor in recurse([name], output):
-                    # In case a module returns a tensor unmodifed, don't change
-                    # its scope.
-                    existing_name = getattr(tensor, "_debug_name_scope", None)
-                    if tensor.requires_grad and not existing_name:
-                        # pylint: disable=protected-access
-                        tensor._debug_name_scope = name
-                        # Set scope before beginning bwd pass from any output
-                        tensor.register_hook(
-                            lambda x: cstorch.set_debug_scope(name)
-                        )
+        self._forward_hook = functools.partial(save_output, "fwd")
+        self._full_backward_hook = functools.partial(save_output, "bwd")
 
-                # Clear any scope in case this is the last module.
-                cstorch.set_debug_scope(None)
+        # Add hook capturing parameter gradients
+        def param_grad_hook(module, input):
+            module_name = get_name(module)
+            for name, param in module.named_parameters(recurse=False):
+                if param.requires_grad and not hasattr(param, "dump_context"):
+                    param.dump_context = True
+                    scope = [module_name, "bwd", name]
+                    param.register_hook(functools.partial(save_tensors, scope))
 
-            def bwd_post_name_scope(module, grad_output, grad_input):
-                # Clear scope after bwd pass is complete.
-                cstorch.set_debug_scope(None)
-
-            self._forward_pre_hook = fwd_pre_name_scope
-            self._forward_hook = fwd_post_name_scope
-            self._backward_hook = bwd_post_name_scope
-        else:
-            # CPU/CPU
-            def save_output(key, module, input, output):
-                """
-                Saves to numpy arrays in the output directory.
-                """
-
-                counter_increment = 1
-                if key == "bwd":
-                    counter_increment = -1
-                    # hook args are `grad_input, grad_output`, where grad_input
-                    # is the _gradient_ of the module's input i.e. the output
-                    # of the backward pass and the more interesting value to
-                    # dump. This way, the dump named `module.fwd` is the output
-                    # of the forward pass (i.e. txact), and `module.bwd` is the
-                    # output of the backward pass (i.e. txdelta) for the
-                    # corresponding kernel
-                    output = input
-
-                name = get_name(module, counter_increment)
-
-                for scope, tensor in recurse([name, key], output):
-                    tensor = tensor.detach().to("cpu").clone()
-                    if tensor.dtype == torch.bfloat16:
-                        warnings.warn(
-                            f"Encountered bfloat16 tensor in summary "
-                            f"collection. Numpy does not natively support "
-                            f"bfloat16, so any torch.bfloat16 tensors will be "
-                            f"saved as np.float32."
-                        )
-                        tensor = tensor.float()
-                    numpy = tensor.numpy()
-                    self._buffer[scope].append(numpy)
-
-            self._forward_hook = functools.partial(save_output, "fwd")
-            self._backward_hook = functools.partial(save_output, "bwd")
+        self._forward_pre_hook = param_grad_hook
 
     def enable_collection(self):
         """
@@ -222,6 +201,9 @@ class DumpContext(ContextDecorator):
         """
         Write all dump buffers out to disk.
         """
+        if not self._buffer:
+            return
+
         if self._flush_count:
             outfile = f"act_dumps_{self._flush_count}.npz"
         else:
