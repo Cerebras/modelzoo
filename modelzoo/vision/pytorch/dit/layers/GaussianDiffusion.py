@@ -14,7 +14,7 @@
 
 import torch
 
-from modelzoo.common.pytorch.run_utils import half_dtype_instance
+import cerebras_pytorch as cstorch
 from modelzoo.vision.pytorch.dit.layers.schedulers import (
     get_named_beta_schedule,
 )
@@ -29,7 +29,7 @@ def extract(arr, timestep, broadcast_shape):
     result = index(arr, timestep).view(shape) + torch.zeros(
         broadcast_shape, device=arr.device
     )
-    return result.to(timestep.device, dtype=half_dtype_instance.half_dtype)
+    return result.to(timestep.device, dtype=cstorch.amp.get_half_dtype())
 
 
 class GaussianDiffusion(torch.nn.Module):
@@ -74,7 +74,9 @@ class GaussianDiffusion(torch.nn.Module):
             beta_end=beta_end,
         )
         assert self.betas.dim() == 1, "betas must be 1-D"
-        assert torch.all(torch.logical_and(self.betas > 0, self.betas <= 1))
+
+        if self.betas.device.type != "lazy":
+            assert torch.all(torch.logical_and(self.betas > 0, self.betas <= 1))
 
         alphas = 1.0 - self.betas
         alphas_cum_prod = torch.cumprod(alphas, dim=0)
@@ -108,7 +110,7 @@ class GaussianDiffusion(torch.nn.Module):
             sqrt_alpha_prod * latent + sqrt_one_minus_alpha_prod * noise
         )
 
-        return noisy_samples.to(half_dtype_instance.half_dtype)
+        return noisy_samples.to(cstorch.amp.get_half_dtype())
 
     def __repr__(self):
         return (

@@ -36,13 +36,12 @@ def get_train_dataloader(params):
 
     batch_size = get_streaming_batch_size(input_params.get("batch_size"))
     to_float16 = input_params.get("to_float16", True)
-    use_bfloat16 = params["model"].get("use_bfloat16", False)
     shuffle = input_params["shuffle"]
 
     dtype = torch.float32
     if to_float16:
         if use_cs or torch.cuda.is_available():
-            dtype = torch.bfloat16 if use_bfloat16 else torch.float16
+            dtype = cstorch.amp.get_half_dtype()
         else:
             print(
                 f"Input dtype float16 is not supported with "
@@ -108,12 +107,11 @@ def get_eval_dataloader(params):
 
     batch_size = get_streaming_batch_size(input_params.get("batch_size"))
     to_float16 = input_params.get("to_float16", True)
-    use_bfloat16 = params["model"].get("use_bfloat16", False)
 
     dtype = torch.float32
     if to_float16:
         if use_cs or torch.cuda.is_available():
-            dtype = torch.bfloat16 if use_bfloat16 else torch.float16
+            dtype = cstorch.amp.get_half_dtype()
         else:
             print(
                 f"Input dtype float16 is not supported with "

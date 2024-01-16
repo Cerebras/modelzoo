@@ -82,4 +82,3 @@ runconfig:
     model_dir: "./model_dir"
     save_initial_checkpoint: True
     eval_steps: 416 # For GPU, multiply the eval_steps by grad_accum_steps
-    use_cs_grad_accum: True

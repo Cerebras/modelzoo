@@ -28,7 +28,7 @@ def set_defaults(params):
         "tgt_max_position_embeddings",
         params["train_input"]["tgt_max_sequence_length"],
     )
-    params["model"]["use_bfloat16"] = params["model"].get("use_bfloat16", False)
+    params["model"]["fp16_type"] = params["model"].get("fp16_type", "float16")
     params["optimizer"]["loss_scaling_factor"] = params["optimizer"].get(
         "loss_scaling_factor", "dynamic"
     )

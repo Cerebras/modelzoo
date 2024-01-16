@@ -20,9 +20,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
-from .AlibiPositionEmbeddingLayer import AlibiPositionEmbeddingLayer
-from .RelativePositionEmbeddingLayer import RelativePositionEmbeddingLayer
-
 LOSS_SCOPE = "loss"
 
 
@@ -39,18 +36,6 @@ def _get_activation_fn(activation: str) -> Callable[[Tensor], Tensor]:
     raise RuntimeError(
         "activation should be relu/gelu, not {}".format(activation)
     )
-
-
-def apply_position_bias(embedding_helper, seq_length, key_length, past_kv=None):
-    self_attn_position_bias = None
-    if isinstance(
-        embedding_helper,
-        (RelativePositionEmbeddingLayer, AlibiPositionEmbeddingLayer,),
-    ):
-        self_attn_position_bias = embedding_helper(
-            seq_length, key_length, past_kv=past_kv
-        )
-    return self_attn_position_bias
 
 
 def patchify_helper(input_image, patch_size):

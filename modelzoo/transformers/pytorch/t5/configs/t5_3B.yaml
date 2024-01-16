@@ -9,7 +9,7 @@ train_input:
     shuffle_seed: 1
     shuffle_buffer: 16384 # large buffer size allows batches to contain samples from multiple documents
     # The effective batch size, which is evenly divided across "num_csx" systems used for the run
-    batch_size: 495 # this is more than 2**16 tokens per batch (ref batch size = 216) for perf reasons on CS system
+    batch_size: 558 # this is more than 2**16 tokens per batch (ref batch size = 216) for perf reasons on CS system
     num_workers: 8
     prefetch_factor: 10
     persistent_workers: True
@@ -24,7 +24,7 @@ eval_input:
     shuffle: False
     shuffle_seed: 1 # also for deterministic masking
     # The effective batch size, which is evenly divided across "num_csx" systems used for the run
-    batch_size: 495
+    batch_size: 558
     num_workers: 8
     prefetch_factor: 10
     persistent_workers: True
@@ -66,17 +66,18 @@ model:
 
     # Cerebras configs.
     mixed_precision: True
-    use_bfloat16: True
+    fp16_type: "bfloat16"
 
 optimizer:
     optimizer_type: "AdaFactor"
+    loss_scaling_factor: 1.0
     learning_rate:
     - scheduler: "InverseSquareRootDecay"
-      warmup_steps: 4363
+      warmup_steps: 3870 # 10000 * 216 / 558
       scale: 1.0
 
 runconfig:
-    max_steps: 228780 # (524288 * 216 / 495)
+    max_steps: 202950 # (524288 * 216 / 558)
     log_steps: 100
     checkpoint_steps: 10000
     eval_steps: 703

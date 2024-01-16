@@ -32,7 +32,6 @@ model:
     # Embedding
     hidden_size: 6144
     vocab_size: 50257
-    use_position_embedding: True
     position_embedding_type: "learned"
     share_embedding_weights: True
     max_position_embeddings: 2048
@@ -71,8 +70,8 @@ model:
 
     # Task-specific
     use_bias_in_output: False
-    loss_scaling: "batch_size"
-    loss_weight: 0.00048828125 # 1/MSL=>1/2048
+    loss_scaling: "num_tokens"
+    loss_weight: 1.0
 
     # Cerebras parameters
     mixed_precision: True
@@ -110,11 +109,10 @@ runconfig:
   max_steps: 170778
   eval_steps: 2409
   checkpoint_steps: 5000
-  keep_checkpoint_max: 21
+  max_checkpoints: 21
   log_steps: 1
   save_initial_checkpoint: True
   seed: 0
   enable_distributed: False # Change to True on GPU
-  use_cs_grad_accum: True
   num_workers_per_csx: 1
   num_wgt_servers: 24

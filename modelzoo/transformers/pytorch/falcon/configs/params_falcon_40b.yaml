@@ -62,8 +62,11 @@ model:
     # reference: https://huggingface.co/tiiuae/falcon-7b-instruct/blob/main/modelling_RW.py#L434
 
     mixed_precision: True
-    use_bfloat16: True
+    fp16_type: "cbfloat16"
     dropout_rate: 0.0
+
+    loss_scaling: "num_tokens"
+    loss_weight: 1.0
 
 optimizer:
     optimizer_type: "adamw"
@@ -72,6 +75,7 @@ optimizer:
     weight_decay: 0.1
     max_gradient_norm: 1.0
     correct_bias: True
+    loss_scaling_factor: "dynamic"
     learning_rate:
     - total_iters: 3938 # 1% of max_steps
       scheduler: "Linear"
@@ -87,5 +91,4 @@ runconfig:
     log_steps: 100
     eval_steps: 5050 # 277822 // batch_size - 1
     checkpoint_steps: 5000
-    use_cs_grad_accum: True
     seed: 1

@@ -27,7 +27,11 @@ from modelzoo.common.pytorch.model_utils.checkpoint_converters.base_converter im
     FormatVersions,
 )
 from modelzoo.common.pytorch.model_utils.checkpoint_converters.gpt2_hf_cs import (
+    Converter_GPT2LMHeadModel_CS20_CS21,
     Converter_GPT2Model_HF_CS17,
+)
+from modelzoo.common.pytorch.model_utils.checkpoint_converters.helper import (
+    Build_HF_CS_Converter_WithOptionalModel,
 )
 
 
@@ -38,28 +42,28 @@ class Converter_Starcoder_Attention_HF_CS(BaseCheckpointConverter_HF_CS):
             ConversionRule(
                 [
                     EquivalentSubkey("c_proj", "proj_output_dense_layer"),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.replaceKey,
             ),
             ConversionRule(
                 [
                     EquivalentSubkey("c_attn", "proj_q_dense_layer"),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.c_attn_converter,
             ),
             ConversionRule(
                 [
                     EquivalentSubkey("c_attn", "proj_k_dense_layer"),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.assert_already_converted,
             ),
             ConversionRule(
                 [
                     EquivalentSubkey("c_attn", "proj_v_dense_layer"),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.assert_already_converted,
             ),
@@ -101,25 +105,25 @@ class Converter_Starcoder_Attention_HF_CS(BaseCheckpointConverter_HF_CS):
         # where embed_dim is for the Queries, and each of the 2 head_dim is
         # for one of Keys and Values
         q_key = new_key
-        k_key = re.sub("\.proj_q_dense_layer\.", ".proj_k_dense_layer.", q_key)
-        v_key = re.sub("\.proj_q_dense_layer\.", ".proj_v_dense_layer.", q_key)
+        k_key = re.sub(r"\.proj_q_dense_layer\.", ".proj_k_dense_layer.", q_key)
+        v_key = re.sub(r"\.proj_q_dense_layer\.", ".proj_v_dense_layer.", q_key)
         hf_config = action_fn_args["configs"][0]
         is_multiquery = hf_config["multi_query"]
         embed_dim = hf_config["n_embd"]
-        h_dim = embed_dim / hf_config["n_head"]
+        n_head = hf_config["n_head"]
+        d_head = int(embed_dim / n_head)
         # Note that nn.Linear stores matrices with shape [out_dim x in_dim]
         packed_dim = old_state_dict[old_key].shape[0]
-
         if is_multiquery:
-            assert packed_dim == (
-                embed_dim + 2 * h_dim
-            ), "Invalid tensor shape {} at {}. The second dimension should be the first dimension (embed_dim) plus 2x the head_dim since Q, K, and V are packed".format(
-                old_state_dict[old_key].shape, old_key
+            assert packed_dim == embed_dim + 2 * d_head, (
+                f"Invalid tensor shape {old_state_dict[old_key].shape} at {old_key}. The second "
+                f"dimension should be the first dimension (embed_dim) plus 2x the head_dim since "
+                f"Q, K, and V are packed"
             )
+            # the ellipsis handles both weight and bias. indexes all of the 2nd dim for weight and
+            # no-op for bias
             q_weight, kv_weight = (
-                old_state_dict[old_key][
-                    :embed_dim, ...
-                ],  # the ellipse handles both weight and bias. indexes all of the 2nd dim for weight and no-op for bias
+                old_state_dict[old_key][:embed_dim, ...],
                 old_state_dict[old_key][embed_dim:, ...],
             )
             k_weight, v_weight = kv_weight.chunk(2, dim=0)
@@ -129,24 +133,47 @@ class Converter_Starcoder_Attention_HF_CS(BaseCheckpointConverter_HF_CS):
                 new_state_dict[v_key],
             ) = (q_weight, k_weight, v_weight)
         else:
-            assert (
-                3 * embed_dim == packed_dim
-            ), "Invalid tensor shape {} at {}. The second dimension should be 3x the first dimension (embed_dim) since Q, K, and V are packed".format(
-                old_state_dict[old_key].shape, old_key
+            assert 3 * embed_dim == packed_dim, (
+                f"Invalid tensor shape {old_state_dict[old_key].shape} at {old_key}. The second "
+                f"dimension should be 3x the first dimension (embed_dim) since Q, K, and V are "
+                f"packed"
             )
-            (
-                new_state_dict[q_key],
-                new_state_dict[k_key],
-                new_state_dict[v_key],
-            ) = torch.chunk(old_state_dict[old_key], 3, dim=0)
+            packed_weight = old_state_dict[old_key]
+
+            query_indices = [
+                i + j
+                for i in range(0, packed_dim, 3 * d_head)
+                for j in range(d_head)
+                if i + j < packed_dim
+            ]
+            key_indices = [
+                i + j
+                for i in range(d_head, packed_dim, 3 * d_head)
+                for j in range(d_head)
+                if i + j < packed_dim
+            ]
+            value_indices = [
+                i + j
+                for i in range(2 * d_head, packed_dim, 3 * d_head)
+                for j in range(d_head)
+                if i + j < packed_dim
+            ]
+
+            query = packed_weight[query_indices, ...]
+            key = packed_weight[key_indices, ...]
+            value = packed_weight[value_indices, ...]
+
+            new_state_dict[q_key] = query
+            new_state_dict[k_key] = key
+            new_state_dict[v_key] = value
 
     def c_attn_converter_cs_to_hf(
         self, old_key, new_key, old_state_dict, new_state_dict, action_fn_args,
     ):
         # HF represents Q, K, and V in a packed format
         q_key = old_key
-        k_key = re.sub("\.proj_q_dense_layer\.", ".proj_k_dense_layer.", q_key)
-        v_key = re.sub("\.proj_q_dense_layer\.", ".proj_v_dense_layer.", q_key)
+        k_key = re.sub(r"\.proj_q_dense_layer\.", ".proj_k_dense_layer.", q_key)
+        v_key = re.sub(r"\.proj_q_dense_layer\.", ".proj_v_dense_layer.", q_key)
 
         assert (
             k_key in old_state_dict
@@ -154,15 +181,53 @@ class Converter_Starcoder_Attention_HF_CS(BaseCheckpointConverter_HF_CS):
         assert (
             v_key in old_state_dict
         ), "Expected the following key to exist! {}".format(v_key)
+        hf_config = action_fn_args["configs"][0]
+        embed_dim = hf_config["n_embd"]
+        n_head = hf_config["n_head"]
+        d_head = int(embed_dim / n_head)
+        is_multiquery = hf_config["multi_query"]
+        # Note that nn.Linear stores matrices with shape [out_dim x in_dim]
+        packed_dim = 3 * embed_dim
 
-        new_state_dict[new_key] = torch.cat(
-            (
-                old_state_dict[q_key],
-                old_state_dict[k_key],
-                old_state_dict[v_key],
-            ),
-            dim=0,
-        )
+        if is_multiquery:
+            new_state_dict[new_key] = torch.cat(
+                (
+                    old_state_dict[q_key],
+                    old_state_dict[k_key],
+                    old_state_dict[v_key],
+                ),
+                dim=0,
+            )
+
+        else:
+            query_indices = [
+                i + j
+                for i in range(0, packed_dim, 3 * d_head)
+                for j in range(d_head)
+                if i + j < packed_dim
+            ]
+            key_indices = [
+                i + j
+                for i in range(d_head, packed_dim, 3 * d_head)
+                for j in range(d_head)
+                if i + j < packed_dim
+            ]
+            value_indices = [
+                i + j
+                for i in range(2 * d_head, packed_dim, 3 * d_head)
+                for j in range(d_head)
+                if i + j < packed_dim
+            ]
+            is_weight = len(old_state_dict[q_key].shape) > 1
+            packed_weights = (
+                torch.zeros(packed_dim, embed_dim)
+                if is_weight
+                else torch.zeros(packed_dim)
+            )
+            packed_weights[query_indices, ...] = old_state_dict[q_key]
+            packed_weights[key_indices, ...] = old_state_dict[k_key]
+            packed_weights[value_indices, ...] = old_state_dict[v_key]
+            new_state_dict[new_key] = packed_weights
 
     def assert_already_converted(
         self,
@@ -202,9 +267,6 @@ class Converter_Starcoder_Attention_HF_CS(BaseCheckpointConverter_HF_CS):
 # declaration as an @abstractmethod in the BaseDictionaryConverter.
 # The cs-X.X in the formats() method is meant to call this to attention
 class Converter_StarcoderModel_HF_CS(Converter_GPT2Model_HF_CS17):
-    def __init__(self):
-        super().__init__()
-
     def attention_converter_class(self):
         return Converter_Starcoder_Attention_HF_CS()
 
@@ -226,7 +288,7 @@ class Converter_StarcoderForCausalLM_HF_CS(BaseCheckpointConverter_HF_CS):
         super().__init__()
         self.rules = [
             ConversionRule(
-                ["lm_head\.(?:weight|bias)"], action=self.replaceKey,
+                [r"lm_head\.(?:weight|bias)"], action=self.replaceKey,
             ),
             ConversionRule(
                 [
@@ -428,11 +490,14 @@ class ConfigConverter_StarcoderModel_HF_CS20(BaseConfigConverter_HF_CS):
             ConversionRule(
                 [
                     EquivalentSubkey(
-                        "scale_attention_softmax_in_fp32",
-                        "attention_softmax_fp32",
+                        "attention_softmax_in_fp32", "attention_softmax_fp32",
                     )
                 ],
                 action=self.replaceKey,
+            ),
+            ConversionRule(
+                ["scale_qk_dot_by_layer_idx"],
+                action=BaseConfigConverter.assert_factory_fn(1, False),
             ),
         ]
 
@@ -490,7 +555,6 @@ class ConfigConverter_StarcoderModel_HF_CS20(BaseConfigConverter_HF_CS):
         )
         self.post_convert_defaults[1].update(
             {
-                "use_position_embedding": True,
                 "position_embedding_type": "learned",
                 "use_projection_bias_in_attention": True,
                 "use_ffn_bias_in_attention": True,
@@ -562,3 +626,117 @@ class ConfigConverter_StarcoderModel_HF_CS20(BaseConfigConverter_HF_CS):
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (FormatVersions("hf"), FormatVersions("cs-2.0"))
+
+
+###########################################################
+# In CS 2.1, we refactored the embedding layer.
+###########################################################
+
+
+class Converter_StarcoderLMHeadModel_CS20_CS21(
+    Converter_GPT2LMHeadModel_CS20_CS21
+):
+    @classmethod
+    def converter_note(cls) -> str:
+        return "GPT2LMHeadModel class (configured as Starcoder)"
+
+
+class ConfigConverter_StarcoderModel_HF_CS21(
+    ConfigConverter_StarcoderModel_HF_CS20
+):
+    "CS 2.1 config is the same as CS 2.0"
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-2.1"))
+
+    def supports_mup_conversion(self):
+        return True
+
+
+class Converter_StarcoderModel_WithoutOptionalModel_HF_CS21(
+    Converter_StarcoderModel_HF_CS
+):
+    def __init__(self):
+        super().__init__()
+        self.rules = [
+            ConversionRule(
+                [
+                    EquivalentSubkey(
+                        "wpe", "embedding_layer.position_embeddings.embed"
+                    ),
+                    "\.(?:weight|bias)",
+                ],
+                action=self.replaceKey,
+            ),
+            *self.rules,
+        ]
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-2.1"))
+
+    @staticmethod
+    def get_config_converter_class() -> BaseConfigConverter:
+        return ConfigConverter_StarcoderModel_HF_CS21
+
+    @classmethod
+    def converter_note(cls) -> str:
+        return (
+            "{} GPTBigCodeModel <-> {} GPT2ForCausalLM (configured as Starcoder)\n"
+            "The HF model doesn't contain a language model head while the CS "
+            "one does. When converting to CS, the exported checkpoint will "
+            "contain a language model head initialized to default random "
+            "values. When converting to HF, the language model head will be "
+            "dropped."
+        ).format(cls.formats()[0], cls.formats()[1])
+
+
+Converter_StarcoderModel_HF_CS21 = Build_HF_CS_Converter_WithOptionalModel(
+    "Converter_StarcoderModel_HF_CS21",
+    Converter_StarcoderModel_WithoutOptionalModel_HF_CS21,
+    derived_class=Converter_StarcoderModel_WithoutOptionalModel_HF_CS21,
+)
+
+
+class Converter_StarcoderForCausalLM_WithoutOptionalModel_HF_CS21(
+    BaseCheckpointConverter_HF_CS
+):
+    def __init__(self):
+        super().__init__()
+        self.rules = [
+            ConversionRule(
+                [r"lm_head\.(?:weight|bias)"], action=self.replaceKey,
+            ),
+            ConversionRule(
+                [
+                    EquivalentSubkey("transformer.", ""),
+                    Converter_StarcoderModel_WithoutOptionalModel_HF_CS21(),
+                ],
+                action=None,
+            ),
+        ]
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-2.1"))
+
+    @staticmethod
+    def get_config_converter_class() -> BaseConfigConverter:
+        return ConfigConverter_StarcoderModel_HF_CS21
+
+    @classmethod
+    def converter_note(cls) -> str:
+        return "{} GPTBigCodeForCausalLM <-> {} GPT2ForCausalLM (configured as Starcoder)".format(
+            cls.formats()[0], cls.formats()[1]
+        )
+
+    def supports_mup_conversion(self):
+        return True
+
+
+Converter_StarcoderForCausalLM_HF_CS21 = Build_HF_CS_Converter_WithOptionalModel(
+    "Converter_StarcoderForCausalLM_HF_CS21",
+    Converter_StarcoderForCausalLM_WithoutOptionalModel_HF_CS21,
+    derived_class=Converter_StarcoderForCausalLM_WithoutOptionalModel_HF_CS21,
+)

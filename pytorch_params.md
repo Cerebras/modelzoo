@@ -7,14 +7,13 @@
 | Parameter Name | Description |
 | --- | --- |
 | mixed_precision | Whether to use mixed precision training or not. (`bool`, optional) Default: `None` |
-| use_bfloat16 | Whether to use bfloat16 data type instead of float32. See [more](https://docs.cerebras.net/en/latest/general/cs-1-data-formats.html?#bfloat16-floating-type) (`bool`, optional) Default: `False` |
+| fp16_type | The 16-bit floating type to use. Accepted values:<br>`"float16"`<br>`"bfloat16"`<br>`"cbfloat16"`. See [more](https://docs.cerebras.net/en/latest/wsc/how_to_guides/cs-1-data-formats.html#numerical-precisions) (`str`, optional) Default: `cbfloat16` |
 
 ### Transformer based models
 
 | Parameter Name | Description | Supported Models |
 | --- | --- | --- |
 | attention_dropout_rate | Dropout rate for attention layer. (`float`, optional) Default: same as `dropout` | All |
-| attention_kernel | Attention kernel to use. Accepted values: <br> `None` - compiler selects the kernel.<br>`"default"` - Default implementation.<br>`"optimized_beta"` - Optimized implementation. Beta feature, support is limited.<br>(`str`/`None`, optional) Default: `None` | All |
 | attention_softmax_fp32 | Whether to use fp32 precision for attention softmax. (`bool`, optional)  Default: `True`) | All |
 | attention_type | Type of attention. Accepted values:<br>`"dot_product"`<br>`"scaled_dot_product"`.<br>(`str`,  optional) Default: `"scaled_dot_product"` | All |
 | d_ff | Size of the intermediate feed forward layer in each `T5Block`. (`int`,  optional) Default: `2048` | T5, Transformer |
@@ -56,7 +55,6 @@
 | use_dropout_outside_residual_path | Whether to set dropout calculations outside of the residual path. (`bool`, optional) Default: `True` for T5, `False` for Transformer | T5, Transformer |
 | use_ffn_bias | Whether to use bias in the feedforward network (FFN). (`bool`, optional) Default: varies per model | All |
 | use_ffn_bias_in_attention | Whether to include bias in the attention layer for feed-forward network (FFN). (`bool`, optional) Default: varies per model | All |
-| use_position_embedding | Whether to use position embedding in the model. (`bool`, optional) Default: `True` | GPT2, GPT3 |
 | use_pre_encoder_decoder_dropout | Whether to use dropout layer after positional embedding layer and encoder/decoder. (`bool`, optional) Default: `False` | T5, Transformer |
 | use_pre_encoder_decoder_layer_norm | Whether to use layer norm before passing input tensors into encoder/decoder. (`bool`, optional) Default: `True` | T5, Transformer |
 | use_projection_bias_in_attention | Whether to include bias in the attention layer for projection.  (`bool`, optional) Default: varies per model | All |
@@ -185,7 +183,7 @@
 | initial_loss_scale | Initial loss scale to be used in the grad scale. (`int`, optional) Default: `2 ** 15` |
 | learning_rate | Learning rate scheduler to be used. See [supported LR schedulers](https://docs.cerebras.net/en/latest/pytorch-docs/pytorch-ops/supported-pt-learning-rate-schedulers.html). (`dict`, required) |
 | log_summaries | Flag to log per layer gradient norm in Tensorboard (`bool`, optional) Default: `False` |
-| loss_scaling_factor | Loss scaling factor for gradient calculation in learning step. (`float`/`str`, optional) Default: `1.0` |
+| loss_scaling_factor | Loss scaling factor for gradient calculation in learning step. Recommended to set it to `"dynamic"` for models with `fp16_type: "cbfloat16"` and `1.0` for models with `fp16_type: "bfloat16"` (`float`/`str`, optional) Default: `1.0` |
 | max_gradient_norm | Max norm of the gradients for learnable parameters. Used for gradient clipping.(`float`, optional) Default: `None` |
 | min_loss_scale | The minimum loss scale value that can be chosen by dynamic loss scaling. (`float`, optional) Default: `None` |
 | max_loss_scale | The maximum loss scale value that can be chosen by dynamic loss scaling. (`float`, optional) Default: `None` |
@@ -203,7 +201,7 @@
 | compile_dir | Compile directory where compile artifacts will be written. (`str`, optional) Default: `None` | All |
 | compile_only | Enables compile only workflow. (`bool`, optional) Default: `False` | All |
 | credentials_path | Credentials for cluster access. If `None`, the value from a pre-configured location will be used if available. (`str`, optional) Default: `None`| CSX |
-| debug_args_path | ath to debugs args file.  (`str`, optional) Default: `None` | CSX |
+| debug_args_path | Path to debugs args file.  (`str`, optional) Default: `None` | CSX |
 | disable_strict_checkpoint_loading | Flag used in conjunction with `checkpoint_path`, to avoid enforcing strict model state loading. (`bool`, optional) Default: `False`    | All            |
 | dist_addr | To init master_addr and master_port of distributed. (`str`, optional) Default: `localhost:8888` | GPU |
 | dist_backend | Distributed backend engine. (`str`, optional) Default: `"nccl"` | GPU |
@@ -236,3 +234,4 @@
 | target_device | The target device to run the training on. One of: `CPU`, `GPU`, `CSX`. Required in command line. (`str`, optional) Default: command line value | All |
 | use_cs_grad_accum | Whether to use gradient accumulation to support larger batch sizes. (`bool`, optional) Default: `False` | CSX |
 | validate_only | Enables validate only workflow, stops the compilation at kernel matching stage. (`bool`, optional) Default: `False` | CSX |
+| wsc_log_level | Specifes the logging level for particular Wafer-Scale Cluster servers or tasks. Input can be either a single value setting a global log level (i.e. `--wsc_log_level DEBUG`) or a list of equal-sign-separated key value pairs in the format of `<task or server>=<log level>`. A task and server can be combined to specify a server only during a specific task (i.e. `<execute>.<crd>`). The log level can be either an int or a string (i.e. `INFO`, `DEBUG`, `VERBOSE`, `20`, `10`). See [more](https://docs.python.org/3/library/logging.html#logging-levels). (`str`, optional) Default: `None` | All |

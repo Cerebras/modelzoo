@@ -28,7 +28,11 @@ from modelzoo.common.pytorch.model_utils.checkpoint_converters.bert import (
     ConfigConverter_Bert_HF_CS18,
     Converter_BertLayerNorm_HF_CS,
     Converter_BertModel_CS16_CS17,
+    Converter_BertModel_WithoutOptionalModel_HF_CS21,
     Converter_BertPretrainModel_HF_CS18,
+)
+from modelzoo.common.pytorch.model_utils.checkpoint_converters.helper import (
+    Build_HF_CS_Converter_WithOptionalModel,
 )
 
 
@@ -49,7 +53,7 @@ class Converter_RobertaPretrainModel_HF_CS(BaseCheckpointConverter_HF_CS):
                         "lm_head.dense",
                         "bert_mlm_head.mlm_transform.ffn.ffn.0.linear_layer",
                     ),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.replaceKey,
             ),
@@ -68,7 +72,7 @@ class Converter_RobertaPretrainModel_HF_CS(BaseCheckpointConverter_HF_CS):
                         "lm_head.decoder",
                         "bert_mlm_head.classifier.ffn.0.linear_layer",
                     ),
-                    "\.weight",
+                    r"\.weight",
                 ],
                 action=self.replaceKey,
             ),
@@ -78,11 +82,11 @@ class Converter_RobertaPretrainModel_HF_CS(BaseCheckpointConverter_HF_CS):
                         "lm_head.decoder",
                         "bert_mlm_head.classifier.ffn.0.linear_layer",
                     ),
-                    "\.bias",
+                    r"\.bias",
                 ],
                 action=self.convert_cls_predictions_bias,
             ),
-            ConversionRule(["lm_head\.bias"], exists="left"),
+            ConversionRule([r"lm_head\.bias"], exists="left"),
         ]
 
     @staticmethod
@@ -112,7 +116,7 @@ class Converter_RobertaPretrainModel_HF_CS(BaseCheckpointConverter_HF_CS):
         )
         if from_index == 1:
             # HF stores an extra copy of the decoder bias in the predictions object itself
-            bias_key = re.sub("\.decoder\.", ".", new_key)
+            bias_key = re.sub(r"\.decoder\.", ".", new_key)
             self.replaceKey(
                 old_key,
                 bias_key,
@@ -160,12 +164,14 @@ class Converter_RobertaPretrainModel_HF_CS18(
         configs,
         from_index,
         drop_unmatched_keys,
+        key_prefix="",
     ):
         if from_index == 1:
             num_segments = configs[1]["model"]["num_segments"]
             if not num_segments:
                 new_state_dict[
-                    "roberta.embeddings.token_type_embeddings.weight"
+                    key_prefix
+                    + "roberta.embeddings.token_type_embeddings.weight"
                 ] = torch.zeros(
                     configs[0]["type_vocab_size"], configs[0]["hidden_size"]
                 )
@@ -175,6 +181,7 @@ class Converter_RobertaPretrainModel_HF_CS18(
             configs,
             from_index,
             drop_unmatched_keys,
+            key_prefix=key_prefix,
         )
 
 
@@ -301,3 +308,50 @@ class ConfigConverter_Roberta_HF_CS18(ConfigConverter_Bert_HF_CS18):
             from_index,
             drop_unmatched_keys,
         )
+
+
+###########################################################
+# In CS 2.1, we refactored the embedding layer.
+# CS 2.0 <> CS 2.1, and HF <> CS 2.1 converters:
+###########################################################
+
+
+class ConfigConverter_Roberta_HF_CS21(ConfigConverter_Roberta_HF_CS18):
+    "CS 2.1 config is the same as CS 2.0"
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-2.1"))
+
+
+class Converter_RobertaPretrainModel_WithoutOptionalModel_HF_CS21(
+    Converter_RobertaPretrainModel_HF_CS
+):
+    def __init__(self):
+        super().__init__()
+        self.rules = [
+            ConversionRule(
+                [
+                    EquivalentSubkey("roberta.", "bert_encoder."),
+                    Converter_BertModel_WithoutOptionalModel_HF_CS21(),  # CS16 = HF
+                ],
+            ),
+            *self.rules,
+        ]
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-2.1"))
+
+    @staticmethod
+    def get_config_converter_class() -> BaseConfigConverter:
+        return ConfigConverter_Roberta_HF_CS21
+
+
+Converter_RobertaPretrainModel_HF_CS21 = Build_HF_CS_Converter_WithOptionalModel(
+    "Converter_RobertaPretrainModel_HF_CS21",
+    Converter_RobertaPretrainModel_WithoutOptionalModel_HF_CS21,
+    derived_class=Converter_RobertaPretrainModel_HF_CS18,
+    config_converter_class=ConfigConverter_Roberta_HF_CS21,
+    formats=(FormatVersions("hf"), FormatVersions("cs-2.1")),
+)

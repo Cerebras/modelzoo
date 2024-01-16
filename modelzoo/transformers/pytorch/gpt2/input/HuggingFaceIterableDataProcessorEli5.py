@@ -54,5 +54,5 @@ class HuggingFaceIterableDataProcessorEli5(HuggingFaceDataProcessor):
             num_shards=(num_tasks() * num_workers)
         )
 
-        # The supper class will take care of sharding the dataset and creating the dataloader
+        # The super class will take care of sharding the dataset and creating the dataloader
         super().__init__(params)

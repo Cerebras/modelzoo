@@ -17,6 +17,7 @@
 import random
 
 import torch
+from torch.utils.data import default_collate
 
 from modelzoo.common.pytorch.utils import BufferedShuffleDataset
 from modelzoo.transformers.data_processing.HDF5IterableDataset import (
@@ -67,6 +68,10 @@ class HDF5IterableDataProcessor:
             # Use a unique seed for each worker.
             random.seed(self.shuffle_seed + worker_id)
 
+    @staticmethod
+    def collate_fn(batch):
+        return default_collate(batch)
+
     def create_dataloader(self):
         """
         Classmethod to create the dataloader object.
@@ -89,6 +94,7 @@ class HDF5IterableDataProcessor:
             dataset,
             batch_size=self.batch_size,
             drop_last=self.drop_last,
+            collate_fn=self.collate_fn,
             num_workers=self.num_workers,
             prefetch_factor=self.prefetch_factor
             if self.num_workers > 0

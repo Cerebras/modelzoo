@@ -80,32 +80,35 @@ def make_key_padding_mask_broadcastable(
 
 def build_broadcastable_attention_mask(
     attention_mask: torch.Tensor,
+    attention_span: Optional[torch.Tensor] = None,
     build_causal: bool = False,
     device: Optional[torch.device] = None,
     dtype=None,
     revert_mask: bool = True,
     multiply_neg_inf: bool = True,
+    num_heads: Optional[int] = None,
 ):
     """Create broadcastable attention mask (full or causal) so that masked positions are ignored.
 
     Args:
         attention_mask (torch.Tensor): attention mask with shape in [2,3,4], with entry values either 1 or 0.
+        attention_span (torch.Tensor): attention span of keys for VSL has shape [batch_size, target_seq_len].
         build_causal (bool): If enabled a causal mask will be created according to the dims of attention_mask.
         device: (torch.device): The device of the input to the model, used for causal mask creation.
         dtype (torch.dtype): Dtype of the resulting mask.
         revert_mask (bool): whether to flip the 1's and 0's of the attention mask, default to True.
         multiply_neg_inf (bool): whether to multiply the resulting mask by a negative infinity constant, default to True.
+        num_heads (int): Number of heads.
 
     Returns:
         The attention mask of shape [batch_size, num_heads, src_seq_len, target_seq_len],
         with broadcast dimensions set to 1.
     """
 
-    assert len(attention_mask.shape) in [
-        2,
-        3,
-        4,
-    ], "Masks with shape 2, 3, 4 are supported"
+    assert len(attention_mask.shape) in [2, 3, 4], (
+        f"Masks with dimensions of 2, 3, 4 are supported "
+        f"but found shape {attention_mask.shape}"
+    )
     if dtype is None:
         dtype = torch.float16
     attention_mask = attention_mask.to(dtype=dtype)
@@ -126,12 +129,27 @@ def build_broadcastable_attention_mask(
     )
 
     if build_causal:
-        causal_mask = create_2D_autoregressive_mask(
-            src_sequence_length,
-            target_sequence_length,
-            dtype=dtype,
-            device=device,
-        )
+
+        if attention_span is None:
+            causal_mask = create_2D_autoregressive_mask(
+                src_sequence_length,
+                target_sequence_length,
+                dtype=dtype,
+                device=device,
+            )
+        else:
+            assert (
+                num_heads is not None
+            ), "num_heads is needed for creating vsl mask."
+            causal_mask = create_vsl_autoregressive_mask(
+                attention_span,
+                src_sequence_length,
+                target_sequence_length,
+                num_heads=num_heads,
+                dtype=dtype,
+                device=device,
+            )
+
         extended_attention_mask, _ = torch.broadcast_tensors(
             causal_mask, extended_attention_mask
         )
@@ -151,7 +169,8 @@ def create_2D_autoregressive_mask(
     dtype=None,
     device=None,
 ):
-    """Create autoregressive (triangular) mask.
+    """Creates a reverted autoregressive (upper triangular) mask where the 0s refers to the tokens
+        to attend to and 1s refer to the tokens that are skipped.
 
     Args:
         batch_size (int): Batch size.
@@ -202,6 +221,63 @@ def create_2D_full_mask(
         dtype=dtype,
     )
     return full_mask
+
+
+def create_vsl_autoregressive_mask(
+    attention_span: torch.Tensor,
+    src_sequence_length: int,
+    target_sequence_length: int,
+    num_heads: int,
+    dtype=None,
+    device=None,
+):
+    """Create autoregressive (triangular) mask for variable sequence length.
+
+    Args:
+        attention_span (torch.Tensor): Attention span of the keys has shape [batch_size, target_sequence_length].
+        src_sequence_length (int): Sequence length of the source (num query vectors).
+        target_sequence_length (int): Sequence length of the target (num key vectors).
+        num_heads (int): Number of heads.
+        dtype (torch.dtype): Dtype of the resulting mask.
+        device: (torch.device): The device of the input to the model, used for causal mask creation.
+
+    Returns:
+        The causal mask of shape [src_seq_len, target_seq_len].
+    """
+    if dtype is None:
+        dtype = torch.float16
+    batch_size, _ = attention_span.shape
+    mask_shape = (
+        batch_size,
+        num_heads,
+        src_sequence_length,
+        target_sequence_length,
+    )
+    s_in = torch.arange(
+        src_sequence_length, device=device, dtype=torch.float32
+    )[None, :, None].broadcast_to(mask_shape)
+    s_out = torch.arange(
+        target_sequence_length, device=device, dtype=torch.float32
+    )[None, None, :].broadcast_to(mask_shape)
+    diff = s_in - s_out
+    one = torch.tensor(1, dtype=torch.float32)
+    zero = torch.tensor(0, dtype=torch.float32)
+
+    # We want causal_mask = (diff < 0) | (diff > attention_span) written as float
+    # ops.
+    #
+    # For Integer tensors diff, attention_span, equivalent to
+    # min((-min(diff, 0)) + max(diff - attention_span, 0), 1)
+
+    causal_mask = torch.minimum(
+        (
+            torch.maximum(diff - attention_span[:, None, None, :], zero)
+            - torch.minimum(diff, zero)
+        ),
+        one,
+    )
+    causal_mask = causal_mask.to(dtype=dtype)
+    return causal_mask
 
 
 def make_sparse_mask_broadcastable(

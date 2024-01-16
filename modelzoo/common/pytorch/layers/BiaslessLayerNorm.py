@@ -69,18 +69,12 @@ class BiaslessLayerNorm(nn.Module):
             torch.empty(self.normalized_shape, **factory_kwargs)
         )
 
-        self.bias = nn.Parameter(
-            torch.empty(self.normalized_shape, **factory_kwargs),
-            requires_grad=False,
-        )
-
         self.reset_parameters()
 
     def reset_parameters(self) -> None:
-        self.bias.data.zero_()
         self.weight.data.fill_(1.0)
 
     def forward(self, input: Tensor) -> Tensor:
         return nn.functional.layer_norm(
-            input, self.normalized_shape, self.weight, self.bias, self.eps
+            input, self.normalized_shape, self.weight, None, self.eps
         )

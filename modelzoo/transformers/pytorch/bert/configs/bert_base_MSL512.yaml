@@ -62,7 +62,7 @@ model:
     layer_norm_epsilon: 1.0e-5
     mlm_loss_weight: 0.019
     mixed_precision: True
-    use_bfloat16: True
+    fp16_type: "cbfloat16"
 
 optimizer:
     optimizer_type: "AdamW"
@@ -76,7 +76,7 @@ optimizer:
           initial_learning_rate: 8.838834764831845e-05 # (sqrt(3200.0/256.0)/2)*0.0001
           end_learning_rate: 0.0
           total_iters: 317600
-    loss_scaling_factor: 1.0
+    loss_scaling_factor: "dynamic"
     max_gradient_norm: 1.0
 
 runconfig:
@@ -87,4 +87,3 @@ runconfig:
     model_dir: "./model_dir"
     save_initial_checkpoint: True
     eval_steps: 74
-    use_cs_grad_accum: True

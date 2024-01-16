@@ -19,18 +19,18 @@ from typing import Tuple
 import torch
 
 from modelzoo.common.pytorch.model_utils.checkpoint_converters.base_converter import (
-    BaseCheckpointConverter_CS_CS,
     BaseCheckpointConverter_HF_CS,
     BaseConfigConverter,
-    BaseConfigConverter_CS_CS,
     BaseConfigConverter_HF_CS,
     ConfigConversionError,
     ConversionRule,
     EquivalentSubkey,
     FormatVersions,
 )
-from modelzoo.common.pytorch.model_utils.checkpoint_converters.helper import (
-    convert_use_rms_layer_norm_helper,
+from modelzoo.common.pytorch.model_utils.checkpoint_converters.gpt2_hf_cs import (
+    ConfigConverter_GPT2Model_CS18_CS20,
+    Converter_GPT2LMHeadModel_CS18_CS20,
+    Converter_GPT2LMHeadModel_CS20_CS21,
 )
 
 
@@ -41,28 +41,28 @@ class Converter_LlamaAttention_HF_CS(BaseCheckpointConverter_HF_CS):
             ConversionRule(
                 [
                     EquivalentSubkey("q_proj", "proj_q_dense_layer"),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.convert_with_interleaving_query,
             ),
             ConversionRule(
                 [
                     EquivalentSubkey("k_proj", "proj_k_dense_layer"),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.convert_with_interleaving_key,
             ),
             ConversionRule(
                 [
                     EquivalentSubkey("v_proj", "proj_v_dense_layer"),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.replaceKey,
             ),
             ConversionRule(
                 [
                     EquivalentSubkey("o_proj", "proj_output_dense_layer"),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.convert_output_and_inv_freq,
             ),
@@ -146,9 +146,10 @@ class Converter_LlamaAttention_HF_CS(BaseCheckpointConverter_HF_CS):
             tensor = tensor.view(*initial_shape)
             new_state_dict[new_key] = tensor
         else:
-            assert (
-                False
-            ), f" attention_module {cs_config['model']['attention_module']} is not supported for llama"
+            assert False, (
+                f"attention_module {cs_config['model']['attention_module']} is not supported for "
+                f"llama"
+            )
 
     def interleave_helper(self, t, cs_config):
         rotary_dim = cs_config["model"]["rotary_dim"]
@@ -171,9 +172,10 @@ class Converter_LlamaAttention_HF_CS(BaseCheckpointConverter_HF_CS):
             )
             interleaved = torch.cat((to_rotate, to_pass), dim=1)
         else:
-            assert (
-                False
-            ), "shape of query, key, value projection tensor has to have shape of length 2 (biases) or 3 (weights) when converting from HF to CS"
+            assert False, (
+                "shape of query, key, value projection tensor has to have shape of length 2 "
+                "(biases) or 3 (weights) when converting from HF to CS."
+            )
         return interleaved
 
     def reverse_interleave_helper(self, t, cs_config, num_heads):
@@ -182,6 +184,7 @@ class Converter_LlamaAttention_HF_CS(BaseCheckpointConverter_HF_CS):
             t = t.reshape(num_heads, -1, t.shape[-1])
             to_rotate = t[:, :rotary_dim, :]
             to_pass = t[:, rotary_dim:, :]
+            # pylint: disable=redefined-builtin
             reversed = (
                 to_rotate.reshape(num_heads, -1, 2, t.shape[-1])
                 .permute(0, 2, 1, 3)
@@ -199,9 +202,10 @@ class Converter_LlamaAttention_HF_CS(BaseCheckpointConverter_HF_CS):
             )
             reversed = torch.cat((reversed, to_pass), dim=1)
         else:
-            assert (
-                False
-            ), "shape of query, key, value projection tensor has to have shape of length 1 (biases) or 2 (weights) when converting from CS to HF"
+            assert False, (
+                "shape of query, key, value projection tensor has to have shape of length 1 "
+                "(biases) or 2 (weights) when converting from CS to HF."
+            )
         return reversed
 
     def convert_output_and_inv_freq(
@@ -229,7 +233,7 @@ class Converter_LlamaAttention_HF_CS(BaseCheckpointConverter_HF_CS):
             cs_config = action_fn_args["configs"][1]
             rotary_dim = cs_config["model"]["rotary_dim"]
             inv_freq_key = re.sub(
-                "\.o_proj\.weight", ".rotary_emb.inv_freq", new_key
+                r"\.o_proj\.weight", ".rotary_emb.inv_freq", new_key
             )
             new_state_dict[inv_freq_key] = 1.0 / (
                 rotary_emb_base
@@ -255,7 +259,7 @@ class Converter_LlamaModel_HF_CS(BaseCheckpointConverter_HF_CS):
                     EquivalentSubkey(
                         "embed_tokens", "embedding_layer.word_embeddings"
                     ),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.replaceKey,
             ),
@@ -263,7 +267,7 @@ class Converter_LlamaModel_HF_CS(BaseCheckpointConverter_HF_CS):
             ConversionRule(
                 [
                     EquivalentSubkey("norm", "transformer_decoder.norm"),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.replace_final_norm,
             ),
@@ -271,14 +275,14 @@ class Converter_LlamaModel_HF_CS(BaseCheckpointConverter_HF_CS):
             ConversionRule(
                 [
                     EquivalentSubkey("layers", "transformer_decoder.layers"),
-                    "\.\d+\.self_attn\.",
+                    r"\.\d+\.self_attn\.",
                     Converter_LlamaAttention_HF_CS(),
                 ],
                 action=None,
             ),
             # Rotary embedding
             ConversionRule(
-                ["layers\.\d+\.self_attn\.rotary_emb\.inv_freq"],
+                [r"layers\.\d+\.self_attn\.rotary_emb\.inv_freq"],
                 exists="left",
                 action=None,
             ),
@@ -286,18 +290,18 @@ class Converter_LlamaModel_HF_CS(BaseCheckpointConverter_HF_CS):
             ConversionRule(
                 [
                     EquivalentSubkey("layers", "transformer_decoder.layers"),
-                    "\.\d+\.",
+                    r"\.\d+\.",
                     EquivalentSubkey("input_layernorm", "norm1"),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.replaceKey,
             ),
             ConversionRule(
                 [
                     EquivalentSubkey("layers", "transformer_decoder.layers"),
-                    "\.\d+\.",
+                    r"\.\d+\.",
                     EquivalentSubkey("post_attention_layernorm", "norm3"),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.replaceKey,
             ),
@@ -305,34 +309,34 @@ class Converter_LlamaModel_HF_CS(BaseCheckpointConverter_HF_CS):
             ConversionRule(
                 [
                     EquivalentSubkey("layers", "transformer_decoder.layers"),
-                    "\.\d+\.",
+                    r"\.\d+\.",
                     EquivalentSubkey("mlp.up_proj", "ffn.ffn.0.linear_layer"),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.replaceKey,
             ),
             ConversionRule(
                 [
                     EquivalentSubkey("layers", "transformer_decoder.layers"),
-                    "\.\d+\.",
+                    r"\.\d+\.",
                     EquivalentSubkey(
                         "mlp.gate_proj", "ffn.ffn.0.linear_layer_for_glu"
                     ),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.replaceKey,
             ),
             ConversionRule(
                 [
                     EquivalentSubkey("layers", "transformer_decoder.layers"),
-                    "\.\d+\.",
+                    r"\.\d+\.",
                     EquivalentSubkey("mlp.down_proj", "ffn.ffn.1.linear_layer"),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.replaceKey,
             ),
-            ConversionRule(["lm_head\.(?:weight|bias)"], exists="right"),
-            ConversionRule(["ln_f\.(?:weight|bias)"], exists="right"),
+            ConversionRule([r"lm_head\.(?:weight|bias)"], exists="right"),
+            ConversionRule([r"ln_f\.(?:weight|bias)"], exists="right"),
         ]
 
     def replace_final_norm(
@@ -348,7 +352,7 @@ class Converter_LlamaModel_HF_CS(BaseCheckpointConverter_HF_CS):
         # CS 1.7 has both "ln_f" and "transformer_decoder.norm"
         # we need to copy the original ("ln_f") too:
         if from_index == 0:
-            ln_f_key = re.sub("transformer_decoder\.norm\.", "ln_f.", new_key)
+            ln_f_key = re.sub(r"transformer_decoder\.norm\.", "ln_f.", new_key)
             new_state_dict[ln_f_key] = old_state_dict[old_key]
 
     def post_model_convert(
@@ -358,16 +362,15 @@ class Converter_LlamaModel_HF_CS(BaseCheckpointConverter_HF_CS):
         configs,
         from_index,
         drop_unmatched_keys,
+        key_prefix="",
     ):
         if from_index == 0:
             # We are converting from HF LlamaModel (which is headless) ->
             # CS GPT2LMHeadModel configured as llama (which has a head)
             # We need to create 'lm_head' and init to default values
             logging.warning(
-                "{} has a language model head (lm_head) "
-                "while {} does not. Initializing lm_head to default.".format(
-                    self.formats()[1], self.formats()[0]
-                )
+                f"{self.formats()[1]} has a language model head (lm_head) "
+                f"while {self.formats()[0]} does not. Initializing lm_head to default."
             )
             hf_config = configs[0]
             cs_config = configs[1]
@@ -381,16 +384,17 @@ class Converter_LlamaModel_HF_CS(BaseCheckpointConverter_HF_CS):
             else:
                 lm_head_weight = torch.zeros((vocab_size, embed_dim))
                 lm_head_weight.normal_(mean=0.0, std=0.02)
-            new_state_dict["lm_head.weight"] = lm_head_weight
+            new_state_dict[key_prefix + "lm_head.weight"] = lm_head_weight
             if use_bias_in_output:
                 lm_head_bias = torch.zeros(vocab_size)
-                new_state_dict["lm_head.bias"] = lm_head_bias
+                new_state_dict[key_prefix + "lm_head.bias"] = lm_head_bias
         super().post_model_convert(
             old_state_dict,
             new_state_dict,
             configs,
             from_index,
             drop_unmatched_keys,
+            key_prefix=key_prefix,
         )
 
     @staticmethod
@@ -422,12 +426,11 @@ class Converter_LlamaModel_HF_CS19(Converter_LlamaModel_HF_CS):
     @classmethod
     def converter_note(cls) -> str:
         return (
-            "{} LlamaModel <-> {} GPT2LMHeadModel (configured as Llama)\n"
-            "The HF model doesn't contain a language model head while the CS "
-            "one does. When converting to CS, the exported checkpoint will "
-            "contain a language model head initialized to default random "
-            "values. When converting to HF, the language model head will be "
-            "dropped."
+            f"{cls.formats()[0]} LlamaModel <-> {cls.formats()[1]} GPT2LMHeadModel (configured as "
+            f"Llama)\nThe HF model doesn't contain a language model head while the CS one does. "
+            f"When converting to CS, the exported checkpoint will contain a language model head "
+            f"initialized to default random values. When converting to HF, the language model head "
+            f"will be dropped."
         ).format(cls.formats()[0], cls.formats()[1])
 
     @staticmethod
@@ -440,7 +443,7 @@ class Converter_LlamaForCausalLM_HF_CS(BaseCheckpointConverter_HF_CS):
         super().__init__()
         self.rules = [
             ConversionRule(
-                ["lm_head\.(?:weight|bias)"], action=self.replaceKey,
+                [r"lm_head\.(?:weight|bias)"], action=self.replaceKey,
             ),
             ConversionRule(
                 [EquivalentSubkey("model.", ""), Converter_LlamaModel_HF_CS(),],
@@ -491,10 +494,14 @@ class Converter_LlamaForCausalLM_HF_CS19(BaseCheckpointConverter_HF_CS):
 class ConfigConverter_LLaMa_HF_CS19(BaseConfigConverter_HF_CS):
     def __init__(self):
         super().__init__()
+        if not hasattr(self, "model_type"):
+            self.model_type = "llama"
         self.rules = [
             ConversionRule(
                 ["model_type"],
-                action=BaseConfigConverter.assert_factory_fn(0, "llama"),
+                action=BaseConfigConverter.assert_factory_fn(
+                    0, self.model_type
+                ),
             ),
             # Embedding
             ConversionRule(["vocab_size"], action=self.replaceKey),
@@ -578,6 +585,7 @@ class ConfigConverter_LLaMa_HF_CS19(BaseConfigConverter_HF_CS):
             ConversionRule(
                 ["rotary_dim"], exists="right", action=self.assert_rotary_dim
             ),
+            ConversionRule(["rope_theta"], action=self.replaceKey),
             ConversionRule(
                 [EquivalentSubkey("rms_norm_eps", "layer_norm_epsilon")],
                 action=self.replaceKey,
@@ -667,14 +675,14 @@ class ConfigConverter_LLaMa_HF_CS19(BaseConfigConverter_HF_CS):
         activation = old_state_dict[old_key]
         if from_index == 0:
             gated_hf2cs = {"silu": "swiglu", "relu": "reglu", "gelu": "geglu"}
-            if activation not in gated_hf2cs.keys():
+            if activation not in gated_hf2cs:
                 raise ConfigConversionError(
                     "{} is not a GLU-able activation in CS".format(activation)
                 )
             activation = gated_hf2cs[activation]
         elif from_index == 1:
             gated_cs2hf = {"swiglu": "silu", "reglu": "relu", "geglu": "gelu"}
-            if activation not in gated_cs2hf.keys():
+            if activation not in gated_cs2hf:
                 raise ConfigConversionError(
                     "{} is not a supported GLU activation in HF".format(
                         activation
@@ -742,13 +750,10 @@ class ConfigConverter_LLaMa_HF_CS19(BaseConfigConverter_HF_CS):
         return (FormatVersions("hf"), FormatVersions("cs-1.9"))
 
 
-class Converter_LlamaForCausalLM_CS19_CS20(BaseCheckpointConverter_CS_CS):
-    def __init__(self):
-        super().__init__()
-        # Model didn't change between 1.9 and 2.0. Copy all keys.
-        self.rules = [
-            ConversionRule([".*"], action=self.replaceKey),
-        ]
+class Converter_LlamaForCausalLM_CS19_CS20(Converter_GPT2LMHeadModel_CS18_CS20):
+    r"""
+    Llama uses the GPT2 backbone
+    """
 
     @classmethod
     def converter_note(cls) -> str:
@@ -763,23 +768,10 @@ class Converter_LlamaForCausalLM_CS19_CS20(BaseCheckpointConverter_CS_CS):
         return ConfigConverter_LlamaModel_CS19_CS20
 
 
-class ConfigConverter_LlamaModel_CS19_CS20(BaseConfigConverter_CS_CS):
-    def __init__(self):
-        super().__init__()
-        # Only difference between 1.9 and 2.0 is introduction of norm_type
-        self.rules = [
-            ConversionRule(
-                [EquivalentSubkey("use_rms_norm", "norm_type")],
-                action=self.convert_use_rms_layer_norm,
-            ),
-            ConversionRule([".*"], action=self.replaceKey),
-        ]
-
-        self.pre_convert_defaults[0]["use_rms_norm"] = False
-        self.pre_convert_defaults[1]["norm_type"] = "layernorm"
-
-    def convert_use_rms_layer_norm(self, *args):
-        convert_use_rms_layer_norm_helper(self, *args)
+class ConfigConverter_LlamaModel_CS19_CS20(ConfigConverter_GPT2Model_CS18_CS20):
+    r"""
+    Llama uses the GPT2 backbone
+    """
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
@@ -787,9 +779,6 @@ class ConfigConverter_LlamaModel_CS19_CS20(BaseConfigConverter_CS_CS):
 
 
 class Converter_LlamaModel_HF_CS20(Converter_LlamaModel_HF_CS19):
-    def __init__(self):
-        super().__init__()
-
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (FormatVersions("hf"), FormatVersions("cs-2.0"))
@@ -800,9 +789,6 @@ class Converter_LlamaModel_HF_CS20(Converter_LlamaModel_HF_CS19):
 
 
 class Converter_LlamaForCausalLM_HF_CS20(Converter_LlamaForCausalLM_HF_CS19):
-    def __init__(self):
-        super().__init__()
-
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (FormatVersions("hf"), FormatVersions("cs-2.0"))
@@ -835,6 +821,7 @@ class ConfigConverter_LLaMa_HF_CS20(ConfigConverter_LLaMa_HF_CS19):
         del self.post_convert_defaults[1]["use_rms_norm"]
         self.pre_convert_defaults[1]["norm_type"] = "layernorm"
         self.post_convert_defaults[1]["norm_type"] = "rmsnorm"
+        del self.post_convert_defaults[1]["use_position_embedding"]
 
     def convert_gqa(
         self,
@@ -854,7 +841,10 @@ class ConfigConverter_LLaMa_HF_CS20(ConfigConverter_LLaMa_HF_CS19):
                     old_state_dict["num_attention_heads"]
                     % old_state_dict[old_key]
                     == 0
-                ), f"number of attention heads should be divisible by num_key_value_heads but got {old_state_dict['num_attention_heads']} and {old_state_dict[old_key]}"
+                ), (
+                    f"number of attention heads should be divisible by num_key_value_heads but "
+                    f"got {old_state_dict['num_attention_heads']} and {old_state_dict[old_key]},"
+                )
                 extra = {"num_kv_groups": old_state_dict[old_key]}
                 new_state_dict[new_key] = extra
                 new_state_dict["attention_module"] = "multiquery_attention"
@@ -867,21 +857,112 @@ class ConfigConverter_LLaMa_HF_CS20(ConfigConverter_LLaMa_HF_CS19):
                     old_key not in old_state_dict
                     or "num_kv_groups" not in old_state_dict[old_key]
                 ), "Conflict between use of multi-query and multi-head attention"
-                new_state_dict[new_key] = old_state_dict[old_key]["num_heads"]
+                new_state_dict[new_key] = old_state_dict["num_heads"]
             elif old_state_dict["attention_module"] == "multiquery_attention":
                 num_heads = old_state_dict["num_heads"]
                 num_kv_groups = old_state_dict[old_key]["num_kv_groups"]
-                assert (
-                    num_heads % num_kv_groups == 0
-                ), f"number of attention heads should be divisible by num_key_value_heads but got {num_heads} and {num_kv_groups}"
+                assert num_heads % num_kv_groups == 0, (
+                    f"number of attention heads should be divisible by num_key_value_heads but "
+                    f"got {num_heads} and {num_kv_groups}."
+                )
                 new_state_dict[new_key] = old_state_dict[old_key][
                     "num_kv_groups"
                 ]
             else:
-                assert (
-                    False
-                ), f" attention_module {old_state_dict['attention_module']} is not supported for llama"
+                assert False, (
+                    f"attention_module {old_state_dict['attention_module']} is not supported for "
+                    f"llama"
+                )
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (FormatVersions("hf"), FormatVersions("cs-2.0"))
+
+
+###########################################################
+# In CS 2.1, we refactored the embedding layer.
+# CS 2.0 <> CS 2.1. We don't need a separate HF <> CS 2.1 converters since
+# HF only supports RoPE which doesn't produce any checkpoint keys.
+###########################################################
+
+
+class Converter_LlamaForCausalLM_CS20_CS21(Converter_GPT2LMHeadModel_CS20_CS21):
+    @classmethod
+    def converter_note(cls) -> str:
+        return "GPT2LMHeadModel class (configured as Llama)"
+
+
+class Converter_LlamaModel_HF_CS21(Converter_LlamaModel_HF_CS20):
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-2.1"))
+
+    @staticmethod
+    def get_config_converter_class() -> BaseConfigConverter:
+        return ConfigConverter_LLaMa_HF_CS21
+
+
+class Converter_LlamaForCausalLM_HF_CS21(Converter_LlamaForCausalLM_HF_CS20):
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-2.1"))
+
+    @staticmethod
+    def get_config_converter_class() -> BaseConfigConverter:
+        return ConfigConverter_LLaMa_HF_CS21
+
+    def supports_mup_conversion(self):
+        return True
+
+
+class ConfigConverter_LLaMa_HF_CS21(ConfigConverter_LLaMa_HF_CS20):
+    def __init__(self):
+        super().__init__()
+        self.rules = [
+            ConversionRule(
+                [EquivalentSubkey("rope_scaling", "pos_scaling_factor")],
+                action=self.convert_pi,
+            ),
+            *self.rules,
+        ]
+
+        self.pre_convert_defaults[0].update(
+            {"rope_scaling": None,}
+        )
+        self.pre_convert_defaults[1].update({"pos_scaling_factor": 1.0,},)
+
+    def convert_pi(
+        self,
+        old_key,
+        new_key,
+        old_state_dict,
+        new_state_dict,
+        from_index,
+        action_fn_args,
+    ):
+        if from_index == 0:
+            if old_state_dict[old_key] is None:
+                new_state_dict[new_key] = 1.0
+            else:
+                scaling_type = old_state_dict[old_key]["type"].lower()
+                if scaling_type != "linear":
+                    raise ConfigConversionError(
+                        f"Only `rope_scaling` type `linear` is currently supported, "
+                        f"but got type `{scaling_type}`."
+                    )
+                new_state_dict[new_key] = old_state_dict[old_key]["factor"]
+        else:
+            if old_state_dict[old_key] == 1.0:
+                new_state_dict[new_key] = None
+            else:
+                new_state_dict[new_key] = {
+                    "type": "linear",
+                    "factor": old_state_dict[old_key],
+                }
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-2.1"))
+
+    def supports_mup_conversion(self):
+        return True

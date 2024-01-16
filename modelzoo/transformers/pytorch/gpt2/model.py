@@ -32,27 +32,27 @@ class Gpt2Model(torch.nn.Module):
         super().__init__()
 
         model_params = params["model"].copy()
+
+        self.compute_eval_metrics = model_params.pop(
+            "compute_eval_metrics", True
+        )
+
+        if self.compute_eval_metrics:
+            self.perplexity_metric = PerplexityMetric(name="eval/lm_perplexity")
+            self.accuracy_metric = AccuracyMetric(name="eval/accuracy")
+
         self.model = self.build_model(model_params)
 
         self.loss_fn = GPTLMHeadModelLoss(
             params["model"]["vocab_size"], self.loss_scaling, self.loss_weight,
         )
-        self.compute_eval_metrics = model_params.pop(
-            "compute_eval_metrics", True
-        )
-        if self.compute_eval_metrics:
-            self.perplexity_metric = PerplexityMetric(name="eval/lm_perplexity")
-            self.accuracy_metric = AccuracyMetric(name="eval/accuracy")
 
     def _post_device_transfer(self):
         self.model.tie_weights()
 
     def build_model(self, model_params):
-
-        position_embedding_type = (
-            model_params.pop("position_embedding_type", "learned")
-            if model_params.pop("use_position_embedding", True)
-            else None
+        position_embedding_type = model_params.pop(
+            "position_embedding_type", "learned"
         )
 
         self.loss_weight = model_params.pop("loss_weight", 1.0)
@@ -100,6 +100,7 @@ class Gpt2Model(torch.nn.Module):
                 "num_relative_attention_buckets", 32
             ),
             rotary_dim=model_params.pop("rotary_dim", None),
+            rope_theta=model_params.pop("rope_theta", 10000),
             # Encoder
             num_hidden_layers=model_params.pop("num_hidden_layers"),
             dropout_rate=default_dropout_rate,
@@ -126,7 +127,6 @@ class Gpt2Model(torch.nn.Module):
             attention_softmax_fp32=model_params.pop(
                 "attention_softmax_fp32", True
             ),
-            attention_kernel=model_params.pop("attention_kernel", None),
             # Encoder - ffn
             filter_size=model_params.pop("filter_size"),
             nonlinearity=model_params.pop("nonlinearity", "gelu"),
@@ -152,17 +152,18 @@ class Gpt2Model(torch.nn.Module):
             alibi_trainable_slopes=model_params.pop(
                 "alibi_trainable_slopes", False
             ),
+            pos_scaling_factor=float(
+                model_params.pop("pos_scaling_factor", 1.0)
+            ),
             scale_qk_dot_by_layer_idx=model_params.pop(
                 "scale_qk_dot_by_layer_idx", False
             ),
         )
 
-        # `use_bfloat16` and `precision_opt_level` are accessed later,
+        # `fp16_type` is accessed later,
         # so we remove these from the list of unused params
         unused_params = [
-            key
-            for key in model_params.keys()
-            if key != "use_bfloat16" and key != "precision_opt_level"
+            key for key in model_params.keys() if key != "fp16_type"
         ]
         if unused_params:
             logging.warning(
@@ -172,7 +173,16 @@ class Gpt2Model(torch.nn.Module):
 
         return model
 
-    def forward(self, data):
+    def forward(self, data, reduce_batch=True, output_logits=False):
+        """The forward pass on the input data. This method
+        returns the loss tensor if `output_logits` is False.
+        If `output_logits` is True, the model call will also
+        return the output logits tensor in addition to the
+        loss as a (loss, lm_logits) tuple.
+
+        This may be useful for performing post processing on
+        the model's output logits.
+        """
         # Note: attention_mask is a misnomer in this model and actually acts as
         # a loss mask. In the model computation its contents are ignored and
         # only its shape is used.
@@ -192,11 +202,14 @@ class Gpt2Model(torch.nn.Module):
             attention_mask=data[
                 "attention_mask"
             ],  # doesn't actually mask anything
+            attention_span=data.get("attention_span"),  # VSL-only input
+            position_ids=data.get("position_ids"),  # VSL-only input
         )
         loss = self.loss_fn(
             lm_logits,
             labels=data["labels"],
             attention_mask=data["attention_mask"],  # acts as a loss mask
+            reduce_batch=reduce_batch,
         )
 
         # Calculate eval metrics if not training
@@ -227,4 +240,7 @@ class Gpt2Model(torch.nn.Module):
                 labels=lm_labels, loss=unscaled_loss, weights=lm_weights,
             )
 
-        return loss
+        if output_logits:
+            return loss, lm_logits
+        else:
+            return loss

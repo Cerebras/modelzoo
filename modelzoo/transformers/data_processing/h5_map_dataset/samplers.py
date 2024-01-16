@@ -20,7 +20,12 @@ import torch
 from modelzoo.transformers.pytorch.input_utils import cluster_config
 
 
-class CBSampler(torch.utils.data.Sampler):
+class PaddedSampler:
+    # Arbitrary object to use as a placeholder for padding indices
+    pad_index = object()
+
+
+class CBSampler(torch.utils.data.Sampler, PaddedSampler):
     """
     A sampler to handle sharding, batching, and skipping of map style datasets
     intended for use on CSX. Sharding is performed in such a way that data order
@@ -38,6 +43,7 @@ class CBSampler(torch.utils.data.Sampler):
         batch_size=None,
         drop_last=True,
         num_samples=None,
+        pad_last=False,
     ):
         """
         Create a sampler to handle shuffling in a deterministic and restartable
@@ -64,6 +70,10 @@ class CBSampler(torch.utils.data.Sampler):
                 epoch training, it is common to set this to the total number
                 of samples that you plan to see in your training run to get
                 smoother loss curves and improved convergence.
+            pad_last (bool): Flag to enable padding of the last batch so
+                that the last batch has the same batch size as the rest of the
+                batches. Only used if `batch_size` is not `None` and `drop_last`
+                is `False`.
         """
         cluster_spec, _ = cluster_config()
         _num_systems = cluster_spec.num_csx
@@ -80,7 +90,9 @@ class CBSampler(torch.utils.data.Sampler):
             num_samples=num_samples,
         )
         if batch_size is not None:
-            self.sampler = BatchSampler(self.sampler, batch_size, drop_last)
+            self.sampler = BatchSampler(
+                self.sampler, batch_size, drop_last, pad_last
+            )
         if shard:
             self.sampler = Sharder(self.sampler)
 
@@ -111,7 +123,7 @@ class CBSampler(torch.utils.data.Sampler):
         self.__init__(**self.kwargs, start_index=start_index)
 
 
-class BaseSampler(torch.utils.data.Sampler):
+class BaseSampler(torch.utils.data.Sampler, PaddedSampler):
     """
     Handle shuffling and skipping
     """
@@ -181,7 +193,7 @@ class BaseSampler(torch.utils.data.Sampler):
         return self.num_samples - self.start_index
 
 
-class Sharder(torch.utils.data.Sampler):
+class Sharder(torch.utils.data.Sampler, PaddedSampler):
     def __init__(self, data_source):
         self.data_source = data_source
         cluster_spec, worker_spec = cluster_config()
@@ -211,7 +223,7 @@ class Sharder(torch.utils.data.Sampler):
         return l
 
 
-class BatchSampler(torch.utils.data.Sampler):
+class BatchSampler(torch.utils.data.Sampler, PaddedSampler):
     """
     A slight modification of the PyTorch batch sampler such that any samples not
     yielded at the end of an epoch when `drop_last=True` will be yielded at the
@@ -220,7 +232,7 @@ class BatchSampler(torch.utils.data.Sampler):
     Adapted from the PyTorch batch sampler
     """
 
-    def __init__(self, sampler, batch_size, drop_last):
+    def __init__(self, sampler, batch_size, drop_last, pad_last):
         if (
             not isinstance(batch_size, int)
             or isinstance(batch_size, bool)
@@ -238,6 +250,7 @@ class BatchSampler(torch.utils.data.Sampler):
         self.sampler = sampler
         self.batch_size = batch_size
         self.drop_last = drop_last
+        self.pad_last = pad_last
         self.leftover_samples = []
 
         if len(self.sampler) < self.batch_size:
@@ -267,7 +280,13 @@ class BatchSampler(torch.utils.data.Sampler):
                     idx_in_batch = 0
                     batch = [0] * self.batch_size
             if idx_in_batch > 0:
-                yield batch[:idx_in_batch]
+                if self.pad_last:
+                    while idx_in_batch < self.batch_size:
+                        batch[idx_in_batch] = self.pad_index
+                        idx_in_batch += 1
+                    yield batch
+                else:
+                    yield batch[:idx_in_batch]
 
     def __len__(self):
         if self.drop_last:

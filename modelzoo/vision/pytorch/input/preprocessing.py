@@ -17,6 +17,7 @@ import logging
 import torch
 from torchvision.transforms import transforms
 
+import cerebras_pytorch as cstorch
 from modelzoo.vision.pytorch.input.transforms import create_transform
 
 
@@ -30,7 +31,7 @@ def get_preprocess_transform(params):
         transform_list.append(transform)
 
     if params["mixed_precision"]:
-        mp_type = torch.bfloat16 if params["use_bfloat16"] else torch.float16
+        mp_type = cstorch.amp.get_half_dtype()
     else:
         mp_type = torch.float32
 

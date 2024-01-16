@@ -7,7 +7,6 @@ tag: "dit_xl_2"
 # 2. model.vae.latent_size: [64, 64]
 # 3. train_input.transforms(if any): change `size` params under various transforms to [512, 512] 
 
-
 train_input: &train_input
   # NOTE: when using this input, model.latent_size should be set to [32, 32]
   data_processor: "DiffusionLatentImageNet1KProcessor"
@@ -19,7 +18,7 @@ train_input: &train_input
   # In distributed training, batch_size specifies the per-GPU batch size;
   # thus, you should divide by the number of GPU used.
   # The effective batch size, which is evenly divided across "num_csx" systems used for the run
-  batch_size: 495
+  batch_size: 990
   shuffle: True
   num_classes: 1000
   num_workers: 8
@@ -76,7 +75,7 @@ model:
     use_conv_patchified_embedding: True
 
     mixed_precision: True
-    use_bfloat16: True
+    fp16_type: "bfloat16"
 
     vae:
       # https://huggingface.co/stabilityai/sd-vae-ft-ema/blob/main/config.json
@@ -127,7 +126,7 @@ optimizer:
 runconfig:
     log_steps: 1
     checkpoint_steps: 50000
-    max_steps: 206869 # ~80 epochs, ImageNet has 1,281,167 samples
+    max_steps: 102435 # ~80 epochs, ImageNet has 1,281,167 samples
     seed: 1
     num_workers_per_csx: 1
     save_initial_checkpoint: True

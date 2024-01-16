@@ -114,7 +114,7 @@ def assemble_disallowlist(
         Callable[[], List[argparse.ArgumentParser]]
     ] = None,
 ) -> list:
-    """ Determine invalid parameters for the current device type. """
+    """Determine invalid parameters for the current device type. """
     # cpu parser does not currently contain any additional information
     # or parameters but will parse through its elements as well just
     # in case that changes in the future.
@@ -136,8 +136,9 @@ def add_general_arguments(
     parser: argparse.ArgumentParser,
     default_model_dir: str,
     first_parse: bool = True,
+    modes: List[str] = ["train", "eval", "train_and_eval", "eval_all"],
 ):
-    """ Injects general parser arguments.
+    """Injects general parser arguments.
 
     Args:
         parser: Parser into which the arguments are being added.
@@ -146,6 +147,11 @@ def add_general_arguments(
           time processing the arguments. If True, the "params" arg
           is required to get additional parameters, if False then
           the params file has already been read and is not required.
+        modes: Optional list of valid modes to be passed under the `--mode`
+            argument of the parser. We default to choices
+            ["train", "eval", "train_and_eval", "eval_all"].
+            If an empty list if provided, then `--mode` isn't added as a
+            parser arg.
     """
     required_arguments = parser.add_argument_group("Required Arguments")
     required_arguments.add_argument(
@@ -154,19 +160,30 @@ def add_general_arguments(
         required=first_parse,
         help="Path to .yaml file with model parameters",
     )
-    required_arguments.add_argument(
-        "-m",
-        "--mode",
-        required=True,
-        choices=["train", "eval", "train_and_eval", "eval_all"],
-        help=(
-            "Select mode of execution for the run. Can choose "
-            "between train, eval, train_and_eval or eval_all."
-        ),
-    )
+    if len(modes) > 1:
+        required_arguments.add_argument(
+            "-m",
+            "--mode",
+            required=True,
+            choices=modes,
+            help=(
+                "Select mode of execution for the run. Can choose among "
+                f"the following: {', '.join(modes)}"
+            ),
+        )
     optional_arguments = parser.add_argument_group(
         "Optional Arguments, All Devices"
     )
+    if len(modes) == 1:
+        optional_arguments.add_argument(
+            "-m",
+            "--mode",
+            default=modes[0],
+            choices=modes,
+            help=(
+                f"The mode of execution for the run. Defaults to {modes[0]}."
+            ),
+        )
     optional_arguments.add_argument(
         "-o",
         "--model_dir",
@@ -204,6 +221,36 @@ def add_general_arguments(
         "--logging",
         default=None,
         help="Specifies the default logging level. Defaults to INFO.",
+    )
+
+    class ParseToDict(argparse.Action):
+        def __call__(self, parser, namespace, values, option_string=None):
+            if getattr(namespace, self.dest, None) is None:
+                setattr(namespace, self.dest, dict())
+            for kv_pair in values:
+                tokens = kv_pair.strip().split("=")
+                if len(tokens) == 1:
+                    key = ''
+                    value = tokens[0]
+                elif len(tokens) == 2:
+                    key = tokens[0]
+                    value = tokens[1]
+                else:
+                    raise ValueError(
+                        f"'{kv_pair}' is an invalid label. Expecting a single value or the label key and "
+                        f"the label value to be separated by a single equal sign(=) character."
+                    )
+                getattr(namespace, self.dest)[key] = value
+
+    optional_arguments.add_argument(
+        "--wsc_log_level",
+        action=ParseToDict,
+        nargs="+",
+        help=(
+            "Specifies the log level for particular Wafer-Scale Cluster servers."
+            "A list of equal-sign-separated key value pairs (or just a value for global setting) of a "
+            "server task and a log level which can be either an integer or a string (e.g. INFO, DEBUG, 10)."
+        ),
     )
     optional_arguments.add_argument(
         "--max_steps",
@@ -384,6 +431,10 @@ def get_parser(
     extra_args_parser_fn: Optional[
         Callable[[], List[argparse.ArgumentParser]]
     ] = None,
+    device_type: Optional[DeviceType] = None,
+    parser_epilog: Optional[str] = None,
+    csx_parser_epilog: Optional[str] = None,
+    modes: List[str] = ["train", "eval", "train_and_eval", "eval_all"],
 ) -> argparse.ArgumentParser:
     """Returns an ArgumentParser for parsing commandline options.
 
@@ -395,10 +446,22 @@ def get_parser(
           is only being used for verification on existing params.
         extra_args_parser_fn: Parent parser passed in by models with
           unique specific arguments.
+        device_type: The device type for which to fetch to add the args
+            to the new parser. If None, all device type (CPU, GPU, CSX)
+            args are added.
+        parser_epilog: Optional helpful text to add to the end of the
+            main parser's help message
+        csx_parser_epilog: Optional helpful text to add to the end of the
+            CSX subparser's help message
+        modes: Optional list of valid modes to be passed under the `--mode`
+            argument of the parser. We default to choices
+            ["train", "eval", "train_and_eval", "eval_all"].
+            If an empty list if provided, then `--mode` isn't added as a
+            parser arg.
+
     Returns:
         A parser instance.
     """
-
     default_model_dir = None
 
     if first_parse:
@@ -434,7 +497,7 @@ def get_parser(
         parents.extend(extra_args.get(DeviceType.ANY, []))
 
     parent = argparse.ArgumentParser(parents=parents, add_help=False)
-    add_general_arguments(parent, default_model_dir, first_parse)
+    add_general_arguments(parent, default_model_dir, first_parse, modes)
 
     parser = argparse.ArgumentParser(
         epilog=(
@@ -442,41 +505,48 @@ def get_parser(
             "Here are some example commands for running on different devices: \n \n"
             "    python run.py CSX --params /path/to/params --mode train --num_csx 1 \n \n"
             "    python run.py CPU --params /path/to/params --mode eval --checkpoint_path /path/to/checkpoint \n \n"
-        ),
+        )
+        if parser_epilog is None
+        else parser_epilog,
         formatter_class=argparse.RawTextHelpFormatter,
     )
     sp = parser.add_subparsers(title="Target Device", dest="target_device")
     sp.required = True
 
-    sp.add_parser(
-        DeviceType.CPU,
-        parents=[parent] + extra_args.get(DeviceType.CPU, []),
-        help="Run on CPU",
-    )
+    if device_type == None or device_type == DeviceType.CPU:
+        sp.add_parser(
+            DeviceType.CPU,
+            parents=[parent] + extra_args.get(DeviceType.CPU, []),
+            help="Run on CPU",
+        )
 
-    gpu_parser = sp.add_parser(
-        DeviceType.GPU,
-        parents=[parent] + extra_args.get(DeviceType.GPU, []),
-        help="Run on GPU",
-    )
-    add_gpu_arguments(gpu_parser, first_parse)
+    if device_type == None or device_type == DeviceType.GPU:
+        gpu_parser = sp.add_parser(
+            DeviceType.GPU,
+            parents=[parent] + extra_args.get(DeviceType.GPU, []),
+            help="Run on GPU",
+        )
+        add_gpu_arguments(gpu_parser, first_parse)
 
-    csx_parser = sp.add_parser(
-        DeviceType.CSX,
-        help="Run on Cerebras System",
-        parents=[parent] + extra_args.get(DeviceType.CSX, []),
-        epilog=(
-            "To see a complete list of all available arguments for \n"
-            "please run 'python run.py CSX -h'. \n\n"
-            "Here is an example command for running with CSX: \n \n"
-            "    python run.py CSX --params /path/to/params --mode train --num_csx 1 \n \n"
-            "When running from the Cerebras Model Zoo, you generally specify --python_paths and \n"
-            "--mount_dirs. This can be done here or in your params.yaml under the 'runconfig' section. \n"
-            "Both should at least include a path \n"
-            "to the directory in which the Cerebras Model Zoo resides. \n"
-        ),
-        formatter_class=argparse.RawTextHelpFormatter,
-    )
+    if device_type == None or device_type == DeviceType.CSX:
+        csx_parser = sp.add_parser(
+            DeviceType.CSX,
+            help="Run on Cerebras System",
+            parents=[parent] + extra_args.get(DeviceType.CSX, []),
+            epilog=(
+                "To see a complete list of all available arguments for \n"
+                "please run 'python run.py CSX -h'. \n\n"
+                "Here is an example command for running with CSX: \n \n"
+                "    python run.py CSX --params /path/to/params --mode train --num_csx 1 \n \n"
+                "When running from the Cerebras Model Zoo, you generally specify --python_paths and \n"
+                "--mount_dirs. This can be done here or in your params.yaml under the 'runconfig' section. \n"
+                "Both should at least include a path \n"
+                "to the directory in which the Cerebras Model Zoo resides. \n"
+            )
+            if csx_parser_epilog is None
+            else csx_parser_epilog,
+            formatter_class=argparse.RawTextHelpFormatter,
+        )
     add_csx_arguments(csx_parser, first_parse)
 
     return parser
@@ -520,10 +590,30 @@ def update_params_from_args(
         params: The params to be updated.
         first_parse: Indicates whether to keep in the params path.
     """
+    # First checking to see if wsc_log_level was given as a string.
+    # If so, convert to dict so that we can merge with the dict
+    # generated by cli.
+    wsc_log_level = params.get("wsc_log_level", None)
+    if wsc_log_level:
+        if isinstance(wsc_log_level, str):
+            wsc_log_level = {'': wsc_log_level}
+            params["wsc_log_level"] = wsc_log_level
+        else:
+            assert isinstance(
+                wsc_log_level, dict
+            ), "wsc_log_level must be a string or dict."
     if args:
         for (k, v) in list(vars(args).items()):
             if k in ["config", "params"]:
                 continue
+            if k == "wsc_log_level":
+                # merge wsc logger level
+                if v:
+                    if k in params:
+                        params[k].update(v)
+                    else:
+                        params[k] = v
+                    continue
             if k in ["python_paths", "mount_dirs"]:
                 append_args = []
                 if v is not None:
@@ -587,10 +677,25 @@ def update_params_from_args(
     os.makedirs(model_dir, exist_ok=True)
 
 
+def update_params_from_args_and_env(args: argparse.Namespace, params: dict):
+    """Update params in-place with the arguments from args and the cerebras
+    sysadmin overrides..
+
+    Args:
+        args: The namespace containing args from the commandline.
+        params: The params to be updated.
+    """
+    sysadmin_file = os.getenv('CEREBRAS_WAFER_SCALE_CLUSTER_DEFAULTS')
+    sysadmin_params = (
+        get_params(sysadmin_file) if sysadmin_file is not None else {}
+    )
+    return update_params_from_args(args, params, sysadmin_params)
+
+
 def post_process_params(
     params: dict, valid_arguments: list, invalid_arguments: list
 ) -> list:
-    """ Removes arguments that are not used by this target device. """
+    """Removes arguments that are not used by this target device. """
     target_device = params["runconfig"].pop("target_device", None)
     assert target_device is not None
 
@@ -600,6 +705,10 @@ def post_process_params(
     for k, v in params["runconfig"].copy().items():
         if v == None or v == False:
             continue
+
+        if k == "wsc_log_level":
+            # Undo the ArgParse action...
+            v = [f"{ik}={iv}" for ik, iv in v.items()]
 
         # Ignore arguments from params.yaml that apply to different devices
         if k in invalid_arguments:
@@ -630,6 +739,8 @@ def get_params_from_args(
     extra_args_parser_fn: Optional[
         Callable[[], List[argparse.ArgumentParser]]
     ] = None,
+    device_type: Optional[DeviceType] = None,
+    **parser_args,
 ) -> dict:
     """
     Parse the arguments and get the params dict from the resulting args
@@ -637,8 +748,20 @@ def get_params_from_args(
     Args:
         run_dir: The path to the `run.py` file
         argv: The args to be parse. Defaults to sys.argv if not provided
+        extra_args_parser_fn: An optional callable that adds any
+            extra parser args in the parser.
+        device_type: The device type for which to fetch to add the args
+            to the new parser. If None, all device type (CPU, GPU, CSX)
+            args are added.
+        parser_args: Any extra keyword arguments to be passed to the `get_parser`
+            method for constructing the parser
     """
-    parser = get_parser(run_dir, extra_args_parser_fn=extra_args_parser_fn)
+    parser = get_parser(
+        run_dir,
+        extra_args_parser_fn=extra_args_parser_fn,
+        device_type=device_type,
+        **parser_args,
+    )
 
     args = parser.parse_args(argv if argv else sys.argv[1:])
 
@@ -647,17 +770,17 @@ def get_params_from_args(
     )
     params = get_params(args.params,)
 
-    sysadmin_file = os.getenv('CEREBRAS_WAFER_SCALE_CLUSTER_DEFAULTS')
-    sysadmin_params = (
-        get_params(sysadmin_file) if sysadmin_file is not None else {}
-    )
-    update_params_from_args(args, params["runconfig"], sysadmin_params)
+    update_params_from_args_and_env(args, params["runconfig"])
 
     rerun_command = post_process_params(
         params, params_template.keys(), invalid_params
     )
     parser = get_parser(
-        run_dir, first_parse=False, extra_args_parser_fn=extra_args_parser_fn
+        run_dir,
+        first_parse=False,
+        extra_args_parser_fn=extra_args_parser_fn,
+        device_type=device_type,
+        **parser_args,
     )
     try:
         logging.info(rerun_command)

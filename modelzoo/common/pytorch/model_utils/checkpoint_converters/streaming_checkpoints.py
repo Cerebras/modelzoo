@@ -19,6 +19,7 @@ import os
 import re
 from typing import Union
 
+import safetensors.torch as safetensors_torch
 import torch
 
 from cerebras_appliance.utils.units import convert_byte_unit
@@ -28,10 +29,13 @@ from cerebras_pytorch.utils.nest import recurse_spec
 
 def convert_file_size_to_int(size: Union[int, str]):
     """
-    Converts a size expressed as a string with digits and unit (like `"5MB"`) to an integer (in bytes).
+    Converts a size expressed as a string with digits and unit to an integer.
 
     Args:
-        size (`int` or `str`): The size to convert. Will be directly returned if an `int`.
+        size (`int` or `str`): The size to convert (e.g., `"5MB"`). Will be directly returned if
+            an `int`.
+    Returns:
+        The size in bytes.
 
     Example:
     ```py
@@ -43,7 +47,8 @@ def convert_file_size_to_int(size: Union[int, str]):
         match = re.search(r'(\d+)(.*)', size)
         if not match:
             raise ValueError(
-                f"size '{size}' is not in a valid format. Use an integer followed by the unit, e.g., '10GB'."
+                f"size '{size}' is not in a valid format. Use an integer followed by the "
+                f"unit, e.g., '10GB'."
             )
         try:
             num = int(match.group(1))
@@ -51,7 +56,8 @@ def convert_file_size_to_int(size: Union[int, str]):
             size = convert_byte_unit(num, "B", src_unit=unit)
         except:
             raise ValueError(
-                f"size '{size}' is not in a valid format. Use an integer followed by the unit, e.g., '10GB'."
+                f"size '{size}' is not in a valid format. Use an integer followed by the "
+                f"unit, e.g., '10GB'."
             )
     return size
 
@@ -79,7 +85,7 @@ class StreamingShardedHFReader:
     r"""Allows sharded HuggingFace checkpoints to be read in a streaming manner
     rather than loading all shards into memory all at once. The underlying
     checkpoint is read-only.
-    
+
     Only one shard is stored into memory at a time. For this reason, accessing
     random keys may slow due to the switching cost (loading) between shards. For
     this reason, it is recommend that keys are accessed in the order given by
@@ -114,6 +120,12 @@ class StreamingShardedHFReader:
         self.active_file_name = None
         self.active_file_data = None
 
+    def load_shard(self, file):
+        if file.endswith(".safetensors"):
+            return safetensors_torch.load_file(file, device="cpu")
+        else:
+            return torch.load(file, map_location="cpu")
+
     def __len__(self):
         return len(self.weight_map)
 
@@ -133,8 +145,8 @@ class StreamingShardedHFReader:
                 # Drop old data *before* load.
                 # Without this, peak mem usage = prev shard + new shard
                 del self.active_file_data
-            self.active_file_data = torch.load(
-                os.path.join(self.index_dir, file), map_location="cpu",
+            self.active_file_data = self.load_shard(
+                os.path.join(self.index_dir, file),
             )
         return self.active_file_data[key]
 
@@ -154,7 +166,7 @@ class StreamingShardedHFWriter:
     r"""Writes a HuggingFace sharded checkpoint in a streaming manner rather
     than accumulating the full checkpoint into memory and then writing all
     shards at the end.
-    
+
     A partial checkpoint is accumulated into memory until it reaches the shard
     size limit at which point this shard is written to disk.
 
@@ -169,25 +181,38 @@ class StreamingShardedHFWriter:
     `self.__iter__()` as keys that appear in the same shard are in consecutive
     order. Note that updating data stored in a shard may result in a shard that
     is smaller/larger than the original shard size, as StreamingShardedHFWriter
-    will not intelligently split or coalesce shards during updates. 
+    will not intelligently split or coalesce shards during updates.
 
     Args:
         checkpoint_dir: Path to where a new directory will be created to store
                         the checkpoint shards.
+
         shard_size:     The maximum size each checkpoint shard should be. Can be
                         an integer representing the number of bytes, or a
                         formatted string (ex: "10GB").
                         See convert_file_size_to_int for valid string formats.
 
+        export_safetensors: Whether the output shards should be saved as
+                            safetensors or pickle files. Default: False. When
+                            using pickle files, the checkpoint & index files
+                            are saved with the 'pytorch_model` prefix while
+                            they use the 'model' prefix when using safetensors.
+
     """
 
     def __init__(
-        self, checkpoint_dir: str, shard_size: Union[str, int] = "10GB"
+        self,
+        checkpoint_dir: str,
+        shard_size: Union[str, int] = "10GB",
+        export_safetensors=False,
     ) -> None:
         self.checkpoint_dir = checkpoint_dir
+        self.file_ext = 'safetensors' if export_safetensors else 'bin'
+        self.file_prefix = "pytorch_" if not export_safetensors else ""
         os.mkdir(self.checkpoint_dir)
         self.index_file = os.path.join(
-            self.checkpoint_dir, "pytorch_model.bin.index.json"
+            self.checkpoint_dir,
+            f"{self.file_prefix}model.{self.file_ext}.index.json",
         )
         self.weight_map = {}
         self.current_file_number = 0
@@ -198,7 +223,7 @@ class StreamingShardedHFWriter:
         )
         self.active_file_data = {}
         self.file_size = {self.active_file_name: 0}
-        self.dirty = False
+        self.dirty = True
         self.max_shard_size = convert_file_size_to_int(shard_size)
 
     def __len__(self):
@@ -219,7 +244,6 @@ class StreamingShardedHFWriter:
         return self.active_file_data[key]
 
     def __setitem__(self, key, value):
-
         if key in self.weight_map:
             # We are updating a key that has already been seen before
             file = self.weight_map[key]
@@ -239,8 +263,9 @@ class StreamingShardedHFWriter:
                 self.file_size[self.active_file_name] + delta_size
                 > self.max_shard_size
             ):
-                logging.warn(
-                    f"Updating {key} is causing shard {self.active_file_name} to be larger than limit"
+                logging.warning(
+                    f"Updating {key} is causing shard {self.active_file_name} to be larger than "
+                    f"limit."
                 )
 
             self.active_file_data[key] = value
@@ -285,13 +310,35 @@ class StreamingShardedHFWriter:
             self.file_size[self.active_file_name] += weight_size
             self.dirty = True
 
-    @staticmethod
-    def get_filename(file_number, total_shards=0):
-        return f"pytorch_model-{file_number+1:05d}-of-{total_shards:05d}.bin"
+    def get_filename(self, file_number, total_shards=0):
+        return f"{self.file_prefix}model-{file_number+1:05d}-of-{total_shards:05d}.{self.file_ext}"
+
+    def load_shard(self, file):
+        if self.file_ext == "safetensors":
+            return safetensors_torch.load_file(file, device="cpu")
+        else:
+            return torch.load(file, map_location="cpu")
+
+    def save_shard(self, data, file):
+        if self.file_ext == "safetensors":
+
+            def materialize(value):
+                if hasattr(value, "_materialize"):
+                    value = value._materialize()
+                if isinstance(value, torch.Tensor):
+                    value = value.contiguous()
+                return value
+
+            materialized_data = {k: materialize(v) for k, v in data.items()}
+            safetensors_torch.save_file(
+                materialized_data, file, {"format": "pt"}
+            )
+        else:
+            torch.save(data, file)
 
     def _flush(self):
         if self.dirty:
-            torch.save(
+            self.save_shard(
                 self.active_file_data,
                 os.path.join(self.checkpoint_dir, self.active_file_name),
             )
@@ -304,8 +351,8 @@ class StreamingShardedHFWriter:
             # Drop old data *before* load.
             # Without this, peak mem usage = prev shard + new shard
             del self.active_file_data
-        self.active_file_data = torch.load(
-            os.path.join(self.checkpoint_dir, new_file), map_location="cpu",
+        self.active_file_data = self.load_shard(
+            os.path.join(self.checkpoint_dir, new_file),
         )
 
     def save(self):
@@ -392,7 +439,7 @@ class StreamingCSWriterView:
     prefix ["model"]. The view acts like a dict (offers `__getitem__`,
     `__setitem__`, etc operations) which incrementally saves/loads from an H5
     checkpoint under the hood.
-    
+
     Args:
         checkpoint_file:    Path to H5 checkpoint
         state:              (Sub)state dictionary corresponding to the current
@@ -402,10 +449,10 @@ class StreamingCSWriterView:
 
     """
 
-    def __init__(self, checkpoint_file, state, prefix=[]) -> None:
+    def __init__(self, checkpoint_file, state, prefix=None) -> None:
         self.checkpoint_file = checkpoint_file
         self.state = state
-        self.prefix = prefix
+        self.prefix = prefix or []
 
     def __str__(self):
         return str(self.state)
@@ -504,7 +551,7 @@ class StreamingCSWriter(StreamingCSWriterView):
     r"""Writes a Cerebras H5 checkpoint in a streaming (incremental) manner
     rather than accumulating the full checkpoint into memory and then writing
     all weights at the end.
-    
+
     It is essential that `self.save()` is called in order to flush the required
     metadata (state's spec). Without this call, the resulting checkpoint will
     not be able to be loaded with `cstorch.load(...)`.
@@ -539,3 +586,123 @@ class StreamingCSWriter(StreamingCSWriterView):
 
     def __repr__(self):
         return f"StreamingCSWriter: {str(self)}"
+
+
+class OnDemandDictionaryConverter:
+    r"""Wraps around an input dictionary in order to transform its values
+    on-the-fly. The transformation has the following restrictions:
+    1. It must maintain a 1-1 mapping (i.e. no new/dropped keys)
+    2. The keys cannot change names (only values can change)
+    There is error checking during object initialization and during runtime to
+    ensure that this restriction holds.
+
+    Args:
+        underlying_dict:    Underlying dictionary that needs to be transformed
+                            in an on-demand fashion
+        converter_class:    A subclass of BaseDictionaryConverter which
+                            describes the transformation of the underlying
+                            dictionary
+        action_fn_args:     Additional arguments that may be used in the
+                            converter's action functions.
+
+    """
+
+    def __init__(
+        self, underlying_dict, converter_class, action_fn_args=None
+    ) -> None:
+        super().__init__()
+        self.underlying_dict = ReadOnlyDict(underlying_dict)
+        self.converter_instance = converter_class()
+        self.action_fn_args = action_fn_args or {}
+        self.verify_converter()
+
+    def verify_converter(self):
+        # Deferred to prevent circular import:
+        from modelzoo.common.pytorch.model_utils.checkpoint_converters.base_converter import (
+            BaseDictionaryConverter,
+        )
+
+        assert isinstance(self.converter_instance, BaseDictionaryConverter), (
+            f"{self.__class__}'s nested converter must subclass "
+            f"BaseDictionaryConverter"
+        )
+        disallowed_fns = [
+            "pre_checkpoint_convert",
+            "pre_model_convert",
+            "post_model_convert",
+            "post_checkpoint_convert",
+        ]
+        for fn_name in disallowed_fns:
+            assert not hasattr(self.converter_instance, fn_name), (
+                f"{self.__class__} only supports converters that are 1-1 "
+                f"mappings. Therefore, the nested converter cannot contain the "
+                f"{fn_name} function"
+            )
+
+        for rule in self.converter_instance.rules:
+            if not all(isinstance(elm, str) for elm in rule.segments):
+                raise ValueError(
+                    f"{self.__class__} only supports converters that are 1-1 "
+                    f"mappings. Therefore, their rules can only contain regex "
+                    f"strings (no EquivalentSubkey or BaseDictionaryConverter "
+                    f"objects). The following conversion rule offends this "
+                    f"constraint:\n{rule}"
+                )
+
+    def __len__(self):
+        return len(self.underlying_dict)
+
+    def __iter__(self):
+        return self.underlying_dict.__iter__()
+
+    def __getitem__(self, key):
+        if key not in self.underlying_dict:
+            raise KeyError
+
+        new_temp_dict = {}
+        from_index = 0
+        match = self.converter_instance.convert_key(
+            key,
+            self.underlying_dict,
+            new_temp_dict,
+            from_index,
+            action_fn_args=self.action_fn_args,
+        )
+        if set(new_temp_dict) != {key}:
+            raise ValueError(
+                f"{self.__class__}'s nested converter did not create a 1-1 "
+                f"mapping."
+            )
+        if not match:
+            raise KeyError
+        return new_temp_dict[key]
+
+    def items(self):
+        for key in self.keys():
+            yield key, self[key]
+
+    def keys(self):
+        return self.underlying_dict.keys()
+
+    def values(self):
+        for key in self.keys():
+            yield self[key]
+
+
+def _readonly(self, *args, **kwargs):
+    raise RuntimeError("Cannot modify ReadOnlyDict")
+
+
+class ReadOnlyDict(dict):
+    """A Read-only dict.
+
+    Note that this object doesn't guard against the values from being mutated in-place.
+    """
+
+    __setitem__ = _readonly
+    __delitem__ = _readonly
+    pop = _readonly
+    popitem = _readonly
+    clear = _readonly
+    update = _readonly
+    setdefault = _readonly

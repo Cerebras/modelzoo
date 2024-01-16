@@ -12,20 +12,30 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Module which provides utilities for selecting half dtype between float16 and bfloat16"""
+"""Module which provides utilities for selecting 16-bit floating point representation."""
+
+from typing import Any, Dict
 
 import torch
 
-
-class HalfDType:
-    def __init__(self, use_bfloat16=False):
-        self.use_bfloat16 = use_bfloat16
-
-    @property
-    def half_dtype(self):
-        if self.use_bfloat16:
-            return torch.bfloat16
-        return torch.float16
+import cerebras_pytorch as cstorch
 
 
-half_dtype_instance = HalfDType()
+def set_half_dtype_from_params(params: Dict[str, Any]) -> torch.dtype:
+    """Sets the half dtype in cstorch from the given model params.
+
+    Note that after this call, reading the half dtype from params is discouraged. Instead, use
+    `cstorch.amp.get_half_dtype()` to get the dtype to use in the model.
+
+    Args:
+        params: Model params where to find "fp16_type" key.
+    Returns:
+        The proxy dtype to use in the model.
+    """
+    if "use_bfloat16" in params:
+        raise KeyError(
+            f"The flag \"use_bfloat16\" is deprecated. Use the flag \"fp16_type\" instead. "
+            f"This flag accepts one of \"float16\", \"bfloat16\", or \"cbfloat16\"."
+        )
+
+    return cstorch.amp.set_half_dtype(params.get("fp16_type", "float16"))

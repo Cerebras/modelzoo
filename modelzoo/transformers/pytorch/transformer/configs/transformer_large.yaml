@@ -81,6 +81,7 @@ model:
 
     # Cerebras configs.
     mixed_precision: True
+    fp16_type: "cbfloat16"
 
 optimizer:
     optimizer_type: "Adam"
@@ -180,4 +181,3 @@ runconfig:
     seed: 1
     model_dir: "./model_dir"
     eval_steps: 3001 # comment out this line for GPU eval
-    use_cs_grad_accum: True

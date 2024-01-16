@@ -38,8 +38,10 @@ class HFTokenizer:
     def encode(self, text):
         return self.tokenizer.encode(text).ids
 
-    def decode(self, token_ids):
-        return self.tokenizer.decode(token_ids)
+    def decode(self, token_ids, skip_special_tokens=False):
+        return self.tokenizer.decode(
+            token_ids, skip_special_tokens=skip_special_tokens
+        )
 
     def add_special_tokens(self, special_tokens):
         self.tokenizer.add_special_tokens(special_tokens)

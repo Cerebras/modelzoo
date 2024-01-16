@@ -60,8 +60,8 @@ model:
     use_bias_in_output: False
     initializer_range: 0.02
 
-    loss_scaling: "batch_size"
-    loss_weight: 0.00048828125 # = 1/max_sequence_length
+    loss_scaling: "num_tokens"
+    loss_weight: 1.0
 
     # We use truncated_normal instead of normal ("ref: https://github.com/EleutherAI/gpt-neox/blob/main/configs/small.yml") with the same std and mean for better performance
     # Neox small config uses normal init with std=0.02, we chose to align with Neox 20B
@@ -81,6 +81,7 @@ model:
         std: 0.0060140653 # 2 / num_hidden_layers / sqrt(hidden_size)
 
     mixed_precision: True
+    fp16_type: "cbfloat16"
 
 optimizer:
     optimizer_type: "adamw"
@@ -89,6 +90,7 @@ optimizer:
     weight_decay: 0.0
     max_gradient_norm: 1.0
     correct_bias: True
+    loss_scaling_factor: "dynamic"
     learning_rate:
         - total_iters: 3200 # warm-up 0.01
           scheduler: "Linear"
@@ -103,6 +105,5 @@ runconfig:
     max_steps: 320000
     log_steps: 100
     checkpoint_steps: 10000
-    use_cs_grad_accum: True
     seed: 1
 

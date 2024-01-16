@@ -19,17 +19,17 @@ from typing import Tuple
 import torch
 
 from modelzoo.common.pytorch.model_utils.checkpoint_converters.base_converter import (
-    BaseCheckpointConverter_CS_CS,
     BaseCheckpointConverter_HF_CS,
     BaseConfigConverter,
-    BaseConfigConverter_CS_CS,
     BaseConfigConverter_HF_CS,
     ConversionRule,
     EquivalentSubkey,
     FormatVersions,
 )
-from modelzoo.common.pytorch.model_utils.checkpoint_converters.helper import (
-    convert_use_biasless_layer_norm_helper,
+from modelzoo.common.pytorch.model_utils.checkpoint_converters.gptj_hf_cs import (
+    ConfigConverter_GPTJModel_CS18_CS20,
+    Converter_GPTJ_LMHeadModel_CS18_CS20,
+    Converter_GPTJ_LMHeadModel_CS20_CS21,
 )
 
 
@@ -40,28 +40,28 @@ class Converter_GPT_Neox_Attention_HF_CS17(BaseCheckpointConverter_HF_CS):
             ConversionRule(
                 [
                     EquivalentSubkey("dense", "proj_output_dense_layer"),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.replaceKey,
             ),
             ConversionRule(
                 [
                     EquivalentSubkey("query_key_value", "proj_q_dense_layer"),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.qkv_converter,
             ),
             ConversionRule(
                 [
                     EquivalentSubkey("query_key_value", "proj_k_dense_layer"),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.assert_already_converted,
             ),
             ConversionRule(
                 [
                     EquivalentSubkey("query_key_value", "proj_v_dense_layer"),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.assert_already_converted,
             ),
@@ -96,9 +96,10 @@ class Converter_GPT_Neox_Attention_HF_CS17(BaseCheckpointConverter_HF_CS):
             )
             interleaved = torch.cat((to_rotate, to_pass), dim=1)
         else:
-            assert (
-                False
-            ), "shape of query, key, value projection tensor has to have shape of length 2 (biases) or 3 (weights) when converting from HF to CS"
+            assert False, (
+                "shape of query, key, value projection tensor has to have shape of length 2 "
+                "(biases) or 3 (weights) when converting from HF to CS."
+            )
         return interleaved
 
     def reverse_interleave_helper(self, t, cs_config, num_heads=None):
@@ -109,6 +110,7 @@ class Converter_GPT_Neox_Attention_HF_CS17(BaseCheckpointConverter_HF_CS):
             t = t.reshape(num_heads, -1, t.shape[-1])
             to_rotate = t[:, :rotary_dim, :]
             to_pass = t[:, rotary_dim:, :]
+            # pylint: disable=redefined-builtin
             reversed = (
                 to_rotate.reshape(num_heads, -1, 2, t.shape[-1])
                 .permute(0, 2, 1, 3)
@@ -126,9 +128,10 @@ class Converter_GPT_Neox_Attention_HF_CS17(BaseCheckpointConverter_HF_CS):
             )
             reversed = torch.cat((reversed, to_pass), dim=1)
         else:
-            assert (
-                False
-            ), "shape of query, key, value projection tensor has to have shape of length 1 (biases) or 2 (weights) when converting from CS to HF"
+            assert False, (
+                "shape of query, key, value projection tensor has to have shape of length 1 "
+                "(biases) or 2 (weights) when converting from CS to HF."
+            )
         return reversed
 
     def qkv_converter(
@@ -152,11 +155,11 @@ class Converter_GPT_Neox_Attention_HF_CS17(BaseCheckpointConverter_HF_CS):
     def qkv_converter_hf_to_cs17(
         self, old_key, new_key, old_state_dict, new_state_dict, action_fn_args
     ):
-        # HF represents Q, K, and V in a packed format (torch.Size(3*hidden, hidden)). We need to unpack the
-        # weight and bias tensor for CS 1.7 format.
+        # HF represents Q, K, and V in a packed format (torch.Size(3*hidden, hidden)). We need to
+        # unpack the weight and bias tensor for CS 1.7 format.
         q_key = new_key
-        k_key = re.sub("\.proj_q_dense_layer\.", ".proj_k_dense_layer.", q_key)
-        v_key = re.sub("\.proj_q_dense_layer\.", ".proj_v_dense_layer.", q_key)
+        k_key = re.sub(r"\.proj_q_dense_layer\.", ".proj_k_dense_layer.", q_key)
+        v_key = re.sub(r"\.proj_q_dense_layer\.", ".proj_v_dense_layer.", q_key)
 
         cs_config = action_fn_args["configs"][1]
         num_heads = cs_config["model"]["num_heads"]
@@ -166,10 +169,9 @@ class Converter_GPT_Neox_Attention_HF_CS17(BaseCheckpointConverter_HF_CS):
             packed_dim = old_state_dict[old_key].shape[0]
             embed_dim = packed_dim // 3
             head_size = embed_dim // num_heads
-            assert (
-                3 * embed_dim == packed_dim
-            ), "Invalid tensor shape {} at {}. Bias should be divisible by 3 since Q, K, and V are packed".format(
-                old_state_dict[old_key].shape, old_key
+            assert 3 * embed_dim == packed_dim, (
+                f"Invalid tensor shape {old_state_dict[old_key].shape} at {old_key}. Bias should "
+                f"be divisible by 3 since Q, K, and V are packed."
             )
             split_by_num_heads = old_state_dict[old_key].reshape(num_heads, -1)
             query, key, value = torch.split(
@@ -188,10 +190,10 @@ class Converter_GPT_Neox_Attention_HF_CS17(BaseCheckpointConverter_HF_CS):
         elif new_key.endswith(".weight"):
             packed_dim, dim = old_state_dict[old_key].shape
             head_size = dim // num_heads
-            assert (
-                3 * dim == packed_dim
-            ), "Invalid tensor shape {} at {}. The first dimension (packed_dim) should be 3x the second dimension (embed_dim) since Q, K, and V are packed".format(
-                old_state_dict[old_key].shape, old_key
+            assert 3 * dim == packed_dim, (
+                f"Invalid tensor shape {old_state_dict[old_key].shape} at {old_key}. The first "
+                f"dimension (packed_dim) should be 3x the second dimension (embed_dim) since "
+                f"Q, K, and V are packed."
             )
             split_by_num_heads = old_state_dict[old_key].reshape(
                 num_heads, -1, dim
@@ -219,8 +221,8 @@ class Converter_GPT_Neox_Attention_HF_CS17(BaseCheckpointConverter_HF_CS):
         # special ".bias" and ".masked_bias" register buffers that need to be
         # initialized
         q_key = old_key
-        k_key = re.sub("\.proj_q_dense_layer\.", ".proj_k_dense_layer.", q_key)
-        v_key = re.sub("\.proj_q_dense_layer\.", ".proj_v_dense_layer.", q_key)
+        k_key = re.sub(r"\.proj_q_dense_layer\.", ".proj_k_dense_layer.", q_key)
+        v_key = re.sub(r"\.proj_q_dense_layer\.", ".proj_v_dense_layer.", q_key)
 
         assert (
             k_key in old_state_dict
@@ -251,16 +253,18 @@ class Converter_GPT_Neox_Attention_HF_CS17(BaseCheckpointConverter_HF_CS):
             new_state_dict[new_key] = packed_qkv
 
             # build model params that don't exist in CS models
-            attn_bias_key = re.sub("\.query_key_value\.", ".", new_key)
+            attn_bias_key = re.sub(r"\.query_key_value\.", ".", new_key)
             new_state_dict[attn_bias_key] = torch.tril(
                 torch.ones((max_positions, max_positions), dtype=torch.uint8)
             ).view(1, 1, max_positions, max_positions)
 
-            masked_bias_key = re.sub("\.query_key_value\.", ".masked_", new_key)
+            masked_bias_key = re.sub(
+                r"\.query_key_value\.", ".masked_", new_key
+            )
             new_state_dict[masked_bias_key] = torch.tensor(-1e9)
 
             inv_freq_key = re.sub(
-                "\.query_key_value\.bias", ".rotary_emb.inv_freq", new_key
+                r"\.query_key_value\.bias", ".rotary_emb.inv_freq", new_key
             )
             new_state_dict[inv_freq_key] = 1.0 / (
                 rotary_emb_base
@@ -319,7 +323,7 @@ class Converter_GPT_Neox_Headless_HF_CS17(BaseCheckpointConverter_HF_CS):
                     EquivalentSubkey(
                         "embed_in", "embedding_layer.word_embeddings"
                     ),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.replaceKey,
             ),
@@ -329,7 +333,7 @@ class Converter_GPT_Neox_Headless_HF_CS17(BaseCheckpointConverter_HF_CS):
                     EquivalentSubkey(
                         "final_layer_norm", "transformer_decoder.norm"
                     ),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.replace_final_norm,
             ),
@@ -337,7 +341,7 @@ class Converter_GPT_Neox_Headless_HF_CS17(BaseCheckpointConverter_HF_CS):
             ConversionRule(
                 [
                     EquivalentSubkey("layers", "transformer_decoder.layers"),
-                    "\.\d+\.",
+                    r"\.\d+\.",
                     EquivalentSubkey("attention.", "self_attn."),
                     Converter_GPT_Neox_Attention_HF_CS17(),
                 ],
@@ -347,18 +351,18 @@ class Converter_GPT_Neox_Headless_HF_CS17(BaseCheckpointConverter_HF_CS):
             ConversionRule(
                 [
                     EquivalentSubkey("layers", "transformer_decoder.layers"),
-                    "\.\d+\.",
+                    r"\.\d+\.",
                     EquivalentSubkey("input_layernorm", "norm1"),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.replaceKey,
             ),
             ConversionRule(
                 [
                     EquivalentSubkey("layers", "transformer_decoder.layers"),
-                    "\.\d+\.",
+                    r"\.\d+\.",
                     EquivalentSubkey("post_attention_layernorm", "norm3"),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.replaceKey,
             ),
@@ -366,33 +370,34 @@ class Converter_GPT_Neox_Headless_HF_CS17(BaseCheckpointConverter_HF_CS):
             ConversionRule(
                 [
                     EquivalentSubkey("layers", "transformer_decoder.layers"),
-                    "\.\d+\.",
+                    r"\.\d+\.",
                     EquivalentSubkey(
                         "mlp.dense_h_to_4h", "ffn.ffn.0.linear_layer"
                     ),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.replaceKey,
             ),
             ConversionRule(
                 [
                     EquivalentSubkey("layers", "transformer_decoder.layers"),
-                    "\.\d+\.",
+                    r"\.\d+\.",
                     EquivalentSubkey(
                         "mlp.dense_4h_to_h", "ffn.ffn.1.linear_layer"
                     ),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.replaceKey,
             ),
             # others
-            ConversionRule(["lm_head\.(?:weight|bias)"], exists="right"),
-            ConversionRule(["ln_f\.(?:weight|bias)"], exists="right"),
+            ConversionRule([r"lm_head\.(?:weight|bias)"], exists="right"),
+            ConversionRule([r"ln_f\.(?:weight|bias)"], exists="right"),
             ConversionRule(
-                ["layers\.\d+\.attention\.rotary_emb\.inv_freq"], exists="left"
+                [r"layers\.\d+\.attention\.rotary_emb\.inv_freq"], exists="left"
             ),
             ConversionRule(
-                ["layers\.\d+\.attention\.(?:masked_bias|bias)",], exists="left"
+                [r"layers\.\d+\.attention\.(?:masked_bias|bias)",],
+                exists="left",
             ),
         ]
 
@@ -409,7 +414,7 @@ class Converter_GPT_Neox_Headless_HF_CS17(BaseCheckpointConverter_HF_CS):
         # CS 1.7 has both "ln_f" and "transformer_decoder.norm"
         # we need to copy the original ("ln_f") too:
         if from_index == 0:
-            ln_f_key = re.sub("transformer_decoder\.norm\.", "ln_f.", new_key)
+            ln_f_key = re.sub(r"transformer_decoder\.norm\.", "ln_f.", new_key)
             new_state_dict[ln_f_key] = old_state_dict[old_key]
 
     def pre_model_convert(
@@ -445,10 +450,11 @@ class Converter_GPT_Neox_Headless_HF_CS17(BaseCheckpointConverter_HF_CS):
         configs,
         from_index,
         drop_unmatched_keys,
+        key_prefix="",
     ):
         if from_index == 0:
-            # We are converting from HF GPTNeoxModel (which is headless) -> CS GPTNeoxModel (which has a head)
-            # We need to create 'lm_head' and init to default values
+            # We are converting from HF GPTNeoxModel (which is headless) -> CS GPTNeoxModel
+            # (which has a head). We need to create 'lm_head' and init to default values
             hf_config = configs[0]
             cs_config = configs[1]
             use_bias_in_output = cs_config["model"].get(
@@ -461,16 +467,17 @@ class Converter_GPT_Neox_Headless_HF_CS17(BaseCheckpointConverter_HF_CS):
             else:
                 lm_head_weight = torch.zeros((vocab_size, embed_dim))
                 lm_head_weight.normal_(mean=0.0, std=0.02)
-            new_state_dict["lm_head.weight"] = lm_head_weight
+            new_state_dict[key_prefix + "lm_head.weight"] = lm_head_weight
             if use_bias_in_output:
                 lm_head_bias = torch.zeros(vocab_size)
-                new_state_dict["lm_head.bias"] = lm_head_bias
+                new_state_dict[key_prefix + "lm_head.bias"] = lm_head_bias
         super().post_model_convert(
             old_state_dict,
             new_state_dict,
             configs,
             from_index,
             drop_unmatched_keys,
+            key_prefix=key_prefix,
         )
 
     @staticmethod
@@ -538,7 +545,7 @@ class Converter_GPT_Neox_LMHeadModel_HF_CS17(BaseCheckpointConverter_HF_CS):
             ConversionRule(
                 [
                     EquivalentSubkey("embed_out", "lm_head"),
-                    "\.(?:weight|bias)",
+                    r"\.(?:weight|bias)",
                 ],
                 action=self.replaceKey,
             ),
@@ -695,12 +702,16 @@ class ConfigConverter_GPT_Neox_HF_CS17(BaseConfigConverter_HF_CS):
                 action=self.replaceKey,
             ),
             ConversionRule(
-                ["attention_dropout_rate"],
-                action=BaseConfigConverter.assert_factory_fn(1, 0.0),
+                [
+                    EquivalentSubkey(
+                        "attention_dropout", "attention_dropout_rate"
+                    )
+                ],
+                action=self.replaceKey,
             ),
             ConversionRule(
-                ["residual_dropout_rate"],
-                action=BaseConfigConverter.assert_factory_fn(1, 0.0),
+                [EquivalentSubkey("hidden_dropout", "residual_dropout_rate")],
+                action=self.replaceKey,
             ),
             ConversionRule(
                 [EquivalentSubkey("rotary_pct", "rotary_dim")],
@@ -828,59 +839,36 @@ class ConfigConverter_GPT_Neox_HF_CS17(BaseConfigConverter_HF_CS):
 
 
 class ConfigConverter_GPT_Neox_HF_CS18(ConfigConverter_GPT_Neox_HF_CS17):
-    def __init__(self):
-        super().__init__()
-
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (FormatVersions("hf"), FormatVersions("cs-1.8", "cs-1.9"))
 
 
-class Converter_GPT_Neox_LMHeadModel_CS18_CS20(BaseCheckpointConverter_CS_CS):
-    def __init__(self):
-        super().__init__()
-        # Model didn't change between 1.8/1.9 and 2.0. Copy all keys.
-        self.rules = [
-            ConversionRule([".*"], action=self.replaceKey),
-        ]
+class Converter_GPT_Neox_LMHeadModel_CS18_CS20(
+    Converter_GPTJ_LMHeadModel_CS18_CS20
+):
+    r"""
+    NeoX uses the GPTJ backbone
+    """
 
     @classmethod
     def converter_note(cls) -> str:
         return "GPTJModel (configured as neox)"
 
     @staticmethod
-    def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("cs-1.8", "cs-1.9"), FormatVersions("cs-2.0"))
-
-    @staticmethod
     def get_config_converter_class() -> BaseConfigConverter:
         return ConfigConverter_GPT_Neox_Headless_CS18_CS20
 
 
-class ConfigConverter_GPT_Neox_Headless_CS18_CS20(BaseConfigConverter_CS_CS):
-    def __init__(self):
-        super().__init__()
-        # Only difference between 1.8/1.9 and 2.0 is introduction of norm_type
-        self.rules = [
-            ConversionRule(
-                [EquivalentSubkey("use_biasless_norm", "norm_type")],
-                action=self.convert_use_biasless_layer_norm,
-            ),
-            ConversionRule([".*"], action=self.replaceKey),
-        ]
-
-    def convert_use_biasless_layer_norm(self, *args):
-        convert_use_biasless_layer_norm_helper(self, *args)
-
-    @staticmethod
-    def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("cs-1.8", "cs-1.9"), FormatVersions("cs-2.0"))
+class ConfigConverter_GPT_Neox_Headless_CS18_CS20(
+    ConfigConverter_GPTJModel_CS18_CS20
+):
+    r"""
+    NeoX uses the GPTJ backbone
+    """
 
 
 class Converter_GPT_Neox_Headless_HF_CS20(Converter_GPT_Neox_Headless_HF_CS18):
-    def __init__(self):
-        super().__init__()
-
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (FormatVersions("hf"), FormatVersions("cs-2.0"))
@@ -893,9 +881,6 @@ class Converter_GPT_Neox_Headless_HF_CS20(Converter_GPT_Neox_Headless_HF_CS18):
 class Converter_GPT_Neox_LMHeadModel_HF_CS20(
     Converter_GPT_Neox_LMHeadModel_HF_CS18
 ):
-    def __init__(self):
-        super().__init__()
-
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (FormatVersions("hf"), FormatVersions("cs-2.0"))
@@ -919,3 +904,93 @@ class ConfigConverter_GPT_Neox_HF_CS20(ConfigConverter_GPT_Neox_HF_CS18):
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (FormatVersions("hf"), FormatVersions("cs-2.0"))
+
+
+###########################################################
+# In CS 2.1, we refactored the embedding layer.
+# CS 2.0 <> CS 2.1. We don't need a separate HF <> CS 2.1 converters since
+# HF only supports RoPE which doesn't produce any checkpoint keys.
+###########################################################
+
+
+class Converter_GPT_Neox_LMHeadModel_CS20_CS21(
+    Converter_GPTJ_LMHeadModel_CS20_CS21
+):
+    def __init__(self):
+        super().__init__()
+
+    @classmethod
+    def converter_note(cls) -> str:
+        return "GPTJLMHeadModel class (configured as GPT-NeoX)"
+
+
+class Converter_GPT_Neox_Headless_HF_CS21(Converter_GPT_Neox_Headless_HF_CS20):
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-2.1"))
+
+    @staticmethod
+    def get_config_converter_class() -> BaseConfigConverter:
+        return ConfigConverter_GPT_Neox_HF_CS21
+
+
+class Converter_GPT_Neox_LMHeadModel_HF_CS21(
+    Converter_GPT_Neox_LMHeadModel_HF_CS20
+):
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-2.1"))
+
+    @staticmethod
+    def get_config_converter_class() -> BaseConfigConverter:
+        return ConfigConverter_GPT_Neox_HF_CS21
+
+
+class ConfigConverter_GPT_Neox_HF_CS21(ConfigConverter_GPT_Neox_HF_CS20):
+    def __init__(self):
+        super().__init__()
+        self.rules = [
+            ConversionRule(
+                [EquivalentSubkey("rope_scaling", "pos_scaling_factor")],
+                action=self.convert_pi,
+            ),
+            *self.rules,
+        ]
+
+        self.pre_convert_defaults[0].update(
+            {"rope_scaling": None,}
+        )
+        self.pre_convert_defaults[1].update({"pos_scaling_factor": 1.0,},)
+
+    def convert_pi(
+        self,
+        old_key,
+        new_key,
+        old_state_dict,
+        new_state_dict,
+        from_index,
+        action_fn_args,
+    ):
+        if from_index == 0:
+            if old_state_dict[old_key] is None:
+                new_state_dict[new_key] = 1.0
+            else:
+                scaling_type = old_state_dict[old_key]["type"].lower()
+                if scaling_type != "linear":
+                    raise ValueError(
+                        f"Only `rope_scaling` type `linear` is currently supported, "
+                        f"but got type `{scaling_type}`."
+                    )
+                new_state_dict[new_key] = old_state_dict[old_key]["factor"]
+        else:
+            if old_state_dict[old_key] == 1.0:
+                new_state_dict[new_key] = None
+            else:
+                new_state_dict[new_key] = {
+                    "type": "linear",
+                    "factor": old_state_dict[old_key],
+                }
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-2.1"))

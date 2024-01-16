@@ -49,3 +49,9 @@ def eval_input_dataloader(params):
     return getattr(
         sys.modules[__name__], params["eval_input"]["data_processor"]
     )(params["eval_input"]).create_dataloader()
+
+
+def inference_input_dataloader(params):
+    return getattr(
+        sys.modules[__name__], params["inference_input"]["data_processor"]
+    )(params["inference_input"]).create_dataloader()

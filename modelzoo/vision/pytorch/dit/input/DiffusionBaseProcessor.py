@@ -19,6 +19,7 @@ import numpy as np
 import torch
 from torch.utils.data.dataloader import default_collate
 
+import cerebras_pytorch as cstorch
 from modelzoo.common.pytorch.input_utils import get_streaming_batch_size
 from modelzoo.vision.pytorch.dit.input.transforms import (
     LabelDropout,
@@ -45,9 +46,7 @@ class DiffusionBaseProcessor:
         self.num_classes = params["num_classes"]
 
         if self.mixed_precision:
-            self.mp_type = (
-                torch.bfloat16 if params["use_bfloat16"] else torch.float16
-            )
+            self.mp_type = cstorch.amp.get_half_dtype()
         else:
             self.mp_type = torch.float32
 
@@ -55,7 +54,7 @@ class DiffusionBaseProcessor:
         self.pp_params = dict()
         self.pp_params["noaugment"] = params["noaugment"]
         self.pp_params["mixed_precision"] = params["mixed_precision"]
-        self.pp_params["use_bfloat16"] = params["use_bfloat16"]
+        self.pp_params["fp16_type"] = params["fp16_type"]
         self.pp_params["transforms"] = params.get("transforms", [])
 
         # params for data loader

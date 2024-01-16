@@ -82,4 +82,3 @@ runconfig:
     seed: 1
     model_dir: "./model_dir"
     save_initial_checkpoint: True
-    use_cs_grad_accum: True

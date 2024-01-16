@@ -24,7 +24,6 @@ eval_input:
 model: 
     # Embedding
     vocab_size: 49152
-    use_position_embedding: True
     position_embedding_type: "learned"
     embedding_dropout_rate: 0.1
     share_embedding_weights: True # no config default values, HF uses tie_weights as default
@@ -54,6 +53,9 @@ model:
     use_bias_in_output: False
     initializer_range: 0.02
 
+    loss_scaling: "num_tokens"
+    loss_weight: 1.0
+
     output_layer_initializer:
         name: "truncated_normal"
         mean: 0.0
@@ -62,7 +64,7 @@ model:
         b: 0.00447213595
 
     mixed_precision: True
-    use_bfloat16: True
+    fp16_type: "cbfloat16"
 
 optimizer: 
     # paper section 5.5
@@ -71,7 +73,7 @@ optimizer:
     eps: 1.0e-8
     weight_decay: 0.1
     max_gradient_norm: 1.0
-    correct_bias: True
+    loss_scaling_factor: "dynamic"
     learning_rate:
     - total_iters: 51200
       scheduler: "Linear"
@@ -89,4 +91,3 @@ runconfig:
     checkpoint_steps: 5000
     eval_steps: 2303 # 46296 // 512 - 1
     seed: 1
-    use_cs_grad_accum: True

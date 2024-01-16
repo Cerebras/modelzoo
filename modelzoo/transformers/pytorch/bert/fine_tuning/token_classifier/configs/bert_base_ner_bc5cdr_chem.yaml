@@ -59,4 +59,3 @@ runconfig:
     seed: 1
     model_dir: "./model_dir"
     eval_steps: 759
-    use_cs_grad_accum: True

@@ -32,10 +32,6 @@ class GptjModel(torch.nn.Module):
         super().__init__()
 
         model_params = params["model"].copy()
-        self.model = self.build_model(model_params)
-        self.loss_fn = GPTLMHeadModelLoss(
-            params["model"]["vocab_size"], self.loss_scaling, self.loss_weight,
-        )
 
         self.compute_eval_metrics = model_params.pop(
             "compute_eval_metrics", True
@@ -43,6 +39,12 @@ class GptjModel(torch.nn.Module):
         if self.compute_eval_metrics:
             self.perplexity_metric = PerplexityMetric(name="eval/lm_perplexity")
             self.accuracy_metric = AccuracyMetric(name="eval/accuracy")
+
+        self.model = self.build_model(model_params)
+
+        self.loss_fn = GPTLMHeadModelLoss(
+            params["model"]["vocab_size"], self.loss_scaling, self.loss_weight,
+        )
 
     def _post_device_transfer(self):
         self.model.tie_weights()
@@ -62,6 +64,7 @@ class GptjModel(torch.nn.Module):
             position_embedding_type != "alibi"
         ), "alibi position embedding is not yet supported by gptj"
 
+        rope_theta = model_params.pop("rope_theta", 10000)
         rotary_dim = None
         num_relative_attention_buckets = None
         if position_embedding_type == "rotary":
@@ -112,6 +115,7 @@ class GptjModel(torch.nn.Module):
             ),
             position_embedding_type=position_embedding_type,
             rotary_dim=rotary_dim,
+            rope_theta=rope_theta,
             num_relative_attention_buckets=num_relative_attention_buckets,
             # Decoder params
             num_hidden_layers=model_params.pop("num_hidden_layers"),
@@ -158,16 +162,19 @@ class GptjModel(torch.nn.Module):
             output_layer_initializer=model_params.pop(
                 "output_layer_initializer", None
             ),
-            attention_kernel=model_params.pop("attention_kernel", None),
+            alibi_trainable_slopes=model_params.pop(
+                "alibi_trainable_slopes", False
+            ),
+            pos_scaling_factor=float(
+                model_params.pop("pos_scaling_factor", 1.0)
+            ),
         )
 
         model_params.pop("mixed_precision", None)
-        # `use_bfloat16` and `precision_opt_level` are accessed later,
+        # `fp16_type` is accessed later,
         # so we remove these from the list of unused params
         unused_params = [
-            key
-            for key in model_params.keys()
-            if key != "use_bfloat16" and key != "precision_opt_level"
+            key for key in model_params.keys() if key != "fp16_type"
         ]
         if unused_params:
             logging.warning(
@@ -176,7 +183,7 @@ class GptjModel(torch.nn.Module):
             )
         return model
 
-    def forward(self, data):
+    def forward(self, data, reduce_batch=True):
         assert (
             "input_ids" in data
             and "attention_mask" in data
@@ -189,9 +196,17 @@ class GptjModel(torch.nn.Module):
         ), "The dtype for all inputs should be torch.int32"
 
         lm_logits = self.model(
-            input_ids=data["input_ids"], attention_mask=data["attention_mask"],
+            input_ids=data["input_ids"],
+            attention_mask=data["attention_mask"],
+            attention_span=data.get("attention_span"),  # VSL-only input
+            position_ids=data.get("position_ids"),  # VSL-only input
         )
-        loss = self.loss_fn(lm_logits, data["labels"], data["attention_mask"],)
+        loss = self.loss_fn(
+            lm_logits,
+            data["labels"],
+            data["attention_mask"],
+            reduce_batch=reduce_batch,
+        )
 
         # Calculate eval metrics if not training
         if not self.model.training and self.compute_eval_metrics:

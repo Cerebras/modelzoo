@@ -39,21 +39,34 @@ class GPTLMHeadModelLoss(nn.Module):
             ), f"Loss scaling with 'num_tokens' requires loss_weight == 1.0"
 
     def forward(
-        self, lm_logits, labels, attention_mask,
+        self, lm_logits, labels, attention_mask, reduce_batch=True,
     ):
         loss_fct = nn.CrossEntropyLoss(reduction='none')
         lm_loss = loss_fct(
             lm_logits.view(-1, self.vocab_size), labels.view(-1).long(),
         )
-
-        lm_loss *= attention_mask.to(dtype=lm_logits.dtype).view(-1)
-
-        if self.loss_scaling == "num_tokens":
-            lm_loss = torch.sum(lm_loss) / torch.sum(
-                attention_mask.to(dtype=lm_logits.dtype)
+        if reduce_batch:
+            lm_loss = lm_loss * attention_mask.to(dtype=lm_logits.dtype).view(
+                -1
             )
-        else:
-            lm_loss = (torch.sum(lm_loss) / labels.shape[0]) * self.loss_weight
 
-        loss = lm_loss.to(lm_logits.dtype)
+            if self.loss_scaling == "num_tokens":
+                lm_loss = torch.sum(lm_loss) / torch.sum(
+                    attention_mask.to(dtype=lm_logits.dtype)
+                )
+            else:
+                lm_loss = (
+                    torch.sum(lm_loss) / labels.shape[0]
+                ) * self.loss_weight
+
+            loss = lm_loss.to(lm_logits.dtype)
+        else:
+            assert (
+                self.label_smoothing == 0.0
+            ), "Label smoothing not supported when reduce_batch=False"
+            loss = lm_loss.view(attention_mask.shape) * attention_mask.to(
+                dtype=lm_logits.dtype
+            )
+            loss = torch.sum(loss, dim=-1)
+            loss = loss.to(lm_logits.dtype)
         return loss

@@ -2,7 +2,7 @@
 # Based on: https://arxiv.org/pdf/2307.09288.pdf
 
 train_input:
-    data_processor: "GptHDF5DataProcessor"
+    data_processor: "GptHDF5DataProcessor" 
     data_dir: "./llama_v2_data_test/val"
     shuffle: False
     shuffle_seed: 1
@@ -13,7 +13,7 @@ train_input:
 
 
 eval_input:
-    data_processor: "GptHDF5DataProcessor"
+    data_processor: "GptHDF5DataProcessor" 
     data_dir: "./llama_v2_data_test/test"
     shuffle: False
     shuffle_seed: 1
@@ -26,7 +26,6 @@ model:
     # Embedding
     vocab_size: 32000
     hidden_size: 5120
-    use_position_embedding: True
     position_embedding_type: "rotary"
     rotary_dim: 128
     share_embedding_weights: False
@@ -53,10 +52,12 @@ model:
 
     # Task-specific
     use_bias_in_output: False
+    loss_scaling: "num_tokens"
+    loss_weight: 1.0
 
     # Cerebras parameters
     mixed_precision: True
-    use_bfloat16: True
+    fp16_type: "cbfloat16"
 
 optimizer:
     optimizer_type: "AdamW"
@@ -64,6 +65,7 @@ optimizer:
     eps: 1.0e-5
     correct_bias: True
     weight_decay: 0.1
+    loss_scaling_factor: "dynamic"
     learning_rate:
         - scheduler: "Linear"
           initial_learning_rate: 0.0
@@ -84,4 +86,3 @@ runconfig:
     seed: 1
     model_dir: "./model_dir"
     eval_steps: 89
-    use_cs_grad_accum: True

@@ -13,24 +13,22 @@
 # limitations under the License.
 
 
-def set_attention_kernel(params):
+def set_attention_params(params):
     '''
-    Set attention kernel related params
+    Set attention related params
     :param params: model_params
     :return:
     '''
-
-    params["model"]["attention_kernel"] = params["model"].get(
-        "attention_kernel", "default"
-    )
-
     # Attention softmax is fp32 by default.
     params["model"]["attention_softmax_fp32"] = True
 
+    if params["runconfig"].get("precision_opt_level", 1) == 2:
+        params["model"]["attention_softmax_fp32"] = False
+
     if (
-        params["runconfig"]["precision_opt_level"] == 1
-        and params["model"]["attention_kernel"] == "compatible"
-    ) or params["runconfig"].get("precision_opt_level", 1) == 2:
+        params["model"].get("fp16_type", "bfloat16") == "cbfloat16"
+        and params["runconfig"].get("precision_opt_level", 1) == 1
+    ):
         params["model"]["attention_softmax_fp32"] = False
 
 
@@ -41,7 +39,10 @@ def set_defaults(params):
     Args:
         params: The dictionary containing the params
     """
-    if params["train_input"]["data_processor"] == "Gpt2SyntheticDataProcessor":
+    if (
+        params.get("train_input", {}).get("data_processor")
+        == "Gpt2SyntheticDataProcessor"
+    ):
         if "train_input" in params:
             params["train_input"]["vocab_size"] = params["train_input"].get(
                 "vocab_size", params["model"]["vocab_size"]
@@ -72,7 +73,7 @@ def set_defaults(params):
                 params["model"]["max_position_embeddings"],
             )
 
-    params["model"]["use_bfloat16"] = params["model"].get("use_bfloat16", True)
+    params["model"]["fp16_type"] = params["model"].get("fp16_type", "bfloat16")
     params["optimizer"]["loss_scaling_factor"] = params["optimizer"].get(
         "loss_scaling_factor", 1.0
     )
@@ -82,4 +83,4 @@ def set_defaults(params):
     params["runconfig"]["precision_opt_level"] = params["runconfig"].get(
         "precision_opt_level", 1
     )
-    set_attention_kernel(params)
+    set_attention_params(params)

@@ -17,6 +17,9 @@ import sys
 from modelzoo.transformers.pytorch.t5.input.T5DynamicDataProcessor import (  # noqa
     T5DynamicDataProcessor,
 )
+from modelzoo.transformers.pytorch.t5.input.T5HDF5DataProcessor import (  # noqa
+    T5HDF5DataProcessor,
+)
 
 
 def train_input_dataloader(params):

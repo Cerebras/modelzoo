@@ -36,6 +36,3 @@ runconfig:
     checkpoint_steps: 10000000
     seed: 1
     model_dir: "./model_dir"
-csconfig:
-    use_cbfloat16: False
-    

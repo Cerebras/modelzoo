@@ -451,7 +451,7 @@ def pad_t5_input_features(
         "attention_mask": attention_mask,
         "decoder_attention_mask": decoder_attention_mask,
         "labels": labels,
-        "decoder_input_length": len(features["decoder_input_ids"]),
+        "decoder_input_length": np.array([len(features["decoder_input_ids"])]),
     }
 
 

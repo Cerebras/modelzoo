@@ -38,6 +38,9 @@ from modelzoo.transformers.data_processing.scripts.hdf5_preprocessing.utils impo
 from modelzoo.transformers.data_processing.scripts.hdf5_preprocessing.hdf5_dataset_preprocessors import (  # noqa
     LMDataPreprocessor,
     SummarizationPreprocessor,
+    FIMDataPreprocessor,
+    VSLLMDataPreprocessor,
+    VSLSummarizationPreprocessor,
 )
 
 # Custom preprocessors

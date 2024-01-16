@@ -20,12 +20,16 @@ import os
 import subprocess
 import sys
 from shutil import which
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Union
 
 import torch
 import yaml
 
-import modelzoo.common.pytorch.half_dtype as half_dtype
+from cerebras_appliance.log import (
+    collect_wsc_log_settings,
+    get_level_name,
+    wsc_logger,
+)
 from cerebras_pytorch.core import modes
 from modelzoo.common.pytorch.run_cstorch_flow import run_cstorch_flow
 from modelzoo.common.pytorch.utils import (
@@ -36,7 +40,6 @@ from modelzoo.common.run_utils.cli_parser import get_params_from_args
 from modelzoo.common.run_utils.utils import DeviceType
 
 DATA_FN_TYPE = Callable[[dict], torch.utils.data.DataLoader]
-half_dtype_instance = half_dtype.half_dtype_instance
 
 
 def arg_filter(arg: str, keyword: str) -> bool:
@@ -237,6 +240,9 @@ def main(
         parent = inspect.getouterframes(inspect.currentframe())[1]
         script = parent.filename
 
+    wsc_log_level = params["runconfig"].get("wsc_log_level") or {}
+    set_wsc_log_level(wsc_log_level)
+
     if params["runconfig"]["mode"] == modes.EVAL_ALL:
         sideband_eval_all(script, sys.argv[1:], params)
         return None
@@ -311,3 +317,19 @@ def run_with_params(
     runconfig_params["summary_dir"] = summary_dir
 
     return run_cstorch_flow(params, model_fn, train_data_fn, eval_data_fn)
+
+
+def set_wsc_log_level(log_levels: Union[List[str], Dict[str, str]]):
+    """Assert the list of log levels is valid"""
+    if isinstance(log_levels, dict):
+        for task, level in log_levels.items():
+            level = int(level) if level.isdigit() else get_level_name(level)
+            if task:
+                wsc_logger.getChild(task).setLevel(level)
+            else:
+                wsc_logger.setLevel(level)
+    else:
+        raise ValueError("Invalid log levels. Input must be a dict.")
+
+    # validate log level setting
+    collect_wsc_log_settings()

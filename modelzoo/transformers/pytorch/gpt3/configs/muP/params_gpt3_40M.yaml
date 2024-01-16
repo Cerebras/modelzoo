@@ -32,7 +32,6 @@ eval_input:
 model:
   vocab_size: 50257
   hidden_size: 256
-  use_position_embedding: true
   position_embedding_type: learned
   share_embedding_weights: true
   max_position_embeddings: 2048
@@ -65,11 +64,11 @@ model:
     std: 0.011547005383792516
     a: -0.023094010767585032
     b: 0.023094010767585032
-  loss_scaling: batch_size
-  loss_weight: 0.00048828125
+  loss_scaling: num_tokens
+  loss_weight: 1.0
   use_bias_in_output: false
   mixed_precision: true
-  use_bfloat16: true
+  fp16_type: "cbfloat16"
   output_logits_scale: 1.0
   embeddings_scale: 10.0
   scale_qk_dot_by_d: true
@@ -78,6 +77,7 @@ optimizer:
   betas: [0.9, 0.95]
   eps: 1.0e-08
   max_gradient_norm: 1.0
+  loss_scaling_factor: "dynamic"
   learning_rate:
   - scheduler: Linear
     initial_learning_rate: 0.0
@@ -99,5 +99,3 @@ runconfig:
   enable_distributed: false
   log_steps: 1
   save_initial_checkpoint: false
-  use_cs_grad_accum: true
-  use_appliance_data: true

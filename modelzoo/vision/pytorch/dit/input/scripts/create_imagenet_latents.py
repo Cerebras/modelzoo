@@ -44,7 +44,7 @@ from modelzoo.vision.pytorch.input.transforms import (
 )
 
 """
-torchrun --nnodes 1 --nproc_per_node 1 modelzoo/vision/pytorch/dit/input/scripts/create_imagenet_latents.py --image_size=256 --src_dir=/pathto/imagenet1k_ilsvrc2012 --dest_dir=<path to store created latent files> --log_steps=10 --dataset_split=val --checkpoint_path=<path to vae trained ckpt>
+torchrun --nnodes 1 --nproc_per_node 1 modelzoo/vision/pytorch/dit/input/scripts/create_imagenet_latents.py --image_height 256 --image_width 256 --src_dir=/pathto/imagenet1k_ilsvrc2012 --dest_dir=<path to store created latent files> --log_steps=10 --dataset_split=val --checkpoint_path=<path to vae trained ckpt>
 """
 
 LOGFORMAT = '%(asctime)s %(levelname)-4s[%(filename)s:%(lineno)d] %(message)s'
@@ -88,7 +88,10 @@ def get_parser_args():
         help="If passed, flip image horizonatally",
     )
     parser.add_argument(
-        "--image_size", type=int, required=True, choices=[256, 512]
+        "--image_height", type=int, required=True,
+    )
+    parser.add_argument(
+        "--image_width", type=int, required=True,
     )
     parser.add_argument(
         "--src_dir", type=str, required=True, help="source data location"
@@ -206,7 +209,8 @@ class LatentImageNetProcessor:
         # Check if process checkpoint saved can actually be used and data generation resumed
         checks = {
             "src_dir": self.src_dir == ckpt_data["src_dir"],
-            "image_size": self.image_size == ckpt_data["image_size"],
+            "image_height": self.image_height == ckpt_data["image_height"],
+            "image_width": self.image_width == ckpt_data["image_width"],
             "dataset_split": self.dataset_split == ckpt_data["dataset_split"],
             "vae_params": self.vae_params == ckpt_data["vae_params"],
             "checkpoint_path": self.checkpoint_path
@@ -261,12 +265,13 @@ class LatentImageNetProcessor:
             data = {"model": {"vae": self.vae_params}}
             yaml.dump(data, fh)
 
-    def set_data_transforms(self, horizontal_flip, image_size):
+    def set_data_transforms(self, horizontal_flip, image_height, image_width):
         """
         Data transforms used for dataset creation
         Args:
             horizontal_flip (bool): If True, flip the image horizontally
-            image_size (int): Image is resized to `image_size x image_size` dimensions 
+            image_height (int): Height of resized image
+            image_width (int): Width of resized image
 
         Returns:
             transform : torchvision.transforms composition to be applied to image
@@ -275,7 +280,7 @@ class LatentImageNetProcessor:
         transform = [
             transforms.Lambda(
                 lambda pil_image: resize_center_crop_pil_image(
-                    pil_image, [image_size, image_size]
+                    pil_image, image_height, image_width,
                 )
             ),
             transforms.ToTensor(),
@@ -307,7 +312,7 @@ class LatentImageNetProcessor:
             dataloader: torch.utils.data.Dataloader object that reads from ImageNet dataset
         """
         transform, target_transform = self.set_data_transforms(
-            self.horizontal_flip, self.image_size
+            self.horizontal_flip, self.image_height, self.image_width,
         )
         logging.info(
             f"The following transforms are used for image: {transform} \n"
@@ -358,8 +363,8 @@ class LatentImageNetProcessor:
         """
         Save the output latent tensors from VAE encoder to npz file
         Args:
-            vae_output (torch.Tensor): Concatenation of mean and logvar outputs from VAE 
-                corresponding to images at src_paths, 
+            vae_output (torch.Tensor): Concatenation of mean and logvar outputs from VAE
+                corresponding to images at src_paths,
                 shape=(2 * latent_size, latent_height, latent_width)
             label (torch.Tensor): Target label of image
             src_paths List[str]: Path of image
@@ -396,7 +401,7 @@ class LatentImageNetProcessor:
             log_path (str): Path to save log ckpt used for data generation resume
             global_rank (int): GPU global rank
             iter_num (int): Current iteration of dataloader on GPU with rank = `global_rank`
-            total_num_batches (int): Total number of batches processed so far across all GPUs 
+            total_num_batches (int): Total number of batches processed so far across all GPUs
                 during the current data generation process
         """
         total_num_batches += self.resume_num_batches
@@ -410,7 +415,8 @@ class LatentImageNetProcessor:
             "total_batches_processed": total_num_batches,
             "num_samples_processed": num_samples,
             "batch_size_per_gpu": self.batch_size_per_gpu,
-            "image_size": self.image_size,
+            "image_height": self.image_height,
+            "image_width": self.image_width,
             "dataset_split": self.dataset_split,
             "src_dir": self.src_dir,
             "dest_dir": self.dest_dir,

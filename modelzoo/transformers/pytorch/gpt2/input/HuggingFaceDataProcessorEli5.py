@@ -47,5 +47,5 @@ class HuggingFaceDataProcessorEli5(HuggingFaceDataProcessor):
             split=split, num_workers=num_workers
         )
 
-        # The supper class will take care of sharding the dataset and creating the dataloader
+        # The super class will take care of sharding the dataset and creating the dataloader
         super().__init__(params)

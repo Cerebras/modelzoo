@@ -24,6 +24,9 @@ from torch.nn import Dropout, LayerNorm
 
 from modelzoo.common.pytorch.layers.AttentionHelper import get_attention_module
 from modelzoo.common.pytorch.layers.FeedForwardNetwork import FeedForwardNetwork
+from modelzoo.common.pytorch.model_utils.RotaryPositionEmbeddingHelper import (
+    RotaryPositionEmbeddingHelper,
+)
 
 
 class TransformerEncoderLayer(nn.Module):
@@ -175,6 +178,9 @@ class TransformerEncoderLayer(nn.Module):
         src: Tensor,
         src_mask: Optional[Tensor] = None,
         src_key_padding_mask: Optional[Tensor] = None,
+        rotary_position_embedding_helper: Optional[
+            RotaryPositionEmbeddingHelper
+        ] = None,
         self_attn_position_bias: Optional[Tensor] = None,
         **extra_args,
     ) -> Tensor:
@@ -184,6 +190,8 @@ class TransformerEncoderLayer(nn.Module):
             src: the sequence to the encoder layer (required).
             src_mask: the mask for the src sequence (optional).
             src_key_padding_mask: the mask for the src keys per batch (optional).
+            rotary_position_embedding_helper (Optional[RotaryPositionEmbeddingHelper]):
+                A helper class to apply rotary embedding on the input tensor.
             self_attn_position_bias: the tensor containing position bias to apply in self-attention,
                 can be obtained from relative or alibi position embeddings.
 
@@ -199,6 +207,7 @@ class TransformerEncoderLayer(nn.Module):
                 self.norm1(x),
                 src_mask,
                 src_key_padding_mask,
+                rotary_position_embedding_helper=rotary_position_embedding_helper,
                 self_attn_position_bias=self_attn_position_bias,
                 **extra_args,
             )
@@ -210,6 +219,7 @@ class TransformerEncoderLayer(nn.Module):
                     x,
                     src_mask,
                     src_key_padding_mask,
+                    rotary_position_embedding_helper=rotary_position_embedding_helper,
                     self_attn_position_bias=self_attn_position_bias,
                     **extra_args,
                 )
@@ -224,7 +234,10 @@ class TransformerEncoderLayer(nn.Module):
         x: Tensor,
         attn_mask: Optional[Tensor],
         key_padding_mask: Optional[Tensor],
-        self_attn_position_bias: Optional[Tensor],
+        rotary_position_embedding_helper: Optional[
+            RotaryPositionEmbeddingHelper
+        ] = None,
+        self_attn_position_bias: Optional[Tensor] = None,
         **extra_args,
     ) -> Tensor:
         x = self.self_attn(
@@ -233,6 +246,7 @@ class TransformerEncoderLayer(nn.Module):
             x,
             attn_mask=attn_mask,
             key_padding_mask=key_padding_mask,
+            rotary_position_embedding_helper=rotary_position_embedding_helper,
             position_bias=self_attn_position_bias,
             need_weights=False,
             **extra_args,

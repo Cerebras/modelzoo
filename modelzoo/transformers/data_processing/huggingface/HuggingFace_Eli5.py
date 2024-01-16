@@ -36,6 +36,9 @@ def HuggingFace_Eli5(split="train", num_workers=8, sequence_length=128):
     eli5 = eli5.flatten()
 
     tokenizer = AutoTokenizer.from_pretrained("distilgpt2", use_fast=True)
+    tokenizer.add_bos_token = (
+        False  # BOS token added in CSDataCollatorForLanguageModeling
+    )
 
     def preprocess_function(examples):
         return tokenizer([" ".join(x) for x in examples["answers.text"]])
