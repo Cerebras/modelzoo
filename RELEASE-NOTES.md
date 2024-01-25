@@ -2,6 +2,12 @@
 
 The following are the release notes for the Model Zoo repository.
 
+## Version 2.1.1
+
+* In Release 2.1.0, a behavior was introduced where, if the user did not specify the max_checkpoints parameter in the runconfig portion of the yaml config file, it would default to 5 and only retain the 5 most recent checkpoints. In release 2.1.1, max_checkpoints now defaults again to infinity, reverting back to previous default checkpoint saving behavior.
+
+* In Release 2.1.1, the automatic kernel generation feature (autogen) is temporarily unavailable. Make sure that in your runconfig file, you set autogen_policy:disabled if you were previously using it (for more information on how to do this, click on How to enable AutoGen). If your model previously required autogen and is now no longer compiling, reach out to the Cerebras Support Team for assistance. We will be restoring autogen functionality in the next release.
+
 ## Version 2.1.0
 
 ### New features and enhancements

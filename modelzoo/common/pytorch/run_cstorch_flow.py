@@ -222,8 +222,8 @@ def run_cstorch_train(params, model_fn, input_fn, cs_config, artifact_dir):
     use_cstorch_optimizer_step = runconfig.get(
         "use_cstorch_optimizer_step", False
     )
-    # Default to only keeping the 5 latest checkpoints.
-    max_checkpoints = runconfig.get("max_checkpoints", 5)
+    # Default to keeping all checkpoints
+    max_checkpoints = runconfig.get("max_checkpoints", None)
 
     if target_device == DeviceType.CSX:
         use_cs_grad_accum = runconfig.get("use_cs_grad_accum", True)
