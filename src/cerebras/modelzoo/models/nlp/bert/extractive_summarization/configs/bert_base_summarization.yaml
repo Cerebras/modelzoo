@@ -1,0 +1,85 @@
+# BertSum config file. Bert Base backbone.
+
+train_input:
+    data_dir: "./language/datasets/extractive_summarization_csv/train/"
+    data_processor: "BertSumCSVDataProcessor"
+    vocab_file: "../../../vocab/google_research_uncased_L-12_H-768_A-12.txt"
+    max_sequence_length: 1532
+    max_cls_tokens: 50
+    # The effective batch size, which is evenly divided across "num_csx" systems used for the run
+    batch_size: 32   # for GPU(16GB) set batch_size: 8
+                    # 8 * 4 = 32 with grad_accum_steps: 4 and single GPU
+    num_workers: 1
+    shuffle: True
+    shuffle_seed: 1
+
+eval_input:
+    data_dir: "./language/datasets/extractive_summarization_csv/valid/"
+    data_processor: "BertSumCSVDataProcessor"
+    vocab_file: "../../../vocab/google_research_uncased_L-12_H-768_A-12.txt"
+    max_sequence_length: 1532
+    max_cls_tokens: 50
+    # The effective batch size, which is evenly divided across "num_csx" systems used for the run
+    batch_size: 32   # for GPU(16GB) set batch_size: 8
+                    # 8 * 4 = 32 with grad_accum_steps: 4 and single GPU
+    num_workers: 1
+    shuffle: False
+
+model:
+    vocab_size: 30522
+    hidden_size: 768
+    num_hidden_layers: 12
+    num_heads: 12
+    filter_size: 3072
+    encoder_nonlinearity: "gelu" # {"gelu", "relu", "silu", "gelu_new"}
+    pooler_nonlinearity: "tanh"
+    max_position_embeddings: 1532
+    use_cls_bias: True
+    mixed_precision: True
+    dropout_rate: 0.1
+    attention_dropout_rate: 0.1
+    compute_eval_metrics: False
+    layer_norm_epsilon: 1.0e-5
+    loss_weight: 0.0539 # `loss_weight` allows us to apply scaling of the loss
+                        # across number of CLS tokens with this formula
+                        # `loss_weight` = 1 / {average number of CLS tokens per sequence}
+                        # as we dynamically scale by the batch dimension.
+    fp16_type: "cbfloat16"
+
+optimizer:
+    optimizer_type: "Adam" # {"SGD", "AdamW", "Adam"}
+    eps: 1.0e-6
+    max_gradient_norm: 1.0
+    learning_rate:
+        - scheduler: "Linear"
+          initial_learning_rate: 0.0
+          end_learning_rate: 0.00002
+          total_iters: 10000
+        - scheduler: "Linear"
+          initial_learning_rate: 0.00002
+          end_learning_rate: 0.000014142135623730951
+          total_iters: 10000
+        - scheduler: "Linear"
+          initial_learning_rate: 0.000014142135623730951
+          end_learning_rate: 0.000011547005383792516
+          total_iters: 10000
+        - scheduler: "Linear"
+          initial_learning_rate: 0.000011547005383792516
+          end_learning_rate: 0.00001
+          total_iters: 10000
+        - scheduler: "Linear"
+          initial_learning_rate: 0.00001
+          end_learning_rate: 0.000008944361354059921
+          total_iters: 10000
+    loss_scaling_factor: "dynamic"
+    # grad_accum_steps: 4 # helps fit in GPU memory, uncomment 
+                        # when using GPU and reduced batch_size above
+
+runconfig:
+    max_steps: 50000
+    log_steps: 100
+    checkpoint_steps: 10000
+    seed: 1
+    model_dir: "./model_dir"
+    save_initial_checkpoint: True
+    eval_steps: 416 # For GPU, multiply the eval_steps by grad_accum_steps

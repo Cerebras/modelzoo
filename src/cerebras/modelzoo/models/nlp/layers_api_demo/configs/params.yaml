@@ -1,0 +1,41 @@
+train_input:
+    num_samples: 20000
+    seq_length: 10
+    # The effective batch size, which is evenly divided across "num_csx" systems used for the run
+    batch_size: 32
+
+eval_input:
+    num_samples: 2000
+    seq_length: 10
+    # The effective batch size, which is evenly divided across "num_csx" systems used for the run
+    batch_size: 32
+
+model:
+    vocab_size: 26
+    embedding_size: 64
+    num_heads: 2
+    hidden_size: 64
+    num_hidden_layers: 2
+    dropout: 0.0
+    seq_len: 10
+    nonlinearity: "gelu"
+
+    # Cerebras parameters
+    mixed_precision: True
+
+optimizer:
+    optimizer_type: "Adam"
+    correct_bias: True
+    weight_decay: 0.01
+    learning_rate:
+        - scheduler: "Linear"
+          initial_learning_rate: 1.0e-4
+          end_learning_rate: 0.0
+          total_iters: 1000
+    loss_scaling_factor: "dynamic"
+
+runconfig:
+    max_steps: 1000
+    log_steps: 100
+    seed: 1
+    model_dir: "./model_dir"

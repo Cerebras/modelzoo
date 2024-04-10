@@ -1,0 +1,66 @@
+#BERT-SST2-Large
+
+train_input:
+    data_processor: "SST2DataProcessor"
+    data_dir: "./language/datasets/glue_data/SST-2"
+    vocab_file: "../../../vocab/google_research_uncased_L-12_H-768_A-12.txt"
+    max_sequence_length: 72
+    do_lower: True
+    # The effective batch size, which is evenly divided across "num_csx" systems used for the run
+    batch_size: 2048
+    num_workers: 8
+    shuffle: True
+    shuffle_seed: 1
+
+eval_input:
+    data_processor: "SST2DataProcessor"
+    data_dir: "./language/datasets/glue_data/SST-2"
+    vocab_file: "../../../vocab/google_research_uncased_L-12_H-768_A-12.txt"
+    max_sequence_length: 72
+    do_lower: True
+    # The effective batch size, which is evenly divided across "num_csx" systems used for the run
+    batch_size: 12
+    num_workers: 1
+    shuffle: False
+    shuffle_seed: 1
+
+model:
+    vocab_size: 30522
+    hidden_size: 1024
+    num_hidden_layers: 24
+    num_heads: 16
+    filter_size: 4096
+    encoder_nonlinearity: "gelu" # {"gelu", "relu", "silu", "gelu_new"}
+    pooler_nonlinearity: "tanh"
+    dropout_rate: 0.1
+    attention_dropout_rate: 0.1
+    max_position_embeddings: 512
+    task_dropout: 0.1
+    problem_type: "single_label_classification"
+    num_labels: 2
+    mixed_precision: True
+    fp16_type: "cbfloat16"
+    compute_eval_metrics: False
+
+optimizer:
+    optimizer_type: "AdamW"
+    weight_decay: 0.01
+    eps: 1.0e-6
+    max_gradient_norm: 1.0
+    learning_rate:
+        - scheduler: "Linear"
+          total_iters: 2000
+          initial_learning_rate: 0.0
+          end_learning_rate: 0.000005
+        - scheduler: "Constant"
+          learning_rate: 0.000005
+    loss_scaling_factor: "dynamic"
+
+runconfig:
+    max_steps: 20000 # ~3 epochs, 67k samples in an epoch
+    log_steps: 1000
+    checkpoint_steps: 5000
+    seed: 1
+    model_dir: "./model_dir"
+    save_initial_checkpoint: True
+    eval_steps: 71

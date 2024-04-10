@@ -1,0 +1,71 @@
+train_input:
+    data_processor : "DPREmbedGenSyntheticDataProcessor"
+    max_sequence_length: 512
+    num_examples: 1000
+    shuffle: False
+    shuffle_seed: 1
+    batch_size: 4
+    num_workers: 0
+    prefetch_factor: 10
+    persistent_workers: True
+
+eval_input:
+    data_processor : "DPREmbedGenSyntheticDataProcessor"
+    max_sequence_length: 512
+    num_examples: 1000
+    shuffle: False
+    shuffle_seed: 1
+    batch_size: 4
+    num_workers: 0
+    prefetch_factor: 10
+    persistent_workers: True
+
+model:
+    selected_encoder: "ctx_encoder"
+    q_encoder: &base_model
+        # Embedding
+        vocab_size: 17
+        hidden_size: 8
+        max_position_embeddings: 512
+
+        # Encoder
+        num_hidden_layers: 2
+        dropout_rate: 0.0
+        layer_norm_epsilon: 1.0e-5
+
+        # Encoder - Attention
+        num_heads: 2
+        attention_dropout_rate: 0.0
+
+        # Encoder - ffn
+        filter_size: 8
+        encoder_nonlinearity: "gelu"
+
+        # Task-specific
+        mlm_loss_weight: 0.0078125
+
+        # Cerebras parameters
+        mixed_precision: True
+        fp16_type: "cbfloat16"
+
+    ctx_encoder:
+        <<: *base_model
+
+optimizer:
+    optimizer_type: "AdamW"
+    loss_scaling_factor: "dynamic"
+    learning_rate: 0.001
+
+runconfig:
+    log_steps: 1
+    checkpoint_steps: 5
+    max_steps: 10
+    seed: 1
+    model_dir: "./model_dir"
+    num_workers_per_csx: 1
+    num_wgt_servers: 1
+    precision_opt_level: 0
+    embeddings_per_file: 9
+
+csconfig:
+    use_cbfloat16: False
