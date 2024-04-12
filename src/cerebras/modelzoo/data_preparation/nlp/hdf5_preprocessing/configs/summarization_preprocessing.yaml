@@ -1,0 +1,34 @@
+##############################################################
+## Summarization Preprocessing Parameters
+##############################################################
+
+setup:
+    input_dir: "/cb/datasets/language/pile/raw_data/test/" # replace with your directory
+    output_dir: "./data_dir_summarization/" # replace with your output directory
+    processes: 1
+    dataset_processor: "SummarizationPreprocessor"
+
+processing:
+    tokenizer_type: "NeoXTokenizer"
+    encoder_file: "../../../models/vocab/neox-encoder.json"
+
+    max_seq_length: 2048
+    short_seq_prob: 0.0
+
+    output_name: "examples"
+    files_per_record: 50000
+    write_in_batch: True
+
+    write_remainder: True
+    resume_from_checkpoint: False
+    display_pbar: True
+    seed: 0
+
+dataset:
+    use_ftfy: True
+    ftfy_normalizer: "NFC"
+    wikitext_detokenize: False
+
+    sep_token: null
+    prompt_key: "source"
+    completion_key: "target"

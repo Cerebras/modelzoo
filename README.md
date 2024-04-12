@@ -32,28 +32,31 @@ For advanced use cases and porting your existing code please refer to the [devel
 
 | Model   | Code pointer   |
 |:-------|:-----------------------:|
-| BERT | [Code](./modelzoo/transformers/pytorch/bert/) |
-| BERT (fine-tuning) Classifier | [Code](./modelzoo/transformers/pytorch/bert/fine_tuning/classifier/) |
-| BERT (fine-tuning) Named Entity Recognition | [Code](./modelzoo/transformers/pytorch/bert/fine_tuning/token_classifier/) |
-| BERT (fine-tuning) Summarization | [Code](./modelzoo/transformers/pytorch/bert/fine_tuning/extractive_summarization/) |
-| BERT (fine-tuning) Question Answering | [Code](./modelzoo/transformers/pytorch/bert/fine_tuning/qa/) |
-| BLOOM | [Code](./modelzoo/transformers/pytorch/bloom/) |
-| BTLM  | [Code](./modelzoo/transformers/pytorch/btlm/) |
-| GPT-2 | [Code](./modelzoo/transformers/pytorch/gpt2/) |
-| GPT-3 | [Code](./modelzoo/transformers/pytorch/gpt3/) |
-| GPT-J | [Code](./modelzoo/transformers/pytorch/gptj/) |
-| GPT-NeoX | [Code](./modelzoo/transformers/pytorch/gptj/) |
-| GPT-J (fine-tuning) Summarization |[Code](./modelzoo/transformers/pytorch/gptj/fine_tuning/continuous_pretraining/) |
-| RoBERTa | [Code](./modelzoo/transformers/pytorch/bert/) |
-| T5 | [Code](./modelzoo/transformers/pytorch/t5/) |
-| Transformer | [Code](./modelzoo/transformers/pytorch/transformer/) |
-| MNIST (fully connected) | [Code](./modelzoo/fc_mnist/pytorch/) |
-| Falcon | [Code](./modelzoo/transformers/pytorch/falcon) |
-| StarCoder | [Code](./modelzoo/transformers/pytorch/starcoder) |
-| LLaMA and LLaMA-2 | [Code](./modelzoo/transformers/pytorch/llama) |
-| DiT | [Code](./modelzoo/vision/pytorch/dit) |
-| MPT | [Code](./modelzoo/transformers/pytorch/mpt) |
-| Mistral | [Code](./modelzoo/transformers/pytorch/mistral) |
+| BERT | [Code](./src/cerebras/modelzoo/models/nlp/bert/) |
+| BERT (fine-tuning) Classifier | [Code](./src/cerebras/modelzoo/models/nlp/bert/classifier/) |
+| BERT (fine-tuning) Named Entity Recognition | [Code](./src/cerebras/modelzoo/models/nlp/bert/token_classifier/) |
+| BERT (fine-tuning) Summarization | [Code](./src/cerebras/modelzoo/models/nlp/bert/extractive_summarization/) |
+| BLOOM | [Code](./src/cerebras/modelzoo/models/nlp/bloom/) |
+| BTLM  | [Code](./src/cerebras/modelzoo/models/nlp/btlm/) |
+| GPT-2 | [Code](./src/cerebras/modelzoo/models/nlp/gpt2/) |
+| GPT-3 | [Code](./src/cerebras/modelzoo/models/nlp/gpt3/) |
+| GPT-J | [Code](./src/cerebras/modelzoo/models/nlp/gptj/) |
+| GPT-NeoX | [Code](./src/cerebras/modelzoo/models/nlp/gptj/) |
+| GPT-J (fine-tuning) Summarization |[Code](./src/cerebras/modelzoo/models/nlp/gptj/continuous_pretraining/) |
+| RoBERTa | [Code](./src/cerebras/modelzoo/models/nlp/bert/) |
+| T5 | [Code](./src/cerebras/modelzoo/models/nlp/t5/) |
+| Transformer | [Code](./src/cerebras/modelzoo/models/nlp/transformer/) |
+| MNIST (fully connected) | [Code](./src/cerebras/modelzoo/fc_mnist/pytorch/) |
+| Falcon | [Code](./src/cerebras/modelzoo/models/nlp/falcon) |
+| StarCoder | [Code](./src/cerebras/modelzoo/models/nlp/starcoder) |
+| LLaMA and LLaMA-2 | [Code](./src/cerebras/modelzoo/models/nlp/llama) |
+| DiT | [Code](./src/cerebras/modelzoo/models/vision/dit) |
+| MPT | [Code](./src/cerebras/modelzoo/models/nlp/mpt) |
+| Mistral | [Code](./src/cerebras/modelzoo/models/nlp/mistral) |
+| DPO | [Code](./src/cerebras/modelzoo/models/nlp/dpo) |
+| DPR | [Code](./src/cerebras/modelzoo/models/nlp/dpr) |
+| JAIS | [Code](./src/cerebras/modelzoo/models/nlp/jais) |
+| LLaVA | [Code](./src/cerebras/modelzoo/models/multimodal/llava) |
 
 ## License
 

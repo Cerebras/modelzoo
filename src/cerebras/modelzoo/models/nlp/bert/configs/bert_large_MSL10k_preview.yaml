@@ -1,0 +1,91 @@
+# Copyright 2023 Cerebras Systems.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# BERT-Large, MSL:10k
+
+train_input:
+    data_processor: "BertCSVDataProcessor"
+    data_dir: "./language/datasets/owt_pretraining_long_msl_10k/train_512k_uncased_msl10256"
+    vocab_file: "../../vocab/google_research_uncased_L-12_H-768_A-12.txt"
+    max_sequence_length: 10256
+    max_predictions_per_seq: 1538
+    # The effective batch size, which is evenly divided across "num_csx" systems used for the run
+    batch_size: 30
+    whole_word_masking: False
+    do_lower: True
+    masked_lm_prob: 0.15
+    shuffle: True
+    shuffle_seed: 1
+    num_workers: 3
+    prefetch_factor: 10
+    persistent_workers: True
+
+eval_input:
+    data_processor: "BertCSVDataProcessor"
+    data_dir: "./language/datasets/owt_pretraining_long_msl_10k/val_512k_uncased_msl10256"
+    vocab_file: "../../vocab/google_research_uncased_L-12_H-768_A-12.txt"
+    max_predictions_per_seq: 80
+    max_sequence_length: 512
+    # The effective batch size, which is evenly divided across "num_csx" systems used for the run
+    batch_size: 30
+    whole_word_masking: False
+    do_lower: True
+    masked_lm_prob: 0.15
+    shuffle: False
+    shuffle_seed: 1 # also for deterministic masking
+    num_workers: 2
+    prefetch_factor: 10
+    persistent_workers: True
+    vocab_size: 30522
+
+model:
+    vocab_size: 30522
+    hidden_size: 1024
+    num_hidden_layers: 24
+    num_heads: 16
+    filter_size: 4096
+    encoder_nonlinearity: "gelu" # {"gelu", "relu", "silu", "gelu_new"}
+    pooler_nonlinearity: "tanh"
+    dropout_rate: 0.1
+    attention_dropout_rate: 0.1
+    attention_softmax_fp32: True
+    max_position_embeddings: 10256
+    layer_norm_epsilon: 1.0e-5
+    mlm_loss_weight: 9.750390015600624e-05
+    mixed_precision: True
+    fp16_type: "cbfloat16"
+
+optimizer:
+    optimizer_type: "AdamW"
+    learning_rate:
+    - scheduler: "Linear"
+      initial_learning_rate: 0.0
+      end_learning_rate: 8.6e-05
+      total_iters: 85331
+    - scheduler: "Linear"
+      initial_learning_rate: 8.6e-05
+      end_learning_rate: 0.0
+      total_iters: 18773260
+    loss_scaling_factor: "dynamic"
+    max_gradient_norm: 1.0
+    weight_decay: 0.01
+
+runconfig:
+    checkpoint_steps: 1000
+    eval_steps: 331
+    log_steps: 1
+    max_steps: 10000
+    model_dir: "./model_dir"
+    save_initial_checkpoint: True
+    seed: 1
