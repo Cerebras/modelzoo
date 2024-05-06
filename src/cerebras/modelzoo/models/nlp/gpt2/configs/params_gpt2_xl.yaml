@@ -122,4 +122,5 @@ runconfig:
     validate_only: False
     compile_only: False
     mode: "train"
+    eval_frequency: 10000
 

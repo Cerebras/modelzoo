@@ -112,3 +112,4 @@ runconfig:
     enable_distributed: False
     log_steps: 1
     save_initial_checkpoint: False
+    eval_frequency: 946

@@ -15,7 +15,10 @@
 """Various utility functions related to checkpoint saving and loading."""
 import logging
 import os
-from typing import Optional
+import re
+from datetime import datetime
+from pathlib import Path
+from typing import List, Optional, Union
 from warnings import warn
 
 
@@ -54,3 +57,40 @@ class CkptInfo:
                     warn(
                         f"Failed to clean up old checkpoint {drop_ckpt} due to error: {e}"
                     )
+
+
+def get_all_checkpoints(model_dir: str) -> List[str]:
+    """Return the path to all available checkpoints"""
+    ckpts = []
+    for checkpoint in Path(model_dir).glob("checkpoint_*.mdl"):
+        match = re.match(
+            r"checkpoint_(?P<step>\d+)(?:_(?P<timestamp>\d{8}_\d{6}))?.mdl",
+            checkpoint.name,
+        )
+        if not match:
+            continue
+
+        step = int(match.group("step"))
+        timestamp = match.group("timestamp")
+        if timestamp is not None:
+            try:
+                date = datetime.strptime(timestamp, "%Y%m%d_%H%M%S")
+            except ValueError:
+                continue
+        else:
+            date = datetime.min
+
+        ckpts.append((checkpoint, step, date))
+
+    # sort by step and then by timestamp
+    return (
+        [ckpt[0] for ckpt in sorted(ckpts, key=lambda x: (x[1], x[2]))]
+        if ckpts
+        else []
+    )
+
+
+def get_latest_checkpoint(model_dir: str) -> Union[str, None]:
+    """Get the path to the checkpoint with the highest global step"""
+    ckpts = get_all_checkpoints(model_dir)
+    return ckpts[-1] if ckpts else None

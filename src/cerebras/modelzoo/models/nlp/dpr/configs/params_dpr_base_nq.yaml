@@ -71,3 +71,4 @@ runconfig:
     seed: 1
     model_dir: "./model_dir"
     eval_steps: 101
+    eval_frequency: 460

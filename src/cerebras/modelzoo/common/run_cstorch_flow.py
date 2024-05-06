@@ -21,7 +21,6 @@ import os
 import re
 import warnings
 from datetime import datetime
-from pathlib import Path
 from typing import Any, Dict, Optional, Union
 from warnings import warn
 
@@ -34,7 +33,11 @@ from cerebras.appliance.run_utils import (
     set_ini,
     update_debug_args_from_keys,
 )
-from cerebras.modelzoo.common.checkpoint_utils import CkptInfo
+from cerebras.modelzoo.common.checkpoint_utils import (
+    CkptInfo,
+    get_all_checkpoints,
+    get_latest_checkpoint,
+)
 from cerebras.modelzoo.common.dump_context import DumpContext
 from cerebras.modelzoo.common.half_dtype import set_half_dtype_from_params
 from cerebras.modelzoo.common.input_utils import (
@@ -142,14 +145,26 @@ def run_cstorch_flow(params, model_fn, train_data_fn, eval_data_fn):
             run_cstorch_train(
                 params, model_fn, train_data_fn, cs_config, artifact_dir
             )
-        elif runconfig["mode"] == modes.EVAL:
+        elif runconfig["mode"] in [modes.EVAL, modes.EVAL_ALL]:
             run_cstorch_eval(
                 params, model_fn, eval_data_fn, cs_config, artifact_dir
+            )
+        elif runconfig["mode"] == modes.TRAIN_AND_EVAL:
+            from cerebras.modelzoo.common.train_and_eval import train_and_eval
+
+            train_and_eval(
+                params,
+                model_fn,
+                train_data_fn,
+                eval_data_fn,
+                cs_config,
+                artifact_dir,
             )
         else:
             raise ValueError(
                 f"Unsupported mode: {runconfig['mode']}. "
-                f"Supported modes are: {modes.TRAIN}, {modes.EVAL}"
+                f"Supported modes are: {modes.TRAIN}, {modes.EVAL}, "
+                f"{modes.TRAIN_AND_EVAL}"
             )
 
 
@@ -845,6 +860,7 @@ def run_cstorch_eval(params, model_fn, input_fn, cs_config, artifact_dir):
 
     target_device = runconfig["target_device"]
 
+    mode = runconfig["mode"]
     model_dir = runconfig["model_dir"]
     compile_dir = runconfig.get("compile_dir")
     log_steps = runconfig.get("log_steps")
@@ -929,9 +945,11 @@ def run_cstorch_eval(params, model_fn, input_fn, cs_config, artifact_dir):
         if lora_params:
             # After model init, we need to convert it into a LoRA model
             from cerebras.modelzoo.common.utils.model.lora import (
+                disable_lora_merge_weights,
                 make_model_lora,
             )
 
+            disable_lora_merge_weights(lora_params)
             model = make_model_lora(model, lora_params)
 
     compiled_model = cstorch.compile(model, backend)
@@ -989,12 +1007,19 @@ def run_cstorch_eval(params, model_fn, input_fn, cs_config, artifact_dir):
     global_step = 0
 
     # Load checkpoint if provided and not compiling or validating
-    if (
-        not compile_only
-        and not validate_only
-        and (checkpoint_path := get_model_checkpoint(runconfig))
-    ):
-        load_checkpoint(checkpoint_path)
+    checkpoint_paths = []
+    if not (compile_only or validate_only):
+        if mode == modes.EVAL_ALL:
+            checkpoint_paths = get_all_checkpoints(model_dir)
+            if not checkpoint_paths:
+                raise ValueError(
+                    f"No checkpoints were found for evaluation. Please ensure that the "
+                    f"model directory \"{model_dir}\" contains at least one valid checkpoint."
+                )
+        elif checkpoint_path := get_model_checkpoint(runconfig):
+            checkpoint_paths = [checkpoint_path]
+
+    checkpoint_paths = checkpoint_paths or [None]
 
     summary_dir = (
         runconfig["summary_dir"]
@@ -1093,71 +1118,56 @@ def run_cstorch_eval(params, model_fn, input_fn, cs_config, artifact_dir):
                 input_params["batch_size"], micro_batch_size, cs_config.num_csx
             )
 
-    executor = cstorch.utils.data.DataExecutor(
-        dataloader,
-        num_steps=num_steps,
-        cs_config=cs_config,
-        writer=writer,
-        listeners=listeners,
-        micro_batch_size=micro_batch_size,
-    )
+    for eval_id, checkpoint_path in enumerate(checkpoint_paths):
+        global_step = 0
+        total_steps = 0
+        total_loss = 0
+        try:
+            if eval_id > 0:
+                dataloader = cstorch.utils.data.DataLoader(input_fn, params)
 
-    try:
-        for batch in executor:
-            loss = eval_step(batch)
-            post_eval_step(loss)
-
-        if not (compile_only or validate_only):
-            for name, metric in metrics.get_all_metrics():
-                value = float(metric)
-                writer.add_scalar(name, value, global_step)
-                logging.info(f"Metric: {name} = {value}")
-
-            avg_eval_loss = total_loss / total_steps
-            writer.add_scalar("loss", avg_eval_loss, global_step)
-            logging.info(f"Avg Eval Loss: {avg_eval_loss}")
-
-            logging.info("Evaluation completed successfully!")
-
-    finally:
-        numeric_debug.flush()
-        if not (compile_only or validate_only) and executor.profiler:
-            # compute the total samples processed based on the number of steps
-            # and the number of Cerebras systems in the cluster
-            total_samples = int(executor.profiler.rate_tracker.total_samples)
-            total_time = executor.profiler.rate_tracker.total_time
-
-            logging.info(
-                f"Processed {total_samples} sample(s) "
-                f"in {total_time} seconds."
+            executor = cstorch.utils.data.DataExecutor(
+                dataloader,
+                num_steps=num_steps,
+                cs_config=cs_config,
+                writer=writer,
+                listeners=listeners,
+                micro_batch_size=micro_batch_size,
             )
 
+            if checkpoint_path:
+                load_checkpoint(checkpoint_path)
 
-def get_latest_checkpoint(model_dir: str) -> Union[str, None]:
-    """Get the path to the checkpoint with the highest global step"""
-    ckpts = []
-    for checkpoint in Path(model_dir).glob("checkpoint_*.mdl"):
-        match = re.match(
-            r"checkpoint_(?P<step>\d+)(?:_(?P<timestamp>\d{8}_\d{6}))?.mdl",
-            checkpoint.name,
-        )
-        if not match:
-            continue
+            for batch in executor:
+                loss = eval_step(batch)
+                post_eval_step(loss)
 
-        step = int(match.group("step"))
-        timestamp = match.group("timestamp")
-        if timestamp is not None:
-            try:
-                date = datetime.strptime(timestamp, "%Y%m%d_%H%M%S")
-            except ValueError:
-                continue
-        else:
-            date = datetime.min
+            if not (compile_only or validate_only):
+                for name, metric in metrics.get_all_metrics():
+                    value = float(metric)
+                    writer.add_scalar(name, value, global_step)
+                    logging.info(f"Metric: {name} = {value}")
 
-        ckpts.append((checkpoint, step, date))
+                avg_eval_loss = total_loss / total_steps
+                writer.add_scalar("loss", avg_eval_loss, global_step)
+                logging.info(f"Avg Eval Loss: {avg_eval_loss}")
 
-    # sort by step and then by timestamp
-    return max(ckpts, key=lambda x: (x[1], x[2]))[0] if ckpts else None
+                logging.info("Evaluation completed successfully!")
+
+        finally:
+            numeric_debug.flush()
+            if not (compile_only or validate_only) and executor.profiler:
+                # compute the total samples processed based on the number of steps
+                # and the number of Cerebras systems in the cluster
+                total_samples = int(
+                    executor.profiler.rate_tracker.total_samples
+                )
+                total_time = executor.profiler.rate_tracker.total_time
+
+                logging.info(
+                    f"Processed {total_samples} sample(s) "
+                    f"in {total_time} seconds."
+                )
 
 
 def get_model_checkpoint(runconfig: Dict[str, Any]) -> Union[str, None]:

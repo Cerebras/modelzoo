@@ -90,7 +90,7 @@ def sideband_eval_all(
         )
 
     updated_args = update_sideband_mode_arg(
-        arguments, eval_mode, modes.EVAL_ALL
+        arguments, eval_mode, f"sideband_{modes.EVAL_ALL}"
     )
 
     # Gather all checkpoints
@@ -120,10 +120,10 @@ def sideband_train_eval_all(
     eval_mode = "--mode=eval"
 
     train_args = update_sideband_mode_arg(
-        arguments, train_mode, f"{modes.TRAIN_AND_EVAL}"
+        arguments, train_mode, f"sideband_{modes.TRAIN_AND_EVAL}"
     )
     eval_args = update_sideband_mode_arg(
-        arguments, eval_mode, f"{modes.TRAIN_AND_EVAL}"
+        arguments, eval_mode, f"sideband_{modes.TRAIN_AND_EVAL}"
     )
 
     runconfig = params['runconfig']
@@ -245,12 +245,13 @@ def main(
     wsc_log_level = params["runconfig"].get("wsc_log_level") or {}
     set_wsc_log_level(wsc_log_level)
 
-    if params["runconfig"]["mode"] == modes.EVAL_ALL:
+    if params["runconfig"]["mode"] == f"sideband_{modes.EVAL_ALL}":
         sideband_eval_all(script, sys.argv[1:], params)
         return None
         # TODO ambiguity on what to return, possibly just run the final checkpoint in
         # the main process below
-    if params["runconfig"]["mode"] == modes.TRAIN_AND_EVAL:
+    # TODO(SW-99336): Remove this once we properly support train_and_eval with cs
+    if params["runconfig"]["mode"] == f"sideband_{modes.TRAIN_AND_EVAL}":
         sideband_train_eval_all(script, sys.argv[1:], params)
         return None
 

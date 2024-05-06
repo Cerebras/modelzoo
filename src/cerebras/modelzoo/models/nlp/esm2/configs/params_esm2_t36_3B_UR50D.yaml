@@ -1,0 +1,89 @@
+# ESM-2 Model, 3B parameters, max_seq_length 1026
+# Based on: https://huggingface.co/facebook/esm2_t36_3B_UR50D
+
+
+train_input:
+    data_processor: "BertCSVDataProcessor"
+    data_dir: "./language/datasets/esm2/train/"
+    vocab_file: "./language/datasets/esm2/vocab.txt"
+    max_sequence_length: 1026
+    max_predictions_per_seq: 154
+    masked_lm_prob: 0.15
+    batch_size: 135
+    micro_batch_size: 135
+    shuffle: True
+    shuffle_seed: 1
+    num_workers: 8
+    prefetch_factor: 10
+    persistent_workers: True
+
+eval_input:
+    data_processor: "BertCSVDataProcessor"
+    data_dir: "./language/datasets/esm2/validation/"
+    vocab_file: "./language/datasets/esm2/vocab.txt"
+    vocab_size: 33
+    max_sequence_length: 1026
+    masked_lm_prob: 0.15
+    batch_size: 450
+    micro_batch_size: 90
+    shuffle: True
+    shuffle_seed: 1
+    num_workers: 3
+    prefetch_factor: 10
+    persistent_workers: True
+
+model:
+    attention_dropout_rate: 0.0
+    disable_nsp: true
+    dropout_rate: 0.0
+    embedding_layer_norm: false
+    encoder_nonlinearity: gelu
+    filter_size: 10240
+    hidden_size: 2560
+    initializer_range: 0.02
+    layer_norm_epsilon: 1.0e-05
+    mask_token_id: 32
+    max_position_embeddings: 1026
+    mixed_precision: true
+    mlm_nonlinearity: gelu
+    mlm_loss_weight: 0.0256 # = 1/(0.15/4 * 1026). The synthetic data processor
+                            # masks 15% /4 of the sequence on average.
+    num_heads: 40
+    num_hidden_layers: 36
+    pad_token_id: 1
+    position_embedding_type: rotary
+    rotary_dim: 64
+    share_embedding_weights: true
+    token_dropout: true
+    use_final_layer_norm: true
+    fp16_type: "cbfloat16"
+    vocab_size: 33
+
+# The paper uses warmup of 2000 steps to learning rate of 4e-4, with GBS=2048.
+# Since we changed GBS to 135, we update warmup steps to 135/1080 * 2000 to ~30000
+optimizer:
+    optimizer_type: "Adam"
+    betas: [0.9, 0.98]
+    eps: 1.0e-8
+    weight_decay: 0.01
+    learning_rate:
+        - scheduler: "Linear"
+          initial_learning_rate: 0.0
+          end_learning_rate: 2.5e-06
+          total_iters: 30000
+        - scheduler: "Linear"
+          initial_learning_rate: 2.5e-06
+          end_learning_rate: 2.5e-07
+          total_iters: 6200000
+    loss_scaling_factor: "dynamic"
+    steps_per_increase: 30000 # hack to workaround SW-119191
+    log_summaries: True
+
+runconfig:
+    max_steps: 32000
+    log_steps: 100
+    checkpoint_steps: 32000
+    #save_initial_checkpoint: True
+    seed: 1
+    model_dir: "./model_dir"
+    load_checkpoint_states: model # workaround for SW-120031

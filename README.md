@@ -49,7 +49,7 @@ For advanced use cases and porting your existing code please refer to the [devel
 | MNIST (fully connected) | [Code](./src/cerebras/modelzoo/fc_mnist/pytorch/) |
 | Falcon | [Code](./src/cerebras/modelzoo/models/nlp/falcon) |
 | StarCoder | [Code](./src/cerebras/modelzoo/models/nlp/starcoder) |
-| LLaMA and LLaMA-2 | [Code](./src/cerebras/modelzoo/models/nlp/llama) |
+| LLaMA, LLaMA-2 and LLaMA-3 | [Code](./src/cerebras/modelzoo/models/nlp/llama) |
 | DiT | [Code](./src/cerebras/modelzoo/models/vision/dit) |
 | MPT | [Code](./src/cerebras/modelzoo/models/nlp/mpt) |
 | Mistral | [Code](./src/cerebras/modelzoo/models/nlp/mistral) |
@@ -57,6 +57,7 @@ For advanced use cases and porting your existing code please refer to the [devel
 | DPR | [Code](./src/cerebras/modelzoo/models/nlp/dpr) |
 | JAIS | [Code](./src/cerebras/modelzoo/models/nlp/jais) |
 | LLaVA | [Code](./src/cerebras/modelzoo/models/multimodal/llava) |
+| ESM-2 | [Code](./src/cerebras/modelzoo/models/nlp/esm2) |
 
 ## License
 

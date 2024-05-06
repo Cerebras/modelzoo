@@ -41,6 +41,9 @@ from cerebras.modelzoo.data_preparation.nlp.chunk_data_processing.data_reader im
 from cerebras.modelzoo.data_preparation.nlp.chunk_data_processing.lm_data_token_generator import (
     LMDataTokenGenerator,
 )
+from cerebras.modelzoo.data_preparation.nlp.chunk_data_processing.utils import (
+    save_mlm_data_to_csv,
+)
 from cerebras.modelzoo.data_preparation.nlp.hdf5_preprocessing.utils import (
     dump_args,
     get_files,
@@ -60,6 +63,9 @@ from cerebras.modelzoo.data_preparation.nlp.chunk_data_processing.fim_data_token
 )
 from cerebras.modelzoo.data_preparation.nlp.chunk_data_processing.lm_vsl_data_token_generator import (  # noqa
     VSLLMDataTokenGenerator,
+)
+from cerebras.modelzoo.data_preparation.nlp.chunk_data_processing.mlm_data_token_generator import (  # noqa
+    MLMTokenGenerator,
 )
 from cerebras.modelzoo.data_preparation.nlp.chunk_data_processing.nlg_token_generator import (  # noqa
     NLGTokenGenerator,
@@ -210,6 +216,7 @@ class ChunkDataPreprocessor:
             "VSLLMDataPreprocessor": "VSLLMDataTokenGenerator",
             "VSLSummarizationPreprocessor": "VSLSummarizationTokenGenerator",
             "DPOPreprocessor": "DPOTokenGenerator",
+            "MLMPreprocessor": "MLMTokenGenerator",
         }
         self.token_generator_name = token_generator_map[ds_processor]
 
@@ -413,6 +420,11 @@ class ChunkDataPreprocessor:
         assert (
             self.tokenizer_type != "none"
         ), "`tokenizer_type` is missing, please provide it using `args.tokenizer_type`."
+
+        if self.token_generator_name == "MLMTokenGenerator":
+            assert (
+                self.tokenizer_type == "huggingfacetokenizer"
+            ), "MLM token generator only supports HuggingFace tokenizers for now"
 
         if self.tokenizer_type == "gpt2tokenizer":
             self.initialize_gpt2tokenizer(processing_params)
@@ -626,44 +638,6 @@ class ChunkDataPreprocessor:
                     self.logger.error(e)
         return process_checkpoints
 
-    def verify_hdf5_files(self, chunk_data) -> None:
-        """
-        This function verifies the whether the hdf5 files have been written correctly.
-        Parameters:
-            chunk_data: The df chunk which needs to be written to a hdf5 file
-        """
-
-        ## check that the expected shape of data matches and
-        ## the indices in the data is less than voacb size
-        chunk_number, df_chunk = chunk_data
-        vocab_size = self.get_vocab_size()
-        if isinstance(
-            self.token_generator,
-            (VSLLMDataTokenGenerator, VSLSummarizationTokenGenerator),
-        ):
-            expected_shape = (5, self.max_seq_length)
-        elif isinstance(
-            self.token_generator,
-            DPOTokenGenerator,
-        ):
-            expected_shape = (6, self.max_seq_length)
-        else:
-            expected_shape = (3, self.max_seq_length)
-        data_arr = np.concatenate(df_chunk.tokenized_data, axis=0)
-        data_shape = data_arr.shape
-        assert data_shape[1:] == expected_shape or self.max_seq_length == -1, (
-            f"Error in dataframe with number {chunk_number}, conversion is corrupted as the "
-            f"shape of example is unexpected. Expected:"
-            f" {expected_shape}, received {data_shape[1:]}."
-        )
-        assert (data_arr < vocab_size).all(), (
-            f"Error in dataframe with number {chunk_number}, conversion is corrupted as the "
-            f"input ids are greater than vocab size."
-            f"Please ensure that a correct tokenizer is used "
-            f"and the eos_id and pad_id are correct within the "
-            f"tokenizer vocabulary size."
-        )
-
     def write_remaining_prefix(self, chunk_locks, pid) -> Tuple[int, Dict]:
         """
         This function writes the prefix remaining after processing LMData when pack_sequences is set to true.
@@ -716,7 +690,6 @@ class ChunkDataPreprocessor:
                     df_chunk = DataFrame(self.data_keys)
                     df_chunk.tokenized_data.append(encoded_prefix)
                     chunk_data = chunk_number, df_chunk
-                    self.verify_hdf5_files(chunk_data)
                     if not self.shuffle:
                         with h5py.File(output_file_name, "w") as h5f:
                             df_chunk.save_to_hdf5(h5f, self.write_in_batch)
@@ -755,14 +728,42 @@ class ChunkDataPreprocessor:
             progress_counter: A shared counter to track progress across processes.
         """
 
+        def replace_file_extension(file_path, old_ext, new_ext):
+            """
+            Replace the file extension of file_path from old_ext to new_ext.
+            Args:
+                file_path (str): The full path of the file.
+                old_ext (str): The current extension to replace (including the dot, e.g., '.h5').
+                new_ext (str): The new extension to replace it with (including the dot, e.g., '.csv').
+            Returns:
+                str: The modified file path with the new extension.
+            """
+            if file_path.endswith(old_ext):
+                # Slice off the old extension and add the new extension
+                return file_path[: -len(old_ext)] + new_ext
+            else:
+                raise ValueError(f"The file path does not end with {old_ext}")
+
         np.random.seed(self.shuffle_seed + pid)
         for file_path in file_list:
             with h5py.File(file_path, 'r+') as hf:
                 data = hf["data"]
-                data_array = data[:]
-                np.random.shuffle(data_array)
-                data[...] = data_array
-            progress_counter.value += 1
+                data_array = data[:]  # Load the data into memory
+                np.random.shuffle(data_array)  # Shuffle the loaded data
+                data[
+                    ...
+                ] = data_array  # Write the shuffled data back to the file
+
+            if self.token_generator_name == 'MLMTokenGenerator':
+                csv_file_path = replace_file_extension(
+                    file_path, '.h5', '.csv'
+                )  # Prepare the CSV file path
+                save_mlm_data_to_csv(
+                    csv_file_path, data_array
+                )  # Save the shuffled data to CSV
+                os.remove(file_path)  # Delete the original HDF5 file
+
+            progress_counter.value += 1  # Update the shared progress counter
 
     def split_shuffle_second_pass(self):
         """
@@ -921,13 +922,22 @@ class ChunkDataPreprocessor:
 
             # Save chunk to HDF5
             if not self.shuffle:
-                output_file_name = os.path.join(
-                    self.output_dir,
-                    f"output_chunk_{process_idx}_{df_chunk.file_idx}_{df_chunk.start_doc_idx}_{process_chunk_number}.h5",
-                )
-                with h5py.File(output_file_name, "w") as h5f:
-                    df_chunk.save_to_hdf5(h5f, self.write_in_batch)
-                    cum_data_stats["examples"] += int(h5f.attrs["n_examples"])
+                if self.token_generator_name == 'MLMTokenGenerator':
+                    output_file_name = os.path.join(
+                        self.output_dir,
+                        f"output_chunk_{process_idx}_{df_chunk.file_idx}_{df_chunk.start_doc_idx}_{process_chunk_number}.csv",
+                    )
+                    df_chunk.save_mlm_data_to_csv(output_file_name)
+                else:
+                    output_file_name = os.path.join(
+                        self.output_dir,
+                        f"output_chunk_{process_idx}_{df_chunk.file_idx}_{df_chunk.start_doc_idx}_{process_chunk_number}.h5",
+                    )
+                    with h5py.File(output_file_name, "w") as h5f:
+                        df_chunk.save_to_hdf5(h5f, self.write_in_batch)
+                        cum_data_stats["examples"] += int(
+                            h5f.attrs["n_examples"]
+                        )
             else:
                 n_examples = df_chunk.append_to_hdf5(
                     self.output_dir,
@@ -1179,17 +1189,23 @@ class ChunkDataPreprocessor:
                     progress_counter.value += 1
                     continue
                 else:
-                    self.verify_hdf5_files(chunk_data)
                     if not self.shuffle:
-                        output_file_name = os.path.join(
-                            self.output_dir,
-                            f"output_chunk_{writer_idx}_{df_chunk.file_idx}_{df_chunk.start_doc_idx}_{chunk_number}.h5",
-                        )
-                        with h5py.File(output_file_name, "w") as h5f:
-                            df_chunk.save_to_hdf5(h5f, self.write_in_batch)
-                            cum_data_stats["examples"] += int(
-                                h5f.attrs["n_examples"]
+                        if self.token_generator_name == 'MLMTokenGenerator':
+                            output_file_name = os.path.join(
+                                self.output_dir,
+                                f"output_chunk_{writer_idx}_{df_chunk.file_idx}_{df_chunk.start_doc_idx}_{chunk_number}.csv",
                             )
+                            df_chunk.save_mlm_data_to_csv(output_file_name)
+                        else:
+                            output_file_name = os.path.join(
+                                self.output_dir,
+                                f"output_chunk_{writer_idx}_{df_chunk.file_idx}_{df_chunk.start_doc_idx}_{chunk_number}.h5",
+                            )
+                            with h5py.File(output_file_name, "w") as h5f:
+                                df_chunk.save_to_hdf5(h5f, self.write_in_batch)
+                                cum_data_stats["examples"] += int(
+                                    h5f.attrs["n_examples"]
+                                )
                     else:
                         n_examples = df_chunk.append_to_hdf5(
                             self.output_dir,

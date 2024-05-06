@@ -182,3 +182,4 @@ runconfig:
   max_checkpoints: 3
   seed: 1
   load_checkpoint_states: "model"
+  eval_frequency: 1000

@@ -91,3 +91,4 @@ runconfig:
     checkpoint_steps: 5000
     eval_steps: 2303 # 46296 // 512 - 1
     seed: 1
+    eval_frequency: 5000

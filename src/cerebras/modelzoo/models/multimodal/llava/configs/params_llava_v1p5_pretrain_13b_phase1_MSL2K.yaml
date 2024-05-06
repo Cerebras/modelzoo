@@ -182,3 +182,4 @@ runconfig:
   eval_steps: 1000
   seed: 1
   max_checkpoints: 3
+  eval_frequency: 1000

@@ -88,3 +88,4 @@ runconfig:
     checkpoint_steps: 5000
     eval_steps: 3703 # 277822 // batch_size - 1
     seed: 1
+    eval_frequency: 5000

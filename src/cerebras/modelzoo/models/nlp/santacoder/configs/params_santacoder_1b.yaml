@@ -76,3 +76,4 @@ runconfig:
     checkpoint_steps: 5000
     seed: 1
     precision_opt_level: 0
+    eval_frequency: 5000

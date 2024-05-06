@@ -166,6 +166,11 @@ def add_general_arguments(
         help="Path to .yaml file with model parameters",
     )
     if len(modes) > 1:
+        # TODO(SW-99336): Remove this once we properly support train_and_eval with cs
+        if "train_and_eval" in modes:
+            modes.append("sideband_train_and_eval")
+        if "eval_all" in modes:
+            modes.append("sideband_eval_all")
         required_arguments.add_argument(
             "-m",
             "--mode",
@@ -180,6 +185,11 @@ def add_general_arguments(
         "Optional Arguments, All Devices"
     )
     if len(modes) == 1:
+        # TODO(SW-99336): Remove this once we properly support train_and_eval with cs
+        if "train_and_eval" in modes:
+            modes.append("sideband_train_and_eval")
+        if "eval_all" in modes:
+            modes.append("sideband_eval_all")
         optional_arguments.add_argument(
             "-m",
             "--mode",

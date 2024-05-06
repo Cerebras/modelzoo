@@ -17,7 +17,7 @@
 train_input:
     data_processor: "BertCSVDynamicMaskDataProcessor"
     data_dir: "./language/datasets/wikicorpus_csv/train_cased_msl512_mlm_only_unmasked"
-    vocab_file: "./language/models/bert/pretrained/google-research/cased_L-12_H-768_A-12/vocab.txt"
+    vocab_file: "../../vocab/google_research_cased_L-12_H-768_A-12.txt"
     max_sequence_length: 512
     max_predictions_per_seq: 80
     shuffle: True
@@ -31,7 +31,7 @@ train_input:
 eval_input:
     data_processor: "BertCSVDynamicMaskDataProcessor"
     data_dir: "./language/datasets/wikicorpus_csv/val_cased_msl512_mlm_only_unmasked"
-    vocab_file: "./language/models/bert/pretrained/google-research/cased_L-12_H-768_A-12/vocab.txt"
+    vocab_file: "../../vocab/google_research_cased_L-12_H-768_A-12.txt"
     max_sequence_length: 512
     max_predictions_per_seq: 80
     shuffle: False
@@ -83,3 +83,4 @@ runconfig:
     seed: 1
     model_dir: "./model_dir"
     save_initial_checkpoint: True
+    eval_frequency: 5000

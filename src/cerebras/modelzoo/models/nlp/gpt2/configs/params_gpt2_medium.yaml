@@ -83,6 +83,7 @@ runconfig:
     seed: 1
     model_dir: "./model_dir"
     eval_steps: 233
+    eval_frequency: 10000
 
     # Distributed Training Params:
     # enable_distributed: True

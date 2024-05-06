@@ -106,4 +106,5 @@ runconfig:
     log_steps: 100
     checkpoint_steps: 5000
     seed: 1
+    eval_frequency: 5000
 

@@ -64,3 +64,4 @@ runconfig:
     model_dir: "./model_dir"
     save_initial_checkpoint: True
     eval_steps: 1226
+    eval_frequency: 20000

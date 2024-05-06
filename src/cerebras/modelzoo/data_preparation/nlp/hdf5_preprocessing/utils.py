@@ -354,8 +354,8 @@ def add_summarization_vsl_args(parser):
         "--multi_turn_key",
         type=str,
         help="""
-        Json key for column where multi-turn dialogue is contained. 
-        Note that this should not be specified at the same time as prompt_key 
+        Json key for column where multi-turn dialogue is contained.
+        Note that this should not be specified at the same time as prompt_key
         and completion_key -- either specify this flag or both of the other flags.
         """,
     )
@@ -363,12 +363,12 @@ def add_summarization_vsl_args(parser):
         "--multi_turn_content_key",
         type=str,
         help="""
-        If column specified by --multi_turn_key is a dictionary rather 
+        If column specified by --multi_turn_key is a dictionary rather
         than a list, this specifies the json key for obtaining the message
         within one element of the above column. For example you could have
-        one entry that is formatted as follows: 
+        one entry that is formatted as follows:
         [
-            {"content": "First message", "role": "user"}, 
+            {"content": "First message", "role": "user"},
             {"content": "Response to first message", "role": "assistant"}
         ]
         and you would specify --multi_turn_content_key as "content". We make
@@ -379,8 +379,8 @@ def add_summarization_vsl_args(parser):
         "--prompt_prefix",
         type=str,
         help="""
-        If specified, this will be added before the prompt in every sequence. 
-        Example usage is to add "<|user|>" before the user message in a 
+        If specified, this will be added before the prompt in every sequence.
+        Example usage is to add "<|user|>" before the user message in a
         multi-turn dialogue.
         """,
     )
@@ -388,8 +388,8 @@ def add_summarization_vsl_args(parser):
         "--completion_prefix",
         type=str,
         help="""
-        Similar to `prompt_prefix`, but for the completion. 
-        Example usage is to add "<|assistant|>" before the model's response in 
+        Similar to `prompt_prefix`, but for the completion.
+        Example usage is to add "<|assistant|>" before the model's response in
         a multi-turn dialogue.
         """,
     )
@@ -397,8 +397,8 @@ def add_summarization_vsl_args(parser):
         "--eos_after_prompt",
         type=bool,
         help="""
-        Some current chat templates will include an EOS token after the end of 
-        the user input in a multi-turn dialogue. If this flag is specified, 
+        Some current chat templates will include an EOS token after the end of
+        the user input in a multi-turn dialogue. If this flag is specified,
         there will be EOS tokens after all prompts.
         """,
     )
@@ -410,8 +410,8 @@ def add_llava_common_args(parser):
         "--eos_after_prompt",
         type=bool,
         help="""
-        Some current chat templates will include an EOS token after the end of 
-        the user input in a multi-turn dialogue. If this flag is specified, 
+        Some current chat templates will include an EOS token after the end of
+        the user input in a multi-turn dialogue. If this flag is specified,
         there will be EOS tokens after all prompts.
         """,
     )
@@ -419,8 +419,8 @@ def add_llava_common_args(parser):
         "--multi_turn_key",
         type=str,
         help="""
-        Json key for column where multi-turn dialogue is contained. 
-        Note that this should not be specified at the same time as prompt_key 
+        Json key for column where multi-turn dialogue is contained.
+        Note that this should not be specified at the same time as prompt_key
         and completion_key -- either specify this flag or both of the other flags.
         """,
     )
@@ -428,12 +428,12 @@ def add_llava_common_args(parser):
         "--multi_turn_content_key",
         type=str,
         help="""
-        If column specified by --multi_turn_key is a dictionary rather 
+        If column specified by --multi_turn_key is a dictionary rather
         than a list, this specifies the json key for obtaining the message
         within one element of the above column. For example you could have
-        one entry that is formatted as follows: 
+        one entry that is formatted as follows:
         [
-            {"content": "First message", "role": "user"}, 
+            {"content": "First message", "role": "user"},
             {"content": "Response to first message", "role": "assistant"}
         ]
         and you would specify --multi_turn_content_key as "content". We make
@@ -454,8 +454,8 @@ def add_llava_common_args(parser):
         "--image_token",
         type=str,
         help="""
-        String that represents where in the text the image patches will be inserted. 
-        For example, the original LLaVA dataset contained the string "<image>" in the prompt. 
+        String that represents where in the text the image patches will be inserted.
+        For example, the original LLaVA dataset contained the string "<image>" in the prompt.
         """,
     )
     parser.add_argument(
@@ -483,8 +483,8 @@ def add_llava_phase_2_args(parser):
         "--prompt_prefix",
         type=str,
         help="""
-        If specified, this will be added before the prompt in every sequence. 
-        Example usage is to add "<|user|>" before the user message in a 
+        If specified, this will be added before the prompt in every sequence.
+        Example usage is to add "<|user|>" before the user message in a
         multi-turn dialogue.
         """,
     )
@@ -492,8 +492,8 @@ def add_llava_phase_2_args(parser):
         "--completion_prefix",
         type=str,
         help="""
-        Similar to `prompt_prefix`, but for the completion. 
-        Example usage is to add "<|assistant|>" before the model's response in 
+        Similar to `prompt_prefix`, but for the completion.
+        Example usage is to add "<|assistant|>" before the model's response in
         a multi-turn dialogue.
         """,
     )
@@ -501,8 +501,8 @@ def add_llava_phase_2_args(parser):
         "--system_prompt_style",
         type=int,
         help="""
-        Key to obtain the system prompt used for the LLM backbone within LLaVA. 
-        For example, if you training a LLaVA model based on the Vicuna model, you would specify "vicuna_v1".  
+        Key to obtain the system prompt used for the LLM backbone within LLaVA.
+        For example, if you training a LLaVA model based on the Vicuna model, you would specify "vicuna_v1".
         """,
     )
 
@@ -546,6 +546,15 @@ def add_dpo_args(parser):
         type=str,
         default=None,
         help="Specify the token which separates prompt and responses. This is used to extract prompt from a dialogue.",
+    )
+
+
+def add_mlm_args(parser):
+    parser.add_argument(
+        "--mlm_fraction",
+        type=float,
+        default=None,
+        help="Masked languague modeling fraction to mask",
     )
 
 
@@ -670,6 +679,14 @@ def get_parser(desc):
     add_common_args(dpo_parser)
     add_dpo_args(dpo_parser)
 
+    ### MLM parser ###
+    mlm_parser = subparser.add_parser(
+        "MLM",
+        help="Masked language modeling data preprocessing flag.",
+    )
+    add_common_args(mlm_parser)
+    add_mlm_args(mlm_parser)
+
     ### Customize ###
     custom_parser = subparser.add_parser(
         "Customize", help="Provide customized dataset processor."
@@ -729,6 +746,8 @@ def update_params(params, args):
         "max_chunk_size",
         "shuffle",
         "shuffle_seed",
+        "mlm_fraction",
+        "excluded_tokens",
     ]
     dataset_params = [
         "use_ftfy",
@@ -772,6 +791,7 @@ def update_params(params, args):
         "dpo": "DPOPreprocessor",
         "llavaphaseone": "LlavaPhaseOnePreprocessor",
         "llavaphasetwo": "LlavaPhaseTwoPreprocessor",
+        "mlm": "MLMPreprocessor",
     }
 
     mode = args.pop("mode").lower()
@@ -2058,6 +2078,7 @@ def get_files(input_dir=None, filetypes=None, metadata_files=None):
             '.jsonl.zst.tar',
             '.txt',
             '.parquet',
+            '.fasta',
         ]
     if isinstance(filetypes, str):
         filetypes = [filetypes]

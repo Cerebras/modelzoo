@@ -15,8 +15,8 @@ train_input:
 eval_input:
     data_processor: "DpoHDF5DataProcessor"
     data_dir: "./ultrafeedback_binarized/test"
-    batch_size: 100
-    micro_batch_size: 100
+    batch_size: 128
+    micro_batch_size: 32
     shuffle: False
     num_workers: 8
 
@@ -94,4 +94,5 @@ runconfig:
     precision_opt_level: 1
     load_checkpoint_states: model  
     seed: 1
-    eval_steps: 20
+    eval_steps: 15
+    eval_frequency: 100

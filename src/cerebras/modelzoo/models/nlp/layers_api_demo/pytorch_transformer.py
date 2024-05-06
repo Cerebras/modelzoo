@@ -62,6 +62,10 @@ import torch
 from torch import Tensor, nn
 from torch.nn import Embedding, TransformerEncoder, TransformerEncoderLayer
 
+from cerebras.modelzoo.common.utils.model.transformer_utils import (
+    create_broadcasted_autoregressive_mask,
+)
+
 
 class TransformerModel(nn.Module):
     def __init__(
@@ -114,13 +118,17 @@ class TransformerModel(nn.Module):
         return output
 
 
-def generate_square_subsequent_mask(sz: int, device=None) -> Tensor:
+def generate_square_subsequent_mask(
+    bz: int, nhead: int, sz: int, itype: int, device=None
+) -> Tensor:
     """Generates an upper-triangular matrix of -inf, with zeros on diag."""
-    return (
-        torch.triu(
-            torch.ones((sz, sz), device=device, dtype=torch.float16), diagonal=1
-        )
-        * torch.finfo(torch.float16).min
+    return create_broadcasted_autoregressive_mask(
+        batch_size=bz,
+        num_heads=nhead,
+        tgt_seq_length=sz,
+        dtype=itype,
+        device=device,
+        multiply_neg_inf=True,
     )
 
 
