@@ -84,3 +84,4 @@ runconfig:
     seed: 1
     model_dir: "./model_dir"
     #compile_crd_memory_gi: 95  # 2023-04 - requires ~90Gi
+    eval_frequency: 10000

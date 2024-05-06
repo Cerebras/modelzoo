@@ -115,3 +115,4 @@ runconfig:
     seed: 1
     eval_steps: 1873 # 185646 / batch_size - 1
     execute_crd_memory_gi: 45
+    eval_frequency: 10000

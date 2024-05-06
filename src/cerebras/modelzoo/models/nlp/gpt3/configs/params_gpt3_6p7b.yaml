@@ -116,6 +116,7 @@ runconfig:
     enable_distributed: False
     log_steps: 1
     save_initial_checkpoint: False
+    eval_frequency: 2000
     # Default optimizations level (POL=1) has not been tested for this model.
     # Convergence might be affected. POL=0 has been tested for convergence. To
     # use POL=0, uncomment this config:

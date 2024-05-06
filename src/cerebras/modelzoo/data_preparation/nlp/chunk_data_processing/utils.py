@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import copy
+import csv
 import json
 import logging
 
@@ -83,3 +84,62 @@ def dump_args(args, json_params_file):
     # write initial params to file
     with open(json_params_file, "w") as _fout:
         json.dump(args, _fout, indent=4, sort_keys=True)
+
+
+def save_mlm_data_to_csv(filename, data):
+    """
+    Process and save given data to a CSV file. This includes splitting combined arrays
+    into labels, masked_lm_positions, and masked_lm_weights using the actual_length
+    indicator stored as the last element of these arrays.
+
+    Args:
+        filename (str): Path to the CSV file to write.
+        data (list): A list of tokenized data arrays to be processed and written.
+    """
+    with open(filename, mode='w', newline='', encoding='utf-8') as file:
+        writer = csv.writer(file)
+
+        # Define the column names for the CSV file
+        columns = [
+            "input_ids",
+            "attention_mask",
+            "labels",
+            "masked_lm_positions",
+            "masked_lm_weights",
+        ]
+        writer.writerow(columns)  # Write the header
+        # Process each item in the data
+        for item in data:
+            # Initialize list to collect row data
+            row_data = [
+                json.dumps(item[0].tolist()),
+                json.dumps(item[1].tolist()),
+            ]  # Process input_ids and attention_mask normally
+
+            # Extract labels, positions, and weights from the combined array
+            combined_array = item[2]
+            actual_length = combined_array[
+                -1
+            ]  # The last entry is the actual length of each segment
+
+            # Determine the start and end indices for each segment
+            labels_start, labels_end = 0, actual_length
+            positions_start, positions_end = actual_length, 2 * actual_length
+            weights_start, weights_end = 2 * actual_length, 3 * actual_length
+
+            # Extract segments as lists and convert to JSON strings
+            labels = json.dumps(
+                combined_array[labels_start:labels_end].tolist()
+            )
+            masked_lm_positions = json.dumps(
+                combined_array[positions_start:positions_end].tolist()
+            )
+            masked_lm_weights = json.dumps(
+                combined_array[weights_start:weights_end].tolist()
+            )
+
+            # Append extracted data to row_data
+            row_data.extend([labels, masked_lm_positions, masked_lm_weights])
+
+            # Write the row data to the CSV file
+            writer.writerow(row_data)

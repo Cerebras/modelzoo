@@ -51,8 +51,34 @@ class LoraConfig:
     alpha: int = 1
     dropout: float = 0.0
     fan_in_fan_out: bool = False
-    merge_weights: bool = True
+    merge_weights: bool = False
     target_modules: Optional[list] = None
+
+
+def disable_lora_merge_weights(lora_params_dict: Union[dict, List[dict]]):
+    r"""Sets merge_weights=False in LoRA parameters. This is helpful during
+    eval mode to ensure that the weights don't get folded prior to checkpoint
+    loading.
+    """
+
+    def _disable_merge_weights(params, printed_already=False):
+        if params["merge_weights"] and not printed_already:
+            logging.warning(
+                "Automatically switching LoRA merge_weights to False in order "
+                "to run evals."
+            )
+            printed_already = True
+
+        params["merge_weights"] = False
+
+        return printed_already
+
+    if isinstance(lora_params_dict, list):
+        printed = True
+        for params in lora_params_dict:
+            printed = _disable_merge_weights(params, printed)
+    else:
+        _disable_merge_weights(lora_params_dict)
 
 
 class LoRALayer:

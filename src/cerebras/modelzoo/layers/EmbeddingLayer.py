@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
+
 import torch.nn as nn
 
 from cerebras.modelzoo.layers.create_initializer import create_initializer
@@ -146,7 +148,9 @@ class EmbeddingLayer(nn.Module):
             if max_position_embeddings is None:
                 raise ValueError("max_position_embeddings should be specified.")
 
-            if max_position_embeddings > 32768:
+            if (
+                not os.environ.get("CEREBRAS_ALLOW_LONG_MSL")
+            ) and max_position_embeddings > 32768:
                 raise ValueError("max_position_embeddings cannot exceed 32768")
 
             if (
@@ -358,7 +362,9 @@ class EmbeddingLayer(nn.Module):
                 AlibiPositionEmbeddingLayer,
             ),
         ):
-            if seq_length > 32768 or key_length > 32768:
+            if (not os.environ.get("CEREBRAS_ALLOW_LONG_MSL")) and (
+                seq_length > 32768 or key_length > 32768
+            ):
                 raise ValueError(
                     f"The tokenized data exceeded the 32768 MSL limit. Make "
                     f"sure that the tokenized data length and "

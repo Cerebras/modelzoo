@@ -128,6 +128,7 @@ runconfig:
     num_workers_per_csx: 1
     save_initial_checkpoint: True
     precision_opt_level: 1
+    eval_frequency: 50000
     # # enable GPU distributed training:
     # enable_distributed: True
     # dist_addr: "localhost:8888"

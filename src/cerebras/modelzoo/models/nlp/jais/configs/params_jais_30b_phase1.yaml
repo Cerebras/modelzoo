@@ -2,39 +2,39 @@ train_input:
     batch_size: 2640
     data_processor: GptHDF5MapDataProcessor
     mixture:
-    -   data_dir: ./datasets/multilingual_v2/pile_train_correct
+    -   data_dir: /cb/customers/g42/datasets/multilingual_v2/pile_train_correct
         weight: 0.6510508098635567
-    -   data_dir: ./datasets/multilingual_v2/github_train
+    -   data_dir: /cb/customers/g42/datasets/multilingual_v2/github_train
         weight: 0.05508760163741673
-    -   data_dir: ./datasets/multilingual_v2/books_3_arabic_train_correct_packed
+    -   data_dir: /cb/customers/g42/datasets/multilingual_v2/books_3_arabic_train_correct_packed
         weight: 0.031560734257525036
-    -   data_dir: ./datasets/multilingual_v2/AraV5/alkhair_train_packed
+    -   data_dir: /cb/customers/g42/datasets/multilingual_v2/AraV5/alkhair_train_packed
         weight: 0.0008565650109973057
-    -   data_dir: ./datasets/multilingual_v2/AraV5/aranews_train_packed
+    -   data_dir: /cb/customers/g42/datasets/multilingual_v2/AraV5/aranews_train_packed
         weight: 0.00015934634990853936
-    -   data_dir: ./datasets/multilingual_v2/AraV5/baai_train_packed
+    -   data_dir: /cb/customers/g42/datasets/multilingual_v2/AraV5/baai_train_packed
         weight: 0.026914907066381152
-    -   data_dir: ./datasets/multilingual_v2/AraV5/C4_train_packed
+    -   data_dir: /cb/customers/g42/datasets/multilingual_v2/AraV5/C4_train_packed
         weight: 0.04434604029033599
-    -   data_dir: ./datasets/multilingual_v2/AraV5/ccnews_train_packed
+    -   data_dir: /cb/customers/g42/datasets/multilingual_v2/AraV5/ccnews_train_packed
         weight: 0.006921611120055068
-    -   data_dir: ./datasets/multilingual_v2/AraV5/common_crawl_train_packed
+    -   data_dir: /cb/customers/g42/datasets/multilingual_v2/AraV5/common_crawl_train_packed
         weight: 0.1665541286308144
-    -   data_dir: ./datasets/multilingual_v2/AraV5/daypop_train_packed
+    -   data_dir: /cb/customers/g42/datasets/multilingual_v2/AraV5/daypop_train_packed
         weight: 0.0017987284534324059
-    -   data_dir: ./datasets/multilingual_v2/AraV5/en2ar_wikipedia_train_packed
+    -   data_dir: /cb/customers/g42/datasets/multilingual_v2/AraV5/en2ar_wikipedia_train_packed
         weight: 0.006428621520916274
-    -   data_dir: ./datasets/multilingual_v2/AraV5/en_wikipedia_train_packed
+    -   data_dir: /cb/customers/g42/datasets/multilingual_v2/AraV5/en_wikipedia_train_packed
         weight: 0.003561363619881376
-    -   data_dir: ./datasets/multilingual_v2/AraV5/maktabah_train_packed
+    -   data_dir: /cb/customers/g42/datasets/multilingual_v2/AraV5/maktabah_train_packed
         weight: 0.0026810119295565364
-    -   data_dir: ./datasets/multilingual_v2/AraV5/misc_train_packed
+    -   data_dir: /cb/customers/g42/datasets/multilingual_v2/AraV5/misc_train_packed
         weight: 7.056663329594336e-05
-    -   data_dir: ./datasets/multilingual_v2/AraV5/osian_train_packed
+    -   data_dir: /cb/customers/g42/datasets/multilingual_v2/AraV5/osian_train_packed
         weight: 0.0006335432478047283
-    -   data_dir: ./datasets/multilingual_v2/AraV5/un_train_packed
+    -   data_dir: /cb/customers/g42/datasets/multilingual_v2/AraV5/un_train_packed
         weight: 0.0010203462676059763
-    -   data_dir: ./datasets/multilingual_v2/AraV5/wikipedia_train_packed
+    -   data_dir: /cb/customers/g42/datasets/multilingual_v2/AraV5/wikipedia_train_packed
         weight: 0.00035407410051588393
     num_workers: 1
     persistent_workers: true
@@ -45,7 +45,7 @@ train_input:
     vocab_size: 84992
 eval_input:
     batch_size: 32
-    data_dir: ./datasets/multilingual_v2/pile_val_correct_packed
+    data_dir: /cb/customers/g42/datasets/multilingual_v2/pile_val_correct_packed
     data_processor: GptHDF5MapDataProcessor
     num_workers: 1
     repeat: false
@@ -126,3 +126,4 @@ runconfig:
     precision_opt_level: 1
     save_initial_checkpoint: false
     seed: 1
+    eval_frequency: 10660

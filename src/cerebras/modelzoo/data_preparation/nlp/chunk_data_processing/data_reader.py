@@ -53,6 +53,9 @@ from cerebras.modelzoo.data_preparation.nlp.chunk_data_processing.summarization_
 from cerebras.modelzoo.data_preparation.nlp.chunk_data_processing.summarization_vsl_data_token_generator import (
     VSLSummarizationTokenGenerator,
 )
+from cerebras.modelzoo.data_preparation.nlp.chunk_data_processing.utils import (
+    save_mlm_data_to_csv,
+)
 
 logger = logging.getLogger("data_reader")
 logger.setLevel(logging.INFO)
@@ -249,6 +252,16 @@ class DataFrame:
             )
             for idx, f in enumerate(_data):
                 dset[idx] = f
+
+    def save_mlm_data_to_csv(self, csv_file_path):
+        """
+        Save the processed tokenized data to a CSV file.
+
+        Args:
+            csv_file_path (str): Path to the CSV file to write.
+        """
+        self.tokenized_data = np.concatenate(self.tokenized_data, axis=0)
+        save_mlm_data_to_csv(csv_file_path, self.tokenized_data)
 
     def append_to_hdf5(
         self,
@@ -786,6 +799,52 @@ class Reader:
             entry_gen(start_doc_idx), current_file_idx
         )
 
+    def read_fasta(
+        self, file: str, checkpoint_args: tuple
+    ) -> Iterator[Dict[str, Any]]:
+        """
+        Read and process Fasta file without using BioPython.
+        Args:
+            file (str): Path to the .fasta file.
+            checkpoint_args (tuple): Contains the current file starting index, current document starting index
+        Returns:
+            Iterator[Dict[str, Any]]: Yields processed data rows.
+        """
+        current_file_idx, start_doc_idx = checkpoint_args
+
+        def entry_gen(start_doc_idx):
+            with open(file, 'r') as fasta_file:
+                record_id = None
+                sequence_lines = []
+                idx = -1  # Initialize sequence index
+                for line in fasta_file:
+                    line = line.strip()
+                    if not line:
+                        continue  # Skip empty lines
+                    if line.startswith(">"):
+                        if record_id is not None and idx >= start_doc_idx:
+                            # Yield the previous record
+                            yield {
+                                "text": ''.join(sequence_lines),
+                                "doc_idx": idx,
+                            }
+                        record_id = line[
+                            1:
+                        ]  # Remove the ">" symbol and store the record ID
+                        sequence_lines = (
+                            []
+                        )  # Reset the sequence for a new record
+                        idx += 1  # Increment sequence index when a new record is found
+                    else:
+                        sequence_lines.append(line)
+                # Don't forget to yield the last record in the file
+                if record_id is not None and idx >= start_doc_idx:
+                    yield {"text": ''.join(sequence_lines), "doc_idx": idx}
+
+        yield from self.accumulate_and_yield(
+            entry_gen(start_doc_idx), current_file_idx
+        )
+
     def stream_data(
         self, checkpoint_args, get_meta: bool = False
     ) -> Iterator[Any]:
@@ -818,6 +877,9 @@ class Reader:
             elif f.endswith(".parquet"):
                 assert not get_meta
                 yield from self.read_parquet(f, checkpoint_args)
+            elif f.endswith(".fasta"):
+                assert not get_meta
+                yield from self.read_fasta(f, checkpoint_args)
             else:
                 logger.warning(
                     f"Skipping {f} as streaming for that filetype is not implemented"

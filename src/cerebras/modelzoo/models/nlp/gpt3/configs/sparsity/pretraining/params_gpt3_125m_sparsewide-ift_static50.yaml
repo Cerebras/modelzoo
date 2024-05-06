@@ -118,3 +118,4 @@ runconfig:
     log_steps: 1
     save_initial_checkpoint: False
     precision_opt_level: 1
+    eval_frequency: 2152

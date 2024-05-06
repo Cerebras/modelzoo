@@ -34,6 +34,9 @@ from cerebras.modelzoo.tools.checkpoint_converters.base_converter import (
     BaseConfigConverter,
     FormatIndices,
     fallback_converters,
+    no_ckpt_conversion_necessary,
+    parse_format_version,
+    update_ckpt_metadata,
 )
 from cerebras.modelzoo.tools.checkpoint_converters.bert import (
     Converter_Bert_CS17_CS18,
@@ -130,6 +133,9 @@ from cerebras.modelzoo.tools.checkpoint_converters.vit import (  # noqa
     Converter_ViT_Headless_HF_CS21,
     Converter_ViT_HF_CS21,
 )
+from cerebras.modelzoo.tools.checkpoint_converters.esm2 import (  # noqa
+    Converter_Esm2PretrainModel_HF_CS21,
+)
 
 
 from cerebras.modelzoo.tools.checkpoint_converters.mpt import (  # noqa
@@ -211,6 +217,7 @@ converters: Dict[str, List[BaseCheckpointConverter]] = {
     "codegen-headless": [
         Converter_Codegen_Headless_HF_CS20,
     ],
+    "esm-2": [Converter_Esm2PretrainModel_HF_CS21],
     "falcon": [
         Converter_Falcon_CS20_CS21,
         Converter_Falcon_HF_CS21,
@@ -599,48 +606,69 @@ def convert_checkpoint_from_file(
     config = config_converter_class.load(config_file, config_from_index)
     checkpoint = converter_class.load(checkpoint_file, checkpoint_from_index)
 
-    if outputdir is not None and not os.path.exists(outputdir):
-        os.makedirs(outputdir)
-
-    checkpoint_folder, checkpoint_filename = os.path.split(checkpoint_file)
-    new_checkpoint_filename_without_ext = (
-        _remove_file_extension(checkpoint_filename) + "_to_" + tgt_fmt
-    )
-
-    new_checkpoint_file_without_ext = (
-        os.path.join(outputdir, new_checkpoint_filename_without_ext)
-        if outputdir is not None
-        else os.path.join(
-            checkpoint_folder, new_checkpoint_filename_without_ext
+    if no_ckpt_conversion_necessary(converter_class):
+        new_config = config_converter_class.convert(
+            config,
+            config_from_index,
+            no_progress_bar=no_progress_bar,
+            debug=debug,
+            drop_unmatched_keys=True,
         )
-    )
+        target_version = parse_format_version(tgt_fmt)
+        update_ckpt_metadata(checkpoint, checkpoint, new_config, target_version)
+        final_checkpoint_file = converter_class.save(
+            checkpoint_file,
+            checkpoint,
+            checkpoint_from_index,
+        )
+        output_checkpoint = None
+        logging.info(
+            f"{model} has no changes when converting from {src_fmt} to {tgt_fmt}. "
+            f"Updating checkpoint metadata in-place."
+        )
+    else:
+        if outputdir is not None and not os.path.exists(outputdir):
+            os.makedirs(outputdir)
 
-    output_checkpoint = converter_class.init_output_checkpoint(
-        new_checkpoint_file_without_ext,
-        checkpoint_from_index,
-        hf_shard_size=hf_shard_size,
-        export_safetensors=export_safetensors,
-    )
+        checkpoint_folder, checkpoint_filename = os.path.split(checkpoint_file)
+        new_checkpoint_filename_without_ext = (
+            _remove_file_extension(checkpoint_filename) + "_to_" + tgt_fmt
+        )
 
-    new_checkpoint, new_config = _convert_checkpoint_helper(
-        converter_class,
-        checkpoint,
-        checkpoint_from_index,
-        config_converter_class,
-        config,
-        config_from_index,
-        output_checkpoint,
-        drop_unmatched_keys,
-        no_progress_bar,
-        debug,
-    )
+        new_checkpoint_file_without_ext = (
+            os.path.join(outputdir, new_checkpoint_filename_without_ext)
+            if outputdir is not None
+            else os.path.join(
+                checkpoint_folder, new_checkpoint_filename_without_ext
+            )
+        )
 
-    logging.info("Saving...")
-    final_checkpoint_file = converter_class.save(
-        new_checkpoint_file_without_ext,
-        new_checkpoint,
-        checkpoint_from_index,
-    )
+        output_checkpoint = converter_class.init_output_checkpoint(
+            new_checkpoint_file_without_ext,
+            checkpoint_from_index,
+            hf_shard_size=hf_shard_size,
+            export_safetensors=export_safetensors,
+        )
+
+        new_checkpoint, new_config = _convert_checkpoint_helper(
+            converter_class,
+            checkpoint,
+            checkpoint_from_index,
+            config_converter_class,
+            config,
+            config_from_index,
+            output_checkpoint,
+            drop_unmatched_keys,
+            no_progress_bar,
+            debug,
+        )
+
+        logging.info("Saving...")
+        final_checkpoint_file = converter_class.save(
+            new_checkpoint_file_without_ext,
+            new_checkpoint,
+            checkpoint_from_index,
+        )
 
     config_folder, config_filename = os.path.split(config_file)
     new_config_filename_without_ext = (

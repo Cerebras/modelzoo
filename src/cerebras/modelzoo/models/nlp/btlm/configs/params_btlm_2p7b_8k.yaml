@@ -110,3 +110,4 @@ runconfig:
     save_initial_checkpoint: False
     seed: 1
     precision_opt_level: 1
+    eval_frequency: 200

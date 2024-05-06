@@ -130,7 +130,9 @@ class RunConfig(BaseConfig):
         "train",
         "eval",
         "eval_all",
+        "sideband_eval_all",
         "train_and_eval",
+        "sideband_train_and_eval",
         "inference",
     ] = "train"
     """

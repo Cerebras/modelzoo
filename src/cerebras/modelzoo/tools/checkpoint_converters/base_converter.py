@@ -1270,6 +1270,24 @@ class BaseCheckpointConverter_CS20_CS21(FallbackConverter_CS_CS):
         return BaseConfigConverter_CS20_CS21
 
 
+class BaseCheckpointConverter_CS21_CS22(BaseCheckpointConverter_CS_CS):
+    """Generic fallback converter class for cs-2.1-> cs-2.2"""
+
+    def __init__(self):
+        super().__init__()
+        self.rules = [
+            ConversionRule([".*"], action=self.replaceKey),
+        ]
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("cs-2.1"), FormatVersions("cs-2.2"))
+
+    @staticmethod
+    def get_config_converter_class() -> BaseConfigConverter:
+        return BaseConfigConverter_CS21_CS22
+
+
 class BaseCheckpointConverter_CS21_CS22(FallbackConverter_CS_CS):
     """Generic fallback converter class for cs-2.1 -> cs-2.2"""
 

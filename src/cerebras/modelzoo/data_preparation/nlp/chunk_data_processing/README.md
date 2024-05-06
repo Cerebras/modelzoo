@@ -8,6 +8,7 @@ We currently offer four modes for generating HDF5 files:
 4. `LMData_VSL`: for processing language modelling datasets that are in `.jsonl`, `.jsonl.zst`, `.json.gz` , `.jsonl.zst.tar`, `.parquet` or `.txt` format with packing of sequences.
 5. `Summarization_VSL`: for processing fine-tuning datasets that are in `.jsonl`, `.jsonl.zst`, `.jsonl.zst.tar`, `.parquet` format with packing of prompt and completion pairs into a list.
 6. `DPO`: Direct preference optimization (DPO) dataset preprocessing. Supported formats are `.jsonl`, `.jsonl.zst`, `.jsonl.zst.tar` and `.parquet`.
+7. `MLM`: Masked language modeling (MLM) data preprocessing. Supported formats `.jsonl`, `.jsonl.zst`, `.jsonl.zst.tar`,  `.parquet`, `.text` and `.fasta`.
 
 Each of the above data processing can be done by running the provided script [`create_hdf5_dataset.py`](./create_hdf5_dataset.py) with the appropriate sub command (modes) to generate the `.h5` files for GPT style models. Each sub-commands takes in a set of arguments which are described below in [Generating HDF5 files](#generating-hdf5-files) section. The [`VSL: Variable Sequence Length for LM and Summarization Tasks`] section describes VSL implementation of `LMData` and `Summarization` data preprocessing and [`Direct preference optimzation (DPO) data prepration`] gives an overview of DPO data generation.
 
@@ -169,7 +170,6 @@ Argument | Default Value | Description
 `shuffle` | `False` | Enable shuffling while preprocessing
 `shuffle_seed` | `0` | Shuffle seed value
 
-
 ##### Table 4: Dataset Arguments (`LMData` mode)
 Argument | Default Value | Description
 --- | --- | ---
@@ -210,6 +210,14 @@ Argument | Default Value | Description
 `fim_suffix_tok` | Special token denoting suffix section in a FIM'ed context
 
 The `FIM` mode is very similar to the `LMData` mode, and uses all the same other arguments as listed in the `LMData` table. These additional parameters determine whether what percentage of samples have the FIM transformation applied, and what percent of these end up in PSM (prefix, suffix, middle) or SPM format.
+
+##### Table 6: Dataset Arguments (`MLM` mode)
+Argument | Default Value | Description
+--- | --- | ---
+`mlm_fraction` | `0.15` | Fraction of tokens to be masked in MLM tasks
+`excluded_tokens` | ['<cls>', '<pad>', '<eos>', '<unk>', '<null_1>', '<mask>']  | Tokens to be excluded when masking. Provided only through yaml config.
+
+Masked Language Modeling (MLM) task is commonly used in pre-training transformers like BERT. The supported output formatis CSV for this mode as BERT data loader implementation processes only CSV format as of now.
 
 > **Note**: For CodeLlama, to follow the note [here](https://huggingface.co/docs/transformers/main/model_doc/code_llama#transformers.CodeLlamaTokenizer.eos_token) specify the EOT token as the EOS token in the config.
 

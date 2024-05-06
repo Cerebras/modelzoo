@@ -116,3 +116,4 @@ runconfig:
   enable_distributed: False # Change to True on GPU
   num_workers_per_csx: 1
   num_wgt_servers: 24
+  eval_frequency: 5000
