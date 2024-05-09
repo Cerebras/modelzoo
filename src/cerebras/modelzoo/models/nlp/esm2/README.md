@@ -18,7 +18,7 @@ Follow these steps to prepare the dataset in HDF5 format for training ESM-2 mode
 * Download the Uniref 50 dataset using this command  
   `curl -O https://ftp.uniprot.org/pub/databases/uniprot/current_release/uniref/uniref50/uniref50.fasta.gz `
 * Split the dataset into training and validation splits in the ratio 90:10
-* Follow the steps to preprocess the esm2 dataset from the README here - [`README.md`]('../../../data_preparation/nlp/chunk_data_processing/README.md').The command for creating the ESM2 dataset is given below - 
+* Follow the steps to preprocess the esm2 dataset from the README here - [`README.md`](../../../data_preparation/nlp/chunk_data_processing/README.md).The command for creating the ESM2 dataset is given below - 
 `python create_hdf5_dataset MLM --params /path/to/data_config`
 
 #### ESM2 DataProcessor output
