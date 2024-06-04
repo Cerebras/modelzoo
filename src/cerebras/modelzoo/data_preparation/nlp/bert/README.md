@@ -12,6 +12,7 @@ The preprocessing scripts for BERT relies on the [spaCy](https://spacy.io/) pack
 
 ```bash
 pip install spacy
+pip install pydantic==1.10.8
 python -m spacy download en
 ```
 
@@ -22,7 +23,7 @@ python -m spacy download en
 To download the OWT dataset and extract them, run:
 
 ```bash
-bash ../../../../data_processing/scripts/owt/download_and_extract.sh
+bash ../data_processing/scripts/owt/download_and_extract.sh
 ```
 
 Note that [download_and_extract.sh](../../../data_preparation/nlp/owt/download_and_extract.sh) may take a while to complete, as it unpacks 40GB of data (8,013,770 documents). Upon completion, the script will produce `openwebtext` directory in the same location. The directory has multiple subdirectories, each containing a collection of `*.txt` files of raw text data (one document per `.txt` file).

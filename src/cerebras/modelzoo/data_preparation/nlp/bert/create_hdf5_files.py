@@ -41,7 +41,7 @@ from multiprocessing import Pool, cpu_count
 import h5py
 import numpy as np
 
-sys.path.append(os.path.join(os.path.dirname(__file__), "../../../"))
+sys.path.append(os.path.join(os.path.dirname(__file__), "../../../../../"))
 import cerebras.modelzoo.data_preparation.nlp.bert.dynamic_processor as mlm_nsp_processor
 import cerebras.modelzoo.data_preparation.nlp.bert.mlm_only_processor as mlm_only_processor
 from cerebras.modelzoo.common.utils.utils import check_and_create_output_dirs
