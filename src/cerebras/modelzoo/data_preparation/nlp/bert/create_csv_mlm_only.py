@@ -26,7 +26,7 @@ import subprocess as sp
 # isort: off
 import sys
 
-sys.path.append(os.path.join(os.path.dirname(__file__), "../../../"))
+sys.path.append(os.path.join(os.path.dirname(__file__), "../../../../../"))
 # isort: on
 
 from cerebras.modelzoo.common.utils.utils import check_and_create_output_dirs

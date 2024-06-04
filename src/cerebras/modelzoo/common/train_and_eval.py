@@ -478,15 +478,8 @@ def train_and_eval(
     if runconfig.get("save_initial_checkpoint", False) and not compile_only:
         save_checkpoint(global_step)
 
-    train_writer = cstorch.utils.tensorboard.SummaryWriter(
-        log_dir=os.path.join(model_dir, "train"),
-        # The post_training_step summaries are written after global_step is
-        # incremented, so +1.
-        base_step=global_step + 1,
-    )
-    eval_writer = cstorch.utils.tensorboard.SummaryWriter(
-        log_dir=os.path.join(model_dir, "eval"),
-    )
+    train_writer = None
+    eval_writer = None
 
     # parameters for numeric debugging
     numeric_debug = lambda f: f
@@ -779,6 +772,15 @@ def train_and_eval(
                 if checkpoint_steps:
                     local_checkpoint_steps = min(checkpoint_steps, train_steps)
 
+            if train_writer is not None:
+                train_writer.flush()
+            train_writer = cstorch.utils.tensorboard.SummaryWriter(
+                log_dir=os.path.join(model_dir, "train"),
+                # The post_training_step summaries are written after global_step is
+                # incremented, so +1.
+                base_step=global_step + 1,
+            )
+
             executor = cstorch.utils.data.DataExecutor(
                 train_dataloader,
                 num_steps=train_steps,
@@ -819,6 +821,12 @@ def train_and_eval(
                     "They will effectively vanish, which could potentially lead "
                     "to different convergence behaviour."
                 )
+
+            if eval_writer is not None:
+                eval_writer.flush()
+            eval_writer = cstorch.utils.tensorboard.SummaryWriter(
+                log_dir=os.path.join(model_dir, "eval"),
+            )
 
             eval_dataloader = cstorch.utils.data.DataLoader(
                 eval_data_fn, params

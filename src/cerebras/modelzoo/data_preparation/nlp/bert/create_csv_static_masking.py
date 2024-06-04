@@ -24,7 +24,7 @@ import os
 import sys
 from collections import defaultdict
 
-sys.path.append(os.path.join(os.path.dirname(__file__), "../../../"))
+sys.path.append(os.path.join(os.path.dirname(__file__), "../../../../../"))
 from cerebras.modelzoo.common.utils.utils import check_and_create_output_dirs
 from cerebras.modelzoo.data_preparation.nlp.bert.sentence_pair_processor import (
     data_generator,
