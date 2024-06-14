@@ -28,7 +28,7 @@ from tabulate import tabulate
 
 import cerebras.pytorch as cstorch
 
-sys.path.append(os.path.join(os.path.dirname(__file__), "../"))
+sys.path.append(os.path.join(os.path.dirname(__file__), "../../.."))
 from cerebras.modelzoo.tools.checkpoint_converters.base_converter import (
     BaseCheckpointConverter,
     BaseConfigConverter,
