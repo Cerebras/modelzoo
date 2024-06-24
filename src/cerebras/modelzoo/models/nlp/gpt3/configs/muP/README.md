@@ -1,6 +1,6 @@
 # GPT-3 &mu;P configs
 
-&mu;P allows for hyperparameter transfer from a smaller base model to large scale language models without the need of tuning at the large scale. For further details refer to the [GPT-3 documentation](../../../README.md) (Section: *Maximal Update Parameterization*).
+&mu;P allows for hyperparameter transfer from a smaller base model to large scale language models without the need of tuning at the large scale. For further details refer to the [GPT-3 documentation](../../../gpt3/README.md) (Section: *Maximal Update Parameterization*).
 Here we provide three GPT-3 &mu;P configs which serve as an example of &mu;-Transfer of hyperparameters. 
 
 ## muP hyperparameter search
