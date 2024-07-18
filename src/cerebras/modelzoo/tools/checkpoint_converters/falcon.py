@@ -146,7 +146,9 @@ class Converter_Falcon_HF_CS20(BaseCheckpointConverter_HF_CS):
     def converter_note(cls) -> str:
         return (
             f"{cls.formats()[0]} FalconForCausalLM or RWForCausalLM <-> {cls.formats()[1]} "
-            f"GPTJModel (configured as Falcon) with LM head"
+            f"GPTJModel (configured as Falcon) with LM head. When converting "
+            f"to HF, make sure that transformers>=4.41.0 to have the most "
+            f"recent falcon implementation."
         )
 
     @staticmethod
@@ -255,7 +257,10 @@ class ConfigConverter_Falcon_HF_CS21(ConfigConverter_Falcon_HF_CS20):
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-2.1", "cs-2.2"))
+        return (
+            FormatVersions("hf"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
+        )
 
 
 class Converter_Falcon_Headless_HF_CS21(Converter_Falcon_Headless_HF_CS20):
@@ -267,14 +272,17 @@ class Converter_Falcon_Headless_HF_CS21(Converter_Falcon_Headless_HF_CS20):
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-2.1", "cs-2.2"))
+        return (
+            FormatVersions("hf"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
+        )
 
     @staticmethod
     def get_config_converter_class() -> BaseConfigConverter:
         return ConfigConverter_Falcon_HF_CS21
 
 
-class Converter_Falcon_HF_CS21(Converter_Falcon_Headless_HF_CS20):
+class Converter_Falcon_HF_CS21(Converter_Falcon_HF_CS20):
     config2model_subconverters = {
         ConfigConverter_Falcon_7B_HF_CS19: Converter_Falcon_7B_HF_CS19,
         ConfigConverter_Falcon_40B_HF_CS20: Converter_Falcon_40B_HF_CS20,
@@ -283,7 +291,10 @@ class Converter_Falcon_HF_CS21(Converter_Falcon_Headless_HF_CS20):
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-2.1", "cs-2.2"))
+        return (
+            FormatVersions("hf"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
+        )
 
     @staticmethod
     def get_config_converter_class() -> BaseConfigConverter:

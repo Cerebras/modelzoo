@@ -276,6 +276,11 @@ def add_common_args(parser):
         help="""Randomization seed to be used with online shuffling. This is supported
                 only for chunk preprocessing pipeline""",
     )
+    parser.add_argument(
+        "--fraction_of_RAM_alloted",
+        type=int,
+        help="Fraction of RAM designated for data sharing among processes in the chunk preprocessing pipeline.",
+    )
 
 
 def add_lm_args(parser):
@@ -340,6 +345,21 @@ def add_summarization_args(parser):
         "--completion_key",
         type=str,
         help="Json key for the completion.",
+    )
+    parser.add_argument(
+        "--chat_template",
+        type=str,
+        help="Chat Template passed as jinja string which will be used to override the tokenizer's default chat template.",
+    )
+    parser.add_argument(
+        "--drop_input",
+        type=str,
+        help="Passed as a list of strings which can be used to drop specific regions of the input. For example passing - ['prompt'] will drop prompt region of the data input.",
+    )
+    parser.add_argument(
+        "--loss_mask_weight",
+        type=str,
+        help="Used to specify weights for masking the loss corresponding to specific regions of the input.",
     )
 
 
@@ -507,6 +527,58 @@ def add_llava_phase_2_args(parser):
     )
 
 
+def add_multimodal_args(parser):
+    add_summarization_args(parser)
+    parser.add_argument(
+        "--multi_turn_key",
+        type=str,
+        help="""
+        Json key for column where multi-turn dialogue is contained.
+        Note that this should not be specified at the same time as prompt_key
+        and completion_key -- either specify this flag or both of the other flags.
+        """,
+    )
+    parser.add_argument(
+        "--image_key",
+        type=str,
+        help="Image key of the multimodal dataset.",
+    )
+    parser.add_argument(
+        "--image_token",
+        type=str,
+        help="""
+        String that represents where in the text the image patches will be inserted.
+        For example, the original LLaVA dataset contained the string "<image>" in the prompt.
+        """,
+    )
+    parser.add_argument(
+        "--multimodal_mode",
+        type=str,
+        help="""
+        String that represents whether the mode is 'interleaved' or 'non_interleaved'.
+        For example, if you want the image patches to occur interleaved with text specify 'interleaved'.
+        """,
+    )
+    parser.add_argument(
+        "--num_patches",
+        type=int,
+        help="Number of patches to represent an image.",
+    )
+    parser.add_argument(
+        "--image_dir",
+        type=str,
+        help="Absolute path of image directory. Used along with the relative path under the `image_key` field to check that images exist",
+    )
+    parser.add_argument(
+        "--system_prompt_style",
+        type=int,
+        help="""
+        Key to obtain the system prompt used for the LLM backbone within the multimodal model.
+        For example, if you training a LLaVA model based on the Vicuna model, you would specify "vicuna_v1".
+        """,
+    )
+
+
 def add_dpo_args(parser):
     parser.add_argument(
         "--prompt_key",
@@ -546,15 +618,6 @@ def add_dpo_args(parser):
         type=str,
         default=None,
         help="Specify the token which separates prompt and responses. This is used to extract prompt from a dialogue.",
-    )
-
-
-def add_mlm_args(parser):
-    parser.add_argument(
-        "--mlm_fraction",
-        type=float,
-        default=None,
-        help="Masked languague modeling fraction to mask",
     )
 
 
@@ -649,10 +712,6 @@ def get_parser(desc):
     add_common_args(summarization_vsl_parser)
     add_summarization_vsl_args(summarization_vsl_parser)
 
-    llava_phase_1_parser = subparser.add_parser(
-        "LlavaPhaseOne",
-        help="Llava Phase 1 preprocessing.",
-    )
     ### DPO parser ###
     dpo_parser = subparser.add_parser(
         "DPO",
@@ -660,9 +719,17 @@ def get_parser(desc):
     )
     add_common_args(dpo_parser)
     add_dpo_args(dpo_parser)
+
+    ### Llava Phase 1 parser ###
+    llava_phase_1_parser = subparser.add_parser(
+        "LlavaPhaseOne",
+        help="Llava Phase 1 preprocessing.",
+    )
     add_common_args(llava_phase_1_parser)
     add_llava_common_args(llava_phase_1_parser)
     add_llava_phase_1_args(llava_phase_1_parser)
+
+    ### Llava Phase 2 parser ###
     llava_phase_2_parser = subparser.add_parser(
         "LlavaPhaseTwo",
         help="Llava Phase 2 preprocessing.",
@@ -671,21 +738,13 @@ def get_parser(desc):
     add_llava_common_args(llava_phase_2_parser)
     add_llava_phase_2_args(llava_phase_2_parser)
 
-    ### DPO parser ###
-    dpo_parser = subparser.add_parser(
-        "DPO",
-        help="DPO data preprocessing flag.",
+    ##Multimodal Parser
+    generic_multimodal_parser = subparser.add_parser(
+        "multimodal",
+        help="Generic multimodal preprocessing.",
     )
-    add_common_args(dpo_parser)
-    add_dpo_args(dpo_parser)
-
-    ### MLM parser ###
-    mlm_parser = subparser.add_parser(
-        "MLM",
-        help="Masked language modeling data preprocessing flag.",
-    )
-    add_common_args(mlm_parser)
-    add_mlm_args(mlm_parser)
+    add_common_args(generic_multimodal_parser)
+    add_multimodal_args(generic_multimodal_parser)
 
     ### Customize ###
     custom_parser = subparser.add_parser(
@@ -746,8 +805,11 @@ def update_params(params, args):
         "max_chunk_size",
         "shuffle",
         "shuffle_seed",
-        "mlm_fraction",
-        "excluded_tokens",
+        "fraction_of_RAM_alloted",
+        "drop_input",
+        "loss_mask_weight",
+        "chat_template",
+        "multimodal_mode",
     ]
     dataset_params = [
         "use_ftfy",
@@ -791,7 +853,7 @@ def update_params(params, args):
         "dpo": "DPOPreprocessor",
         "llavaphaseone": "LlavaPhaseOnePreprocessor",
         "llavaphasetwo": "LlavaPhaseTwoPreprocessor",
-        "mlm": "MLMPreprocessor",
+        "multimodal": "MultiModalTokenGenerator",
     }
 
     mode = args.pop("mode").lower()
@@ -1584,6 +1646,442 @@ def create_features_auto_lm_vsl(
     input_ids, labels, attention_span, position_ids = [], [], [], []
     for sample in bin:
         input_ids.extend(sample[:-1])
+
+
+def validate_tokens(tokens, min_len=2):
+    is_valid = len(tokens) >= min_len
+    if not is_valid:
+        logger.warning(
+            f"token_ids must have at least {min_len} elements, skipping this example..."
+        )
+    return is_valid
+
+
+def create_features_auto_lm(
+    token_ids,
+    max_sequence_length,
+    short_seq_prob=0,
+    inverted_mask=False,
+    pad_id=0,
+    min_len=10,
+    input_ids_dtype="int32",
+    input_mask_dtype="int32",
+    labels_dtype="int32",
+    rng=None,
+):
+    """Given a list of token_ids, generate input sequence and labels.
+
+    Args:
+        token_ids (sequence): List containing token ids for creating features,
+            labels and input mask from.
+        max_sequence_length (int): Maximum sequence length for data writes.
+        short_seq_prob (float): Probability of generating short sequences from
+            data. Defaults to `0`.
+        inverted_mask (bool): Invert mask if specified for runtime execution.
+            Defaults to `False`.
+        min_len (int): Minimum length of token_ids to be considered a valid
+            sequence.
+        pad_id (int): Id for pad token. Defaults to `0`.
+        input_ids_dtype (str): Dtype as string for input ids.
+            Defaults to `int32`.
+        input_mask_dtype (str): Dtype as string for input mask.
+            Defaults to `int32`.
+        labels_dtype (str): Dtype as string for labels. Defaults to `int32`.
+        rng (random.Random obj): Instance of random object, with states set.
+            Defaults to `None`.
+
+    Returns:
+        Tuple containing features and labels
+    """
+    if not validate_tokens(token_ids, min_len=min_len):
+        return []
+
+    if rng.random() < short_seq_prob:
+        token_ids = token_ids[0 : rng.randint(2, max_sequence_length - 1)]
+
+    input_ids = token_ids[:-1]
+    labels = token_ids[1:]
+    input_mask = [1] * len(input_ids)
+
+    # padding
+    num_pad = max_sequence_length - len(input_ids)
+    padding = [pad_id] * num_pad
+
+    input_ids.extend(padding)
+    labels.extend(padding)
+    input_mask.extend([0] * num_pad)
+
+    # assertions to ensure correct output shapes
+    assert (
+        len(input_ids) == max_sequence_length
+        and len(labels) == max_sequence_length
+        and len(input_mask) == max_sequence_length
+    ), "Wrong sequence length"
+
+    # create feature dict
+    features = dict()
+    features["input_ids"] = getattr(np, input_ids_dtype)(input_ids)
+    features["input_mask"] = getattr(np, input_mask_dtype)(input_mask)
+
+    if inverted_mask:
+        features["input_mask"] = np.equal(features["input_mask"], 0).astype(
+            features["input_mask"].dtype
+        )
+    labels = getattr(np, labels_dtype)(labels)
+
+    return np.stack([features["input_ids"], features["input_mask"], labels])
+
+
+def create_features_summarization(
+    prompt_ids,
+    completion_ids,
+    max_sequence_length,
+    eos_id=0,
+    sep_id=None,
+    pad_id=0,
+    min_len=10,
+    inverted_mask=False,
+    input_ids_dtype="int32",
+    input_mask_dtype="int32",
+    labels_dtype="int32",
+):
+    """
+    Given a list of prompt_ids and completion_ids, generate input sequence
+    and labels.
+
+    Args:
+        prompt_ids (sequence): List containing token ids for the prompt to
+            create features,labels and input mask from.
+        completion_ids (sequence): List containing token ids for the completion
+            create features,labels and input mask from.
+        max_sequence_length (int): Maximum sequence length for data writes.
+        eos_id (int): Id for end of sequence token. Defaults to `0`.
+        sep_id (int): Id for separator token. Defaults to `None`.
+        pad_id (int): Id for pad token. Defaults to `0`.
+        min_len (int): Minimum length of token_ids to be considered a valid
+            sequence.
+        inverted_mask (bool): Invert mask if specified for runtime execution.
+            Defaults to `False`.
+        input_ids_dtype (str): Dtype as string for input ids.
+            Defaults to `int32`.
+        input_mask_dtype (str): Dtype as string for input mask.
+            Defaults to `int32`.
+        labels_dtype (str): Dtype as string for labels. Defaults to `int32`.
+    """
+
+    # extra <EOS>
+    total_len = len(prompt_ids) + len(completion_ids) + 1
+    if sep_id is not None:
+        total_len += 1
+    if total_len > max_sequence_length:
+        logger.warning(
+            "prompt_ids + completion_ids > max_sequence_length, skipping this example..."
+        )
+        return []
+    if total_len < min_len:
+        logger.warning(
+            "prompt_ids + completion_ids < min_sequence_len, skipping this example..."
+        )
+        return []
+
+    token_ids = prompt_ids
+    if sep_id is not None:
+        token_ids = token_ids + [sep_id]
+    token_ids = token_ids + completion_ids + [eos_id]
+
+    token_mask = [0] * (len(prompt_ids))
+    if sep_id is not None:
+        token_mask += [1]
+    else:
+        # if no sep_id, prediction starts at the last token of prompt_ids
+        token_mask[-1] = 1
+    token_mask += [1] * len(completion_ids)
+    token_mask += [0]  # EOS
+
+    # add padding
+    token_ids_pad = max_sequence_length + 1 - len(token_ids)
+    input_mask_pad = max_sequence_length - len(token_mask)
+
+    token_ids.extend([pad_id] * token_ids_pad)
+    token_mask.extend([0] * input_mask_pad)
+
+    input_ids = token_ids[:-1]
+    labels = token_ids[1:]
+
+    assert (
+        len(input_ids) == max_sequence_length
+        and len(labels) == max_sequence_length
+        and len(token_mask) == max_sequence_length
+    ), "Wrong sequence length"
+
+    features = dict()
+    features["input_ids"] = getattr(np, input_ids_dtype)(input_ids)
+    features["input_mask"] = getattr(np, input_mask_dtype)(token_mask)
+
+    if inverted_mask:
+        features["input_mask"] = np.equal(features["input_mask"], 0).astype(
+            features["input_mask"].dtype
+        )
+    labels = getattr(np, labels_dtype)(labels)
+
+    return np.stack([features["input_ids"], features["input_mask"], labels])
+
+
+def create_features_auto_lm_vsl(
+    bin,
+    max_sequence_length,
+    num_pad,
+    pad_id=0,
+    inverted_mask=False,
+    input_ids_dtype="int32",
+    input_mask_dtype="int32",
+    labels_dtype="int32",
+    attention_span_dtype="int32",
+    position_ids_dtype="int32",
+):
+    """Given a list of VSL sequences, generate input features and labels.
+
+    Args:
+        bin (list(sequence)): list of VSL sequences.
+        max_sequence_length (int): Maximum sequence length for data writes.
+        num_pad (int): number of padding tokens in the sequence.
+        pad_id (int): Id for pad token. Defaults to `0`.
+        inverted_mask (bool): Invert mask if specified for runtime execution.
+            Defaults to `False`.
+        input_ids_dtype (str): Dtype as string for input ids.
+            Defaults to `int32`.
+        input_mask_dtype (str): Dtype as string for input mask.
+            Defaults to `int32`.
+        labels_dtype (str): Dtype as string for labels. Defaults to `int32`.
+        attention_span_dtype (str): Dtype as string for keys attention span in VSL.
+            Defaults to `int32`.
+        position_ids_dtype (str): Dtype as string for position ids and
+            attention span in VSL. Defaults to `int32`.
+
+    Returns:
+        Tuple containing features and labels
+    """
+    input_ids, labels, attention_span, position_ids = [], [], [], []
+    for sample in bin:
+        input_ids.extend(sample[:-1])
+
+
+def validate_tokens(tokens, min_len=2):
+    is_valid = len(tokens) >= min_len
+    if not is_valid:
+        logger.warning(
+            f"token_ids must have at least {min_len} elements, skipping this example..."
+        )
+    return is_valid
+
+
+def create_features_auto_lm(
+    token_ids,
+    max_sequence_length,
+    short_seq_prob=0,
+    inverted_mask=False,
+    pad_id=0,
+    min_len=10,
+    input_ids_dtype="int32",
+    input_mask_dtype="int32",
+    labels_dtype="int32",
+    rng=None,
+):
+    """Given a list of token_ids, generate input sequence and labels.
+
+    Args:
+        token_ids (sequence): List containing token ids for creating features,
+            labels and input mask from.
+        max_sequence_length (int): Maximum sequence length for data writes.
+        short_seq_prob (float): Probability of generating short sequences from
+            data. Defaults to `0`.
+        inverted_mask (bool): Invert mask if specified for runtime execution.
+            Defaults to `False`.
+        min_len (int): Minimum length of token_ids to be considered a valid
+            sequence.
+        pad_id (int): Id for pad token. Defaults to `0`.
+        input_ids_dtype (str): Dtype as string for input ids.
+            Defaults to `int32`.
+        input_mask_dtype (str): Dtype as string for input mask.
+            Defaults to `int32`.
+        labels_dtype (str): Dtype as string for labels. Defaults to `int32`.
+        rng (random.Random obj): Instance of random object, with states set.
+            Defaults to `None`.
+
+    Returns:
+        Tuple containing features and labels
+    """
+    if not validate_tokens(token_ids, min_len=min_len):
+        return []
+
+    if rng.random() < short_seq_prob:
+        token_ids = token_ids[0 : rng.randint(2, max_sequence_length - 1)]
+
+    input_ids = token_ids[:-1]
+    labels = token_ids[1:]
+    input_mask = [1] * len(input_ids)
+
+    # padding
+    num_pad = max_sequence_length - len(input_ids)
+    padding = [pad_id] * num_pad
+
+    input_ids.extend(padding)
+    labels.extend(padding)
+    input_mask.extend([0] * num_pad)
+
+    # assertions to ensure correct output shapes
+    assert (
+        len(input_ids) == max_sequence_length
+        and len(labels) == max_sequence_length
+        and len(input_mask) == max_sequence_length
+    ), "Wrong sequence length"
+
+    # create feature dict
+    features = dict()
+    features["input_ids"] = getattr(np, input_ids_dtype)(input_ids)
+    features["input_mask"] = getattr(np, input_mask_dtype)(input_mask)
+
+    if inverted_mask:
+        features["input_mask"] = np.equal(features["input_mask"], 0).astype(
+            features["input_mask"].dtype
+        )
+    labels = getattr(np, labels_dtype)(labels)
+
+    return np.stack([features["input_ids"], features["input_mask"], labels])
+
+
+def create_features_summarization(
+    prompt_ids,
+    completion_ids,
+    max_sequence_length,
+    eos_id=0,
+    sep_id=None,
+    pad_id=0,
+    min_len=10,
+    inverted_mask=False,
+    input_ids_dtype="int32",
+    input_mask_dtype="int32",
+    labels_dtype="int32",
+):
+    """
+    Given a list of prompt_ids and completion_ids, generate input sequence
+    and labels.
+
+    Args:
+        prompt_ids (sequence): List containing token ids for the prompt to
+            create features,labels and input mask from.
+        completion_ids (sequence): List containing token ids for the completion
+            create features,labels and input mask from.
+        max_sequence_length (int): Maximum sequence length for data writes.
+        eos_id (int): Id for end of sequence token. Defaults to `0`.
+        sep_id (int): Id for separator token. Defaults to `None`.
+        pad_id (int): Id for pad token. Defaults to `0`.
+        min_len (int): Minimum length of token_ids to be considered a valid
+            sequence.
+        inverted_mask (bool): Invert mask if specified for runtime execution.
+            Defaults to `False`.
+        input_ids_dtype (str): Dtype as string for input ids.
+            Defaults to `int32`.
+        input_mask_dtype (str): Dtype as string for input mask.
+            Defaults to `int32`.
+        labels_dtype (str): Dtype as string for labels. Defaults to `int32`.
+    """
+
+    # extra <EOS>
+    total_len = len(prompt_ids) + len(completion_ids) + 1
+    if sep_id is not None:
+        total_len += 1
+    if total_len > max_sequence_length:
+        logger.warning(
+            "prompt_ids + completion_ids > max_sequence_length, skipping this example..."
+        )
+        return []
+    if total_len < min_len:
+        logger.warning(
+            "prompt_ids + completion_ids < min_sequence_len, skipping this example..."
+        )
+        return []
+
+    token_ids = prompt_ids
+    if sep_id is not None:
+        token_ids = token_ids + [sep_id]
+    token_ids = token_ids + completion_ids + [eos_id]
+
+    token_mask = [0] * (len(prompt_ids))
+    if sep_id is not None:
+        token_mask += [1]
+    else:
+        # if no sep_id, prediction starts at the last token of prompt_ids
+        token_mask[-1] = 1
+    token_mask += [1] * len(completion_ids)
+    token_mask += [0]  # EOS
+
+    # add padding
+    token_ids_pad = max_sequence_length + 1 - len(token_ids)
+    input_mask_pad = max_sequence_length - len(token_mask)
+
+    token_ids.extend([pad_id] * token_ids_pad)
+    token_mask.extend([0] * input_mask_pad)
+
+    input_ids = token_ids[:-1]
+    labels = token_ids[1:]
+
+    assert (
+        len(input_ids) == max_sequence_length
+        and len(labels) == max_sequence_length
+        and len(token_mask) == max_sequence_length
+    ), "Wrong sequence length"
+
+    features = dict()
+    features["input_ids"] = getattr(np, input_ids_dtype)(input_ids)
+    features["input_mask"] = getattr(np, input_mask_dtype)(token_mask)
+
+    if inverted_mask:
+        features["input_mask"] = np.equal(features["input_mask"], 0).astype(
+            features["input_mask"].dtype
+        )
+    labels = getattr(np, labels_dtype)(labels)
+
+    return np.stack([features["input_ids"], features["input_mask"], labels])
+
+
+def create_features_auto_lm_vsl(
+    bin,
+    max_sequence_length,
+    num_pad,
+    pad_id=0,
+    inverted_mask=False,
+    input_ids_dtype="int32",
+    input_mask_dtype="int32",
+    labels_dtype="int32",
+    attention_span_dtype="int32",
+    position_ids_dtype="int32",
+):
+    """Given a list of VSL sequences, generate input features and labels.
+
+    Args:
+        bin (list(sequence)): list of VSL sequences.
+        max_sequence_length (int): Maximum sequence length for data writes.
+        num_pad (int): number of padding tokens in the sequence.
+        pad_id (int): Id for pad token. Defaults to `0`.
+        inverted_mask (bool): Invert mask if specified for runtime execution.
+            Defaults to `False`.
+        input_ids_dtype (str): Dtype as string for input ids.
+            Defaults to `int32`.
+        input_mask_dtype (str): Dtype as string for input mask.
+            Defaults to `int32`.
+        labels_dtype (str): Dtype as string for labels. Defaults to `int32`.
+        attention_span_dtype (str): Dtype as string for keys attention span in VSL.
+            Defaults to `int32`.
+        position_ids_dtype (str): Dtype as string for position ids and
+            attention span in VSL. Defaults to `int32`.
+
+    Returns:
+        Tuple containing features and labels
+    """
+    input_ids, labels, attention_span, position_ids = [], [], [], []
+    for sample in bin:
+        input_ids.extend(sample[:-1])
         labels.extend(sample[1:])
         sample_len = len(sample) - 1
         attention_span.extend(list(range(sample_len - 1, -1, -1)))
@@ -2078,7 +2576,6 @@ def get_files(input_dir=None, filetypes=None, metadata_files=None):
             '.jsonl.zst.tar',
             '.txt',
             '.parquet',
-            '.fasta',
         ]
     if isinstance(filetypes, str):
         filetypes = [filetypes]
@@ -2206,8 +2703,12 @@ def split_text_and_tokenize(
     Returns:
         tok_ids (list): list of token ids for the text
     """
+    if len(text) == 0:
+        return []
+
     curr_start = 0
     tok_ids = []
+
     while curr_start < len(text):
         curr_end = min(text.find(' ', curr_start + max_tok_len), len(text))
         if curr_end < 0:

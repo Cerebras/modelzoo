@@ -90,3 +90,4 @@ runconfig:
     model_dir: "./model_dir"
     eval_steps: 1674
     eval_frequency: 10000
+    execute_crd_memory_gi: 50

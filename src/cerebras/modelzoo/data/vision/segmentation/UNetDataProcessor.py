@@ -191,6 +191,7 @@ class UNetDataProcessor:
         return image, mask
 
     def preprocess_image(self, image):
+
         # converts to (C, (D), H, W) format.
         to_tensor_transform = transforms.PILToTensor()
 
@@ -225,6 +226,7 @@ class UNetDataProcessor:
     def get_augment_transforms(
         self, do_horizontal_flip, n_rotations, do_random_brightness
     ):
+
         augment_transforms_list = []
         if do_horizontal_flip:
             horizontal_flip_transform = transforms.Lambda(

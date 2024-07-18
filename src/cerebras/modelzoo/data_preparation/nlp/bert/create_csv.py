@@ -24,7 +24,7 @@ import os
 import sys
 from collections import defaultdict
 
-sys.path.append(os.path.join(os.path.dirname(__file__), "../../../../../"))
+sys.path.append(os.path.join(os.path.dirname(__file__), "../../../"))
 from cerebras.modelzoo.common.utils.utils import check_and_create_output_dirs
 from cerebras.modelzoo.data_preparation.nlp.bert.dynamic_processor import (
     data_generator,
@@ -207,6 +207,7 @@ def create_csv(
     input_files_prefix="",
     sop_labels=False,
 ):
+
     num_output_files = max(num_output_files, 1)
 
     output_files = [

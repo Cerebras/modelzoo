@@ -19,7 +19,6 @@ import torch.nn as nn
 from cerebras.modelzoo.layers.weight_initializers import (
     lecun_normal_,
     lecun_uniform_,
-    trunc_normal_,
     variance_scaling_,
 )
 
@@ -34,7 +33,7 @@ INIT2FN = {
     "glorot_normal": nn.init.xavier_normal_,  # alias for `xavier_normal`
     "xavier_uniform": nn.init.xavier_uniform_,
     "glorot_uniform": nn.init.xavier_uniform_,  # alias for `xavier_uniform`
-    "truncated_normal": trunc_normal_,
+    "truncated_normal": nn.init.trunc_normal_,
     "variance_scaling": variance_scaling_,
     "lecun_normal": lecun_normal_,
     "lecun_uniform": lecun_uniform_,

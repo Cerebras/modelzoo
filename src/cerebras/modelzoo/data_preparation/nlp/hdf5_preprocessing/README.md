@@ -65,9 +65,9 @@ There is also two extra key/values needed to train GPT models on variable sequen
 > **NOTE**: 
 
 1. More information on using of HuggingFace datasets can be found in this document: [Using HuggingFace datasets for auto-regressive LM](../../huggingface/README.md)
-2. `attention_mask` here actually represents loss mask and is used as loss mask by our gpt-style models. It can mask out components like padding tokens or prompt tokens that shouldn't be in the loss calculation. For example: \
-- If we do autoregressive language modeling with the input in format [`input_ids`, `padding_tokens`] (LMData), `attention_mask` will look something like [1, 1, ..., 1, 0, 0, 0, ..., 0] where the 1's corresponds to `input_ids` and 0's to `padding_tokens`
-- If we do prompted generation like instruction tuning with input in format [`prompt_ids`, `input_ids`, `padding_tokens`(optional)] (Summarization), `attention_mask` will look something like [0, 0, ..., 0, ... 1, 1, ..., 1, 0, 0, 0, ..., 0] where the first chunk of 0's correspond to `prompt_ids`, the 1's correspond to `input_ids` and the second chunk of 0's correspond to `padding_tokens`
+2. `attention_mask` here actually represents loss mask and is used as loss mask by our gpt-style models. It can mask out components like padding tokens or prompt tokens that shouldn't be in the loss calculation. For example:
+  - If we do autoregressive language modeling with the input in format [`input_ids`, `padding_tokens`] (LMData), `attention_mask` will look something like [1, 1, ..., 1, 0, 0, 0, ..., 0] where the 1's corresponds to `input_ids` and 0's to `padding_tokens`
+  - If we do prompted generation like instruction tuning with input in format [`prompt_ids`, `input_ids`, `padding_tokens`(optional)] (Summarization), `attention_mask` will look something like [0, 0, ..., 0, ... 1, 1, ..., 1, 0, 0, 0, ..., 0] where the first chunk of 0's correspond to `prompt_ids`, the 1's correspond to `input_ids` and the second chunk of 0's correspond to `padding_tokens`
 
 ## Generating HDF5 data from raw data
 
@@ -173,7 +173,7 @@ We support three different tokenizers with this script, 1. `GPT2Tokenizer`, 2. `
 - For `NeoXTokenizer`, `encoder_file=neox-encoder.json`.
 - For `HuggingFaceTokenizer`, `huggingface_tokenizer` should be specified, for example `huggingface_tokenizer=tiiuae/falcon-7b` .
 
-These files can be found [here](../../../vocab/).
+These files can be found [here](../../../models/vocab/).
 
 **Note:** For `GPT2Tokenizer` we follow the nomenclature used by OpenAI in their [implementation](https://github.com/openai/gpt-2/blob/master/src/encoder.py#L109-L112) which is slightly different from Hugging Face's nomenclature where they call the `vocab_file` as `merges_file` and `encoder_file` as `vocab_file`. However, the content of the files are the same. For `NeoXTokenizer`, we use the same nomenclature to avoid confusion.
 

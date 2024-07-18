@@ -273,6 +273,7 @@ class SampleGenerator(ABC):
                 "num_cfg_channels"
             ]
         for _ in pbar:
+
             # Random normal noised_latent and random integer labels
             num_classes = self.rparams["pipeline"]["num_classes"]
             custom_labels = self.rparams["pipeline"]["custom_labels"]

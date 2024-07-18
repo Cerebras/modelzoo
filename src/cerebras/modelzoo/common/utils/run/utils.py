@@ -13,6 +13,7 @@
 # limitations under the License.
 
 """Contains common run related utilies for cv and nlp models"""
+
 import os
 
 
@@ -28,12 +29,12 @@ def get_default_inis():
 
 
 def update_runconfig_debug_args_path(params, default_inis_dict):
-    from cerebras.appliance.run_utils import (
+    from cerebras.appliance.utils.debug_args import (
         DebugArgs,
         get_debug_args,
-        set_default_ini,
         write_debug_args,
     )
+    from cerebras.appliance.utils.ini import set_default_ini
 
     if not params["runconfig"].get("debug_args_path"):
         debug_args = DebugArgs()
@@ -65,3 +66,9 @@ class DeviceType:
     def devices(cls):
         """Valid strategies"""
         return [cls.CSX, cls.CPU, cls.GPU]
+
+
+def update_dataclass_from_dict(obj, data_dict):
+    """Adds new members to dataclass from dict"""
+    for key, value in data_dict.items():
+        setattr(obj, key, value)

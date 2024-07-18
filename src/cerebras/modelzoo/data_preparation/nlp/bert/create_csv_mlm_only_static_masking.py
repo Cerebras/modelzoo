@@ -26,7 +26,7 @@ import subprocess as sp
 # isort: off
 import sys
 
-sys.path.append(os.path.join(os.path.dirname(__file__), "../../../../../"))
+sys.path.append(os.path.join(os.path.dirname(__file__), "../../../"))
 # isort: on
 
 from cerebras.modelzoo.common.utils.utils import check_and_create_output_dirs
@@ -245,6 +245,7 @@ def create_csv(
     spacy_model="en",
     input_files_prefix="",
 ):
+
     num_output_files = max(num_output_files, 1)
 
     output_files = [
@@ -373,6 +374,7 @@ def main():
     # Create meta file.
     with open(f"{args.output_dir}/meta.dat", "w") as fout:
         for file_name in os.listdir(args.output_dir):
+
             if file_name.startswith(args.name):
                 # Calculate number of lines in the input data.
                 num_lines = sp.run(

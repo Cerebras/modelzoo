@@ -12,10 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 from dataclasses import dataclass
-from typing import Optional
+from typing import Literal, Optional
 
-from cerebras.modelzoo.config_manager.config_classes.base.base_config import *
+from cerebras.modelzoo.common.registry import registry
+from cerebras.modelzoo.config_manager.config_classes.base.base_config import (
+    BaseConfig,
+    required,
+)
 from cerebras.modelzoo.config_manager.config_classes.base.data_config import (
     DataConfig,
 )
@@ -31,25 +36,24 @@ from cerebras.modelzoo.config_manager.config_classes.base.run_config import (
 from cerebras.modelzoo.config_manager.config_classes.base.sparsity_config import (
     SparsityConfig,
 )
-from cerebras.modelzoo.config_manager.config_validators import *
 
 
 @dataclass
 class BertForTokenClassificationModelConfig(ModelConfig):
     num_classes: int = required
-    loss_weight: float = 1.0
-    include_padding_in_loss: bool = True
-    encoder_output_dropout_rate: Optional[float] = None
-    dropout_rate: float = 0.1
-    embedding_dropout_rate: float = 0.1
+    loss_weight: Optional[float] = 1.0
+    include_padding_in_loss: Optional[bool] = False
+    encoder_output_dropout_rate: float = required
+    dropout_rate: Optional[float] = 0.0
+    embedding_dropout_rate: Optional[float] = None
 
     vocab_size: int = 30522
     "The size of the vocabulary used in the model. Max supported value - `512000`."
 
-    attention_dropout_rate: Optional[float] = 0.1
+    attention_dropout_rate: Optional[float] = 0.0
     "Dropout rate for attention layer. Default - same as `dropout`"
 
-    num_heads: Optional[int] = 12
+    num_heads: int = 12
     "The number of attention heads in the multi-head attention layer."
 
     max_position_embeddings: int = 1024
@@ -61,7 +65,9 @@ class BertForTokenClassificationModelConfig(ModelConfig):
     num_hidden_layers: int = 12
     "Number of hidden layers in the Transformer encoder/decoder."
 
-    layer_norm_epsilon: float = 1e-5
+    label_vocab_file: Optional[str] = None
+
+    layer_norm_epsilon: Optional[float] = 1e-5
     "The epsilon value used in layer normalization layers."
 
     filter_size: int = 3072
@@ -69,16 +75,39 @@ class BertForTokenClassificationModelConfig(ModelConfig):
 
     encoder_nonlinearity: Literal["gelu", "relu", "silu", "gelu_new"] = "gelu"
     pooler_nonlinearity: Optional[str] = None
-    compute_eval_metrics: Optional[bool] = None
+    compute_eval_metrics: Optional[bool] = False
+    attention_kernel: Optional[str] = None
+    fp16_type: Literal["bfloat16", "float16", "cbfloat16"] = "bfloat16"
+    "Type of 16bit precision used"
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.embedding_dropout_rate = (
+            self.embedding_dropout_rate or self.dropout_rate
+        )
 
 
-@registry.register_config("token_classifier")
+@dataclass
+class BertForTokenClassificationDataConfig(DataConfig):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def __post_init__(self):
+        if self.params.get("vocab_file", None):
+            self.params["vocab_file"] = os.path.abspath(
+                self.params["vocab_file"]
+            )
+
+        super().__post_init__()
+
+
+@registry.register_config("bert/token_classifier")
 @dataclass
 class BertForTokenClassificationConfig(BaseConfig):
-    train_input: Optional[DataConfig] = None
+    train_input: Optional[BertForTokenClassificationDataConfig] = None
     "Input params class for train mode"
 
-    eval_input: Optional[DataConfig] = None
+    eval_input: Optional[BertForTokenClassificationDataConfig] = None
     "Input params class for eval mode"
 
     model: BertForTokenClassificationModelConfig = required
@@ -92,3 +121,25 @@ class BertForTokenClassificationConfig(BaseConfig):
 
     sparsity: Optional[SparsityConfig] = None
     "Params class for sparsity related cofigurations"
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.set_config_defaults(
+            self.model,
+            self.train_input.params if self.train_input else None,
+            [self.eval_input.params if self.eval_input else None],
+        )
+
+    @staticmethod
+    def set_config_defaults(mparams, tparams, eparams_list):
+        if tparams:
+            mparams.label_vocab_file = tparams.get("label_vocab_file", None)
+            if mparams.include_padding_in_loss:
+                mparams.loss_weight *= 1.0 / tparams["max_sequence_length"]
+
+        for params in [tparams] + eparams_list:
+            if not params:
+                continue
+
+            for key in ["num_classes", "include_padding_in_loss"]:
+                params[key] = getattr(mparams, key)

@@ -140,6 +140,7 @@ def tile_image_transform(img, target_height, target_width):
     tgt_img_shape = [img_channels, target_height, target_width]
 
     def _get_tiled_image(img, tgt_img_shape, axis):
+
         if tgt_img_shape[axis] <= img.shape[axis]:
             # No tiling since image already satisfies requirement
             return img

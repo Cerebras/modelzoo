@@ -20,6 +20,7 @@ import torch
 from torchvision.datasets import DatasetFolder
 
 import cerebras.pytorch.distributed as dist
+from cerebras.modelzoo.common.registry import registry
 from cerebras.modelzoo.data.vision.diffusion.DiffusionBaseProcessor import (
     DiffusionBaseProcessor,
 )
@@ -131,6 +132,7 @@ class ImageNetLatentDataset(DatasetFolder):
         return latent, target
 
 
+@registry.register_datasetprocessor("DiffusionLatentImageNet1KProcessor")
 class DiffusionLatentImageNet1KProcessor(DiffusionBaseProcessor):
     def __init__(self, params):
         super().__init__(params)
@@ -170,38 +172,3 @@ class DiffusionLatentImageNet1KProcessor(DiffusionBaseProcessor):
 
         dataset = CategoricalDataset(dataset_list, seed=self.shuffle_seed)
         return dataset
-
-
-if __name__ == "__main__":
-    import os
-
-    import yaml
-
-    from cerebras.modelzoo.models.vision.dit.utils import set_defaults
-
-    fpath = os.path.abspath(
-        os.path.join(
-            os.path.dirname(__file__),
-            "../configs/params_dit_small_patchsize_2x2.yaml",
-        )
-    )
-    with open(fpath, "r") as fid:
-        params = yaml.safe_load(fid)
-
-    params = set_defaults(params)
-
-    data_obj = DiffusionLatentImageNet1KProcessor(params['train_input'])
-    dataset = data_obj.create_dataset(
-        use_training_transforms=True, split=params["train_input"]["split"]
-    )
-    print("Dataset features: \n")
-    print(f"Dataset 0th sample: {dataset[0]}, {dataset[0][0].shape}")
-
-    dataloader = data_obj.create_dataloader(dataset, is_training=True)
-    print("Dataloader features as below: \n")
-    for ii, data in enumerate(dataloader):
-        if ii == 1:
-            break
-        for k, v in data.items():
-            print(f"{k} -- {v.shape}, {v.dtype}")
-        print("----")

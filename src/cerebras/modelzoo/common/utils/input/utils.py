@@ -13,39 +13,14 @@
 # limitations under the License.
 
 """Specifies `SamplesSaver` and `SamplesViewer` classes for writing and reading numpy array datasets."""
+
 import logging
 import os
 import shutil
 import sys
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 import numpy as np
-
-
-class SamplesViewer:
-    """Handles iteraing over data samples of numpy arrays from .npy files."""
-
-    def __init__(self, samples_file_list: List[str]):
-        if not samples_file_list:
-            raise RuntimeError(
-                "No samples files to load. Please provide a list of "
-                "valid paths to .npy files to load data samples from "
-                "when initializing this class."
-            )
-        self._samples_file_list = samples_file_list
-
-    def __iter__(self):
-        for samples_file in self._samples_file_list:
-            try:
-                with open(samples_file, 'rb') as f:
-                    samples = np.load(f)
-            except Exception as e:
-                raise RuntimeError(
-                    f"Failed to read requests file: {samples_file}"
-                ) from e
-
-            for sample in samples:
-                yield sample
 
 
 class SamplesSaver:
@@ -57,7 +32,8 @@ class SamplesSaver:
         max_file_size: int,
         filename_prefix: Optional[str] = None,
     ):
-        """
+        """Constructs a `SamplesSaver` instance.
+
         Args:
             data_dir: Path to mounted dir where the samples are dumped
             max_file_size: Maximum file size (in bytes) for the .npy samples file(s)
@@ -79,11 +55,11 @@ class SamplesSaver:
 
     @property
     def dataset_size(self) -> int:
-        """Returns the total numer of data samples."""
+        """Returns the total number of data samples."""
         return self._samples_len
 
     @property
-    def samples_files(self) -> List[str]:
+    def samples_files(self) -> List[Tuple[str, int]]:
         """Returns the list of `.npy` file(s)."""
         return self._samples_file_list
 
@@ -124,8 +100,10 @@ class SamplesSaver:
                 f"due to error: {e}"
             ) from e
 
-        # Add filename to list of files
-        self._samples_file_list.append(samples_file_path)
+        # Save file path and number of samples in the file
+        self._samples_file_list.append(
+            (samples_file_path, len(self._data_samples))
+        )
 
         # Increment chunk no. and reset samples' list and size attrs
         self._chunk_idx += 1
@@ -140,7 +118,8 @@ class SamplesSaver:
     def delete_data_dumps(self) -> None:
         """Cleans up by deleting all dumped data."""
         try:
-            shutil.rmtree(self.data_dir)
+            if os.path.exists(self.data_dir):
+                shutil.rmtree(self.data_dir)
         except Exception as e:
             logging.error(
                 f"Failed to delete samples data directory due to: {e}"

@@ -55,9 +55,11 @@ def augment_gaussian_noise(
             variance_here = (
                 variance
                 if variance is not None
-                else noise_variance[0]
-                if noise_variance[0] == noise_variance[1]
-                else np.random.uniform(noise_variance[0], noise_variance[1])
+                else (
+                    noise_variance[0]
+                    if noise_variance[0] == noise_variance[1]
+                    else np.random.uniform(noise_variance[0], noise_variance[1])
+                )
             )
             # bug fixed: https://github.com/MIC-DKFZ/batchgenerators/issues/86
             data_sample[c] = data_sample[c] + np.random.normal(

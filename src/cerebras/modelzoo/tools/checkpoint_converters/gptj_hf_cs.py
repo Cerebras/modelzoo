@@ -226,9 +226,9 @@ class Converter_GPTJ_Headless_HF_CS17(BaseCheckpointConverter_HF_CS):
                 old_state_dict.get("embedding_layer.word_embeddings.weight", 0)
                 is None
             ):
-                old_state_dict[
-                    "embedding_layer.word_embeddings.weight"
-                ] = old_state_dict["lm_head.weight"]
+                old_state_dict["embedding_layer.word_embeddings.weight"] = (
+                    old_state_dict["lm_head.weight"]
+                )
 
     def post_model_convert(
         self,
@@ -363,9 +363,9 @@ class Converter_GPTJ_LMHeadModel_HF_CS17(BaseCheckpointConverter_HF_CS):
                 old_state_dict.get("embedding_layer.word_embeddings.weight", 0)
                 is None
             ):
-                old_state_dict[
-                    "embedding_layer.word_embeddings.weight"
-                ] = old_state_dict["lm_head.weight"]
+                old_state_dict["embedding_layer.word_embeddings.weight"] = (
+                    old_state_dict["lm_head.weight"]
+                )
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
@@ -743,7 +743,7 @@ class Converter_GPTJ_Headless_HF_CS20(Converter_GPTJ_Headless_HF_CS18):
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.0", "cs-2.1", "cs-2.2"),
+            FormatVersions("cs-2.0", "cs-2.1", "cs-2.2", "cs-2.3"),
         )
 
     @staticmethod
@@ -751,12 +751,16 @@ class Converter_GPTJ_Headless_HF_CS20(Converter_GPTJ_Headless_HF_CS18):
         return ConfigConverter_GPTJModel_HF_CS20
 
 
+# Despite the embedding layer being refactored in release 2.1, the 2.0
+# HF <> CS converter also works for 2.1 and 2.2. This is because the HF
+# GPT-J style models only support RoPE embeddings which don't store any
+# learnable params in the checkpoint."
 class Converter_GPTJ_LMHeadModel_HF_CS20(Converter_GPTJ_LMHeadModel_HF_CS18):
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.0", "cs-2.1", "cs-2.2"),
+            FormatVersions("cs-2.0", "cs-2.1", "cs-2.2", "cs-2.3"),
         )
 
     @staticmethod
@@ -779,7 +783,51 @@ class ConfigConverter_GPTJModel_HF_CS20(ConfigConverter_GPTJModel_HF_CS18):
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.0", "cs-2.1", "cs-2.2"),
+            FormatVersions("cs-2.0", "cs-2.1", "cs-2.2", "cs-2.3"),
+        )
+
+
+class Converter_GPTJ_Headless_HF_CS23(Converter_GPTJ_Headless_HF_CS20):
+    def supports_mup_conversion(self):
+        return True
+
+    @staticmethod
+    def get_config_converter_class() -> BaseConfigConverter:
+        return ConfigConverter_GPTJModel_HF_CS23
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (
+            FormatVersions("hf"),
+            FormatVersions("cs-2.3"),
+        )
+
+
+class Converter_GPTJ_LMHeadModel_HF_CS23(Converter_GPTJ_LMHeadModel_HF_CS20):
+    def supports_mup_conversion(self):
+        return True
+
+    @staticmethod
+    def get_config_converter_class() -> BaseConfigConverter:
+        return ConfigConverter_GPTJModel_HF_CS23
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (
+            FormatVersions("hf"),
+            FormatVersions("cs-2.3"),
+        )
+
+
+class ConfigConverter_GPTJModel_HF_CS23(ConfigConverter_GPTJModel_HF_CS20):
+    def supports_mup_conversion(self):
+        return True
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (
+            FormatVersions("hf"),
+            FormatVersions("cs-2.3"),
         )
 
 

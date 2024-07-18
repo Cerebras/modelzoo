@@ -3,7 +3,7 @@
   - [Model overview](#model-overview)
   - [Structure of the code](#structure-of-the-code)
   - [Dataset download and preprocessing](#dataset-download-and-preprocessing)
-    - [Phase-1: Pre-training for Feature alignment datasets](#phase-1-pre-training-for-feature-alignment-datasets)
+    - [Phase-1: Pre-training for Feature alignment datasets:](#phase-1-pre-training-for-feature-alignment-datasets)
       - [LLaVA Visual Instruct Pretrain LCS-558K Dataset](#llava-visual-instruct-pretrain-lcs-558k-dataset)
       - [ShareGPT4V-PT Dataset](#sharegpt4v-pt-dataset)
       - [Synthdog-EN Dataset](#synthdog-en-dataset)
@@ -106,17 +106,6 @@ optional arguments:
   -h, --help            show this help message and exit
 
 ```
-```
-python preprocess_dataset.py convert_json2jsonl -h
-usage: Pre-process LLaVa datasets convert_json2jsonl [-h] --input_dir INPUT_DIR
-
-optional arguments:
-  -h, --help            show this help message and exit
-  --input_dir INPUT_DIR
-                        Path to a folder of json files that need to be converted to jsonl format.
-```
-
-
 Note: **We currently expect all the images under a single parent folder and the relative path of images from different datasets are written under `image_key` in the H5 files generated.**
 For example:
    ```
@@ -127,7 +116,8 @@ For example:
     ├── textvqa
     └── vg
    ```
-### Phase-1: Pre-training for Feature alignment datasets
+
+### Phase-1: Pre-training for Feature alignment datasets: 
 #### LLaVA Visual Instruct Pretrain LCS-558K Dataset
 * Download from https://huggingface.co/datasets/liuhaotian/LLaVA-Pretrain
 * Dataset and images can be directly downloaded from HuggingFace Hub Datasets using  
@@ -450,7 +440,7 @@ c. Rename `config.json` to `config_lmsys.json`
 d. Download [LLaVA-7B config.json](https://huggingface.co/liuhaotian/llava-v1.5-7b/blob/main/config.json) from HuggingFace
    ```
    cd /path/to/pretrained/checkpoints/text_model
-   wget https://huggingface.co/liuhaotian/llava-v1.5-7b/blob/main/config.json
+   wget https://huggingface.co/liuhaotian/llava-v1.5-7b/raw/main/config.json
    ```
 
 We do steps (c) and (d) above since we need additional information about LLaVA model such as `mm_projector_type` etc to build appropriate CS config yaml and checkpoint

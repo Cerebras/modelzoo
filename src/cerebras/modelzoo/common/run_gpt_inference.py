@@ -13,11 +13,14 @@
 # limitations under the License.
 
 """GPT Inference script built using the cstorch API"""
+
 import argparse
+import copy
 import inspect
 import logging
 import os
 import sys
+from dataclasses import is_dataclass
 
 # isort: off
 sys.path.append(os.path.join(os.path.dirname(__file__), "../../.."))
@@ -28,9 +31,14 @@ from warnings import warn
 import numpy as np
 import yaml
 
-from cerebras.modelzoo.common.utils.utils import format_rate
+from cerebras.modelzoo.common.utils.run.utils import update_dataclass_from_dict
+from cerebras.modelzoo.common.utils.utils import (
+    configure_compression,
+    format_rate,
+)
 from cerebras.modelzoo.config_manager.config_loader import (
-    validate_config_params,
+    convert_to_dict,
+    create_config_obj_from_params,
 )
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "../.."))
@@ -54,17 +62,20 @@ def get_cluster_config(params):
         get_cluster_config as _get_cluster_config,
     )
 
-    cs_config = _get_cluster_config(params)
+    cluster_config = _get_cluster_config(params)
 
-    if cs_config.max_act_per_csx is not None and cs_config.max_act_per_csx > 1:
+    if (
+        cluster_config.max_act_per_csx is not None
+        and cluster_config.max_act_per_csx > 1
+    ):
         warn("max_act_per_csx is forced to 1 for inference")
 
-    cs_config.max_act_per_csx = 1
+    cluster_config.max_act_per_csx = 1
 
-    if cs_config.num_workers_per_csx is None:
-        cs_config.num_workers_per_csx = 1
+    if cluster_config.num_workers_per_csx is None:
+        cluster_config.num_workers_per_csx = 1
 
-    return cs_config
+    return cluster_config
 
 
 def inference_input_dataloader(params):
@@ -98,7 +109,7 @@ def inference_input_dataloader(params):
                 "max_sequence_length": inference_input.get(
                     "max_sequence_length"
                 ),
-                "drop_last": False,
+                "drop_last": inference_input.get("drop_last", False),
                 "pad_last": True,
                 "dataset_map_fn": map_fn,
             }
@@ -143,7 +154,6 @@ def main():
     }
 
     params = get_params_from_args(
-        run_dir,
         argv=sys.argv[1:],
         extra_args_parser_fn=parser_fn,
         device_type=DeviceType.CSX,
@@ -183,7 +193,7 @@ def main():
     with open(os.path.join(artifact_dir, f"params_inference.yaml"), "w") as f:
         yaml.dump(params, f, default_flow_style=False)
 
-    cs_config = get_cluster_config(params)
+    cluster_config = get_cluster_config(params)
 
     from torch.utils._pytree import tree_map
 
@@ -193,7 +203,7 @@ def main():
         validate_streaming_and_micro_batch_size,
     )
     from cerebras.modelzoo.common.run_cstorch_flow import get_model_checkpoint
-    from cerebras.modelzoo.models.nlp.gpt2.model import GptInferenceModel
+    from cerebras.modelzoo.models.nlp.gpt2.model import Gpt2Model
 
     compile_only = runconfig.get("compile_only", False)
     validate_only = runconfig.get("validate_only", False)
@@ -205,7 +215,7 @@ def main():
         validate_streaming_and_micro_batch_size(
             input_params["batch_size"],
             micro_batch_size,
-            cs_config.num_csx,
+            cluster_config.num_csx,
         )
 
     # Initialize the backend
@@ -215,6 +225,7 @@ def main():
         compile_dir=runconfig.get("compile_dir"),
         compile_only=compile_only,
         validate_only=validate_only,
+        cluster_config=cluster_config,
         retrace_every_iteration=runconfig.get("retrace_every_iteration", False),
     )
     backend.device.config.lazy_initialization = runconfig.get(
@@ -243,18 +254,37 @@ def main():
         for eeh_arg in extra_parser_param_keys:
             if eeh_arg in run_params:
                 extra_parser_params[eeh_arg] = run_params.pop(eeh_arg, None)
-        # validate the params with config class
-        validate_config_params(params, model_key)
-        # Re-add extra inference args to the runconfig after config validation
-        run_params.update(extra_parser_params)
 
-    # Initialize model
+        # validate the params with config class (Will return the Config Class if it finds one)
+        params = create_config_obj_from_params(params, model_key)
+        params_obj = None
+        if is_dataclass(params):
+            params_obj = copy.deepcopy(params)
+            params = convert_to_dict(params_obj)
+        # Re-add extra inference args to the runconfig after config validation
+        run_params = params["runconfig"]
+        run_params.update(extra_parser_params)
+        # Update the extra params to object as well
+        if params_obj and params_obj.runconfig:
+            update_dataclass_from_dict(
+                params_obj.runconfig, extra_parser_params
+            )
+        return params, params_obj
+
+    # Initialize model (config_validation returns the Config Class if it finds one)
     with backend.device:
-        config_validation(params, "gpt_inference")
-        model = GptInferenceModel(params)
+        params, params_obj = config_validation(params, "gpt2")
+        model = Gpt2Model(params_obj if params_obj else params)
 
     compiled_model = cstorch.compile(model, backend)
     compiled_model.eval()
+
+    # apply weight compression
+    compression_config = params["model"].pop("compression", {})
+    if compression_config:
+        compressions = configure_compression(compression_config)
+        for compression in compressions:
+            model.apply(compression)
 
     # Load weights
     checkpoint_path = get_model_checkpoint(runconfig)
@@ -279,19 +309,20 @@ def main():
         else artifact_dir / "inference"
     )
 
-    writer = cstorch.utils.tensorboard.SummaryWriter(log_dir=summary_dir)
+    from cerebras.pytorch.utils import tensorboard
+
+    writer = tensorboard.SummaryWriter(log_dir=summary_dir)
 
     executor = cstorch.utils.data.DataExecutor(
         dataloader,
         num_steps=runconfig.get("inference_steps"),
-        cs_config=cs_config,
         writer=writer,
         micro_batch_size=micro_batch_size,
     )
 
     @cstorch.trace
     def inference_step(batch):
-        return compiled_model(batch)
+        return compiled_model(batch, autoregressive=True)
 
     @cstorch.step_closure
     def post_inference_step(predictions):

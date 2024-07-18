@@ -128,7 +128,7 @@ def generate_square_subsequent_mask(
         tgt_seq_length=sz,
         dtype=itype,
         device=device,
-        multiply_neg_inf=True,
+        use_neg_inf=True,
     )
 
 

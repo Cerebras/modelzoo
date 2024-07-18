@@ -24,9 +24,11 @@ Transformer [[1]](https://arxiv.org/pdf/1706.03762.pdf) based models such as GPT
 
 ## Sequence of the steps to perform
 
-Following block diagram illustrates the sequence of steps you would perform to run .
-
-![cpt](./images/continuous-pretraining.png)
+1. Download and clean the TRC Data
+2. Convert dataset to hdf5 
+3. Download pre-trained model checkpoint from HuggingFace
+4. Convert checkpoint to CS format 
+5. Run training
 
 ## Structure of the code
 
@@ -75,13 +77,13 @@ python convert_checkpoint.py convert \
 --config <path to EleutherAI_gpt-j-6B_config.json >
 --model gptj \
 --src-fmt hf \
---tgt-fmt cs-1.8 \
+--tgt-fmt cs-2.3 \
 --output-dir <location to save converted checkpoint and config> \
 ```
 
 NOTE: use the above from the [checkpoint converter tool directory](../../../../tools/checkpoint_converters/).
 
-It is also important to note that the config from Hugging Face may not be usable directly and the converted config from using the tool should be used for compatibility with Cerebras format. The converted config will only contain the `model` params and you will have to add `train_input`, `eval_input`, `optimizer` and `runconfig` as necessary. GPTJ [configs](../../configs/) can be used as a reference for populating these.
+It is also important to note that the config from Hugging Face may not be usable directly and the converted config from using the tool should be used for compatibility with Cerebras format. The converted config will only contain the `model` params and you will have to add `train_input`, `eval_input`, `optimizer` and `runconfig` as necessary. GPTJ [configs](../configs/) can be used as a reference for populating these.
 
 ## To compile/validate, run train and eval on Cerebras System
 

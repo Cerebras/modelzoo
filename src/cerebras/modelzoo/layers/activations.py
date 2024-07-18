@@ -73,6 +73,20 @@ def squared_gelu(x):
     return g * g
 
 
+def squared_relu(x):
+    """
+    Taken from https://arxiv.org/abs/2109.08668
+
+    Args:
+        x (torch.Tensor): Input tensor for the activation
+
+    Returns:
+        torch.Tensor with activation applied
+    """
+    r = nn.functional.relu(x)
+    return r * r
+
+
 def linear_act(x):
     return x
 
@@ -120,6 +134,7 @@ ACT2FN = {
     "gelu_fast": gelu_fast,
     "quick_gelu": quick_gelu,
     "squared_gelu": squared_gelu,
+    "squared_relu": squared_relu,
     "mish": nn.functional.mish,
     "linear": linear_act,
     "sigmoid": torch.sigmoid,

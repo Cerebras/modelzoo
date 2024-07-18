@@ -12,12 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass, is_dataclass
-from typing import Optional, Union, get_args, get_origin, get_type_hints
+from dataclasses import dataclass
+from typing import Optional
 
 from cerebras.modelzoo.common.registry import registry
 from cerebras.modelzoo.config_manager.config_classes.base.base_config import (
     BaseConfig,
+    get_class_type,
     required,
 )
 from cerebras.modelzoo.config_manager.config_classes.base.data_config import (
@@ -35,13 +36,15 @@ from cerebras.modelzoo.config_manager.config_classes.base.run_config import (
 from cerebras.modelzoo.config_manager.config_classes.base.sparsity_config import (
     SparsityConfig,
 )
+from cerebras.modelzoo.models.nlp.dpo.model import MODEL_MAPPING
 
 
-@dataclass()
+@dataclass
 class DPOParameters(BaseConfig):
     beta: float = 0.1
     reference_free: bool = False
     loss_type: str = "sigmoid"
+    disable_dropout: bool = True
 
 
 @dataclass
@@ -54,23 +57,49 @@ class DPOModelConfig(ModelConfig):
 
     compute_eval_metrics: bool = True
 
+    def __new__(cls, **kwargs):
+        # Avoid infinite recursion
+        if cls is not DPOModelConfig:
+            return super().__new__(cls)
 
-def get_class_type(config_class, parameter):
-    annotations = get_type_hints(config_class)
-    field_type = annotations[parameter]
-    if get_origin(field_type) is Union:
-        for union_type in get_args(field_type):
-            if is_dataclass(union_type):
-                return union_type
-    elif is_dataclass(field_type):
-        return field_type
-    return None
+        if "model_name" not in kwargs:
+            raise ValueError(f"DPO config requires a \"model_name\" key.")
+
+        name = kwargs["model_name"]
+
+        config_class_to_use = registry.get_config_class(MODEL_MAPPING[name])
+        if config_class_to_use is None:
+            raise ValueError(f"No known DPO backend model found for key {name}")
+
+        model_type = get_class_type(config_class_to_use, 'model')
+        if not model_type:
+            raise ValueError(
+                f"No known DPO backend model found for key {model_type}"
+            )
+
+        @dataclass
+        class DPOBoundModelConfig(DPOModelConfig, model_type):
+            pass
+
+        instance = DPOBoundModelConfig(**kwargs)
+        model_type.__post_init__(instance)
+        return instance
+
+
+@dataclass
+class DPODataConfig(DataConfig):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.params["data_processor"] = self.data_processor
 
 
 @registry.register_config("dpo")
 @dataclass
 class DPOConfig(BaseConfig):
-    eval_input: Optional[DataConfig] = None
+    eval_input: Optional[DPODataConfig] = None
     "Input params class for eval mode"
 
     model: DPOModelConfig = required
@@ -82,31 +111,29 @@ class DPOConfig(BaseConfig):
     runconfig: RunConfig = required
     "Params class to define params for controlling runs."
 
-    train_input: Optional[DataConfig] = None
+    train_input: Optional[DPODataConfig] = None
     "Input params class for train mode"
 
     sparsity: Optional[SparsityConfig] = None
     "Params class for sparsity related cofigurations"
 
     def __post_init__(self):
-        name = self.model.get("model_name")
-        config_class_to_use = None
-        config_class_to_use = registry.get_config_class(name)
-
-        if config_class_to_use is not None:
-            hints = get_type_hints(config_class_to_use)
-            model_type = get_class_type(config_class_to_use, 'model')
-            if model_type:
-
-                @dataclass
-                class DPOBoundModelConfig(DPOModelConfig, model_type):
-                    pass
-
-                self.model = DPOBoundModelConfig(**self.model)
-            else:
-                raise ValueError(
-                    f"No known DPO backend model found for key {model_type}"
-                )
-        else:
-            raise ValueError(f"No known DPO backend model found for key {name}")
         super().__post_init__()
+        self.set_config_defaults(
+            self.model,
+            self.train_input.params if self.train_input else None,
+            [self.eval_input.params if self.eval_input else None],
+        )
+
+    @staticmethod
+    def set_config_defaults(mparams, tparams, eparams_list):
+        config_class_to_use = registry.get_config_class(
+            MODEL_MAPPING[mparams.model_name]
+        )
+        if config_class_to_use is None:
+            raise ValueError(
+                f"No known DPO backend model found for key {mparams.model_name}"
+            )
+
+        if fn := getattr(config_class_to_use, "set_config_defaults", None):
+            fn(mparams, tparams, eparams_list)

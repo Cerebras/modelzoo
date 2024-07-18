@@ -190,6 +190,3 @@ In order to train the model, you need to provide a yaml config file. Below is th
 [1] [BERT paper](https://arxiv.org/abs/1810.04805)
 
 [2] [Fine-tune BERT for Extractive Summarization](https://arxiv.org/abs/1903.10318)
-
-[3] [Pipeline Execution Mode](https://docs.cerebras.net/en/latest/cerebras-basics/cerebras-execution-modes.html#layer-pipelined-mode)
-

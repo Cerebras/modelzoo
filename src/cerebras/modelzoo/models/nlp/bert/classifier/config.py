@@ -12,10 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 from dataclasses import dataclass
-from typing import Optional
+from typing import Literal, Optional
 
-from cerebras.modelzoo.config_manager.config_classes.base.base_config import *
+from cerebras.modelzoo.common.registry import registry
+from cerebras.modelzoo.config_manager.config_classes.base.base_config import (
+    BaseConfig,
+    required,
+)
 from cerebras.modelzoo.config_manager.config_classes.base.data_config import (
     DataConfig,
 )
@@ -31,7 +36,6 @@ from cerebras.modelzoo.config_manager.config_classes.base.run_config import (
 from cerebras.modelzoo.config_manager.config_classes.base.sparsity_config import (
     SparsityConfig,
 )
-from cerebras.modelzoo.config_manager.config_validators import *
 
 
 @dataclass
@@ -40,8 +44,8 @@ class BertForSequenceClassificationModelConfig(ModelConfig):
     problem_type: str = required
     task_dropout: float = required
 
-    embedding_dropout_rate: float = 0.1
-    is_mnli_dataset: bool = False
+    embedding_dropout_rate: Optional[float] = None
+    is_mnli_dataset: Optional[bool] = False
     dropout_rate: float = 0.1
 
     vocab_size: int = 30522
@@ -62,7 +66,7 @@ class BertForSequenceClassificationModelConfig(ModelConfig):
     num_hidden_layers: int = 12
     "Number of hidden layers in the Transformer encoder/decoder."
 
-    layer_norm_epsilon: float = 1e-5
+    layer_norm_epsilon: Optional[float] = 1e-5
     "The epsilon value used in layer normalization layers."
 
     filter_size: int = 3072
@@ -70,16 +74,43 @@ class BertForSequenceClassificationModelConfig(ModelConfig):
 
     encoder_nonlinearity: Literal["gelu", "relu", "silu", "gelu_new"] = "gelu"
     pooler_nonlinearity: Optional[str] = None
-    compute_eval_metrics: Optional[bool] = None
+    compute_eval_metrics: Optional[bool] = False
+    attention_kernel: Optional[str] = None
+    fp16_type: Optional[Literal["bfloat16", "float16", "cbfloat16"]] = "float16"
+    "Type of 16bit precision used"
+
+    def __post_init__(self):
+        super().__post_init__()
+
+        if self.embedding_dropout_rate is None:
+            self.embedding_dropout_rate = self.dropout_rate
+
+        self.layer_norm_epsilon = self.layer_norm_epsilon or 1.0e-5
 
 
-@registry.register_config("classifier")
+@dataclass
+class BertForSequenceClassificationDataConfig(DataConfig):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def __post_init__(self):
+        if self.params.get("vocab_file", None):
+            self.params["vocab_file"] = os.path.abspath(
+                self.params["vocab_file"]
+            )
+
+        super().__post_init__()
+
+        self.params.setdefault("data_processor", self.data_processor)
+
+
+@registry.register_config("bert/classifier")
 @dataclass
 class BertForSequenceClassificationConfig(BaseConfig):
-    train_input: Optional[DataConfig] = None
+    train_input: Optional[BertForSequenceClassificationDataConfig] = None
     "Input params class for train mode"
 
-    eval_input: Optional[DataConfig] = None
+    eval_input: Optional[BertForSequenceClassificationDataConfig] = None
     "Input params class for eval mode"
 
     model: BertForSequenceClassificationModelConfig = required
@@ -93,3 +124,20 @@ class BertForSequenceClassificationConfig(BaseConfig):
 
     sparsity: Optional[SparsityConfig] = None
     "Params class for sparsity related cofigurations"
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.set_config_defaults(
+            self.model,
+            self.train_input.params if self.train_input else None,
+            [self.eval_input.params if self.eval_input else None],
+        )
+
+    @staticmethod
+    def set_config_defaults(mparams, tparams, eparams_list):
+        if tparams:
+            mparams.is_mnli_dataset = "MNLI" in tparams["data_processor"]
+
+        for params in [tparams] + eparams_list:
+            for key in ["problem_type", "num_labels"]:
+                params[key] = getattr(mparams, key)

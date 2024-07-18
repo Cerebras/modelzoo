@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import json
+import logging
 import os
 from collections import OrderedDict, defaultdict
 from typing import Union
@@ -23,6 +24,10 @@ from torch.utils.data import DataLoader, Dataset, IterableDataset
 from tqdm import tqdm
 
 from cerebras.modelzoo.common.utils.utils import check_and_create_output_dirs
+
+logging.basicConfig()
+logger = logging.getLogger(__file__)
+logger.setLevel(logging.INFO)
 
 
 def write_hdf5_file(
@@ -82,6 +87,7 @@ def convert_dataset_to_HDF5(
         dtype (string): Data type for the HDF5 dataset.
         compression (string): Compression strategy.
     """
+
     check_and_create_output_dirs(output_dir, filetype="h5")
 
     dataloader = DataLoader(

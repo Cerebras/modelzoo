@@ -13,14 +13,18 @@
 # limitations under the License.
 
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from cerebras.modelzoo.common.registry import registry
-from cerebras.modelzoo.config_manager.config_classes.base.base_config import *
+from cerebras.modelzoo.config_manager.config_classes.base.base_config import (
+    BaseConfig,
+    required,
+)
 from cerebras.modelzoo.config_manager.config_classes.base.data_config import (
     DataConfig,
 )
 from cerebras.modelzoo.config_manager.config_classes.base.model_config import (
+    InitializerConfig,
     ModelConfig,
 )
 from cerebras.modelzoo.config_manager.config_classes.base.optimizer_config import (
@@ -32,7 +36,6 @@ from cerebras.modelzoo.config_manager.config_classes.base.run_config import (
 from cerebras.modelzoo.config_manager.config_classes.base.sparsity_config import (
     SparsityConfig,
 )
-from cerebras.modelzoo.config_manager.config_validators import *
 
 
 @dataclass
@@ -49,17 +52,17 @@ class VisionTransformerModelConfig(ModelConfig):
     `nonlinearity`."""
 
     position_embedding_initializer: Optional[dict] = None
-    """Initializer for position embedding layer. Either a string indicating the name of 
-    the initializer or a dict that includes the name + other params if relevant. If left 
+    """Initializer for position embedding layer. Either a string indicating the name of
+    the initializer or a dict that includes the name + other params if relevant. If left
     unspecified will apply truncated normal initialization."""
 
     position_embedding_type: str = "learned"
     """The type of position embedding to use in the model. Can be one of:
     `fixed` - Sinusoidal from original [Transformer](https://arxiv.org/abs/1706.03762),
-    `relative` - Relative position embedding, [to exploit pairwise, relative positional 
+    `relative` - Relative position embedding, [to exploit pairwise, relative positional
                  information](https://arxiv.org/abs/1803.02155).,
     `rotary` - a.k.a [RoPE](https://arxiv.org/pdf/2104.09864v4.pdf) ,
-    `learned` - Learned embedding matrix, 
+    `learned` - Learned embedding matrix,
     `None` """
 
     use_conv_patchified_embedding: bool = False
@@ -80,8 +83,8 @@ class VisionTransformerModelConfig(ModelConfig):
 
     attention_module: str = "aiayn_attention"
     """Determines whether to use multiheaded attention (from the Attention is
-    All You Need paper) or multi-query attention (MQA) or grouped-query 
-    attention (GQA). Note that when using MQA/GQA, you must specify 
+    All You Need paper) or multi-query attention (MQA) or grouped-query
+    attention (GQA). Note that when using MQA/GQA, you must specify
     extra_attention_params (see below). MQA/GQA are differentiated through
     that parameter. Can be one of: ["aiayn_attention", "multiquery_attention"]
     """
@@ -99,8 +102,8 @@ class VisionTransformerModelConfig(ModelConfig):
     "Whether to include bias in the attention layer for feed-forward network (FFN)."
 
     extra_attention_params: dict = field(default_factory=dict)
-    """When enabling MQA/GQA, you must specify the the number of key-value 
-    groups. Within the extra attention params dict, you can set 
+    """When enabling MQA/GQA, you must specify the the number of key-value
+    groups. Within the extra attention params dict, you can set
     `num_kv_groups - 1` to enable MQA or `num_kv_groups - <groups>` for
     GQA. The number of groups should be divisible by `num_heads`.
     """
@@ -122,7 +125,7 @@ class VisionTransformerModelConfig(ModelConfig):
     "Whether to use mixed precision training or not."
 
     nonlinearity: str = "gelu"
-    """The non-linear activation function used in the feed forward network 
+    """The non-linear activation function used in the feed forward network
     in each transformer block. Some may have to use autogen_policy: `medium`."""
 
     num_channels: int = 2
@@ -138,7 +141,7 @@ class VisionTransformerModelConfig(ModelConfig):
     "Number of hidden layers in the Transformer encoder."
 
     norm_first: bool = True
-    """Enables normalization before the Attention & FFN blocks (i.e Pre-LN as 
+    """Enables normalization before the Attention & FFN blocks (i.e Pre-LN as
     described in https://arxiv.org/pdf/2002.04745.pdf. When disabled,
     normalization is applied *after* the residual (Post-LN)"""
 
@@ -157,13 +160,74 @@ class VisionTransformerModelConfig(ModelConfig):
     "Attention layer initializer. Defaults to `xavier_uniform`."
 
     initializer_range: float = 0.02
-    """The standard deviation of the truncated_normal_initializer as the 
+    """The standard deviation of the truncated_normal_initializer as the
     default initializer"""
 
     projection_initializer: Optional[dict] = None
-    """Initializer for embedding linear layer. Either a string indicating the name of the 
-    initializer or a dict that includes the name + other params if relevant. If left 
+    """Initializer for embedding linear layer. Either a string indicating the name of the
+    initializer or a dict that includes the name + other params if relevant. If left
     unspecified will apply truncated normal initialization."""
+    ffn_initializer: Optional[dict] = None
+    pooler_initializer: Optional[dict] = None
+    use_final_layer_norm: Optional[bool] = True
+    use_bias_in_output: Optional[bool] = True
+    compute_eval_metrics: bool = True
+    fp16_type: Literal["bfloat16", "float16", "cbfloat16"] = "bfloat16"
+    "Type of 16bit precision used"
+
+
+@registry.register_submodel_config("vit")
+@dataclass
+class ViTModelConfig(BaseConfig):
+    name: Optional[str] = None
+    attention_dropout_rate: float = 0.0
+    attention_initializer: Optional[str] = None
+    attention_module: str = "aiayn_attention"
+    attention_softmax_fp32: bool = True
+    attention_type: str = "scaled_dot_product"
+    dropout_rate: float = 0.0
+    embedding_dropout_rate: float = 0.0
+    extra_attention_params: Optional[dict] = field(default_factory=dict)
+    filter_size: Optional[int] = 3072
+    hidden_size: Optional[int] = 768
+    image_size: List[int] = field(default_factory=lambda: [224, 224])
+    initializer_range: float = 0.02
+    layer_norm_epsilon: float = 1.00e-05
+    nonlinearity: str = "gelu"
+    num_channels: Optional[int] = 3
+    num_heads: int = 12
+    num_hidden_layers: int = 12
+    norm_first: bool = True
+    patch_size: Optional[List[int]] = field(default_factory=lambda: [16, 16])
+    pooler_nonlinearity: Optional[str] = None
+    position_embedding_initializer: Optional[dict] = None
+    position_embedding_type: str = "learned"
+    projection_initializer: Optional[dict] = None
+    prepend_cls_token: bool = True
+    use_conv_patchified_embedding: Optional[bool] = False
+    use_embed_proj_bias: bool = True
+    use_encoder_pooler_layer: bool = False
+    use_ffn_bias: Optional[bool] = True
+    use_ffn_bias_in_attention: Optional[bool] = True
+    use_post_embed_layer_norm: Optional[bool] = False
+    use_projection_bias_in_attention: Optional[bool] = True
+    use_final_layer_norm: bool = True
+    default_initializer: Optional[InitializerConfig] = None
+    ffn_initializer: Optional[dict] = None
+    pooler_initializer: Optional[dict] = None
+    image_layer_idx: Optional[int] = None
+
+    def __post_init__(self):
+        super().__post_init__()
+
+        if self.default_initializer is None:
+            self.default_initializer = InitializerConfig(
+                name="truncated_normal",
+                std=self.initializer_range,
+                mean=0.0,
+                a=self.initializer_range * -2.0,
+                b=self.initializer_range * 2.0,
+            )
 
 
 @registry.register_config("vision_transformer")
@@ -186,3 +250,20 @@ class VisionTransformerConfig(BaseConfig):
 
     sparsity: Optional[SparsityConfig] = None
     "Params class for sparsity related configurations."
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.set_config_defaults(
+            self.model,
+            self.train_input.params if self.train_input else None,
+            [self.eval_input.params if self.eval_input else None],
+        )
+
+    @staticmethod
+    def set_config_defaults(mparams, tparams, eparams_list):
+        if hasattr(mparams, "mixed_precision"):
+            for section in [tparams, *eparams_list]:
+                if section is None:
+                    continue
+
+                section["mixed_precision"] = mparams.mixed_precision

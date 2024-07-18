@@ -93,6 +93,11 @@ class LinformerAttention(MultiheadAttention):
         output_layer_initializer=None,
         attention_type="scaled_dot_product",
         scale_qk_dot_by_d=False,
+        attention_logits_alpha=1.0,
+        q_projection_scale=1.0,
+        k_projection_scale=1.0,
+        v_projection_scale=1.0,
+        output_projection_scale=1.0,
         softmax_dtype_fp32=True,
         attention_kernel=None,
         device=None,
@@ -102,6 +107,7 @@ class LinformerAttention(MultiheadAttention):
         projection_kernel_initializer="xavier_uniform",
         param_share_style="no-share",
     ):
+
         super(LinformerAttention, self).__init__(
             embed_dim,
             num_heads,
@@ -119,6 +125,11 @@ class LinformerAttention(MultiheadAttention):
             output_layer_initializer=output_layer_initializer,
             attention_type=attention_type,
             scale_qk_dot_by_d=scale_qk_dot_by_d,
+            attention_logits_alpha=attention_logits_alpha,
+            q_projection_scale=q_projection_scale,
+            k_projection_scale=k_projection_scale,
+            v_projection_scale=v_projection_scale,
+            output_projection_scale=output_projection_scale,
             softmax_dtype_fp32=softmax_dtype_fp32,
             attention_kernel=attention_kernel,
             device=device,

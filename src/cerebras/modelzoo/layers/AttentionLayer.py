@@ -24,7 +24,7 @@ from cerebras.pytorch.utils.kernel import kernel_annotater
 
 class MultiheadAttention(nn.Module):
     """Multi-head attention layer. Adapted from:
-    https://pytorch.org/docs/stable/_modules/torch/nn/modules/activation.html#MultiheadAttention
+    https://pytorch.org/docs/stable/_modules/torch/nn/modules/activation.html#MultiheadAttention.
 
     Args:
         embed_dim (int): Number of input units in each projection output
@@ -53,6 +53,7 @@ class MultiheadAttention(nn.Module):
             accepts ``dot_product`` and ``scaled_dot_product``. Defaults to
             ``scaled_dot_product``.
         scale_qk_dot_by_d (bool): If ``True`` scales QK^T dot product by d(=hidden/d_head) instead of sqrt(d).
+        attention_logits_alpha (float): Scales the QK^T dot product. Used to stabilize logits in muP training.
         softmax_dtype_fp32 (bool): Use an FP32 softmax implementation.
         attention_kernel (str | None): Kernel to use. Uses ``default`` if None.
             See accepted values below.
@@ -80,6 +81,11 @@ class MultiheadAttention(nn.Module):
         bias_initializer="zeros",
         attention_type="scaled_dot_product",
         scale_qk_dot_by_d=False,
+        attention_logits_alpha=1.0,
+        q_projection_scale=1.0,
+        k_projection_scale=1.0,
+        v_projection_scale=1.0,
+        output_projection_scale=1.0,
         softmax_dtype_fp32=True,
         attention_kernel=None,
         scale_qk_dot_by_layer_idx=False,
@@ -114,7 +120,6 @@ class MultiheadAttention(nn.Module):
 
         self.num_heads = num_heads
         self.attention_type = attention_type
-        self.neg_inf = None
 
         self.use_projection_bias = use_projection_bias
         self.use_ffn_bias = use_ffn_bias
@@ -169,7 +174,11 @@ class MultiheadAttention(nn.Module):
         self.using_kernel = kernel_annotater(attention_kernel)
 
         self.scale_qk_dot_by_d = scale_qk_dot_by_d
-
+        self.attention_logits_alpha = attention_logits_alpha
+        self.q_projection_scale = q_projection_scale
+        self.k_projection_scale = k_projection_scale
+        self.v_projection_scale = v_projection_scale
+        self.output_projection_scale = output_projection_scale
         self.scale_qk_dot_by_layer_idx = scale_qk_dot_by_layer_idx
 
         self.__reset_parameters()
@@ -215,6 +224,7 @@ class MultiheadAttention(nn.Module):
         position_bias=None,
         rotary_position_embedding_helper=None,
         layer_idx=None,
+        **extra_args,
     ):
         """Applies the attention mechanism to queries ``q``, keys ``k`` and values ``v``.
 
@@ -271,6 +281,10 @@ class MultiheadAttention(nn.Module):
             real_seq_length > 1
         ), "Sequence length 1 is currently unsupported."
 
+        constant_pos_mask = None
+        if extra_args and ("constant_pos_mask" in extra_args):
+            constant_pos_mask = extra_args["constant_pos_mask"]
+
         # construct query, key and value vector with a linear projection and split into heads
         q = self.construct_query_vector(
             q, attn_mask=attn_mask, key_padding_mask=key_padding_mask
@@ -296,10 +310,18 @@ class MultiheadAttention(nn.Module):
 
         # rotary embedding helper
         k = self.apply_rotary_position_embedding(
-            k, rotary_position_embedding_helper, real_seq_length, offset_length
+            k,
+            rotary_position_embedding_helper,
+            real_seq_length,
+            offset_length,
+            constant_pos_mask=constant_pos_mask,
         )
         q = self.apply_rotary_position_embedding(
-            q, rotary_position_embedding_helper, real_seq_length, offset_length
+            q,
+            rotary_position_embedding_helper,
+            real_seq_length,
+            offset_length,
+            constant_pos_mask=constant_pos_mask,
         )
         # q, k now have shape [batch_size, num_heads, seq_length, head_dim]
 
@@ -382,21 +404,21 @@ class MultiheadAttention(nn.Module):
 
     def construct_query_vector(self, q, attn_mask=None, key_padding_mask=None):
         # linear projection
-        q = self.proj_q_dense_layer(q)
+        q = self.proj_q_dense_layer(q) * self.q_projection_scale
         # split into heads
         q = self._split_heads(q, rotary=True)
         return q
 
     def construct_key_vector(self, k, attn_mask=None, key_padding_mask=None):
         # linear projection
-        k = self.proj_k_dense_layer(k)
+        k = self.proj_k_dense_layer(k) * self.k_projection_scale
         # split into heads
         k = self._split_heads(k, rotary=True)
         return k
 
     def construct_value_vector(self, v, attn_mask=None, key_padding_mask=None):
         # linear projection
-        v = self.proj_v_dense_layer(v)
+        v = self.proj_v_dense_layer(v) * self.v_projection_scale
         # split into heads
         v = self._split_heads(v, rotary=False)
         return v
@@ -414,10 +436,14 @@ class MultiheadAttention(nn.Module):
         rotary_position_embedding_helper,
         real_seq_length,
         offset_length,
+        constant_pos_mask=None,
     ):
         if rotary_position_embedding_helper:
             vector = rotary_position_embedding_helper.rotate_tensor(
-                vector, real_seq_length, offset=offset_length
+                vector,
+                real_seq_length,
+                offset=offset_length,
+                constant_pos_mask=constant_pos_mask,
             )
         vector = vector.transpose(1, 2)
         return vector
@@ -468,7 +494,7 @@ class MultiheadAttention(nn.Module):
             )
 
         # calculate dot product attention
-        logits = self.using_kernel(torch.matmul)(
+        logits = self.attention_logits_alpha * self.using_kernel(torch.matmul)(
             q, k.transpose(-1, -2)
         )  # (B, H, Lq, E) * (B, H, E, Lk) -> (B, H, Lq, Lk)
 
@@ -624,19 +650,15 @@ class MultiheadAttention(nn.Module):
             if attn_mask_is_float and key_padding_is_float:
                 attention_bias = attn_mask_reshaped + key_padding_mask_reshaped
             elif attn_mask_is_float:
-                mask_neg_inf = (
-                    self.neg_inf
-                    if self.neg_inf is not None
-                    else torch.finfo(attn_mask_reshaped.dtype).min
+                mask_neg_inf = torch.tensor(
+                    float("-inf"), dtype=attn_mask_reshaped.dtype
                 )
                 attention_bias = attn_mask_reshaped.masked_fill(
                     key_padding_mask_reshaped, mask_neg_inf
                 )
             elif key_padding_is_float:
-                mask_neg_inf = (
-                    self.neg_inf
-                    if self.neg_inf is not None
-                    else torch.finfo(key_padding_mask_reshaped.dtype).min
+                mask_neg_inf = torch.tensor(
+                    float("-inf"), dtype=key_padding_mask_reshaped.dtype
                 )
                 attention_bias = key_padding_mask_reshaped.masked_fill(
                     attn_mask_reshaped, mask_neg_inf
@@ -658,10 +680,8 @@ class MultiheadAttention(nn.Module):
                 final_attention_bias = torch.zeros_like(
                     attention_bias, dtype=logits.dtype
                 )
-                mask_neg_inf = (
-                    self.neg_inf
-                    if self.neg_inf is not None
-                    else torch.finfo(final_attention_bias.dtype).min
+                mask_neg_inf = torch.tensor(
+                    float("-inf"), dtype=final_attention_bias.dtype
                 )
                 final_attention_bias.masked_fill_(attention_bias, mask_neg_inf)
                 attention_bias = final_attention_bias
@@ -692,7 +712,10 @@ class MultiheadAttention(nn.Module):
         attention_output = self._combine_heads(attention_output)
 
         # Run the combined outputs through another linear projection layer.
-        attention_output = self.proj_output_dense_layer(attention_output)
+        attention_output = (
+            self.output_projection_scale
+            * self.proj_output_dense_layer(attention_output)
+        )
 
         return attention_output
 

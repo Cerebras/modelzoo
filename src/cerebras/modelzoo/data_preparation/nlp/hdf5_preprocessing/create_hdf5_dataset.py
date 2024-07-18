@@ -35,16 +35,6 @@ from cerebras.modelzoo.data_preparation.nlp.hdf5_preprocessing.utils import (
     verify_saved_hdf5_files_mp,
 )
 
-from cerebras.modelzoo.data_preparation.nlp.hdf5_preprocessing.hdf5_dataset_preprocessors import (  # noqa
-    LMDataPreprocessor,
-    SummarizationPreprocessor,
-    FIMDataPreprocessor,
-    VSLLMDataPreprocessor,
-    VSLSummarizationPreprocessor,
-    LlavaPhaseOnePreprocessor,
-    LlavaPhaseTwoPreprocessor,
-)
-
 # Custom preprocessors
 from cerebras.modelzoo.data_preparation.nlp.hdf5_preprocessing.hdf5_curation_corpus_preprocessor import (  # noqa
     CurationCorpusPreprocessor,
@@ -53,6 +43,15 @@ from cerebras.modelzoo.data_preparation.nlp.hdf5_preprocessing.hdf5_nlg_preproce
     NLGPreprocessor,
 )
 
+from cerebras.modelzoo.data_preparation.nlp.hdf5_preprocessing.hdf5_dataset_preprocessors import (  # noqa
+    FIMDataPreprocessor,
+    LlavaPhaseOnePreprocessor,
+    LlavaPhaseTwoPreprocessor,
+    LMDataPreprocessor,
+    SummarizationPreprocessor,
+    VSLLMDataPreprocessor,
+    VSLSummarizationPreprocessor,
+)
 
 logging.basicConfig()
 logger = logging.getLogger(__file__)
@@ -62,7 +61,11 @@ logger.setLevel(logging.INFO)
 def main():
     """Main function for execution."""
     params = get_params(desc="Create HDF5 dataset for language models")
-
+    logger.warning(
+        f"'create_hdf5_dataset.py script has been deprecated and will be removed in the next release version.\
+                      Please use script from `data_preprocessing` folder under `cerebras.modelzoo.data_preparation.data_preprocessing`.\
+                      Reach out to `developer@cerebras.net ` for any concerns or support."
+    )
     output_dir = params["setup"].get("output_dir", "./data_dir/")
     if not params["processing"].get("resume_from_checkpoint", False):
         check_and_create_output_dirs(output_dir, filetype="h5")

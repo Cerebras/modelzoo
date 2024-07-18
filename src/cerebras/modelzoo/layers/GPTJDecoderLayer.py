@@ -63,6 +63,7 @@ class GPTJDecoderLayer(TransformerDecoderLayer):
         memory_mask: Optional[Tensor] = None,
         tgt_key_padding_mask: Optional[Tensor] = None,
         memory_key_padding_mask: Optional[Tensor] = None,
+        attention_mask: Optional[Tensor] = None,
         rotary_position_embedding_helper: Optional[
             RotaryPositionEmbeddingHelper
         ] = None,
@@ -71,6 +72,7 @@ class GPTJDecoderLayer(TransformerDecoderLayer):
         self_attn_position_bias: Optional[Tensor] = None,
         cross_attn_position_bias: Optional[Tensor] = None,
         layer_idx: Optional[int] = None,
+        expert_hash_idx: Optional[Tensor] = None,
     ) -> Tensor:
         """GPTJ layer with rotary position embeddings and parallel decoder architecture
 
@@ -92,6 +94,9 @@ class GPTJDecoderLayer(TransformerDecoderLayer):
                 autoregressive loop. (optional).
             self_attn_position_bias: the tensor containing position bias to apply in self-attention,
                 can be obtained from relative or alibi position embeddings.
+            expert_hash_idx: tensor containing mixture-of-experts expert
+                selection indices for each token in the batch. Only used with
+                MoE with hash-based routing enabled (optional).
 
         Shape:
             Output tensor with shape
@@ -116,6 +121,16 @@ class GPTJDecoderLayer(TransformerDecoderLayer):
         if self.norm3 is not None:
             hidden_normed = self.norm3(x)
 
-        ffn_output = self.ffn(hidden_normed)
+        if self.moe_enabled:
+            ffn_output, routing_weights, expert_mask = self.ffn(
+                hidden_normed,
+                expert_hash_idx=expert_hash_idx,
+            )
+        else:
+            ffn_output = self.ffn(hidden_normed)
+
         outputs = residual + ffn_output + attn_output[0]
-        return outputs
+        if self.moe_enabled:
+            return outputs, routing_weights, expert_mask
+        else:
+            return outputs

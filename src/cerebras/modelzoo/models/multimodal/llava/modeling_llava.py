@@ -87,15 +87,15 @@ class Llava(nn.Module):
         tgt_key_padding_mask=None,  # 1 where pad and not attend
         attention_span=None,
         position_ids=None,
+        img_start_idx=None,
     ):
-        logits = None
-
         input_embeddings = self.compute_input_embeddings(
             image_data,
             image_embeddings,
             text_input_ids,
             text_embeddings,
             position_ids,
+            img_start_idx,
         )
 
         logits = self.text_model(
@@ -115,6 +115,7 @@ class Llava(nn.Module):
         text_input_ids=None,
         text_embeddings=None,
         position_ids=None,
+        img_start_idx=None,
     ):
         if image_data is not None and image_embeddings is not None:
             raise ValueError(
@@ -176,12 +177,33 @@ class Llava(nn.Module):
         # position_ids and key_padding_mask will ensure
         # appropriate positions to attend and
         # positional encoding
-        image_text_embeddings = torch.cat(
-            (
-                text_embeddings[:, 0 : self.image_start_idx, :],
-                image_features,
-                text_embeddings[:, self.image_start_idx + num_patches :, :],
-            ),
-            dim=1,
-        )
-        return image_text_embeddings
+        if img_start_idx is None:
+            # The `img_start_idx` is not provided, the <image> is at the beginning of the sentence.
+            image_text_embeddings = torch.cat(
+                (
+                    text_embeddings[:, 0 : self.image_start_idx, :],
+                    image_features,
+                    text_embeddings[:, self.image_start_idx + num_patches :, :],
+                ),
+                dim=1,
+            )
+            return image_text_embeddings
+        else:
+            # The `img_start_idx` is not None, the location of <image> is arbitrary.
+            index = torch.arange(
+                0,
+                num_patches,
+                device=image_features.device,
+                dtype=torch.float32,
+            )
+            index = index[None, :].broadcast_to(
+                text_embeddings.shape[0], num_patches
+            )
+            index = (index + img_start_idx).to(torch.int64)
+            index = index[:, :, None].broadcast_to(
+                text_embeddings.shape[0], num_patches, text_embeddings.shape[-1]
+            )
+            text_embeddings.scatter_(
+                1, index, image_features.to(text_embeddings.dtype)
+            )
+            return text_embeddings

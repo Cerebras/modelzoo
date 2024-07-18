@@ -13,8 +13,8 @@
 # limitations under the License.
 
 from cerebras.modelzoo.common.registry import registry
-from cerebras.modelzoo.data.common.h5_map_dataset import (
-    MultiModalHDF5Dataset,
+from cerebras.modelzoo.data.common.h5_map_dataset import MultiModalHDF5Dataset
+from cerebras.modelzoo.data.common.restartable_dataloader import (
     RestartableDataLoader,
 )
 
@@ -39,8 +39,6 @@ class LlavaHDF5MapDataProcessor:
             "text_input_ids",  # input_ids <-> text_input_ids
             "loss_mask",  # input_mask <-> loss_mask
             "labels",
-            "attention_span",
-            "position_ids",
             "key_padding_mask",  # attention_mask <-> key_padding_mask
         ]
         if "dataset_map_fn" in params:

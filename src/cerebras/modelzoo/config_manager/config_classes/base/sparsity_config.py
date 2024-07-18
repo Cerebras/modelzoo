@@ -16,11 +16,14 @@
 Config classes of Sparsity Configs
 
 """
-# pylint: disable=wildcard-import
-import copy
-from typing import Union
 
-from cerebras.modelzoo.config_manager.config_classes.base.base_config import *
+from dataclasses import dataclass
+from typing import List, Literal, Union
+
+from cerebras.modelzoo.config_manager.config_classes.base.base_config import (
+    BaseConfig,
+    required,
+)
 from cerebras.pytorch.sparse import map_sparsity_algorithm
 
 
@@ -46,7 +49,6 @@ class SparsityAlgorithmConfig(BaseConfig):
         super().__init__()
 
     def __post_init__(self):
-        param_dict = copy.deepcopy(asdict(self))
         # This will error out if we are not able to map the params to
         # the mentioned sparsity class
         map_sparsity_algorithm(algorithm=self.algorithm)

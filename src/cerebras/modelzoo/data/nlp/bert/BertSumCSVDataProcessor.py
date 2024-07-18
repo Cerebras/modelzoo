@@ -152,9 +152,9 @@ class BertSumCSVDataProcessor(torch.utils.data.IterableDataset):
             num_workers=self.num_workers,
             drop_last=self.drop_last,
             prefetch_factor=self.prefetch_factor if self.num_workers else None,
-            persistent_workers=self.persistent_workers
-            if self.num_workers
-            else False,
+            persistent_workers=(
+                self.persistent_workers if self.num_workers else False
+            ),
         )
         return dataloader
 

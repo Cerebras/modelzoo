@@ -22,6 +22,7 @@ from cerebras.modelzoo.data.vision.transforms import create_transform
 
 
 def get_preprocess_transform(params):
+
     transform_specs = params["transforms"]
 
     transform_list = []

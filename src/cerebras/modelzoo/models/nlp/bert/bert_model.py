@@ -12,14 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import torch
 import torch.nn as nn
 
+from cerebras.modelzoo.common.utils.model.mup_utils import (
+    scale_initializers_by_dimension,
+)
 from cerebras.modelzoo.common.utils.model.transformer_utils import (
+    create_vsl_mask,
     make_key_padding_mask_broadcastable,
 )
 from cerebras.modelzoo.layers import (
     EmbeddingLayer,
     FeedForwardNetwork,
+    FeedForwardNetworkConfig,
     TransformerEncoder,
     TransformerEncoderLayer,
 )
@@ -43,12 +49,14 @@ class BertPooler(nn.Module):
             self.pooler_norm = nn.LayerNorm(hidden_size, eps=layer_norm_epsilon)
 
         self.pooler = FeedForwardNetwork(
-            input_unit=hidden_size,
-            layers_units=[hidden_size],
-            layers_activation=[activation],
-            layers_dropout_rates=[dropout],
-            use_bias=use_bias,
-            kernel_initializer=initializer,
+            FeedForwardNetworkConfig(
+                input_unit=hidden_size,
+                layers_units=[hidden_size],
+                layers_activation=[activation],
+                layers_dropout_rates=[dropout],
+                use_bias=use_bias,
+                kernel_initializer=initializer,
+            )
         )
 
     def reset_parameters(self):
@@ -128,6 +136,8 @@ class BertModel(nn.Module):
             Initializer for segment embeddings
         add_pooling_layer (:obj:`bool`, `optional`, defaults to True):
             Whether to add the pooling layer for sequence classification.
+        freeze_ffn_bias_in_glu (:obj:`bool`, `optional`, defaults to False):
+            Whether to make ffn bias value '0' and disable gradients on them
     """
 
     # TODO(SW-76063): We may need a general configuration class to avoid writing those params explicitly
@@ -177,12 +187,23 @@ class BertModel(nn.Module):
         position_embeddings_initializer=None,
         segment_embeddings_initializer=None,
         add_pooling_layer=True,
+        freeze_ffn_bias_in_glu=False,
+        dtype=None,
+        # muP (maximal update parameterization)  parameters
+        lr_adjustment_groups=None,
+        embeddings_scale=1.0,
+        scale_qk_dot_by_d=False,
+        attention_logits_alpha=1.0,
+        mup_base_hidden_size=None,
+        mup_base_filter_size=None,
         **extra_args,
     ):
         super().__init__()
 
+        self.num_heads = num_heads
         self.initializer_range = initializer_range
         self.add_pooling_layer = add_pooling_layer
+        self.freeze_ffn_bias_in_glu = freeze_ffn_bias_in_glu
 
         if default_initializer is None:
             default_initializer = {
@@ -201,6 +222,44 @@ class BertModel(nn.Module):
 
         if segment_embeddings_initializer is None:
             segment_embeddings_initializer = default_initializer
+
+        attention_initializer = default_initializer.copy()
+        ffn_initializer = default_initializer.copy()
+        output_layer_initializer = default_initializer.copy()
+        ffn_output_layer_initializer = default_initializer.copy()
+
+        # Handle muP scaling
+        self.embeddings_scale = embeddings_scale
+        if mup_base_hidden_size:
+            hidden_size_width_mult = hidden_size / mup_base_hidden_size
+            scale_initializers_by_dimension(
+                [attention_initializer, ffn_initializer],
+                width_scale=hidden_size_width_mult**-0.5,
+            )
+            scale_initializers_by_dimension(
+                output_layer_initializer,
+                width_scale=hidden_size_width_mult**-0.5,
+                depth_scale=(2 * num_hidden_layers) ** -0.5,
+            )
+            for lr_adjustment_group in [
+                "encoder_attention",
+                "encoder_input_ffn",
+                "pooler",
+            ]:
+                lr_adjustment_groups[lr_adjustment_group].set_scale(
+                    1 / hidden_size_width_mult
+                )
+
+        if mup_base_filter_size:
+            filter_size_width_mult = filter_size / mup_base_filter_size
+            scale_initializers_by_dimension(
+                ffn_output_layer_initializer,
+                width_scale=filter_size_width_mult**-0.5,
+                depth_scale=(2 * num_hidden_layers) ** -0.5,
+            )
+            lr_adjustment_groups["encoder_output_ffn"].set_scale(
+                1 / filter_size_width_mult
+            )
 
         self.embedding_layer = EmbeddingLayer(
             vocab_size=vocab_size,
@@ -227,6 +286,7 @@ class BertModel(nn.Module):
             pad_rope=pad_rope,
             alibi_trainable_slopes=alibi_trainable_slopes,
             pos_scaling_factor=pos_scaling_factor,
+            dtype=dtype,
         )
 
         self.dropout_embd = nn.Dropout(embedding_dropout_rate)
@@ -239,6 +299,8 @@ class BertModel(nn.Module):
             dropout=dropout_rate,
             activation=nonlinearity,
             layer_norm_eps=layer_norm_epsilon,
+            scale_qk_dot_by_d=scale_qk_dot_by_d,
+            attention_logits_alpha=attention_logits_alpha,
             attention_module=attention_module,
             extra_attention_params=extra_attention_params,
             attention_dropout_rate=attention_dropout_rate,
@@ -247,8 +309,10 @@ class BertModel(nn.Module):
             use_projection_bias_in_attention=use_projection_bias_in_attention,
             use_ffn_bias_in_attention=use_ffn_bias_in_attention,
             use_ffn_bias=use_ffn_bias,
-            attention_initializer=default_initializer,
-            ffn_initializer=default_initializer,
+            attention_initializer=attention_initializer,
+            ffn_initializer=ffn_initializer,
+            attention_output_layer_initializer=output_layer_initializer,
+            ffn_output_layer_initializer=ffn_output_layer_initializer,
             norm_first=norm_first,
         )
 
@@ -276,7 +340,7 @@ class BertModel(nn.Module):
                 use_bias=use_ffn_bias,
                 activation=pooler_nonlinearity,
                 dropout=None,
-                initializer=default_initializer,
+                initializer=attention_initializer,
             )
             if self.add_pooling_layer
             else None
@@ -297,6 +361,20 @@ class BertModel(nn.Module):
         if self.embed_ln_f is not None:
             self.embed_ln_f.bias.data.zero_()
             self.embed_ln_f.weight.data.fill_(1.0)
+        # Freeze glu linear layer biases if needed
+        if self.freeze_ffn_bias_in_glu:
+            freeze_layers = []
+            for n, p in self.transformer_encoder.named_parameters():
+                if "linear_layer_for_glu.bias" in n:
+                    freeze_layers.append(n)
+                    # We have two linear layers for glu
+                    freeze_layers.append(
+                        n.replace("linear_layer_for_glu", "linear_layer")
+                    )
+            for n, p in self.transformer_encoder.named_parameters():
+                if n in freeze_layers:
+                    p.data.zero_()
+                    p.requires_grad = False
 
     def compute_input_embeddings(
         self,
@@ -317,6 +395,7 @@ class BertModel(nn.Module):
         attention_mask=None,
         position_ids=None,
         segment_ids=None,
+        attention_span=None,
     ):
         """
         Args:
@@ -330,6 +409,8 @@ class BertModel(nn.Module):
                 Can be 2D of shape ``[batch_size, seq_length]``,
                 or 3D of shape ``[batch, query_length, seq_length]``,
                 or 4D of shape ``[batch, num_heads, query_length, seq_length]``.
+            attention_span (Tensor):
+                The attention span of input tokens for creating VSL mask. Can be of shape `[batch_size, seq_length]`.
         """
         src_key_padding_mask = None
 
@@ -339,9 +420,14 @@ class BertModel(nn.Module):
             position_ids=position_ids,
             segment_ids=segment_ids,
         )
+        hidden_states = hidden_states * torch.tensor(
+            float(self.embeddings_scale), dtype=hidden_states.dtype
+        )
+
         if self.embed_ln_f is not None:
             hidden_states = self.embed_ln_f(hidden_states)
         hidden_states = self.dropout_embd(hidden_states)
+
         if attention_mask is not None:
             attention_mask = make_key_padding_mask_broadcastable(
                 attention_mask, dtype=hidden_states.dtype
@@ -356,6 +442,21 @@ class BertModel(nn.Module):
             length, length
         )
 
+        # Computes VSL mask and applies it attention mask.
+        if attention_span is not None:
+            vsl_attn_mask = create_vsl_mask(
+                attention_span=attention_span,
+                position_ids=position_ids,
+                num_heads=self.num_heads,
+                is_causal=False,
+                device=input_ids.device,
+                dtype=hidden_states.dtype,
+                use_neg_inf=True,
+            )
+            # VSL attention mask contains the padding masking, and we no longer need key padding mask.
+            attention_mask = vsl_attn_mask
+            src_key_padding_mask = None
+
         hidden_states = self.transformer_encoder(
             hidden_states,
             mask=attention_mask,
@@ -363,6 +464,7 @@ class BertModel(nn.Module):
             rotary_position_embedding_helper=self.embedding_layer.get_rope_helper(),
             self_attn_position_bias=self_attn_position_bias,
         )
+
         pooled_output = None
         if self.add_pooling_layer:
             pooled_output = self.pooler(hidden_states)

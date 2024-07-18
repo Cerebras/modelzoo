@@ -23,10 +23,14 @@ from torch import Tensor
 from torch.nn import Dropout, LayerNorm
 
 from cerebras.modelzoo.layers.AttentionHelper import get_attention_module
-from cerebras.modelzoo.layers.FeedForwardNetwork import FeedForwardNetwork
+from cerebras.modelzoo.layers.FeedForwardNetwork import (
+    FeedForwardNetwork,
+    FeedForwardNetworkConfig,
+)
 from cerebras.modelzoo.layers.RotaryPositionEmbeddingHelper import (
     RotaryPositionEmbeddingHelper,
 )
+from cerebras.modelzoo.layers.SparseMoEBlock import SparseMoEBlock
 
 SelfAttnKV = Tuple[Tensor, Tensor]
 CrossAttnKV = Tuple[Tensor, Tensor]
@@ -62,6 +66,7 @@ class TransformerDecoderLayer(nn.Module):
             in the Attention layer. Defaults to False.
         attention_type: Should be in ["scaled_dot_product", "dot_product"]
         scale_qk_dot_by_d (bool): If ``True`` scales QK^T dot product by d(=hidden/d_head) instead of sqrt(d).
+        attention_logit_alpha (float): Scales the QK^T dot product. Used to stabilize logits in muP training.
         attention_inner_dim (int):  Number of output units in attention query/key/value projection. Defaults to d_model
         add_cross_attention: If ``True``, adds cross-attention layer between encoder/decoder,
             otherwise, only self-attention is used in the decoder (GPT-style models should set to ``False``)
@@ -79,6 +84,7 @@ class TransformerDecoderLayer(nn.Module):
         use_ff_layer1_dropout: If ``True``, dropout will be enabled after the first feed forward layer. Default: True
         use_ff_layer2_dropout = If ``True``, dropout will be enabled after the second feed forward layer. Default: True
         ffn_dropout_rate: Controls dropout rate of FF's first layer. If None, defaults to dropout.
+        moe_params: A dict of MoE params including num_experts, top_k and load_balancing_loss_coef
 
     Examples:
         >>> decoder_layer = nn.TransformerDecoderLayer(d_model=512, nhead=8, batch_first=True)
@@ -100,12 +106,18 @@ class TransformerDecoderLayer(nn.Module):
         norm_first: bool = False,
         attention_module: Union[str, nn.Module] = "aiayn_attention",
         extra_attention_params={},
+        extra_ffn_params={},
         device=None,
         add_cross_attention: bool = True,
         attention_dropout_rate: Optional[float] = None,
         attention_softmax_fp32: Optional[bool] = True,
         attention_type="scaled_dot_product",
         scale_qk_dot_by_d=False,
+        attention_logits_alpha: Optional[float] = 1.0,
+        q_projection_scale=1.0,
+        k_projection_scale=1.0,
+        v_projection_scale=1.0,
+        output_projection_scale=1.0,
         scale_qk_dot_by_layer_idx=False,
         attention_inner_dim=None,
         cross_attention_kv_dim=None,
@@ -120,6 +132,7 @@ class TransformerDecoderLayer(nn.Module):
         use_ff_layer1_dropout: bool = True,
         use_ff_layer2_dropout: bool = True,
         ffn_dropout_rate: Optional[float] = None,
+        moe_params=dict(num_experts=1),
     ) -> None:
         super(TransformerDecoderLayer, self).__init__()
 
@@ -139,6 +152,11 @@ class TransformerDecoderLayer(nn.Module):
             batch_first=batch_first,
             attention_type=attention_type,
             scale_qk_dot_by_d=scale_qk_dot_by_d,
+            attention_logits_alpha=attention_logits_alpha,
+            q_projection_scale=q_projection_scale,
+            k_projection_scale=k_projection_scale,
+            v_projection_scale=v_projection_scale,
+            output_projection_scale=output_projection_scale,
             softmax_dtype_fp32=attention_softmax_fp32,
             use_projection_bias=use_projection_bias_in_attention,
             use_ffn_bias=use_ffn_bias_in_attention,
@@ -195,7 +213,7 @@ class TransformerDecoderLayer(nn.Module):
         if ffn_dropout_rate is None:
             ffn_dropout_rate = dropout
 
-        self.ffn = FeedForwardNetwork(
+        ffn_config = FeedForwardNetworkConfig(
             input_unit=d_model,
             layers_units=[dim_feedforward, d_model],
             layers_activation=[activation, None],
@@ -208,7 +226,16 @@ class TransformerDecoderLayer(nn.Module):
             output_layer_initializer=ffn_output_layer_initializer,
             bias_initializer="zeros",
             device=device,
+            **moe_params,
+            **extra_ffn_params,
         )
+
+        self.moe_enabled = moe_params["num_experts"] > 1
+        if self.moe_enabled:
+            self.ffn = SparseMoEBlock(ffn_config)
+        else:
+            self.ffn = FeedForwardNetwork(ffn_config)
+
         self.__reset_parameters()
 
     def reset_parameters(self):
@@ -217,12 +244,12 @@ class TransformerDecoderLayer(nn.Module):
     def __reset_parameters(self):
         self.self_attn.reset_parameters()
         self.ffn.reset_parameters()
-        if hasattr(self.norm1, 'bias'):
+        if hasattr(self.norm1, 'bias') and hasattr(self.norm1.bias, 'data'):
             self.norm1.bias.data.zero_()
         if hasattr(self.norm1, 'weight') and hasattr(self.norm1.weight, 'data'):
             self.norm1.weight.data.fill_(1.0)
         if self.norm3 is not None:
-            if hasattr(self.norm3, 'bias'):
+            if hasattr(self.norm3, 'bias') and hasattr(self.norm3.bias, 'data'):
                 self.norm3.bias.data.zero_()
             if hasattr(self.norm3, 'weight') and hasattr(
                 self.norm3.weight, 'data'
@@ -230,7 +257,7 @@ class TransformerDecoderLayer(nn.Module):
                 self.norm3.weight.data.fill_(1.0)
         if self.add_cross_attention:
             self.multihead_attn.reset_parameters()
-            if hasattr(self.norm2, 'bias'):
+            if hasattr(self.norm2, 'bias') and hasattr(self.norm2.bias, 'data'):
                 self.norm2.bias.data.zero_()
             if hasattr(self.norm2, 'weight') and hasattr(
                 self.norm2.weight, 'data'
@@ -253,6 +280,7 @@ class TransformerDecoderLayer(nn.Module):
         self_attn_position_bias: Optional[Tensor] = None,
         cross_attn_position_bias: Optional[Tensor] = None,
         layer_idx: Optional[int] = None,
+        expert_hash_idx: Optional[Tensor] = None,
         **extra_args,
     ) -> Union[Tensor, Tuple[Tensor, Union[SelfAttnKV, SelfAndCrossAttnKV]]]:
         r"""Pass the inputs (and mask) through the decoder layer.
@@ -275,6 +303,9 @@ class TransformerDecoderLayer(nn.Module):
                 autoregressive loop. (optional).
             self_attn_position_bias: the tensor containing position bias to apply in self-attention,
                 can be obtained from relative or alibi position embeddings.
+            expert_hash_idx: tensor containing mixture-of-experts expert
+                selection indices for each token in the batch. Only used with
+                MoE with hash-based routing enabled (optional).
 
         Shape:
             see the docs in Transformer class.
@@ -285,6 +316,18 @@ class TransformerDecoderLayer(nn.Module):
             past_kv is None and not cache_present_kv
         ), "Cannot provide past_kv because inference is not supported yet."
 
+        ffn_extra_args = {}
+        if (
+            extra_args
+            and ("token_modality_idx" in extra_args)
+            and (extra_args["token_modality_idx"] is not None)
+        ):
+            ffn_extra_args["token_modality_idx"] = extra_args[
+                "token_modality_idx"
+            ]
+            extra_args.pop('token_modality_idx')
+        if self.moe_enabled and expert_hash_idx is not None:
+            ffn_extra_args["expert_hash_idx"] = expert_hash_idx
         x = tgt
         if self.norm_first:
             attn1_out = self._sa_block(
@@ -315,11 +358,19 @@ class TransformerDecoderLayer(nn.Module):
                 )
 
                 x = x + attn2_out[0]
-            x = (
-                x + self.ffn(self.norm3(x))
+            ffn_output = (
+                self.ffn(self.norm3(x), **ffn_extra_args)
                 if self.norm3 is not None
-                else x + self.ffn(x)
+                else self.ffn(x, **ffn_extra_args)
             )
+            if self.moe_enabled:
+                (
+                    ffn_output,
+                    routing_weights,
+                    expert_mask,
+                ) = ffn_output
+
+            x = x + ffn_output
         else:
             attn1_out = self._sa_block(
                 x,
@@ -347,21 +398,40 @@ class TransformerDecoderLayer(nn.Module):
                     **extra_args,
                 )
                 x = self.norm2(x + attn2_out[0])
+            ffn_output = self.ffn(x, **ffn_extra_args)
+            if self.moe_enabled:
+                (
+                    ffn_output,
+                    routing_weights,
+                    expert_mask,
+                ) = ffn_output
+
             x = (
-                self.norm3(x + self.ffn(x))
+                self.norm3(x + ffn_output)
                 if self.norm3 is not None
-                else x + self.ffn(x)
+                else x + ffn_output
             )
 
-        if not cache_present_kv:
-            return x
-        else:
-            present_kv = (
-                attn1_out[1]
-                if not self.add_cross_attention
-                else attn1_out[1] + attn2_out[1]
-            )
+        if not self.moe_enabled:
+            if not cache_present_kv:
+                return x
+            else:
+                present_kv = (
+                    attn1_out[1]
+                    if not self.add_cross_attention
+                    else attn1_out[1] + attn2_out[1]
+                )
             return x, present_kv
+        else:
+            if not cache_present_kv:
+                return x, routing_weights, expert_mask
+            else:
+                present_kv = (
+                    attn1_out[1]
+                    if not self.add_cross_attention
+                    else attn1_out[1] + attn2_out[1]
+                )
+            return x, routing_weights, expert_mask, present_kv
 
     # self-attention block
     def _sa_block(

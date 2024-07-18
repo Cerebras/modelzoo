@@ -12,4 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .dataset import HDF5Dataset, MultiModalHDF5Dataset, RestartableDataLoader
+from .dataset import (
+    HDF5Dataset,
+    MLMHDF5Dataset,
+    MultiModalHDF5Dataset,
+    MultimodalSimpleHDF5Dataset,
+)

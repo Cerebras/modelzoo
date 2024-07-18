@@ -154,6 +154,7 @@ class InriaAerialDataProcessor:
         self.use_fast_dataloader = params.get("use_fast_dataloader", False)
 
     def create_dataset(self, is_training):
+
         split = "train" if is_training else "val"
         dataset = InriaAerialDataset(
             root=self.data_dir,
@@ -242,6 +243,7 @@ class InriaAerialDataProcessor:
         return normalize_tensor_transform(image, normalize_data_method)
 
     def preprocess_image(self, image):
+
         if self.image_shape[-1] == 1:
             image = image.convert(
                 "L"

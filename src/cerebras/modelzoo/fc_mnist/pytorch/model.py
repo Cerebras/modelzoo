@@ -92,7 +92,7 @@ class MNISTModel(nn.Module):
     def build_model(self, model_params):
         dtype = (
             cstorch.amp.get_half_dtype()
-            if model_params["to_float16"]
+            if model_params.get("to_float16", False)
             else torch.float32
         )
         model = MNIST(model_params)

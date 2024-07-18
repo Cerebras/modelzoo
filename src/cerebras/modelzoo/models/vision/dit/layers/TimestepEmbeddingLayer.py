@@ -17,7 +17,10 @@ import math
 import torch
 import torch.nn as nn
 
-from cerebras.modelzoo.layers.FeedForwardNetwork import FeedForwardNetwork
+from cerebras.modelzoo.layers.FeedForwardNetwork import (
+    FeedForwardNetwork,
+    FeedForwardNetworkConfig,
+)
 from cerebras.modelzoo.models.vision.dit.layers.GaussianDiffusion import index
 
 
@@ -42,12 +45,14 @@ class TimestepEmbeddingLayer(nn.Module):
         self.kernel_initializer = kernel_initializer
         self.bias_initializer = bias_initializer
         self.ffn = FeedForwardNetwork(
-            input_unit=frequency_embedding_size,
-            layers_units=[hidden_size, hidden_size],
-            layers_activation=[nonlinearity, None],
-            use_bias=True,
-            kernel_initializer=self.kernel_initializer,
-            bias_initializer=self.bias_initializer,
+            FeedForwardNetworkConfig(
+                input_unit=frequency_embedding_size,
+                layers_units=[hidden_size, hidden_size],
+                layers_activation=[nonlinearity, None],
+                use_bias=True,
+                kernel_initializer=self.kernel_initializer,
+                bias_initializer=self.bias_initializer,
+            )
         )
 
         # Initialize weights and bias

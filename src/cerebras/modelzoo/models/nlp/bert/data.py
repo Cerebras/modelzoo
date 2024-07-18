@@ -14,12 +14,14 @@
 
 import sys
 
+from cerebras.modelzoo.data.nlp.bert.BertCSVDataProcessor import (  # noqa
+    BertCSVDataProcessor,
+)
 from cerebras.modelzoo.data.nlp.bert.BertCSVDynamicMaskDataProcessor import (  # noqa
     BertCSVDynamicMaskDataProcessor,
 )
-
-from cerebras.modelzoo.data.nlp.bert.BertCSVDataProcessor import (  # noqa
-    BertCSVDataProcessor,
+from cerebras.modelzoo.data.nlp.bert.BertHDF5DataProcessor import (  # noqa
+    BertHDF5DataProcessor,
 )
 
 

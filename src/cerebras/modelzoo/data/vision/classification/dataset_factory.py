@@ -49,9 +49,9 @@ class Processor:
         self.pp_params = create_preprocessing_params_with_defaults(params)
 
         # params for data loader
-        self.batch_size = get_streaming_batch_size(
-            params.get("batch_size", 128)
-        )
+        self.global_batch_size = params.get("batch_size", 128)
+        self.batch_size = get_streaming_batch_size(self.global_batch_size)
+
         self.shuffle = params.get("shuffle", True)
         self.shuffle_seed = params.get("shuffle_seed", None)
         if self.shuffle_seed is not None:

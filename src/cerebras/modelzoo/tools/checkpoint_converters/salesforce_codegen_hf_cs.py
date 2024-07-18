@@ -386,9 +386,9 @@ class Converter_Codegen_Headless_HF_CS17(BaseCheckpointConverter_HF_CS):
                 old_state_dict.get("embedding_layer.word_embeddings.weight", 0)
                 is None
             ):
-                old_state_dict[
-                    "embedding_layer.word_embeddings.weight"
-                ] = old_state_dict["lm_head.weight"]
+                old_state_dict["embedding_layer.word_embeddings.weight"] = (
+                    old_state_dict["lm_head.weight"]
+                )
 
     def post_model_convert(
         self,
@@ -522,9 +522,9 @@ class Converter_Codegen_LMHeadModel_HF_CS17(BaseCheckpointConverter_HF_CS):
                 old_state_dict.get("embedding_layer.word_embeddings.weight", 0)
                 is None
             ):
-                old_state_dict[
-                    "embedding_layer.word_embeddings.weight"
-                ] = old_state_dict["lm_head.weight"]
+                old_state_dict["embedding_layer.word_embeddings.weight"] = (
+                    old_state_dict["lm_head.weight"]
+                )
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
@@ -808,7 +808,7 @@ class Converter_Codegen_Headless_HF_CS20(Converter_Codegen_Headless_HF_CS18):
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.0", "cs-2.1", "cs-2.2"),
+            FormatVersions("cs-2.0", "cs-2.1", "cs-2.2", "cs-2.3"),
         )
 
     @staticmethod
@@ -823,7 +823,7 @@ class Converter_Codegen_LMHeadModel_HF_CS20(
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.0", "cs-2.1", "cs-2.2"),
+            FormatVersions("cs-2.0", "cs-2.1", "cs-2.2", "cs-2.3"),
         )
 
     @staticmethod
@@ -848,7 +848,7 @@ class ConfigConverter_Codegen_Model_HF_CS20(
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.0", "cs-2.1", "cs-2.2"),
+            FormatVersions("cs-2.0", "cs-2.1", "cs-2.2", "cs-2.3"),
         )
 
 

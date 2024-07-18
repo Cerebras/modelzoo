@@ -12,12 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import math
-
 import torch
 import torch.nn as nn
 
 import cerebras.pytorch as cstorch
+from cerebras.modelzoo.common.utils.model.mup_utils import (
+    scale_initializers_by_dimension,
+)
 from cerebras.modelzoo.common.utils.model.transformer_utils import (
     create_broadcasted_autoregressive_mask,
     make_sparse_mask_broadcastable,
@@ -35,7 +36,7 @@ from cerebras.modelzoo.models.nlp.gpt2.sparse_mask import (
 
 class GPT2LMHeadModel(nn.Module):
     """
-    GPT-2 model with LM head
+    GPT-2 model with LM head.
     """
 
     def __init__(
@@ -45,6 +46,7 @@ class GPT2LMHeadModel(nn.Module):
         max_position_embeddings=1024,
         embd_pdrop=0.1,
         position_embedding_type="learned",
+        constant_pos_embedding=None,
         position_embedding_offset=0,
         hidden_size=768,
         share_embedding_weights=True,
@@ -64,6 +66,7 @@ class GPT2LMHeadModel(nn.Module):
         attention_module="aiayn_attention",
         attention_sliding_window_length=None,
         extra_attention_params={},
+        extra_ffn_params={},
         use_projection_bias_in_attention=True,
         use_ffn_bias_in_attention=True,
         attention_dropout_rate=0.1,
@@ -80,13 +83,25 @@ class GPT2LMHeadModel(nn.Module):
         embedding_initializer=None,
         initializer=None,
         output_layer_initializer=None,
+        ffn_initializer=None,
+        ffn_output_layer_initializer=None,
         # muP (maximal update parameterization)  parameters
-        output_logits_scale=None,
+        lr_adjustment_groups=None,
+        mup_base_hidden_size=None,
+        mup_base_filter_size=None,
         embeddings_scale=1.0,
         scale_qk_dot_by_d=False,
+        attention_logits_alpha=1.0,
+        scale_output_logits_by_d=True,
+        output_logits_alpha=None,
         alibi_trainable_slopes=False,
         pos_scaling_factor=1.0,
         scale_qk_dot_by_layer_idx=False,
+        # muP backwards compatibility
+        output_logits_scale=None,
+        moe=None,
+        moe_params=dict(num_experts=1),
+        dtype=None,
     ):
         super(GPT2LMHeadModel, self).__init__()
 
@@ -97,37 +112,95 @@ class GPT2LMHeadModel(nn.Module):
         self.embedding_layer_norm = embedding_layer_norm
         self.max_position_embeddings = max_position_embeddings
         self.position_embedding_type = position_embedding_type
-        self.embeddings_scale = embeddings_scale
-        self.num_heads = num_heads
+        self.constant_pos_embedding = constant_pos_embedding
 
+        self.num_heads = num_heads
+        self.moe_enabled = moe_params["num_experts"] > 1
+        self.moe_num_experts = moe_params["num_experts"]
+        self.moe_routing_algorithm = moe_params.get(
+            "routing_algorithm", "learned"
+        )
+
+        default_initializer = {
+            "name": "truncated_normal",
+            "mean": 0.0,
+            "std": self.initializer_range,
+        }
         if initializer is None:
-            attention_initializer = {
-                "name": "truncated_normal",
-                "mean": 0.0,
-                "std": self.initializer_range,
-            }
-            ffn_initializer = {
-                "name": "truncated_normal",
-                "mean": 0.0,
-                "std": self.initializer_range,
-            }
-            if output_layer_initializer is None:
-                output_layer_initializer = {
-                    "name": "truncated_normal",
-                    "mean": 0.0,
-                    "std": self.initializer_range
-                    / math.sqrt(2 * self.num_hidden_layers),
-                }
+            attention_initializer = default_initializer.copy()
+            if ffn_initializer is None:
+                ffn_initializer = default_initializer.copy()
+            if moe_params.get("gate_initializer") is None:
+                gate_initializer = default_initializer.copy()
+            else:
+                gate_initializer = moe_params.get("gate_initializer")
         else:
-            attention_initializer = initializer
-            ffn_initializer = initializer
+            attention_initializer = initializer.copy()
+            if ffn_initializer is None:
+                ffn_initializer = initializer.copy()
+            gate_initializer = initializer.copy()
+
+        moe_params["gate_initializer"] = gate_initializer
 
         if embedding_initializer is None:
-            embedding_initializer = {
-                "name": "truncated_normal",
-                "mean": 0.0,
-                "std": self.initializer_range,
-            }
+            embedding_initializer = default_initializer
+
+        # Handle muP scaling
+        self.embeddings_scale = embeddings_scale
+        self.output_logits_scale = output_logits_scale
+        if mup_base_hidden_size:
+            hidden_size_width_mult = hidden_size / mup_base_hidden_size
+            scale_initializers_by_dimension(
+                [attention_initializer, ffn_initializer],
+                width_scale=hidden_size_width_mult**-0.5,
+            )
+            if output_layer_initializer is None:
+                output_layer_initializer = default_initializer.copy()
+            scale_initializers_by_dimension(
+                output_layer_initializer,
+                width_scale=hidden_size_width_mult**-0.5,
+                depth_scale=(2 * num_hidden_layers) ** -0.5,
+            )
+            if not output_logits_alpha:
+                output_logits_alpha = 1.0
+            if scale_output_logits_by_d:
+                self.output_logits_scale = (
+                    output_logits_alpha / hidden_size_width_mult
+                )
+            else:
+                self.output_logits_scale = (
+                    output_logits_alpha / hidden_size_width_mult**0.5
+                )
+            for lr_adjustment_group in [
+                "decoder_attention",
+                "decoder_input_ffn",
+            ]:
+                lr_adjustment_groups[lr_adjustment_group].set_scale(
+                    1 / hidden_size_width_mult
+                )
+
+        if mup_base_filter_size:
+            filter_size_width_mult = filter_size / mup_base_filter_size
+            if ffn_output_layer_initializer is None:
+                ffn_output_layer_initializer = default_initializer.copy()
+            scale_initializers_by_dimension(
+                ffn_output_layer_initializer,
+                width_scale=filter_size_width_mult**-0.5,
+                depth_scale=(2 * num_hidden_layers) ** -0.5,
+            )
+            lr_adjustment_groups["decoder_output_ffn"].set_scale(
+                1 / filter_size_width_mult
+            )
+
+        if output_layer_initializer is None and initializer is None:
+            output_layer_initializer = default_initializer.copy()
+            scale_initializers_by_dimension(
+                output_layer_initializer,
+                depth_scale=(2 * num_hidden_layers) ** -0.5,
+            )
+
+        if ffn_output_layer_initializer is None:
+            ffn_output_layer_initializer = output_layer_initializer
 
         norm_class = get_norm(norm_type)
 
@@ -147,6 +220,7 @@ class GPT2LMHeadModel(nn.Module):
             embedding_size=hidden_size,
             embeddings_initializer=embedding_initializer,
             position_embedding_type=position_embedding_type,
+            constant_pos_embedding=constant_pos_embedding,
             position_embeddings_initializer=embedding_initializer,
             max_position_embeddings=max_position_embeddings,
             position_embedding_offset=position_embedding_offset,
@@ -157,6 +231,7 @@ class GPT2LMHeadModel(nn.Module):
             pad_rope=pad_rope,
             alibi_trainable_slopes=alibi_trainable_slopes,
             pos_scaling_factor=pos_scaling_factor,
+            dtype=dtype,
         )
 
         if self.embedding_layer_norm:
@@ -177,9 +252,11 @@ class GPT2LMHeadModel(nn.Module):
             norm_layer=norm_class,
             norm_first=True,
             extra_attention_params=extra_attention_params,
+            extra_ffn_params=extra_ffn_params,
             add_cross_attention=False,
             attention_type=attention_type,
             scale_qk_dot_by_d=scale_qk_dot_by_d,
+            attention_logits_alpha=attention_logits_alpha,
             scale_qk_dot_by_layer_idx=scale_qk_dot_by_layer_idx,
             attention_module=attention_module,
             attention_dropout_rate=attention_dropout_rate,
@@ -190,10 +267,10 @@ class GPT2LMHeadModel(nn.Module):
             attention_initializer=attention_initializer,
             attention_output_layer_initializer=output_layer_initializer,
             ffn_initializer=ffn_initializer,
-            ffn_output_layer_initializer=output_layer_initializer,
+            ffn_output_layer_initializer=ffn_output_layer_initializer,
             use_ff_layer1_dropout=False,
+            moe_params=moe_params,
         )
-        self.output_logits_scale = output_logits_scale
 
         # Final LayerNorm
         self.ln_f = norm_class(hidden_size, eps=layer_norm_epsilon)
@@ -229,9 +306,10 @@ class GPT2LMHeadModel(nn.Module):
 
     def __reset_parameters(self):
         # Init final norm layer
-        if hasattr(self.ln_f, "bias"):
+        if hasattr(self.ln_f, "bias") and hasattr(self.ln_f.bias, 'data'):
             self.ln_f.bias.data.zero_()
-        self.ln_f.weight.data.fill_(1.0)
+        if hasattr(self.ln_f, "weight") and hasattr(self.ln_f.weight, 'data'):
+            self.ln_f.weight.data.fill_(1.0)
 
         # Initialize LM head
         if not self.share_embedding_weights:
@@ -267,7 +345,7 @@ class GPT2LMHeadModel(nn.Module):
 
     def get_output_embeddings(self):
         """
-        Extract the final layer that produces logits
+        Extract the final layer that produces logits.
         """
         return self.lm_head
 
@@ -294,10 +372,13 @@ class GPT2LMHeadModel(nn.Module):
         tgt_key_padding_mask=None,
         position_ids=None,
         input_embeddings=None,
+        inference_loop_index=None,
+        token_modality_idx=None,
+        constant_pos_mask=None,
     ):
         if input_ids is not None and input_embeddings is not None:
             raise ValueError(
-                f"Only one of `input_ids` or `input_embeddings`"
+                f"Only one of `input_ids` or `input_embeddings` "
                 f"should be passed to model.forward"
             )
         elif input_ids is None and input_embeddings is None:
@@ -313,17 +394,39 @@ class GPT2LMHeadModel(nn.Module):
         else:
             hidden_states = input_embeddings
 
-        hidden_states = self.apply_decoder(
+        expert_hash_idx = None
+        if self.moe_enabled and self.moe_routing_algorithm == "hash":
+            expert_hash_idx = input_ids.to(torch.float) % self.moe_num_experts
+            expert_hash_idx = expert_hash_idx.to(input_ids.dtype)
+
+        decoder_outputs = self.apply_decoder(
             hidden_states,
             attention_mask=attention_mask,
             attention_span=attention_span,
             position_ids=position_ids,
             tgt_key_padding_mask=tgt_key_padding_mask,
+            expert_hash_idx=expert_hash_idx,
+            token_modality_idx=token_modality_idx,
+            constant_pos_mask=constant_pos_mask,
         )
+
+        if self.moe_enabled:
+            hidden_states, routing_weights, expert_masks = decoder_outputs
+        else:
+            hidden_states = decoder_outputs
+
+        if inference_loop_index is not None:
+            # When running an implicit autoregressive loop for generation, this
+            # tensor holds the "current token" index. We can pull out only the
+            # hidden states from that token to avoid unnecessary work in the
+            # lm_head matmul.
+            hidden_states = cstorch.experimental.get_loop_iteration_slice(
+                hidden_states, inference_loop_index
+            )
 
         if (
             cstorch.use_cs()
-            and cstorch.current_executor().cs_config.precision_opt_level == 1
+            and cstorch.backends.csx.precision.optimization_level == 1
         ):
             lm_logits = cstorch.pol(bwd_level=0)(self.lm_head)(hidden_states)
         else:
@@ -336,7 +439,10 @@ class GPT2LMHeadModel(nn.Module):
                 dtype=lm_logits.dtype,
             )
 
-        return lm_logits
+        if self.moe_enabled:
+            return lm_logits, routing_weights, expert_masks
+        else:
+            return lm_logits
 
     def apply_decoder(
         self,
@@ -346,6 +452,9 @@ class GPT2LMHeadModel(nn.Module):
         tgt_key_padding_mask=None,
         position_ids=None,
         extract_layer_idx=None,
+        expert_hash_idx=None,
+        token_modality_idx=None,
+        constant_pos_mask=None,
     ):
         # `extract_layer_idx` is used only multimodal use case
         # input_embeddings : shape (bsz, MSL, H)
@@ -372,25 +481,26 @@ class GPT2LMHeadModel(nn.Module):
 
         # Helpers on alibi/relative position embeddings bias
         length = input_embeddings.shape[1]
+        batch_size = input_embeddings.shape[0]
         self_attn_position_bias = self.embedding_layer.compute_position_bias(
-            length, length
+            length,
+            length,
+            constant_pos_mask=constant_pos_mask,
+            batch_size=batch_size,
         )
 
-        hidden_states = input_embeddings
-        hidden_states = self.transformer_decoder(
-            hidden_states,
+        return self.transformer_decoder(
+            input_embeddings,
             tgt_mask=causal_attention_mask,
             tgt_key_padding_mask=tgt_key_padding_mask,
             sparse_mask=sparse_attention_mask,
             rotary_position_embedding_helper=self.embedding_layer.get_rope_helper(),
             self_attn_position_bias=self_attn_position_bias,
             extract_layer_idx=extract_layer_idx,
+            expert_hash_idx=expert_hash_idx,
+            token_modality_idx=token_modality_idx,
+            constant_pos_mask=constant_pos_mask,
         )
-
-        if isinstance(hidden_states, tuple):
-            return hidden_states[0]
-        else:
-            return hidden_states
 
     def extract_features(
         self,
@@ -409,11 +519,11 @@ class GPT2LMHeadModel(nn.Module):
             For ex: extract_layer_idx=3 would run fwd pass from decoder_block_0 to decoder_block_3
             and return outputs from decoder_block_3.
             If `extract_layer_idx` = None and `norm` != None, then
-            the output returned would be decoder_block_{self.num_layers-1} -> norm -> output (return)
+            the output returned would be decoder_block_{self.num_layers-1} -> norm -> output (return).
 
         This function is added for multimodal use case.
         """
-        return self.apply_decoder(
+        hidden_states = self.apply_decoder(
             input_embeddings,
             extract_layer_idx=extract_layer_idx,
             attention_mask=attention_mask,
@@ -421,3 +531,8 @@ class GPT2LMHeadModel(nn.Module):
             tgt_key_padding_mask=tgt_key_padding_mask,
             position_ids=position_ids,
         )
+
+        if isinstance(hidden_states, tuple):
+            return hidden_states[0]
+        else:
+            return hidden_states

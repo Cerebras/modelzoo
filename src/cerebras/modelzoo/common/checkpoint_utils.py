@@ -13,6 +13,7 @@
 # limitations under the License.
 
 """Various utility functions related to checkpoint saving and loading."""
+
 import logging
 import os
 import re

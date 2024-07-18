@@ -12,21 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import copy
+from copy import deepcopy
 
 import torch
 
-import cerebras.pytorch as cstorch
 from cerebras.modelzoo.common.registry import registry
 from cerebras.modelzoo.losses.DPOLoss import DPOLoss
 from cerebras.modelzoo.models.nlp.gpt2.model import Gpt2Model
-from cerebras.modelzoo.models.nlp.gpt2.utils import (
-    set_defaults as gpt2_set_defaults,
-)
 from cerebras.modelzoo.models.nlp.gptj.model import GptjModel
-from cerebras.modelzoo.models.nlp.gptj.utils import (
-    set_defaults as gptj_set_defaults,
-)
+from cerebras.modelzoo.trainer import summarize_scalar
 from cerebras.pytorch.metrics import MeanMetric
 
 MODEL_MAPPING = {
@@ -39,6 +33,7 @@ MODEL_MAPPING = {
     "lambda": "gpt2",
     "llama": "gpt2",
     "mistral": "gpt2",
+    "mixtral": "gpt2",
     "mpt": "gpt2",
     "opt": "gpt2",
     "palm": "gptj",
@@ -56,24 +51,24 @@ def disable_dropout_in_model(model: torch.nn.Module) -> None:
 @registry.register_model("dpo", datasetprocessor=["DpoHDF5DataProcessor"])
 class DPOModel(torch.nn.Module):
     """
-    GPT-2 models
+    Differential Privacy Optimization (DPO) enhanced GPT-2 models
     """
 
     def __init__(self, params):
         super().__init__()
 
-        model_params = params["model"]
-        model_name = model_params.pop("model_name")
+        # Assume model_params is a deepcopy of params.model
+        model_params = deepcopy(params.model)
+        model_name = model_params.model_name
 
-        self.compute_eval_metrics = model_params.pop(
-            "compute_eval_metrics", True
-        )
+        self.compute_eval_metrics = model_params.compute_eval_metrics
 
-        dpo_params = model_params.pop("dpo")
-        self.beta = dpo_params.get("beta", 0.1)
-        self.reference_free = dpo_params.get("reference_free", False)
-        disable_dropout = dpo_params.get("disable_dropout", True)
-        self.loss_type = dpo_params.get("loss_type", "sigmoid")
+        # Directly access the 'dpo' object attributes
+        dpo_params = model_params.dpo
+        self.beta = dpo_params.beta
+        self.reference_free = dpo_params.reference_free
+        disable_dropout = dpo_params.disable_dropout
+        self.loss_type = dpo_params.loss_type
 
         if self.compute_eval_metrics:
             if not self.reference_free:
@@ -93,15 +88,15 @@ class DPOModel(torch.nn.Module):
             self.logps_rejected_metric = MeanMetric(name="eval/logps_rejected")
             self.logps_chosen_metric = MeanMetric(name="eval/logps_chosen")
 
-        # Turn off GPT-2/J eval metrics
-        params["model"]["compute_eval_metrics"] = False
+        # Turn off GPT-2/J eval metrics directly in the params.model object
+        params.model.compute_eval_metrics = False
 
         self.policy_model = self.build_model(MODEL_MAPPING[model_name], params)
         if disable_dropout:
             disable_dropout_in_model(self.policy_model)
 
         if not self.reference_free:
-            self.ref_model = copy.deepcopy(self.policy_model)
+            self.ref_model = deepcopy(self.policy_model)
             self.ref_model.eval()
             if disable_dropout:
                 disable_dropout_in_model(self.ref_model)
@@ -113,11 +108,10 @@ class DPOModel(torch.nn.Module):
         )
 
     def build_model(self, model_backbone, params):
+        # Model construction based on the backbone type
         if model_backbone == "gpt2":
-            gpt2_set_defaults(params)
             model = Gpt2Model(params)
         elif model_backbone == "gptj":
-            gptj_set_defaults(params)
             model = GptjModel(params)
         return model
 
@@ -194,21 +188,13 @@ class DPOModel(torch.nn.Module):
 
         # Collect summaries
         if not self.reference_free:
-            cstorch.summarize_scalar("chosen_rewards", chosen_rewards.mean())
-            cstorch.summarize_scalar(
-                "rejected_rewards", rejected_rewards.mean()
-            )
-            cstorch.summarize_scalar(
-                "reward_accuracies", reward_accuracies.mean()
-            )
-            cstorch.summarize_scalar("reward_margins", margins.mean())
+            summarize_scalar("chosen_rewards", chosen_rewards.mean())
+            summarize_scalar("rejected_rewards", rejected_rewards.mean())
+            summarize_scalar("reward_accuracies", reward_accuracies.mean())
+            summarize_scalar("reward_margins", margins.mean())
 
-        cstorch.summarize_scalar(
-            "policy_rejected_logps", policy_rejected_logps.mean()
-        )
-        cstorch.summarize_scalar(
-            "policy_chosen_logps", policy_chosen_logps.mean()
-        )
+        summarize_scalar("policy_rejected_logps", policy_rejected_logps.mean())
+        summarize_scalar("policy_chosen_logps", policy_chosen_logps.mean())
 
         # Calculate eval metrics if not training
         if not self.policy_model.model.training and self.compute_eval_metrics:

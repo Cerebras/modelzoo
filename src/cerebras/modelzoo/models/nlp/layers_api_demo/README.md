@@ -14,7 +14,7 @@
 We will demo how to convert your PyTorch model implemented with modules like torch and torch.nn to a model that is ready to compile and run on CS Systems. We utilize our new layers API
  for transformers to make the conversion. Our layers API is created to mimic the PyTorch implementation of transformer components. It currently contains modules that resemble torch.nn modules with customized implementation for Cerebras Architecture.
 
-For more information of layers API please visit our [developer docs page](https://docs.cerebras.net/en/latest/wsc/port/define-model/common/common.pytorch.html).
+For more information of supported ops through API please visit our [developer docs page](https://docs.cerebras.net/en/latest/wsc/port/define-model/modules.html#supported-ops).
 
 This demo includes but not limited to the following torch.nn modules:
 
@@ -77,9 +77,8 @@ We currently support:
 4. [TransformerDecoderLayer](../../../layers/TransformerDecoderLayer.py)
 5. [TransformerDecoder](../../../layers/TransformerDecoder.py)
 6. [Transformer](../../../layers/Transformer.py)
-7. [optimizers](../../../common/pytorch/optim)
 
-We also provide helper functions to [create masks](../transformer_utils.py) or [initializers](../../../common/utils/model/).
+We also provide helper functions to [create masks](../../../common/utils/model/transformer_utils.py) or [initializers](../../../common/utils/model/).
 
 To convert this PyTorch model to a model that is ready to compile and train on the CS system, we can harness the `TransformerEncoderLayer`, `TransformerEncoder` and the `EmbeddingLayer` APIs:
 

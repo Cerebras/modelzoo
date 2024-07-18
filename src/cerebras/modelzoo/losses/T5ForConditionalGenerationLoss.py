@@ -103,14 +103,11 @@ class T5ForConditionalGenerationLoss(nn.Module):
         elif self.mlm_loss_scaling == "precomputed_num_masked":
             loss = torch.sum(loss) / batch_size
         elif self.mlm_loss_scaling == "batch_size":
-            loss = (torch.sum(loss) / batch_size * self.global_loss_weight).to(
-                dtype=lm_logits.dtype
-            )
+            loss = torch.sum(loss) / batch_size * self.global_loss_weight
         else:
             raise ValueError(
                 f"{self.mlm_loss_scaling} is not supported. Choose between `num_masked`, `precomputed_num_masked`, `batch_size`."
             )
 
-        loss = loss.to(dtype=lm_logits.dtype)
         return loss
         # TODO(thom): Add z_loss https://github.com/tensorflow/mesh/blob/fa19d69eafc9a482aff0b59ddd96b025c0cb207d/mesh_tensorflow/layers.py#L666

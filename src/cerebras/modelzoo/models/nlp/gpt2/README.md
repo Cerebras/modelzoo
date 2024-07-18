@@ -78,7 +78,6 @@ When you create your own custom GPT input function, you must ensure that your GP
 
 We recommended using [GptHDF5DataProcessor](../../../data/nlp/gpt/GptHDF5DataProcessor.py) for the input function of GPT-2 model (for performance reasons). The instructions to create a HDF5 dataset can be found here: [Creating HDF5 dataset for GPT Models](../../../data_preparation/nlp/hdf5_preprocessing/README.md). We also support the following Data Processors:
 
-- [GptTextDataProcessor](./../../../data/internal/nlp/gpt/GptTextDataProcessor.py): A text dataset processor for GPT pre-training; performs on-the-fly processing of data from text.
 - [HuggingFaceDataProcessorEli5](./../../../data/nlp/gpt/HuggingFaceDataProcessorEli5.py): An example of using HuggingFace Eli5 dataset (Map-Style).
 - [HuggingFaceIterableDataProcessorEli5](./../../../data/nlp/gpt/HuggingFaceIterableDataProcessorEli5.py): An example of using HuggingFace Eli5 dataset (Iterable).
 - [DummyDataProcessor](./../../../data/nlp/gpt/DummyDataProcessor.py): An example of using an arbitrary Map-Style PyTorch dataset.

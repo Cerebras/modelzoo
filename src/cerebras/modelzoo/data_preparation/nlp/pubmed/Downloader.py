@@ -70,6 +70,7 @@ class Downloader:
             self.extract_files(dataset_name)
 
     def download_files(self, url, dataset):
+
         output = os.popen('curl ' + url).read()
 
         if dataset == 'pubmed_fulltext' or dataset == 'pubmed_open_access':
@@ -113,6 +114,7 @@ class Downloader:
             os.makedirs(extractdir)
 
         if dataset == "pubmed_baseline" or dataset == "pubmed_daily_update":
+
             files = glob.glob(self.save_path + '/*.xml.gz')
 
             for file in files:
@@ -172,6 +174,7 @@ def parse_args():
 
 
 if __name__ == "__main__":
+
     args = parse_args()
 
     if not os.path.exists(args.save_path):

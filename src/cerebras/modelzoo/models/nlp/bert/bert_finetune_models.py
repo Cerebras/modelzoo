@@ -116,6 +116,7 @@ class BertForSequenceClassification(nn.Module):
         token_type_ids=None,
         attention_mask=None,
     ):
+
         _, pooled_outputs = self.bert(
             input_ids,
             segment_ids=token_type_ids,
@@ -133,6 +134,7 @@ class BertForQuestionAnsweringLoss(nn.Module):
         super(BertForQuestionAnsweringLoss, self).__init__()
 
     def forward(self, logits, labels, cls_label_weights):
+
         # [batch, max_seq_len, 2] -> [batch, 2, max_seq_len]
         logits = torch.permute(logits, [0, 2, 1])
         max_seq_len = logits.shape[-1]

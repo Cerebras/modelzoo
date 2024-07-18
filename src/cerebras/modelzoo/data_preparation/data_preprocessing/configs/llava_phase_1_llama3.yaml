@@ -1,0 +1,42 @@
+setup:
+    data:
+        source: "/input/dir/here"
+        type: "local"
+    output_dir: "/output/dir/here"
+    # adjust the below to however many cores you have available
+    processes: 1 
+    mode: "finetuning"
+
+processing:
+    custom_tokenizer: cerebras.modelzoo.data_preparation.data_preprocessing.custom_tokenizer_example.CustomLlama3Tokenizer:CustomLlama3Tokenizer
+    tokenizer_params:
+        pretrained_model_name_or_path: "meta-llama/Meta-Llama-3-8B-Instruct"
+        token: "<insert_auth_token>"
+
+    max_seq_length: 2048
+    short_seq_prob: 0.0
+
+    write_in_batch: True
+
+    write_remainder: True
+    resume_from_checkpoint: False
+    seed: 0
+
+    read_hook: "cerebras.modelzoo.data_preparation.data_preprocessing.hooks:finetuning_llava_hook_prompt_completion"
+    read_hook_kwargs:
+        data_keys: 
+            multi_turn_key: "conversations"
+            image_key: "image"
+        image_token: "<image>"
+        multi_turn_content_key: "value"
+        phase: 1
+
+dataset:
+    is_multimodal: True
+    use_ftfy: True
+    ftfy_normalizer: "NFC"
+    wikitext_detokenize: False
+
+    num_patches: 576
+    image_dir: "/path/to/images"
+    sep_token: ""

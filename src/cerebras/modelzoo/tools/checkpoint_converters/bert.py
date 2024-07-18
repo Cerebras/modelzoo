@@ -713,9 +713,9 @@ class Converter_BertPretrainModel_HF_CS17(
         drop_unmatched_keys,
     ):
         # Manually tie weights
-        if (
-            converter_indices.direction == 1
-            and configs[1]["model"]["share_embedding_weights"]
+        old_state_dict = dict(old_state_dict)
+        if converter_indices.direction == 1 and configs[1]["model"].get(
+            "share_embedding_weights", False
         ):
             if (
                 old_state_dict.get(
@@ -988,7 +988,10 @@ class ConfigConverter_Bert_HF_CS17(BaseConfigConverter_HF_CS):
         from_index,
         action_fn_args,
     ):
-        if old_state_dict[old_key] != old_state_dict["encoder_nonlinearity"]:
+        if (
+            old_state_dict[old_key] != old_state_dict["encoder_nonlinearity"]
+            and old_state_dict[old_key] is not None
+        ):
             raise ConfigConversionError(
                 "HF model doesn't support different encoder & mlm nonlinearities"
             )
@@ -1209,11 +1212,15 @@ class ConfigConverter_Bert_HF_CS21(ConfigConverter_Bert_HF_CS18):
 
     def __init__(self):
         super().__init__()
+        self.post_convert_defaults[1].update({"freeze_ffn_bias_in_glu": False})
         del self.post_convert_defaults[1]["enable_vts"]
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-2.1", "cs-2.2"))
+        return (
+            FormatVersions("hf"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
+        )
 
 
 class Converter_BertModel_WithoutOptionalModel_HF_CS21(
@@ -1265,7 +1272,7 @@ class Converter_BertPretrainModel_WithoutOptionalModel_HF_CS21(
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.1", "cs-2.2"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
         )
 
     @staticmethod
@@ -1277,4 +1284,59 @@ Converter_BertPretrainModel_HF_CS21 = Build_HF_CS_Converter_WithOptionalModel(
     "Converter_BertPretrainModel_HF_CS21",
     Converter_BertPretrainModel_WithoutOptionalModel_HF_CS21,
     derived_class=Converter_BertPretrainModel_WithoutOptionalModel_HF_CS21,
+)
+
+
+class ConfigConverter_Bert_HF_CS23(ConfigConverter_Bert_HF_CS21):
+    def supports_mup_conversion(self):
+        return True
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (
+            FormatVersions("hf"),
+            FormatVersions("cs-2.3"),
+        )
+
+
+class Converter_BertModel_WithoutOptionalModel_HF_CS23(
+    Converter_BertModel_WithoutOptionalModel_HF_CS21
+):
+    def supports_mup_conversion(self):
+        return True
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (
+            FormatVersions("hf"),
+            FormatVersions("cs-2.3"),
+        )
+
+    @staticmethod
+    def get_config_converter_class() -> BaseConfigConverter:
+        return ConfigConverter_Bert_HF_CS23
+
+
+class Converter_BertPretrainModel_WithoutOptionalModel_HF_CS23(
+    Converter_BertPretrainModel_WithoutOptionalModel_HF_CS21
+):
+    def supports_mup_conversion(self):
+        return True
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (
+            FormatVersions("hf"),
+            FormatVersions("cs-2.3"),
+        )
+
+    @staticmethod
+    def get_config_converter_class() -> BaseConfigConverter:
+        return ConfigConverter_Bert_HF_CS23
+
+
+Converter_BertPretrainModel_HF_CS23 = Build_HF_CS_Converter_WithOptionalModel(
+    "Converter_BertPretrainModel_HF_CS23",
+    Converter_BertPretrainModel_WithoutOptionalModel_HF_CS23,
+    derived_class=Converter_BertPretrainModel_WithoutOptionalModel_HF_CS23,
 )

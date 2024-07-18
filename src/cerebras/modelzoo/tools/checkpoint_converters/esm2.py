@@ -324,7 +324,7 @@ class Converter_Esm2PretrainModel_WithoutOptionalModel_HF_CS21(
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.1", "cs-2.2"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
         )
 
     @staticmethod

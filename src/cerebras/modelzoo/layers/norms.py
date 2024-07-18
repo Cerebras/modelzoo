@@ -12,13 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from functools import partial
+
 import torchvision.ops as ops
 from torch import nn
 
 from cerebras.modelzoo.layers import (
     AdaLayerNorm,
     BatchChannelNorm2D,
-    BiaslessLayerNorm,
     GroupInstanceNorm,
     RMSNorm,
 )
@@ -29,7 +30,10 @@ NORM2CLASS = {
     "batchnorm1d": nn.BatchNorm1d,
     "batchnorm2d": nn.BatchNorm2d,
     "batchnorm3d": nn.BatchNorm3d,
-    "biasless-layernorm": BiaslessLayerNorm,
+    "biasless-layernorm": partial(nn.LayerNorm, bias=False),
+    "nonparametric-layernorm": partial(
+        nn.LayerNorm, elementwise_affine=False, bias=False
+    ),
     "frozenbatchnorm2d": ops.FrozenBatchNorm2d,
     "group": nn.GroupNorm,
     "group_instance": GroupInstanceNorm,  # used to emulate instance norm with group norm

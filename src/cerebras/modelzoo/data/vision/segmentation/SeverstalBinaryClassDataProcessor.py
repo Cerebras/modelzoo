@@ -76,6 +76,7 @@ class SeverstalBinaryClassDataset(VisionDataset):
             self.data = val_dataframe
 
     def _get_data_dirs(self):
+
         images_dir = os.path.join(self.root, "train_images")
         csv_file = os.path.join(self.root, "train.csv")
 
@@ -176,6 +177,7 @@ class SeverstalBinaryClassDataProcessor(UNetDataProcessor):
         ) = self.image_shape
 
     def _update_image_shape(self):
+
         # image_shape is of format (H, W, C)
         image_shape = []
         for i in range(2):
@@ -201,6 +203,7 @@ class SeverstalBinaryClassDataProcessor(UNetDataProcessor):
         return dataset
 
     def preprocess_mask(self, mask):
+
         # Resize
         resize_transform = transforms.Resize(
             [self.tgt_image_height, self.tgt_image_width],

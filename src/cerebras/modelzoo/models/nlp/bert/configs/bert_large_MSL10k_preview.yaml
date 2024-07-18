@@ -17,14 +17,8 @@
 train_input:
     data_processor: "BertCSVDataProcessor"
     data_dir: "./language/datasets/owt_pretraining_long_msl_10k/train_512k_uncased_msl10256"
-    vocab_file: ../../vocab/google_research_uncased_L-12_H-768_A-12.txt
-    max_sequence_length: 10256
-    max_predictions_per_seq: 1538
     # The effective batch size, which is evenly divided across "num_csx" systems used for the run
     batch_size: 30
-    whole_word_masking: False
-    do_lower: True
-    masked_lm_prob: 0.15
     shuffle: True
     shuffle_seed: 1
     num_workers: 3
@@ -34,20 +28,13 @@ train_input:
 eval_input:
     data_processor: "BertCSVDataProcessor"
     data_dir: "./language/datasets/owt_pretraining_long_msl_10k/val_512k_uncased_msl10256"
-    vocab_file: ../../vocab/google_research_uncased_L-12_H-768_A-12.txt
-    max_predictions_per_seq: 80
-    max_sequence_length: 512
     # The effective batch size, which is evenly divided across "num_csx" systems used for the run
     batch_size: 30
-    whole_word_masking: False
-    do_lower: True
-    masked_lm_prob: 0.15
     shuffle: False
     shuffle_seed: 1 # also for deterministic masking
     num_workers: 2
     prefetch_factor: 10
     persistent_workers: True
-    vocab_size: 30522
 
 model:
     vocab_size: 30522

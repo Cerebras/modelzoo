@@ -19,28 +19,21 @@ import sys
 sys.path.append(os.path.join(os.path.dirname(__file__), "../../../../../.."))
 # isort: on
 
-
 from cerebras.modelzoo.common.utils.run.cli_pytorch import get_params_from_args
 
 
 def main():
     params = get_params_from_args()
-    from cerebras.modelzoo.models.nlp.bert.classifier.utils import set_defaults
-
-    set_defaults(params)
 
     from cerebras.modelzoo.common.run_utils import main
     from cerebras.modelzoo.models.nlp.bert.classifier.data import (
         eval_input_dataloader,
         train_input_dataloader,
     )
-    from cerebras.modelzoo.models.nlp.bert.classifier.model import (
-        BertForSequenceClassificationModel,
-    )
 
     main(
         params,
-        BertForSequenceClassificationModel,
+        "bert/classifier",
         train_input_dataloader,
         eval_input_dataloader,
     )

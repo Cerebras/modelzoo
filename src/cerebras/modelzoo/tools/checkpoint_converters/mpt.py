@@ -331,10 +331,10 @@ class Converter_MPTModel_HF_CS(BaseCheckpointConverter_HF_CS):
             # Need to initialize alibi slopes:
             cs_config = configs[1]
             if cs_config["model"]["position_embedding_type"] == "alibi":
-                new_state_dict[
-                    key_prefix + self.cs_slopes_key
-                ] = Converter_MPTModel_HF_CS.get_alibi_slopes(
-                    cs_config["model"]["num_heads"]
+                new_state_dict[key_prefix + self.cs_slopes_key] = (
+                    Converter_MPTModel_HF_CS.get_alibi_slopes(
+                        cs_config["model"]["num_heads"]
+                    )
                 )
         super().post_model_convert(
             old_state_dict,
@@ -430,10 +430,10 @@ class Converter_MPTForCausalLM_HF_CS(BaseCheckpointConverter_HF_CS):
             # Need to initialize alibi slopes:
             cs_config = configs[1]
             if cs_config["model"]["position_embedding_type"] == "alibi":
-                new_state_dict[
-                    key_prefix + self.cs_slopes_key
-                ] = Converter_MPTModel_HF_CS.get_alibi_slopes(
-                    cs_config["model"]["num_heads"]
+                new_state_dict[key_prefix + self.cs_slopes_key] = (
+                    Converter_MPTModel_HF_CS.get_alibi_slopes(
+                        cs_config["model"]["num_heads"]
+                    )
                 )
         super().post_model_convert(
             old_state_dict,
@@ -817,9 +817,9 @@ class ConfigConverter_MPT_HF_CS20(BaseConfigConverter_HF_CS):
         action_fn_args,
     ):
         if from_index == 0:
-            new_state_dict[
-                "use_projection_bias_in_attention"
-            ] = not old_state_dict[old_key]
+            new_state_dict["use_projection_bias_in_attention"] = (
+                not old_state_dict[old_key]
+            )
             new_state_dict["use_ffn_bias_in_attention"] = not old_state_dict[
                 old_key
             ]
@@ -900,7 +900,10 @@ class ConfigConverter_MPT_HF_CS21(ConfigConverter_MPT_HF_CS20):
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-2.1", "cs-2.2"))
+        return (
+            FormatVersions("hf"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
+        )
 
 
 class Converter_MPTModel_WithoutOptionalModel_HF_CS21(Converter_MPTModel_HF_CS):
@@ -926,7 +929,10 @@ class Converter_MPTModel_WithoutOptionalModel_HF_CS21(Converter_MPTModel_HF_CS):
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-2.1", "cs-2.2"))
+        return (
+            FormatVersions("hf"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
+        )
 
     @classmethod
     def converter_note(cls) -> str:
@@ -969,7 +975,10 @@ class Converter_MPTForCausalLM_WithoutOptionalModel_HF_CS21(
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-2.1", "cs-2.2"))
+        return (
+            FormatVersions("hf"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
+        )
 
     @classmethod
     def converter_note(cls) -> str:

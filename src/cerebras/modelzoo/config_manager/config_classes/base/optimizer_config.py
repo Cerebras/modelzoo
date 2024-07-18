@@ -16,11 +16,16 @@
 Config classes of Optimizer Based Configs
 
 """
-import copy
-from dataclasses import asdict
 
-# pylint: disable=wildcard-import
-from cerebras.modelzoo.config_manager.config_classes.base.base_config import *
+import copy
+from dataclasses import asdict, dataclass
+from typing import List, Optional, Union
+
+from cerebras.modelzoo.config_manager.config_classes.base.base_config import (
+    BaseConfig,
+    config_field,
+    required,
+)
 from cerebras.modelzoo.config_manager.config_validators import LossScalingFactor
 from cerebras.pytorch.optim import (
     configure_optimizer_params,
@@ -32,7 +37,7 @@ from cerebras.pytorch.optim import (
 class OptimizerConfig(BaseConfig):
     optimizer_type: str = required
     """
-    Optimizer to be used. 
+    Optimizer to be used.
     See supported optimizers - https://docs.cerebras.net/en/latest/pytorch-docs/pytorch-ops/supported-pytorch-optimizers.html)
     """
     weight_decay: float = 0.0
@@ -62,7 +67,7 @@ class OptimizerConfig(BaseConfig):
     """
     max_gradient_norm: Optional[float] = None
     """
-    Max norm of the gradients for learnable parameters. 
+    Max norm of the gradients for learnable parameters.
     Used for gradient clipping. Default=None
     """
     adjust_learning_rate: Optional[dict] = None

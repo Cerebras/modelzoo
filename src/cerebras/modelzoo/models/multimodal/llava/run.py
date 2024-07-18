@@ -22,21 +22,17 @@ from cerebras.modelzoo.common.utils.run.cli_pytorch import get_params_from_args
 
 
 def main():
-    from cerebras.modelzoo.models.multimodal.llava.utils import set_defaults
-
     params = get_params_from_args()
-    params = set_defaults(params)
 
     from cerebras.modelzoo.common.run_utils import main
     from cerebras.modelzoo.models.multimodal.llava.data import (
         eval_input_dataloader,
         train_input_dataloader,
     )
-    from cerebras.modelzoo.models.multimodal.llava.model import LlavaModel
 
     main(
         params,
-        LlavaModel,
+        "llava",
         train_input_dataloader,
         eval_input_dataloader,
     )

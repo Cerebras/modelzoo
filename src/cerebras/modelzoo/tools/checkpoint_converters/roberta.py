@@ -334,7 +334,10 @@ class ConfigConverter_Roberta_HF_CS21(ConfigConverter_Roberta_HF_CS18):
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-2.1", "cs-2.2"))
+        return (
+            FormatVersions("hf"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
+        )
 
 
 class Converter_RobertaPretrainModel_WithoutOptionalModel_HF_CS21(
@@ -354,7 +357,10 @@ class Converter_RobertaPretrainModel_WithoutOptionalModel_HF_CS21(
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-2.1", "cs-2.2"))
+        return (
+            FormatVersions("hf"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
+        )
 
     @staticmethod
     def get_config_converter_class() -> BaseConfigConverter:
@@ -367,6 +373,9 @@ Converter_RobertaPretrainModel_HF_CS21 = (
         Converter_RobertaPretrainModel_WithoutOptionalModel_HF_CS21,
         derived_class=Converter_RobertaPretrainModel_HF_CS18,
         config_converter_class=ConfigConverter_Roberta_HF_CS21,
-        formats=(FormatVersions("hf"), FormatVersions("cs-2.1", "cs-2.2")),
+        formats=(
+            FormatVersions("hf"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
+        ),
     )
 )

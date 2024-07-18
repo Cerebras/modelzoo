@@ -216,10 +216,6 @@ class Converter_CLIPViT_Core_HF_CS21(BaseCheckpointConverter_HF_CS):
         from_index,
         action_fn_args,
     ):
-        assert (
-            action_fn_args["configs"][1]["model"]["position_embedding_type"]
-            == "learned"
-        ), "Only learned embeddings are supported"
         # cs vit pe puts cls token at last by default but hf put at index 0
         if from_index == 0:
             new_state_dict[new_key] = torch.cat(
@@ -285,7 +281,7 @@ class Converter_CLIPViT_Projection_HF_CS21(BaseCheckpointConverter_HF_CS):
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.1", "cs-2.2"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
         )
 
     @classmethod
@@ -427,6 +423,11 @@ class ConfigConverter_CLIPViT_HF_CS21(ConfigConverter_ViT_HF_CS21):
                 action=self.replaceKey,
             ),
             ConversionRule(["dropout_rate"], exists="right", action=None),
+            ConversionRule(
+                ["position_embedding_type"],
+                exists="right",
+                action=BaseConfigConverter.assert_factory_fn(1, "learned"),
+            ),
         ]
 
         # Since rule matching stops when the first match occurs,

@@ -23,14 +23,10 @@ from cerebras.modelzoo.data.nlp.bert.BertClassifierDataProcessor import (  # noq
 def train_input_dataloader(params):
     return getattr(
         sys.modules[__name__], params["train_input"]["data_processor"]
-    )(params["train_input"], params["model"]).create_dataloader(
-        is_training=True
-    )
+    )(params["train_input"]).create_dataloader(is_training=True)
 
 
 def eval_input_dataloader(params):
     return getattr(
         sys.modules[__name__], params["eval_input"]["data_processor"]
-    )(params["eval_input"], params["model"]).create_dataloader(
-        is_training=False
-    )
+    )(params["eval_input"]).create_dataloader(is_training=False)

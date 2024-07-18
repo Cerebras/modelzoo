@@ -1,0 +1,299 @@
+body, html {
+    font-family: 'Lato', sans-serif;
+    margin: 0;
+    padding: 0;
+    background: #f4f4f4;
+}
+
+
+.container {
+    width: 95%;
+    margin: 0 auto;
+    height: 1250px;
+    background: white;
+    padding: 20px;
+    box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+}
+
+.controls {
+    top: 20px; /* Adjust based on your layout */
+    left: 20px; /* Adjust based on your layout */
+    z-index: 1000; /* Ensure it stays on top */
+    margin-left:calc(105% + 20px);
+    transition-property: margin-left;
+    transition-duration: 0.2s;
+}
+select {
+    margin-top:30px;
+}
+
+.header {
+    display: flex;
+    justify-content: space-between;
+}
+
+.controls-section {
+    position: absolute;
+    top: 25px;
+    left: calc(2.5% + 5px);
+    width: 35%;
+    z-index: 1000;
+}
+
+
+
+.main-content {
+    margin-top:100px;
+}
+
+.main-content {
+    display: flex;
+    justify-content: flex-end;
+    margin-left: 40%;
+}
+
+.dynamic-sections {
+    flex: 1;
+    margin-top:-2em;
+}
+
+.dynamic-sections .section {
+    margin-bottom: 20px;
+}
+
+.logo img {
+    height: 100px; /* Adjust size as necessary */
+}
+
+
+.fixed-sections {
+    margin-top:-100px;
+}
+
+.section {
+    padding: 8px;
+    max-height: 160px; /* Fixed height or adjust as necessary */
+}
+
+#label_ids_display, #input_ids_display {
+    max-height: 240px!important;
+}
+
+div#label_ids_section, div#input_ids_section {
+    max-height: 265px!important;
+
+}
+
+.controls {
+    display: flex;
+    padding-bottom: 10px;
+    align-items: center;
+    margin-top: 80px;
+    justify-content: space-between;
+}
+
+.token-list {
+    padding: 5px;
+    border: 1px solid #ddd;
+    border-radius: 10px;
+    width: 100%;
+    list-style-type: none; /* Remove bullet points */
+    padding-left: 0; /* Remove default padding */
+}
+
+.token-item {
+    display: flex;
+    align-items: center;
+    margin-bottom: 5px;
+    padding-left: 10px; /* Add padding to accommodate the vertical line */
+}
+
+.token-label {
+    min-width: 100px;
+    margin-right: 10px;
+    white-space: nowrap;
+}
+
+.bar-container {
+    display: flex;
+    align-items: center;
+    flex-grow: 1; /* Allow bar container to take remaining space */
+}
+
+.token-bar {
+    height: 20px;
+    background-color: #d76235;
+    border-radius: 0px 10px 10px 0px; /* Rounded corners */
+    margin-right: 5px; /* Space between the bar and the count text */
+    position:relative
+}
+
+.token-count {
+    color: #666;
+    line-height: 20px;
+}
+
+.token-bar::before {
+    content: '';
+    position: absolute;
+    left: 0px; /* Position the line at the start of the bars */
+    top: -22px;
+    bottom: -22px;
+    width: 1px;
+    background-color: #ddd; /* Light color for the line */
+}
+
+
+
+.section {
+    background: #f1f1f1;
+    padding: 15px;
+    border-radius: 5px;
+    border: 1px solid #bbb9b9; /* Use a lighter shade */
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    position: relative;
+    overflow: auto;
+}
+
+.section-title {
+    position: absolute;
+    top: 0;
+    left: 0;
+    font-size: 0.8em; /* Adjust font size as needed */
+    padding: 10px; /* Add padding around the title */
+    z-index: 1; /* Ensure the title is above other content */
+    margin-top:5px;
+}
+
+.data-display {
+    overflow-y: auto; /* Scroll if content overflows */
+    max-height: 120px; /* Adjust based on your layout needs */
+    margin-top:25px;
+}
+
+.section h3 {
+    color: #777;
+    margin-bottom: 10px;
+}
+
+
+tbody {
+    white-space: pre-wrap; /* Ensures the text wraps and respects whitespace */
+    word-wrap: break-word; /* Ensures long words do not cause horizontal overflow */
+}
+
+.transition-all {
+    transition-property: all;
+    transition-timing-function: cubic-bezier(.4,0,.2,1);
+    transition-duration: .15s;
+}
+
+.dropdown {
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    color: #666;
+    font-size: 16px;
+    padding: 10px;
+    margin-right: 10px; /* Adjust spacing between dropdowns */
+    -webkit-appearance: none; /* Remove default styling in WebKit browsers */
+    -moz-appearance: none; /* Remove default styling in Firefox */
+    appearance: none; /* Remove default styling in other browsers */
+}
+
+.dropdown:focus {
+    outline: none;
+    border-color: #777;
+}
+
+#fileSelector {
+    width:230px;
+}
+#stringLengthSelector {
+    width:60px;
+}
+
+.title {
+    font-weight: 700;
+    font-size: 2.5rem;
+    line-height: 2.5rem;
+    font-family: 'Lato', sans-serif;
+}
+
+.popup {
+    position: absolute;
+    background: white;
+    border: 1px solid #ddd;
+    border-radius: 5px;
+    box-shadow: 0 0px 20px 5px rgba(0, 0, 0, 0.15);
+    z-index: 1000;
+    display: flex; /* Ensures the image and text are aligned side by side */
+    font-size:12px;
+    color: #666;
+}
+
+.popup-content {
+    display: flex; /* Ensures the image and text are aligned side by side */
+    align-items: center; /* Aligns the items vertically in the center */
+    height:200px;
+}
+
+.popup-image {
+    width: 125px; /* Restricts the image width to 150px */
+    height: 125px; /* Restricts the image height to 150px */
+    margin-right: 5px; /* Adds some space between the image and the text */
+    align-self: center;
+}
+
+.popup-text {
+    flex: 1;
+    padding-right: 16px;
+}
+
+body {
+    margin: 0;
+    font-family: Arial, sans-serif;
+}
+
+.loader {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255, 255, 255, 0.8);
+    z-index: 1000;
+    display: none; /* Hidden by default */
+}
+
+.loader img {
+    width: 100px; /* Initial size */
+    animation: pulse 1.5s infinite; /* Add animation */
+}
+
+@keyframes pulse {
+    0% {
+        transform: scale(1.2);
+    }
+    50% {
+        transform: scale(1.6);
+    }
+    100% {
+        transform: scale(1.2);
+    }
+}
+
+.blur {
+    filter: blur(5px);
+    pointer-events: none; /* Disable interactions with blurred content */
+}
+
+.content {
+    transition: filter 0.3s ease; /* Smooth transition for blur effect */
+}
+
+.separator-row {
+    padding: 1px!important;
+}

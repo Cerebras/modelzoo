@@ -18,9 +18,11 @@ from cerebras.modelzoo.layers.AlibiPositionEmbeddingLayer import (
 )
 from cerebras.modelzoo.layers.AttentionLayer import MultiheadAttention
 from cerebras.modelzoo.layers.BatchChannelNorm import BatchChannelNorm2D
-from cerebras.modelzoo.layers.BiaslessLayerNorm import BiaslessLayerNorm
 from cerebras.modelzoo.layers.EmbeddingLayer import EmbeddingLayer
-from cerebras.modelzoo.layers.FeedForwardNetwork import FeedForwardNetwork
+from cerebras.modelzoo.layers.FeedForwardNetwork import (
+    FeedForwardNetwork,
+    FeedForwardNetworkConfig,
+)
 from cerebras.modelzoo.layers.FixedPositionEmbeddingLayer import (
     FixedPositionEmbeddingLayer,
 )
@@ -52,7 +54,6 @@ __all__ = [
     "AlibiPositionEmbeddingLayer",
     "MultiheadAttention",
     "BatchChannelNorm2D",
-    "BiaslessLayerNorm",
     "EmbeddingLayer",
     "FeedForwardNetwork",
     "GPTJDecoderLayer",

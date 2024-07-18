@@ -352,9 +352,9 @@ class Converter_BloomModel_HF_CS17(BaseCheckpointConverter_HF_CS):
                 old_state_dict.get("embedding_layer.word_embeddings.weight", 0)
                 is None
             ):
-                old_state_dict[
-                    "embedding_layer.word_embeddings.weight"
-                ] = old_state_dict["lm_head.weight"]
+                old_state_dict["embedding_layer.word_embeddings.weight"] = (
+                    old_state_dict["lm_head.weight"]
+                )
 
     def post_model_convert(
         self,
@@ -384,10 +384,10 @@ class Converter_BloomModel_HF_CS17(BaseCheckpointConverter_HF_CS):
             if use_bias_in_output:
                 lm_head_bias = torch.zeros(vocab_size)
                 new_state_dict[key_prefix + "lm_head.bias"] = lm_head_bias
-            new_state_dict[
-                key_prefix + self.cs_slopes_key
-            ] = Converter_BloomModel_HF_CS17.get_alibi_slopes(
-                cs_config["model"]["num_heads"]
+            new_state_dict[key_prefix + self.cs_slopes_key] = (
+                Converter_BloomModel_HF_CS17.get_alibi_slopes(
+                    cs_config["model"]["num_heads"]
+                )
             )
         super().post_model_convert(
             old_state_dict,
@@ -753,9 +753,9 @@ class Converter_BloomLMHeadModel_HF_CS17(BaseCheckpointConverter_HF_CS):
                 old_state_dict.get("embedding_layer.word_embeddings.weight", 0)
                 is None
             ):
-                old_state_dict[
-                    "embedding_layer.word_embeddings.weight"
-                ] = old_state_dict["lm_head.weight"]
+                old_state_dict["embedding_layer.word_embeddings.weight"] = (
+                    old_state_dict["lm_head.weight"]
+                )
 
     def post_model_convert(
         self,
@@ -768,10 +768,10 @@ class Converter_BloomLMHeadModel_HF_CS17(BaseCheckpointConverter_HF_CS):
     ):
         if converter_indices.direction == 0:
             cs_config = configs[1]
-            new_state_dict[
-                key_prefix + self.cs_slopes_key
-            ] = Converter_BloomModel_HF_CS17.get_alibi_slopes(
-                cs_config["model"]["num_heads"]
+            new_state_dict[key_prefix + self.cs_slopes_key] = (
+                Converter_BloomModel_HF_CS17.get_alibi_slopes(
+                    cs_config["model"]["num_heads"]
+                )
             )
         super().post_model_convert(
             old_state_dict,
@@ -830,10 +830,10 @@ class Converter_BloomLMHeadModel_HF_CS19(BaseCheckpointConverter_HF_CS):
     ):
         if converter_indices.direction == 0:
             cs_config = configs[1]
-            new_state_dict[
-                key_prefix + self.cs_slopes_key
-            ] = Converter_BloomModel_HF_CS17.get_alibi_slopes(
-                cs_config["model"]["num_heads"]
+            new_state_dict[key_prefix + self.cs_slopes_key] = (
+                Converter_BloomModel_HF_CS17.get_alibi_slopes(
+                    cs_config["model"]["num_heads"]
+                )
             )
         super().post_model_convert(
             old_state_dict,
@@ -945,7 +945,10 @@ class ConfigConverter_BloomModel_HF_CS21(ConfigConverter_BloomModel_HF_CS20):
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-2.1", "cs-2.2"))
+        return (
+            FormatVersions("hf"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
+        )
 
     def supports_mup_conversion(self):
         return True
@@ -967,7 +970,10 @@ class Converter_BloomModel_WithoutOptionalModel_HF_CS21(
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-2.1", "cs-2.2"))
+        return (
+            FormatVersions("hf"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
+        )
 
     @staticmethod
     def get_config_converter_class() -> BaseConfigConverter:
@@ -1003,7 +1009,10 @@ class Converter_BloomLMHeadModel_WithoutOptionalModel_HF_CS21(
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-2.1", "cs-2.2"))
+        return (
+            FormatVersions("hf"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
+        )
 
     @staticmethod
     def get_config_converter_class() -> BaseConfigConverter:

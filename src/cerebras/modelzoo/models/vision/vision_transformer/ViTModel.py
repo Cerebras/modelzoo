@@ -54,6 +54,7 @@ class ViTEncoder(nn.Module):
         pooler_initializer=None,
         norm_first=True,
         use_encoder_pooler_layer=False,
+        **extra_args,
     ):
         super(ViTEncoder, self).__init__()
 
@@ -126,10 +127,10 @@ class ViTEncoder(nn.Module):
         if self.pooler is not None:
             self.pooler.reset_parameters()
 
-    def forward(self, input_embeddings, extract_layer_idx=None):
+    def forward(self, input_embeddings, extract_layer_idx=None, src_mask=None):
         # no mask required for now
         hidden_states = self.transformer_encoder(
-            input_embeddings, extract_layer_idx=extract_layer_idx
+            input_embeddings, extract_layer_idx=extract_layer_idx, mask=src_mask
         )
 
         pooled_states = None
@@ -185,6 +186,7 @@ class ViTModel(nn.Module):
         use_conv_patchified_embedding=False,
         use_encoder_pooler_layer=False,
         prepend_cls_token=True,
+        **extra_args,
     ):
         super(ViTModel, self).__init__()
 

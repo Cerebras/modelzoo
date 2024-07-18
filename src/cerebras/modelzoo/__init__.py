@@ -13,11 +13,14 @@
 # limitations under the License.
 
 """Cerebras ModelZoo Package."""
+
 import os
+
+from .trainer import Trainer
 
 
 def _register_paths_for_registry():
-    """This loads all paths used by registry"""
+    """This loads all paths used by registry."""
     from cerebras.modelzoo.common.registry import registry
 
     modelzoo_path = os.path.dirname(os.path.realpath(__file__))
@@ -47,6 +50,10 @@ def _register_paths_for_registry():
     )
     registry.register_paths(
         "datasetprocessor_path", os.path.join(modelzoo_path, "data", "internal")
+    )
+    registry.register_paths(
+        "datasetprocessor_path",
+        os.path.join(modelzoo_path, "data_preparation", "RawDatasetProcessor"),
     )
 
 

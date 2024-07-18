@@ -16,8 +16,8 @@ import importlib
 import logging
 import re
 from collections import OrderedDict
-from dataclasses import dataclass
-from typing import List
+from dataclasses import asdict, dataclass, is_dataclass
+from typing import Any, List
 
 import torch
 
@@ -26,14 +26,13 @@ import torch
 class MultimodalModelMapping:
     model_name: str
     module_import_path: str
-    defaultsfcn_import_path: str
 
 
 @dataclass
 class ProjectorMapping:
     projector_name: str
     module_import_path: str
-    defaultsfcn_import_path: str = None
+    config_class: str
 
 
 # SUPPORTED PROJECTORS
@@ -43,7 +42,9 @@ PROJECTOR_NAME_MODULE_DEFAULTFCN_MAPPING = OrderedDict(
         (
             "MLP",
             ProjectorMapping(
-                "MLP", "cerebras.modelzoo.layers.FeedForwardNetwork", None
+                "MLP",
+                "cerebras.modelzoo.layers.FeedForwardNetwork",
+                "FeedForwardNetworkConfig",
             ),
         ),
         (
@@ -51,7 +52,7 @@ PROJECTOR_NAME_MODULE_DEFAULTFCN_MAPPING = OrderedDict(
             ProjectorMapping(
                 "FeedForwardNetwork",
                 "cerebras.modelzoo.layers.FeedForwardNetwork",
-                None,
+                "FeedForwardNetworkConfig",
             ),
         ),
     ]
@@ -66,7 +67,6 @@ MODEL_MODULE_DEFAULTFCN_MAPPING = OrderedDict(
             MultimodalModelMapping(
                 "ViTModel",
                 "cerebras.modelzoo.models.vision.vision_transformer.ViTModel.ViTModel",
-                "cerebras.modelzoo.models.vision.vision_transformer.utils.set_defaults",
             ),
         ),
         (
@@ -74,7 +74,6 @@ MODEL_MODULE_DEFAULTFCN_MAPPING = OrderedDict(
             MultimodalModelMapping(
                 "T5ForConditionalGeneration",
                 "cerebras.modelzoo.models.nlp.t5.t5_model.T5ForConditionalGeneration",
-                "cerebras.modelzoo.models.nlp.t5.utils.set_defaults",
             ),
         ),
         (
@@ -82,7 +81,16 @@ MODEL_MODULE_DEFAULTFCN_MAPPING = OrderedDict(
             MultimodalModelMapping(
                 "LlamaModel",
                 "cerebras.modelzoo.models.nlp.gpt2.gpt2_model.GPT2LMHeadModel",
-                "cerebras.modelzoo.models.nlp.gpt2.utils.set_defaults",
+            ),
+        ),
+        (
+            "FeedForwardNetwork",
+            MultimodalModelMapping(
+                "FeedForwardNetwork",
+                (
+                    "cerebras.modelzoo.layers.FeedForwardNetwork",
+                    "cerebras.modelzoo.layers.FeedForwardNetworkConfig",
+                ),
             ),
         ),
     ]
@@ -100,103 +108,36 @@ def _import_helper(import_module_path, import_object_name):
     return obj
 
 
-def get_model_handle_from_mapping(model_name: str) -> object:
-    _model_map = MODEL_MODULE_DEFAULTFCN_MAPPING[
-        model_name
-    ].module_import_path.split(".")
+def get_per_model_handle(model_name: str) -> object:
+    _model_map = model_name.split(".")
     _module_path, _modelclass = ".".join(_model_map[:-1]), _model_map[-1]
     model_handle = _import_helper(_module_path, _modelclass)
     return model_handle
 
 
-def get_model_defaults_fcn_handle_from_mapping(model_name: str) -> object:
-    _defaults_fcn_map = MODEL_MODULE_DEFAULTFCN_MAPPING[
-        model_name
-    ].defaultsfcn_import_path
-    _defaults_fcn_map = _defaults_fcn_map.split(".")
-    _module_path, _defaultsfcn = (
-        ".".join(_defaults_fcn_map[:-1]),
-        _defaults_fcn_map[-1],
-    )
-    default_fcn_handle = _import_helper(_module_path, _defaultsfcn)
-    return default_fcn_handle
+def get_model_handle_from_mapping(model_name: str) -> object:
+    _model_map = MODEL_MODULE_DEFAULTFCN_MAPPING[model_name].module_import_path
+    if type(_model_map) is tuple or type(_model_map) is list:
+        model_handle_list = [get_per_model_handle(x) for x in _model_map]
+        return model_handle_list
+    else:
+        return get_per_model_handle(_model_map)
 
 
 def get_projector_model_handle_from_mapping(projector_name: str) -> object:
-    _proj_model_map = PROJECTOR_NAME_MODULE_DEFAULTFCN_MAPPING[
-        projector_name
-    ].module_import_path.split(".")
+    _proj_mapping = PROJECTOR_NAME_MODULE_DEFAULTFCN_MAPPING[projector_name]
+    _proj_model_map = _proj_mapping.module_import_path.split(".")
     _module_path, _modelclass = (
         ".".join(_proj_model_map[:-1]),
         _proj_model_map[-1],
     )
-    proj_model_handle = _import_helper(_module_path, _modelclass)
-    return proj_model_handle
+    model_class = _import_helper(_module_path, _modelclass)
+    config_class = _import_helper(_module_path, _proj_mapping.config_class)
 
+    def handle_from_config_args(*args, **kwargs):
+        return model_class(config_class(*args, **kwargs))
 
-def get_projector_defaults_fcn_handle_from_mapping(
-    projector_name: str,
-) -> object:
-    _defaults_fcn_map = PROJECTOR_NAME_MODULE_DEFAULTFCN_MAPPING[
-        projector_name
-    ].defaultsfcn_import_path
-
-    # passthrough
-    if _defaults_fcn_map is None:
-        return lambda x: x
-
-    # TODO: Note : there might be some problems here since some `utils.py` dont return params
-    _defaults_fcn_map = _defaults_fcn_map.split(".")
-    _module_path, _defaultsfcn = (
-        ".".join(_defaults_fcn_map[:-1]),
-        _defaults_fcn_map[-1],
-    )
-    default_fcn_handle = _import_helper(_module_path, _defaultsfcn)
-    return default_fcn_handle
-
-
-def _get_defaults_fcn(name_str, is_projector=False):
-    if is_projector:
-        fcn_handle = get_projector_defaults_fcn_handle_from_mapping(name_str)
-    else:
-        fcn_handle = get_model_defaults_fcn_handle_from_mapping(name_str)
-    return fcn_handle
-
-
-def set_model_defaults_for_components(params, model_keys):
-    # model_keys refers to the name of keys which have models
-    # and associated projectors if needed
-    # So if model_keys = ["image_model", "image_model_1"],
-    # we have params["model"]["image_model"], params["model"]["image_model_1"]
-    # and projector params["model"]["projector"]["image_model"] and
-    # projector params["model"]["projector"]["image_model_1"]
-
-    mparams = params["model"]
-    mpparams = params["model"]["projector"]
-    mixed_precision = mparams["mixed_precision"]
-    fp16_type = mparams["fp16_type"]
-
-    for component in model_keys:
-        for cparams, tgt_params, is_projector in [
-            (params.copy(), mparams, False),
-            (params.copy(), mpparams, True),
-        ]:
-            if tgt_params and tgt_params.get(component, None):
-                # Add under `model` key since
-                # set_defaults expects that
-                cparams["model"] = tgt_params[component]
-                cparams["model"]["mixed_precision"] = mixed_precision
-                cparams["model"]["fp16_type"] = fp16_type
-
-                defaults_fcn = _get_defaults_fcn(
-                    tgt_params[component]["name"], is_projector
-                )
-                defaults_fcn(cparams)
-
-                cparams["model"].pop("mixed_precision")
-                cparams["model"].pop("fp16_type")
-
-                tgt_params[component] = cparams["model"]
+    return handle_from_config_args
 
 
 def freeze_modules(
@@ -249,3 +190,18 @@ def freeze_modules(
         f"The follow parameters are being trained: "
         f"{[n for n, p in model.named_parameters() if p.requires_grad]}"
     )
+
+
+def init_component_model(component_params: Any) -> object:
+    if is_dataclass(component_params):
+        component_params = asdict(component_params)
+    component_name = component_params.pop("name")
+    component_handle = get_model_handle_from_mapping(component_name)
+    if type(component_handle) is list:
+        component_model = component_handle[0](
+            component_handle[1](**component_params)
+        )
+    else:
+        component_model = component_handle(**component_params)
+
+    return component_model

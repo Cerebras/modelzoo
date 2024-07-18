@@ -3,12 +3,8 @@
 
 
 train_input:
-    data_processor: "BertCSVDataProcessor"
-    data_dir: "./language/datasets/esm2/train/"
-    vocab_file: "./language/datasets/esm2/vocab.txt"
-    max_sequence_length: 1026
-    max_predictions_per_seq: 154
-    masked_lm_prob: 0.15
+    data_processor: "BertHDF5DataProcessor"
+    data_dir: "./language/datasets/scratch/esm2/non_vsl"
     batch_size: 135
     micro_batch_size: 135
     shuffle: True
@@ -20,10 +16,6 @@ train_input:
 eval_input:
     data_processor: "BertCSVDataProcessor"
     data_dir: "./language/datasets/esm2/validation/"
-    vocab_file: "./language/datasets/esm2/vocab.txt"
-    vocab_size: 33
-    max_sequence_length: 1026
-    masked_lm_prob: 0.15
     batch_size: 450
     micro_batch_size: 90
     shuffle: True

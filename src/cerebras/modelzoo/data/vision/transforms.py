@@ -17,11 +17,12 @@ import random
 from inspect import getfullargspec, signature
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageFilter
 from torchvision.transforms import autoaugment, transforms
 from torchvision.transforms.functional import InterpolationMode
 
 import torch  # noqa
+
 
 __all__ = [
     "create_transform",
@@ -38,6 +39,7 @@ SUPPORTED_TRANSFORMS = [
     "random_resized_crop",
     "random_vertical_flip",
     "resize",
+    "random_solarize",
     # Transforms on torch.*Tensor only
     "normalize",
     "random_erase",
@@ -52,6 +54,9 @@ SUPPORTED_TRANSFORMS = [
     # transforms on PIL image only
     "resize_center_crop_pil_image",
     "expand_to_square",
+    "random_apply",
+    "random_gray_scale",
+    "random_gaussian_blur_random_radius",
 ]
 
 
@@ -201,6 +206,33 @@ def create_transform(transform_spec):
             expand_to_square, transform_spec.get("background_color")
         )
 
+    elif name == "random_apply":
+        random_transforms = transform_spec.get("transforms")
+        transform_list = []
+        for t in random_transforms:
+            transform_list.append(create_transform(t))
+
+        transform_list = transforms.Compose(transform_list)
+        return transforms.RandomApply(
+            random_transforms, transform_spec.get("p", 0.5)
+        )
+
+    elif name == "random_gray_scale":
+        return transforms.RandomGrayscale(transform_spec.get("p"))
+
+    elif name == "random_gaussian_blur_random_radius":
+        return RandomGaussianBlurRandomRadius(
+            p=transform_spec.get("p", 0.5),
+            radius_min=transform_spec.get("radius_min", 1.0),
+            radius_max=transform_spec.get("radius_max", 2.0),
+        )
+
+    elif name == "random_solarize":
+        return transforms.RandomSolarize(
+            threshold=transform_spec.get("threshold"),
+            p=transform_spec.get("p", 0.5),
+        )
+
     # Automatic augmentation transforms
     elif name == "autoaug":
         policy = get_or_use_default(transform_spec, "policy", "imagenet")
@@ -344,6 +376,32 @@ def expand_to_square(pil_img, background_color, *args, **kwargs):
         result = Image.new(pil_img.mode, (height, height), background_color)
         result.paste(pil_img, ((height - width) // 2, 0))
         return result
+
+
+class RandomGaussianBlurRandomRadius(object):
+    """
+    Apply Gaussian Blur to the PIL image with a probability
+    """
+
+    def __init__(self, p=0.5, radius_min=0.1, radius_max=2.0):
+        self.prob = p
+        self.radius_min = radius_min
+        self.radius_max = radius_max
+
+    def __call__(self, pil_img):
+
+        do_it = random.random() <= self.prob
+        if not do_it:
+            return pil_img
+
+        return pil_img.filter(
+            ImageFilter.GaussianBlur(
+                radius=random.uniform(self.radius_min, self.radius_max)
+            )
+        )
+
+    def __repr__(self):
+        return f"{self.__class__.__name__}(p={self.prob}, radius_min={self.radius_min}, radius_max={self.radius_max})"
 
 
 class LambdaWithParam(object):

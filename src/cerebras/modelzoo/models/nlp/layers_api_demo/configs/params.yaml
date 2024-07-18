@@ -3,12 +3,14 @@ train_input:
     seq_length: 10
     # The effective batch size, which is evenly divided across "num_csx" systems used for the run
     batch_size: 32
+    seed: 1
 
 eval_input:
     num_samples: 2000
     seq_length: 10
     # The effective batch size, which is evenly divided across "num_csx" systems used for the run
     batch_size: 32
+    seed: 1
 
 model:
     vocab_size: 26

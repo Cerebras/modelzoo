@@ -58,3 +58,25 @@ class ESMConfig(BaseConfig):
     sparsity: Optional[SparsityConfig] = None
     optimizer: OptimizerConfig = required
     runconfig: RunConfig = required
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.set_config_defaults(
+            self.model,
+            self.train_input.params if self.train_input else None,
+            [self.eval_input.params if self.eval_input else None],
+        )
+
+    @staticmethod
+    def set_config_defaults(mparams, tparams, eparams_list):
+        # Pass settings into data loader sections directly
+        for model_key in ("disable_nsp", "vocab_size", "mixed_precision"):
+            for input_key in [tparams, *eparams_list]:
+                if input_key is not None:
+                    input_key[model_key] = getattr(mparams, model_key, None)
+
+        if tparams is not None:
+            mparams.max_position_embeddings = (
+                mparams.max_position_embeddings
+                or tparams["max_sequence_length"]
+            )

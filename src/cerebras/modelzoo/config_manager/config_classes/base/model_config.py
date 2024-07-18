@@ -16,6 +16,7 @@
 Config classes of Model Configs
 
 """
+
 from dataclasses import dataclass
 from typing import List, Literal, Optional, Union
 
@@ -65,6 +66,7 @@ class InitializerConfig(BaseConfig):
     mode: Optional[str] = None
     scale: Optional[float] = None
     distribution: Optional[str] = None
+    gain: Optional[float] = None
 
 
 @dataclass
@@ -92,15 +94,41 @@ class LoraConfig:
     converted to LoRA."""
 
 
+@dataclass
+class CompressionConfig(BaseConfig):
+    format: Literal["mx8-e4m3", "mx8-e3m4"]
+    "mx8 Compression formats"
+    param_filter: Union[str, List[str]]
+    """A glob or list of glob expressions to match against parameter names
+    that are to be compressed with format"""
+
+
+@dataclass
+class SelectiveGradConfig(BaseConfig):
+    param_filter: Optional[Union[str, List[str]]] = None
+    """A glob or list of glob expressions to match against parameter names
+    that are to have the selective gradient mask applied"""
+    init_method: str = "outlier"
+    "An initialization method that represents the mask to apply"
+
+
 @dataclass()
 class ModelConfig(BaseConfig):
     mixed_precision: bool = False
     "Enable to run the model in mixed precision mode"
 
-    fp16_type: Optional[
-        Literal["bfloat16", "float16", "cbfloat16"]
-    ] = "bfloat16"
+    fp16_type: Optional[Literal["bfloat16", "float16", "cbfloat16"]] = None
     "Type of 16bit precision used"
 
     boundary_casting: Optional[bool] = False
     lora_params: Optional[Union[LoraConfig, List[LoraConfig]]] = None
+
+    compression: Optional[Union[CompressionConfig, List[CompressionConfig]]] = (
+        None
+    )
+    "Weight compression configuration as a single dictionary or a list of dictionaries"
+
+    selective_grad: Optional[
+        Union[SelectiveGradConfig, List[SelectiveGradConfig]]
+    ] = None
+    "Selective gradient configuration as a single dictionary or a list of dictionaries"

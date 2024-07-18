@@ -15,7 +15,10 @@
 import torch
 import torch.nn as nn
 
-from cerebras.modelzoo.layers import FeedForwardNetwork
+from cerebras.modelzoo.layers import (
+    FeedForwardNetwork,
+    FeedForwardNetworkConfig,
+)
 from cerebras.modelzoo.models.nlp.bert.bert_model import BertModel
 
 
@@ -30,10 +33,12 @@ class BertClassifierHead(nn.Module):
         super().__init__()
 
         self.classifier = FeedForwardNetwork(
-            input_unit=hidden_size,
-            layers_units=[num_classes],
-            use_bias=use_bias,
-            kernel_initializer=kernel_initializer,
+            FeedForwardNetworkConfig(
+                input_unit=hidden_size,
+                layers_units=[num_classes],
+                use_bias=use_bias,
+                kernel_initializer=kernel_initializer,
+            )
         )
 
     def reset_parameters(self):
@@ -60,12 +65,14 @@ class BertMLMHeadTransform(nn.Module):
             embedding_size = hidden_size
 
         self.ffn = FeedForwardNetwork(
-            input_unit=hidden_size,
-            layers_units=[embedding_size],
-            layers_activation=[activation],
-            layers_dropout_rates=[dropout],
-            use_bias=use_ffn_bias_in_mlm,
-            kernel_initializer=kernel_initializer,
+            FeedForwardNetworkConfig(
+                input_unit=hidden_size,
+                layers_units=[embedding_size],
+                layers_activation=[activation],
+                layers_dropout_rates=[dropout],
+                use_bias=use_ffn_bias_in_mlm,
+                kernel_initializer=kernel_initializer,
+            )
         )
 
         self.ln = nn.LayerNorm(embedding_size, eps=layer_norm_epsilon)
@@ -83,6 +90,7 @@ class BertMLMHeadTransform(nn.Module):
     def forward(self, bert_output):
         mlm_embeddings = self.ffn(bert_output)
         mlm_embeddings = self.ln(mlm_embeddings)
+
         return mlm_embeddings
 
 
@@ -113,10 +121,12 @@ class BertMLMHead(nn.Module):
             kernel_initializer=kernel_initializer,
         )
         self.classifier = FeedForwardNetwork(
-            input_unit=embedding_size,
-            layers_units=[vocab_size],
-            use_bias=use_output_bias_in_mlm,
-            kernel_initializer=kernel_initializer,
+            FeedForwardNetworkConfig(
+                input_unit=embedding_size,
+                layers_units=[vocab_size],
+                use_bias=use_output_bias_in_mlm,
+                kernel_initializer=kernel_initializer,
+            )
         )
 
     def reset_parameters(self):
@@ -183,6 +193,16 @@ class BertPretrainModel(nn.Module):
         # Task-specific
         initializer_range=0.02,
         num_segments=2,
+        dtype=None,
+        # muP (maximal update parameterization)  parameters
+        lr_adjustment_groups=None,
+        embeddings_scale=1.0,
+        scale_qk_dot_by_d=False,
+        attention_logits_alpha=1.0,
+        scale_output_logits_by_d=True,
+        mup_base_hidden_size=None,
+        mup_base_filter_size=None,
+        output_logits_alpha=None,
     ):
         """
         Args:
@@ -239,7 +259,30 @@ class BertPretrainModel(nn.Module):
             initializer_range=initializer_range,
             num_segments=num_segments,
             add_pooling_layer=(not self.disable_nsp),
+            dtype=dtype,
+            # muP (maximal update parameterization)  parameters
+            lr_adjustment_groups=lr_adjustment_groups,
+            embeddings_scale=embeddings_scale,
+            scale_qk_dot_by_d=scale_qk_dot_by_d,
+            attention_logits_alpha=attention_logits_alpha,
+            mup_base_hidden_size=mup_base_hidden_size,
+            mup_base_filter_size=mup_base_filter_size,
         )
+
+        # Handle muP scaling
+        self.output_logits_scale = None
+        if mup_base_hidden_size:
+            hidden_size_width_mult = hidden_size / mup_base_hidden_size
+            if not output_logits_alpha:
+                output_logits_alpha = 1.0
+            if scale_output_logits_by_d:
+                self.output_logits_scale = (
+                    output_logits_alpha / hidden_size_width_mult
+                )
+            else:
+                self.output_logits_scale = (
+                    output_logits_alpha / hidden_size_width_mult**0.5
+                )
 
         kernel_initializer = {
             "name": "truncated_normal",
@@ -317,6 +360,7 @@ class BertPretrainModel(nn.Module):
         token_type_ids=None,
         masked_lm_positions=None,
         should_gather_mlm_labels=False,
+        attention_span=None,
     ):
         """
         Args:
@@ -333,12 +377,15 @@ class BertPretrainModel(nn.Module):
                 Can be of shape ```[batch_size, seq_length]`
             masked_lm_positions (Tensor):
                 Position ids of mlm tokens. Shape ``[batch_size, max_predictions_per_seq]``
+            attention_span (Tensor):
+                The attention span of input tokens for creating VSL mask. Can be of shape ```[batch_size, seq_length]```.
         """
         mlm_hidden_states, pooled_hidden_states = self.bert_encoder(
             input_ids,
             position_ids=position_ids,
             segment_ids=token_type_ids,
             attention_mask=attention_mask,
+            attention_span=attention_span,
         )
         batch_size, seq_len, hidden_size = list(mlm_hidden_states.size())
 
@@ -355,8 +402,22 @@ class BertPretrainModel(nn.Module):
 
         mlm_logits = self.bert_mlm_head(focused_mlm_hidden_states)
 
+        # scale mlm_logits for muP transfer
+        if self.output_logits_scale:
+            mlm_logits = mlm_logits * torch.tensor(
+                float(self.output_logits_scale),
+                dtype=mlm_logits.dtype,
+            )
+
         # nsp_logits
         nsp_logits = None
         if not self.disable_nsp:
             nsp_logits = self.bert_cls_head(pooled_hidden_states)
+            # scale nsp_logits for muP transfer
+            if self.output_logits_scale:
+                nsp_logits = nsp_logits * torch.tensor(
+                    float(self.output_logits_scale),
+                    dtype=nsp_logits.dtype,
+                )
+
         return mlm_logits, nsp_logits, mlm_hidden_states, pooled_hidden_states

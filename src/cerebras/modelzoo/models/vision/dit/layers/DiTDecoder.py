@@ -84,9 +84,11 @@ class DiTDecoder(TransformerDecoder):
             output = mod(
                 output,
                 memory=memory,
-                tgt_mask=sparse_mask
-                if layer_idx % 2 != 0 and sparse_mask is not None
-                else tgt_mask,
+                tgt_mask=(
+                    sparse_mask
+                    if layer_idx % 2 != 0 and sparse_mask is not None
+                    else tgt_mask
+                ),
                 memory_mask=memory_mask,
                 tgt_key_padding_mask=tgt_key_padding_mask,
                 memory_key_padding_mask=memory_key_padding_mask,

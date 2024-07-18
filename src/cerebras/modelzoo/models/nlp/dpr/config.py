@@ -15,7 +15,11 @@
 from dataclasses import dataclass
 from typing import Literal, Optional
 
-from cerebras.modelzoo.config_manager.config_classes.base.base_config import *
+from cerebras.modelzoo.common.registry import registry
+from cerebras.modelzoo.config_manager.config_classes.base.base_config import (
+    BaseConfig,
+    required,
+)
 from cerebras.modelzoo.config_manager.config_classes.base.data_config import (
     DataConfig,
 )
@@ -42,10 +46,58 @@ class DPREncoderConfig(BertModelConfig):
 
 @dataclass
 class DPRModelConfig(ModelConfig):
-    selected_encoder: Optional[Literal["q_encoder", "ctx_encoder"]] = None
-    q_encoder: DPREncoderConfig = required
-    ctx_encoder: DPREncoderConfig = required
-    scale_similarity: bool = False
+    q_encoder: Optional[DPREncoderConfig] = None
+    "Encoder for question in biencoder model (e.g., DPR)"
+    ctx_encoder: Optional[DPREncoderConfig] = None
+    "Encoder for context in biencoder model (e.g., DPR)"
+    encoder: Optional[DPREncoderConfig] = None
+    """
+    Encoder for both question and context model.
+    - If `encoder` is already provided, users should not provide 
+    `q_encoder` and `ctx_encoder` in the same config file. 
+    - Simply providing `encoder` doesn't automatically make the architecture a uni-encoder model;
+    instead, the users should explicitly set `use_biencoder` to be False. Otherwise, a bi-encoder
+    model will be instantiated with question & context encoders have the same config.
+    """
+    softmax_temperature: float = 1.0
+    "Divide the score matrix by temperature before softmax computation"
+    mutual_information: bool = False
+    "Whether to add context-to-question loss in addition to question-to-context loss"
+    use_biencoder: bool = True
+    "Use uniencoder or biencoder architecture"
+    pooler_type: Literal["mean", "cls", "ffn_pooler"] = "cls"
+    """Pooler method for generating sequence embedding out of output token embeddings.
+    Can be one of - 
+    `mean` -  average all token embeddings as the final sequence embedding, 
+    `fixed` - use the token embedding of the [CLS] token as the final sequence embedding", 
+    `ffn_pooler` -  apply an additional linear layer on top of the token embedding of the [CLS] token as the final sequence embedding
+    """
+    compute_eval_metrics: bool = False
+    "Computes accuracy metrics in addition to loss"
+    selected_encoder: Optional[
+        Literal["q_encoder", "ctx_encoder", "encoder"]
+    ] = None
+    "Select which encoder to use in embedding_generation. This field is only used in embedding_generation."
+    fp16_type: Optional[Literal["bfloat16", "float16", "cbfloat16"]] = (
+        "bfloat16"
+    )
+    "Type of 16bit precision used"
+
+    def __post_init__(self):
+        super().__post_init__()
+        valid_biencoder_config = (
+            self.q_encoder and self.ctx_encoder and not self.encoder
+        )
+        valid_uniencoder_config = (
+            not self.q_encoder and not self.ctx_encoder and self.encoder
+        )
+        assert (
+            valid_uniencoder_config or valid_biencoder_config
+        ), "Either provide both q_encoder and ctx_encoder, or only encoder in config"
+        if not self.use_biencoder:
+            assert (
+                valid_uniencoder_config
+            ), "If uniencoder is used, only provide encoder attribute in config"
 
 
 @registry.register_config("dpr")

@@ -36,7 +36,7 @@ def get_train_dataloader(params):
 
     batch_size = get_streaming_batch_size(input_params.get("batch_size"))
     to_float16 = input_params.get("to_float16", True)
-    shuffle = input_params["shuffle"]
+    shuffle = input_params.get("shuffle", True)
 
     dtype = torch.float32
     if to_float16:
@@ -73,11 +73,13 @@ def get_train_dataloader(params):
                     ),
                 ]
             ),
-            target_transform=transforms.Lambda(
-                lambda x: torch.as_tensor(x, dtype=torch.int32)
-            )
-            if use_cs
-            else None,
+            target_transform=(
+                transforms.Lambda(
+                    lambda x: torch.as_tensor(x, dtype=torch.int32)
+                )
+                if use_cs
+                else None
+            ),
         )
 
         train_sampler = None
@@ -143,11 +145,13 @@ def get_eval_dataloader(params):
                     ),
                 ]
             ),
-            target_transform=transforms.Lambda(
-                lambda x: torch.as_tensor(x, dtype=torch.int32)
-            )
-            if use_cs
-            else None,
+            target_transform=(
+                transforms.Lambda(
+                    lambda x: torch.as_tensor(x, dtype=torch.int32)
+                )
+                if use_cs
+                else None
+            ),
         )
 
         eval_loader = torch.utils.data.DataLoader(

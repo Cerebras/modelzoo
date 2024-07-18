@@ -15,15 +15,27 @@
 """
 Config classes of Run Configs
 """
+
+from dataclasses import dataclass, field
 from typing import Dict, List, Literal, Optional, Union
 
-# pylint: disable=wildcard-import
-from cerebras.modelzoo.config_manager.config_classes.base.base_config import *
+from cerebras.modelzoo.config_manager.config_classes.base.base_config import (
+    BaseConfig,
+    config_field,
+    required,
+)
 from cerebras.modelzoo.config_manager.config_validators import PositiveInteger
 
 
 @dataclass
-class PytorchProfilerConfig(BaseConfig):
+class CSTorchProfilerConfig(BaseConfig):
+
+    host_activities: Optional[List[str]]
+    """
+     list of act host, wgt host, csx host in the form of strings which should
+     like, ACTHOST0, WGTHOST0, CSX0, etc
+    """
+
     start_step: int = required
     "step where to begin profiling"
 
@@ -33,6 +45,7 @@ class PytorchProfilerConfig(BaseConfig):
 
 @dataclass
 class RunConfig(BaseConfig):
+
     steps_per_epoch: Optional[int] = None
     "The number of steps per epoch."
 
@@ -49,7 +62,7 @@ class RunConfig(BaseConfig):
     `<host>:<port>`.
     """
 
-    mount_dirs: Optional[List[str]] = None
+    mount_dirs: List[str] = field(default_factory=list)
     """
     A list of paths to be mounted to the appliance containers.
     It should generally contain path to the directory
@@ -58,7 +71,7 @@ class RunConfig(BaseConfig):
     num_epochs: Optional[int] = None
     "The number of epochs to train for."
 
-    python_paths: Optional[List[str]] = None
+    python_paths: List[str] = field(default_factory=list)
     """
     A list of paths to be exported into `PYTHONPATH` for worker containers.
     It should generally contain path to
@@ -80,7 +93,7 @@ class RunConfig(BaseConfig):
     debug_args_path: Optional[str] = None
     "Path to debugs args file."
 
-    retrace_every_iteration: Optional[bool] = None
+    retrace_every_iteration: bool = False
 
     eval_steps: Optional[int] = None
     "Specifies the number of steps to run the model evaluation."
@@ -89,10 +102,10 @@ class RunConfig(BaseConfig):
 
     job_time_sec: Optional[int] = None
 
-    job_labels: Optional[List[str]] = None
+    job_labels: List[str] = field(default_factory=list)
     "A list of equal-sign-separated key value pairs served as job labels."
 
-    job_priority: Optional[str] = None
+    job_priority: str = "p2"
     "Priority of the job in scheduling queue."
 
     seed: Optional[int] = None
@@ -100,7 +113,7 @@ class RunConfig(BaseConfig):
 
     mgmt_namespace: Optional[str] = None
 
-    load_checkpoint_states: Optional[str] = None
+    load_checkpoint_states: str = "all"
     """
     Comma-separated string of keys used in conjunction with `checkpoint_path` to
     explicitly specify what components' state should be loaded if present in a checkpoint.
@@ -130,9 +143,7 @@ class RunConfig(BaseConfig):
         "train",
         "eval",
         "eval_all",
-        "sideband_eval_all",
         "train_and_eval",
-        "sideband_train_and_eval",
         "inference",
     ] = "train"
     """
@@ -140,9 +151,7 @@ class RunConfig(BaseConfig):
     `train_and_eval`.
     """
 
-    wsc_log_level: Optional[
-        Union[Literal["INFO", "DEBUG", "VERBOSE", "20", "10"], dict]
-    ] = "INFO"
+    wsc_log_level: Optional[dict] = None
     """
     Specifes the logging level for particular Wafer-Scale Cluster servers or tasks.
     Input can be either a single value setting a global log level
@@ -154,7 +163,7 @@ class RunConfig(BaseConfig):
     See [more](https://docs.python.org/3/library/logging.html#logging-levels).
     """
 
-    autoload_last_checkpoint: Optional[bool] = True
+    autoload_last_checkpoint: bool = True
     "Flag to automatically load the last checkpoint in the `model_dir`."
 
     check_loss_values: bool = True
@@ -163,7 +172,7 @@ class RunConfig(BaseConfig):
     Defaults to True
     """
 
-    disable_strict_checkpoint_loading: Optional[bool] = False
+    disable_strict_checkpoint_loading: bool = False
     """
     Flag used in conjunction with `checkpoint_path`, to avoid enforcing strict model
     state loading. Defaults to False
@@ -184,9 +193,7 @@ class RunConfig(BaseConfig):
     `0` means no checkpoints saved. Defaults to 0
     """
 
-    disable_version_check: Optional[bool] = False
-
-    drop_data: Optional[bool] = False
+    disable_version_check: bool = False
 
     enable_distributed: bool = False
     "Flag to enable distributed training on GPU. Defaults to False"
@@ -203,7 +210,7 @@ class RunConfig(BaseConfig):
     Defaults to False
     """
 
-    precision_opt_level: Optional[int] = None
+    precision_opt_level: int = 1
     """
     Setting to control the level of numerical precision used for training
     runs for large NLP modelzoo.
@@ -213,7 +220,7 @@ class RunConfig(BaseConfig):
     Defaults to 1
     """
 
-    num_workers_per_csx: int = 0
+    num_workers_per_csx: int = 1
     """
     Number of input workers, per CSX, to use for streaming samples.
     This setting depends on whether the model is compute-bound or input-bound and how
@@ -223,13 +230,14 @@ class RunConfig(BaseConfig):
     per CSX.
     defaults to 0
     """
-    validate_only: Optional[bool] = False
+
+    validate_only: bool = False
     """
     Enables validate only workflow, stops the compilation at kernel matching stage.
     Defaults to False
     """
 
-    logging: Optional[str] = "INFO"
+    logging: Union[str, int] = "INFO"
     """
     Logging Specifies the logging level during training.
     Defaults to 'INFO'
@@ -241,7 +249,7 @@ class RunConfig(BaseConfig):
     Defaults to False
     """
 
-    compile_only: Optional[bool] = False
+    compile_only: bool = False
     """
     Enables compile only workflow.
     Defaults to False
@@ -256,10 +264,16 @@ class RunConfig(BaseConfig):
     num_steps: Optional[int] = None
     "The number of steps to train for."
 
-    transfer_processes: Optional[int] = None
+    transfer_processes: int = config_field(
+        default=5,
+        constraint=PositiveInteger,
+    )
     "Number of transfer processes used for weight transfer"
 
-    num_wgt_servers: Optional[int] = None
+    num_wgt_servers: int = config_field(
+        default=24,
+        constraint=PositiveInteger,
+    )
     """
     Upper bound on the number of MemoryX servers used for storing the model weights.
     Compilation may choose a smaller number depending on the model topology.
@@ -272,8 +286,8 @@ class RunConfig(BaseConfig):
     )
     "The number of CSX systems to use in Cerebras WSE cluster. Defaults to 1"
 
-    num_act_servers: Optional[int] = config_field(
-        default=1,
+    num_act_servers: int = config_field(
+        default=60,
         constraint=PositiveInteger,
     )
     """
@@ -284,8 +298,7 @@ class RunConfig(BaseConfig):
     For CV modelzoo.we choose a higher number, a crude rule of thumb is to have one
     activation server for every 4 workers (i.e. `num_workers_per_csx // 4
     if num_workers_per_csx > 4, else 1`). It is suggested to keep the
-    default values for this param when possible.
-    defaults to 1
+    default values for this param when possible. Defaults to 60.
     """
 
     eval_frequency: Optional[int] = None
@@ -297,7 +310,7 @@ class RunConfig(BaseConfig):
     compile_crd_memory_gi: Optional[int] = None
     "Optional parameter to specifu the memory used for compile. Default : None"
 
-    op_profiler_config: Optional[PytorchProfilerConfig] = None
+    op_profiler_config: Optional[CSTorchProfilerConfig] = None
     dump_activations: bool = False
     enable_distributed: bool = False
     log_input_summaries: bool = False
@@ -305,7 +318,6 @@ class RunConfig(BaseConfig):
     max_checkpoints: Optional[int] = None
     summary_dir: Optional[str] = None
     lazy_initialization: bool = True
-    use_cstorch_optimizer_step: bool = False
     wrk_memory_gi: Optional[int] = None
     act_memory_gi: Optional[int] = None
     cmd_memory_gi: Optional[int] = None
@@ -317,3 +329,5 @@ class RunConfig(BaseConfig):
 
     debug_args: Optional[Dict[str, Union[bool, int, float, str]]] = None
     "Internal debug flags for Wafer Scale Cluster compiler and runtime."
+
+    legacy_event_dirs: bool = False

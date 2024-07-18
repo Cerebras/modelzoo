@@ -87,3 +87,4 @@ runconfig:
     seed: 1
     model_dir: "./model_dir"
     eval_frequency: 10000
+    compile_crd_memory_gi: 60

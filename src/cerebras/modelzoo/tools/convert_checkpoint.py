@@ -21,297 +21,28 @@ import os
 import re
 import sys
 import textwrap
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Optional, Tuple, Union
 
 from packaging.version import parse
 from tabulate import tabulate
 
-import cerebras.pytorch as cstorch
-
-sys.path.append(os.path.join(os.path.dirname(__file__), "../"))
+sys.path.append(os.path.join(os.path.dirname(__file__), "../../.."))
 from cerebras.modelzoo.tools.checkpoint_converters.base_converter import (
     BaseCheckpointConverter,
     BaseConfigConverter,
     FormatIndices,
     fallback_converters,
-    no_ckpt_conversion_necessary,
-    parse_format_version,
-    update_ckpt_metadata,
-)
-from cerebras.modelzoo.tools.checkpoint_converters.bert import (
-    Converter_Bert_CS17_CS18,
-    Converter_Bert_CS18_CS20,
-    Converter_Bert_CS20_CS21,
-    Converter_BertPretrainModel_CS16_CS17,
-    Converter_BertPretrainModel_CS16_CS18,
-    Converter_BertPretrainModel_HF_CS21,
-)
-from cerebras.modelzoo.tools.checkpoint_converters.bert_finetune import (
-    Converter_BertFinetuneModel_CS16_CS17,
-    Converter_BertFinetuneModel_CS16_CS18,
-    Converter_BertForQuestionAnswering_HF_CS21,
-    Converter_BertForSequenceClassification_HF_CS21,
-    Converter_BertForTokenClassification_HF_CS21,
-)
-from cerebras.modelzoo.tools.checkpoint_converters.falcon import (
-    Converter_Falcon_CS20_CS21,
-    Converter_Falcon_Headless_HF_CS21,
-    Converter_Falcon_HF_CS21,
-)
-from cerebras.modelzoo.tools.checkpoint_converters.gpt2_hf_cs import (
-    Converter_GPT2LMHeadModel_CS18_CS20,
-    Converter_GPT2LMHeadModel_CS20_CS21,
-    Converter_GPT2LMHeadModel_HF_CS21,
-    Converter_GPT2Model_HF_CS21,
-)
-from cerebras.modelzoo.tools.checkpoint_converters.gpt_neox_hf_cs import (
-    Converter_GPT_Neox_Headless_HF_CS21,
-    Converter_GPT_Neox_LMHeadModel_CS18_CS20,
-    Converter_GPT_Neox_LMHeadModel_CS20_CS21,
-    Converter_GPT_Neox_LMHeadModel_HF_CS21,
-)
-from cerebras.modelzoo.tools.checkpoint_converters.gptj_hf_cs import (
-    Converter_GPTJ_Headless_HF_CS20,
-    Converter_GPTJ_LMHeadModel_CS18_CS20,
-    Converter_GPTJ_LMHeadModel_CS20_CS21,
-    Converter_GPTJ_LMHeadModel_HF_CS20,
-)
-from cerebras.modelzoo.tools.checkpoint_converters.llama import (
-    Converter_LlamaForCausalLM_CS19_CS20,
-    Converter_LlamaForCausalLM_CS20_CS21,
-    Converter_LlamaForCausalLM_HF_CS21,
-    Converter_LlamaModel_HF_CS21,
-)
-from cerebras.modelzoo.tools.checkpoint_converters.llava import (
-    Converter_LLaVA_HF_CS22,
-)
-from cerebras.modelzoo.tools.checkpoint_converters.roberta import (
-    Converter_RobertaPretrainModel_HF_CS21,
-)
-from cerebras.modelzoo.tools.checkpoint_converters.salesforce_codegen_hf_cs import (
-    Converter_Codegen_Headless_HF_CS20,
-    Converter_Codegen_LMHeadModel_CS18_CS20,
-    Converter_Codegen_LMHeadModel_CS20_CS21,
-    Converter_Codegen_LMHeadModel_HF_CS20,
 )
 from cerebras.modelzoo.tools.checkpoint_converters.streaming_checkpoints import (
     StreamingShardedHFWriter,
 )
-from cerebras.modelzoo.tools.checkpoint_converters.t5 import (
-    Converter_T5_CS16_CS17,
-    Converter_T5_CS16_CS18,
-    Converter_T5_CS17_CS18,
-    Converter_T5_CS18_CS20,
-    Converter_T5_CS20_CS21,
-    Converter_T5_HF_CS21,
-)
-
-from cerebras.modelzoo.tools.checkpoint_converters.btlm_hf_cs import (  # noqa
-    Converter_BTLMLMHeadModel_CS20_CS21,
-    Converter_BTLMLMHeadModel_HF_CS21,
-    Converter_BTLMModel_HF_CS21,
-)
-
-from cerebras.modelzoo.tools.checkpoint_converters.jais_hf_cs import (  # noqa
-    Converter_JAISLMHeadModel_CS20_CS21,
-    Converter_JAISLMHeadModel_HF_CS21,
-    Converter_JAISModel_HF_CS21,
-)
-
-from cerebras.modelzoo.tools.checkpoint_converters.bloom_hf_cs import (  # noqa
-    Converter_BloomLMHeadModel_CS19_CS20,
-    Converter_BloomLMHeadModel_CS20_CS21,
-    Converter_BloomLMHeadModel_HF_CS21,
-    Converter_BloomModel_HF_CS21,
-)
-
-from cerebras.modelzoo.tools.checkpoint_converters.clip_vit import (  # noqa
-    Converter_CLIPViT_Projection_HF_CS21,
-)
-
-from cerebras.modelzoo.tools.checkpoint_converters.vit import (  # noqa
-    Converter_ViT_Headless_HF_CS21,
-    Converter_ViT_HF_CS21,
-)
-from cerebras.modelzoo.tools.checkpoint_converters.esm2 import (  # noqa
-    Converter_Esm2PretrainModel_HF_CS21,
-)
-
-
-from cerebras.modelzoo.tools.checkpoint_converters.mpt import (  # noqa
-    Converter_MPTForCausalLM_HF_CS21,
-    Converter_MPTModel_HF_CS21,
-)
-
-from cerebras.modelzoo.tools.checkpoint_converters.starcoder import (  # noqa
-    Converter_StarcoderForCausalLM_HF_CS21,
-    Converter_StarcoderModel_HF_CS21,
-    Converter_StarcoderLMHeadModel_CS20_CS21,
-)
-
-from cerebras.modelzoo.tools.checkpoint_converters.santacoder import (  # noqa
-    Converter_SantacoderLMHeadModel_HF_CS21,
-    Converter_SantacoderModel_HF_CS21,
-)
-
-from cerebras.modelzoo.tools.checkpoint_converters.mistral import (  # noqa
-    Converter_MistralModel_HF_CS21,
-    Converter_MistralForCausalLM_HF_CS21,
-)
-
-converters: Dict[str, List[BaseCheckpointConverter]] = {
-    "bert": [
-        Converter_BertPretrainModel_HF_CS21,
-        Converter_BertPretrainModel_CS16_CS17,
-        Converter_BertPretrainModel_CS16_CS18,
-        Converter_Bert_CS17_CS18,
-        Converter_Bert_CS18_CS20,
-        Converter_Bert_CS20_CS21,
-    ],
-    "bert-sequence-classifier": [
-        Converter_BertFinetuneModel_CS16_CS17,
-        Converter_BertFinetuneModel_CS16_CS18,
-        Converter_Bert_CS17_CS18,
-        Converter_Bert_CS20_CS21,
-        Converter_BertForSequenceClassification_HF_CS21,
-    ],
-    "bert-token-classifier": [
-        Converter_BertFinetuneModel_CS16_CS17,
-        Converter_BertFinetuneModel_CS16_CS18,
-        Converter_Bert_CS17_CS18,
-        Converter_Bert_CS20_CS21,
-        Converter_BertForTokenClassification_HF_CS21,
-    ],
-    "bert-summarization": [
-        Converter_BertFinetuneModel_CS16_CS17,
-        Converter_BertFinetuneModel_CS16_CS18,
-        Converter_Bert_CS17_CS18,
-        Converter_Bert_CS20_CS21,
-    ],
-    "bert-qa": [
-        Converter_BertFinetuneModel_CS16_CS17,
-        Converter_BertFinetuneModel_CS16_CS18,
-        Converter_Bert_CS17_CS18,
-        Converter_Bert_CS20_CS21,
-        Converter_BertForQuestionAnswering_HF_CS21,
-    ],
-    "bloom": [
-        Converter_BloomLMHeadModel_CS19_CS20,
-        Converter_BloomLMHeadModel_CS20_CS21,
-        Converter_BloomLMHeadModel_HF_CS21,
-    ],
-    "bloom-headless": [
-        Converter_BloomModel_HF_CS21,
-    ],
-    "btlm": [
-        Converter_BTLMLMHeadModel_CS20_CS21,
-        Converter_BTLMLMHeadModel_HF_CS21,
-    ],
-    "btlm-headless": [Converter_BTLMModel_HF_CS21],
-    "clip-vit": [Converter_CLIPViT_Projection_HF_CS21],
-    "codegen": [
-        Converter_Codegen_LMHeadModel_CS18_CS20,
-        Converter_Codegen_LMHeadModel_CS20_CS21,
-        Converter_Codegen_LMHeadModel_HF_CS20,
-    ],
-    "codegen-headless": [
-        Converter_Codegen_Headless_HF_CS20,
-    ],
-    "esm-2": [Converter_Esm2PretrainModel_HF_CS21],
-    "falcon": [
-        Converter_Falcon_CS20_CS21,
-        Converter_Falcon_HF_CS21,
-    ],
-    "falcon-headless": [
-        Converter_Falcon_Headless_HF_CS21,
-    ],
-    "gpt2": [
-        Converter_GPT2LMHeadModel_CS18_CS20,
-        Converter_GPT2LMHeadModel_CS20_CS21,
-        Converter_GPT2LMHeadModel_HF_CS21,
-    ],
-    "gpt2-headless": [
-        Converter_GPT2Model_HF_CS21,
-    ],
-    "gptj": [
-        Converter_GPTJ_LMHeadModel_CS18_CS20,
-        Converter_GPTJ_LMHeadModel_CS20_CS21,
-        Converter_GPTJ_LMHeadModel_HF_CS20,
-    ],
-    "gptj-headless": [
-        Converter_GPTJ_Headless_HF_CS20,
-    ],
-    "gpt-neox": [
-        Converter_GPT_Neox_LMHeadModel_CS18_CS20,
-        Converter_GPT_Neox_LMHeadModel_CS20_CS21,
-        Converter_GPT_Neox_LMHeadModel_HF_CS21,
-    ],
-    "gpt-neox-headless": [
-        Converter_GPT_Neox_Headless_HF_CS21,
-    ],
-    "jais": [
-        Converter_JAISLMHeadModel_CS20_CS21,
-        Converter_JAISLMHeadModel_HF_CS21,
-    ],
-    "llama": [
-        Converter_LlamaForCausalLM_CS19_CS20,
-        Converter_LlamaForCausalLM_CS20_CS21,
-        Converter_LlamaForCausalLM_HF_CS21,
-    ],
-    "llama-headless": [
-        Converter_LlamaModel_HF_CS21,
-    ],
-    "llava": [Converter_LLaVA_HF_CS22],
-    "mpt": [
-        Converter_MPTForCausalLM_HF_CS21,
-    ],
-    "mpt-headless": [
-        Converter_MPTModel_HF_CS21,
-    ],
-    "mistral": [Converter_MistralForCausalLM_HF_CS21],
-    "mistral-headless": [Converter_MistralModel_HF_CS21],
-    "roberta": [
-        Converter_RobertaPretrainModel_HF_CS21,
-        Converter_Bert_CS20_CS21,
-    ],
-    "santacoder": [Converter_SantacoderLMHeadModel_HF_CS21],
-    "santacoder-headless": [Converter_SantacoderModel_HF_CS21],
-    "starcoder": [
-        Converter_StarcoderForCausalLM_HF_CS21,
-        Converter_StarcoderLMHeadModel_CS20_CS21,
-    ],
-    "starcoder-headless": [
-        Converter_StarcoderModel_HF_CS21,
-    ],
-    "t5": [
-        Converter_T5_CS16_CS17,
-        Converter_T5_CS16_CS18,
-        Converter_T5_CS17_CS18,
-        Converter_T5_CS18_CS20,
-        Converter_T5_CS20_CS21,
-        Converter_T5_HF_CS21,
-    ],
-}
-
-# Add some model aliases
-converters["ul2"] = converters["t5"]
-converters["flan-ul2"] = converters["t5"]
-converters["transformer"] = converters["t5"]
-converters["llamaV2"] = converters["llama"]
-converters["llamaV2-headless"] = converters["llama-headless"]
-converters["code-llama"] = converters["llama"]
-converters["code-llama-headless"] = converters["llama-headless"]
-converters["octocoder"] = converters["starcoder"]
-converters["octocoder-headless"] = converters["starcoder-headless"]
-converters["wizardcoder"] = converters["starcoder"]
-converters["wizardcoder-headless"] = converters["starcoder-headless"]
-converters["sqlcoder"] = converters["starcoder"]
-converters["sqlcoder-headless"] = converters["starcoder-headless"]
-converters["wizardlm"] = converters["llama"]
-converters["wizardlm-headless"] = converters["llama-headless"]
 
 
 def _print_supported_models() -> None:
+    from cerebras.modelzoo.tools.checkpoint_converters.registry import (
+        converters,
+    )
+
     print("The following models are supported:\n")
     print(
         tabulate(
@@ -337,6 +68,10 @@ def _get_converter_notes(
 def _print_supported_models_converters(
     model: Optional[str] = None, hide_notes: bool = False
 ) -> None:
+    from cerebras.modelzoo.tools.checkpoint_converters.registry import (
+        converters,
+    )
+
     print("The following converters are supported:\n")
     table = []
 
@@ -402,6 +137,10 @@ def _cs_version_to_float(fmt: str) -> float:
 
 
 def _get_oldest_converter_version(model: str) -> float:
+    from cerebras.modelzoo.tools.checkpoint_converters.registry import (
+        converters,
+    )
+
     oldest_version = float("inf")
     for converter in converters.get(model, []):
         for fmts in converter.formats():
@@ -415,6 +154,10 @@ def _get_oldest_converter_version(model: str) -> float:
 def get_model_converter(
     model: str, src_fmt: str, tgt_fmt: str
 ) -> Optional[BaseCheckpointConverter]:
+    from cerebras.modelzoo.tools.checkpoint_converters.registry import (
+        converters,
+    )
+
     if model in converters:
         for converter in converters[model]:
             if converter.supports_conversion(src_fmt, tgt_fmt):
@@ -451,6 +194,10 @@ def _select_model_and_config_converter(
     Optional[BaseConfigConverter],
     Optional[FormatIndices],
 ]:
+    from cerebras.modelzoo.tools.checkpoint_converters.registry import (
+        converters,
+    )
+
     converter_class = get_model_converter(model, src_fmt, tgt_fmt)
     if converter_class is None:
         print("Cannot convert", model, "from", src_fmt, "to", tgt_fmt)
@@ -528,6 +275,8 @@ def _convert_checkpoint_helper(
 
 
 def _get_cs_src_fmt_from_metadata(checkpoint: Union[str, dict]):
+    import cerebras.pytorch as cstorch
+
     if isinstance(checkpoint, str):
         checkpoint = cstorch.load(checkpoint)
     if isinstance(checkpoint, dict):
@@ -557,6 +306,8 @@ def _get_cs_src_fmt_from_metadata(checkpoint: Union[str, dict]):
 
 
 def _get_cs_tgt_fmt_from_version():
+    import cerebras.pytorch as cstorch
+
     version = parse(cstorch.__version__)
     return f"cs-{version.major}.{version.minor}"
 
@@ -606,69 +357,48 @@ def convert_checkpoint_from_file(
     config = config_converter_class.load(config_file, config_from_index)
     checkpoint = converter_class.load(checkpoint_file, checkpoint_from_index)
 
-    if no_ckpt_conversion_necessary(converter_class):
-        new_config = config_converter_class.convert(
-            config,
-            config_from_index,
-            no_progress_bar=no_progress_bar,
-            debug=debug,
-            drop_unmatched_keys=True,
-        )
-        target_version = parse_format_version(tgt_fmt)
-        update_ckpt_metadata(checkpoint, checkpoint, new_config, target_version)
-        final_checkpoint_file = converter_class.save(
-            checkpoint_file,
-            checkpoint,
-            checkpoint_from_index,
-        )
-        output_checkpoint = None
-        logging.info(
-            f"{model} has no changes when converting from {src_fmt} to {tgt_fmt}. "
-            f"Updating checkpoint metadata in-place."
-        )
-    else:
-        if outputdir is not None and not os.path.exists(outputdir):
-            os.makedirs(outputdir)
+    if outputdir is not None and not os.path.exists(outputdir):
+        os.makedirs(outputdir)
 
-        checkpoint_folder, checkpoint_filename = os.path.split(checkpoint_file)
-        new_checkpoint_filename_without_ext = (
-            _remove_file_extension(checkpoint_filename) + "_to_" + tgt_fmt
-        )
+    checkpoint_folder, checkpoint_filename = os.path.split(checkpoint_file)
+    new_checkpoint_filename_without_ext = (
+        _remove_file_extension(checkpoint_filename) + "_to_" + tgt_fmt
+    )
 
-        new_checkpoint_file_without_ext = (
-            os.path.join(outputdir, new_checkpoint_filename_without_ext)
-            if outputdir is not None
-            else os.path.join(
-                checkpoint_folder, new_checkpoint_filename_without_ext
-            )
+    new_checkpoint_file_without_ext = (
+        os.path.join(outputdir, new_checkpoint_filename_without_ext)
+        if outputdir is not None
+        else os.path.join(
+            checkpoint_folder, new_checkpoint_filename_without_ext
         )
+    )
 
-        output_checkpoint = converter_class.init_output_checkpoint(
-            new_checkpoint_file_without_ext,
-            checkpoint_from_index,
-            hf_shard_size=hf_shard_size,
-            export_safetensors=export_safetensors,
-        )
+    output_checkpoint = converter_class.init_output_checkpoint(
+        new_checkpoint_file_without_ext,
+        checkpoint_from_index,
+        hf_shard_size=hf_shard_size,
+        export_safetensors=export_safetensors,
+    )
 
-        new_checkpoint, new_config = _convert_checkpoint_helper(
-            converter_class,
-            checkpoint,
-            checkpoint_from_index,
-            config_converter_class,
-            config,
-            config_from_index,
-            output_checkpoint,
-            drop_unmatched_keys,
-            no_progress_bar,
-            debug,
-        )
+    new_checkpoint, new_config = _convert_checkpoint_helper(
+        converter_class,
+        checkpoint,
+        checkpoint_from_index,
+        config_converter_class,
+        config,
+        config_from_index,
+        output_checkpoint,
+        drop_unmatched_keys,
+        no_progress_bar,
+        debug,
+    )
 
-        logging.info("Saving...")
-        final_checkpoint_file = converter_class.save(
-            new_checkpoint_file_without_ext,
-            new_checkpoint,
-            checkpoint_from_index,
-        )
+    logging.info("Saving...")
+    final_checkpoint_file = converter_class.save(
+        new_checkpoint_file_without_ext,
+        new_checkpoint,
+        checkpoint_from_index,
+    )
 
     config_folder, config_filename = os.path.split(config_file)
     new_config_filename_without_ext = (
@@ -817,6 +547,8 @@ def diff_checkpoints_from_file(
     Compare two checkpoints (left and right). Returns True if the dicts are the
     same.
     """
+    import cerebras.pytorch as cstorch
+
     file_left_exists, file_right_exists = (
         os.path.exists(file_left),
         os.path.exists(file_right),
@@ -1176,6 +908,10 @@ The following commands are supported:
             help='Hide notes column',
         )
         args = parser.parse_args(sys.argv[2:])
+
+        from cerebras.modelzoo.tools.checkpoint_converters.registry import (
+            converters,
+        )
 
         if args.model == "all":
             _print_supported_models_converters(hide_notes=args.hide_notes)

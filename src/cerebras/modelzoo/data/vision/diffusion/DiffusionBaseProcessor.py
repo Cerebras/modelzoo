@@ -40,6 +40,7 @@ from cerebras.modelzoo.models.vision.dit.layers.vae.utils import (
 @registry.register_datasetprocessor("DiffusionBaseProcessor")
 class DiffusionBaseProcessor:
     def __init__(self, params):
+
         self.data_dir = params.get("data_dir", ".")
         self.use_worker_cache = params["use_worker_cache"]
         self.mixed_precision = params["mixed_precision"]

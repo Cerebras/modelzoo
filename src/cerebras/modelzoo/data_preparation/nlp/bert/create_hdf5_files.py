@@ -41,7 +41,7 @@ from multiprocessing import Pool, cpu_count
 import h5py
 import numpy as np
 
-sys.path.append(os.path.join(os.path.dirname(__file__), "../../../../../"))
+sys.path.append(os.path.join(os.path.dirname(__file__), "../../../"))
 import cerebras.modelzoo.data_preparation.nlp.bert.dynamic_processor as mlm_nsp_processor
 import cerebras.modelzoo.data_preparation.nlp.bert.mlm_only_processor as mlm_only_processor
 from cerebras.modelzoo.common.utils.utils import check_and_create_output_dirs
@@ -57,6 +57,7 @@ from cerebras.modelzoo.data_preparation.utils import (
 
 
 def _get_data_generator(args, metadata_file):
+
     output_type_shapes = get_output_type_shapes(
         args.max_seq_length,
         args.max_predictions_per_seq,
@@ -227,6 +228,7 @@ def create_h5(params):
 
 
 def create_h5_mp(input_files, args):
+
     try:
         files = split_list(input_files, len(input_files) // args.num_processes)
     except ValueError as e:

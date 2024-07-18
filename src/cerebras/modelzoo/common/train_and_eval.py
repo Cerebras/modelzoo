@@ -12,12 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Generic run scripts build using the cstorch API"""
+"""Generic run scripts build using the cstorch API."""
+
 import copy
 import logging
 import math
 import os
 import warnings
+from contextlib import nullcontext
 from datetime import datetime
 from warnings import warn
 
@@ -31,6 +33,10 @@ from cerebras.modelzoo.common.half_dtype import set_half_dtype_from_params
 from cerebras.modelzoo.common.input_utils import (
     validate_streaming_and_micro_batch_size,
 )
+from cerebras.modelzoo.common.optim_utils import (
+    configure_param_groups,
+    flatten_optimizer_params,
+)
 from cerebras.modelzoo.common.pytorch_utils import load_from_checkpoint_file
 from cerebras.modelzoo.common.run_cstorch_flow import (
     GradScalerParams,
@@ -40,15 +46,27 @@ from cerebras.modelzoo.common.run_cstorch_flow import (
     log_input_summary,
     optimizer_step_with_summaries,
 )
+from cerebras.modelzoo.common.utils.model.mup_utils import is_mup
 from cerebras.modelzoo.common.utils.run.utils import DeviceType
-from cerebras.modelzoo.common.utils.utils import format_rate
+from cerebras.modelzoo.common.utils.utils import (
+    configure_compression,
+    configure_selective_gradient,
+    format_rate,
+)
+from cerebras.modelzoo.trainer import summarize_scalar
 
 
 def train_and_eval(
-    params, model_fn, train_data_fn, eval_data_fn, cs_config, artifact_dir
+    params,
+    params_obj,
+    model_fn,
+    train_data_fn,
+    eval_data_fn,
+    cluster_config,
+    artifact_dir,
 ):
     """
-    Runs the train and eval workflow built using the cstorch API
+    Runs the train and eval workflow built using the cstorch API.
 
     Args:
         params: the params dictionary extracted from the params.yaml used
@@ -69,6 +87,10 @@ def train_and_eval(
         )
 
     runconfig = params["runconfig"]
+
+    # Check if current run is configured with muP
+    if is_mup(params.get("model", {})):
+        logging.info("This is a muP configured run")
 
     target_device = runconfig["target_device"]
 
@@ -165,7 +187,9 @@ def train_and_eval(
         (
             train_micro_batch_size,
             eval_micro_batch_size,
-        ) = validate_train_and_eval_micro_batch_size(params, cs_config.num_csx)
+        ) = validate_train_and_eval_micro_batch_size(
+            params, cluster_config.num_csx
+        )
 
         backend = cstorch.backend(
             "CSX",
@@ -173,6 +197,7 @@ def train_and_eval(
             compile_dir=compile_dir,
             compile_only=compile_only,
             validate_only=validate_only,
+            cluster_config=cluster_config,
             retrace_every_iteration=runconfig.get(
                 "retrace_every_iteration", False
             ),
@@ -192,7 +217,6 @@ def train_and_eval(
         backend = cstorch.backend(
             "CPU",
             artifact_dir=artifact_dir,
-            mixed_precision=mixed_precision,
         )
     elif target_device == DeviceType.GPU:
         backend = cstorch.backend(
@@ -212,7 +236,7 @@ def train_and_eval(
         lora_params = params["model"].pop("lora_params")
 
     with backend.device:
-        model = model_fn(params)
+        model = model_fn(params_obj if params_obj else params)
 
         if lora_params:
             # After model init, we need to convert it into a LoRA model
@@ -230,7 +254,7 @@ def train_and_eval(
     ]
 
     # group optimizer params
-    param_optimizer_grouped = cstorch.optim.configure_param_groups(
+    param_optimizer_grouped = configure_param_groups(
         model,
         optimizer_params,
     )
@@ -238,21 +262,63 @@ def train_and_eval(
     optimizer = cstorch.optim.configure_optimizer(
         optimizer_type=optimizer_params.pop("optimizer_type"),
         params=param_optimizer_grouped,
-        **{
-            k: v
-            for k, v in optimizer_params.items()
-            if k != "adjust_learning_rate"
-        },
+        **flatten_optimizer_params(
+            {
+                k: v
+                for k, v in optimizer_params.items()
+                if k != "adjust_learning_rate"
+            }
+        ),
     )
 
     sparsity = None
     sparsity_config = params.pop("sparsity", {})
     if sparsity_config:
+
+        def extract_key(config, key, default):
+            if isinstance(config, dict):
+                yield config.pop(key, default)
+            elif isinstance(config, (list, tuple)):
+                for c in config:
+                    yield from extract_key(c, key, default)
+            else:
+                yield default
+
+        add_summaries = any(
+            extract_key(sparsity_config, "add_summaries", False)
+        )
+
         sparsity = cstorch.sparse.configure(sparsity_config)
 
         # Sparsify model parameters and optimizer state
         model.apply(sparsity)
         optimizer.apply(sparsity)
+
+        if add_summaries:
+            sparsity.register_target_sparsity_hook(
+                lambda _, name, target: summarize_scalar(
+                    f"sparsity/{name}/target", target
+                )
+            )
+            sparsity.register_computed_sparsity_hook(
+                lambda _, name, actual: summarize_scalar(
+                    f"sparsity/{name}/actual", actual
+                )
+            )
+
+    # apply weight compression
+    compression_config = params["model"].pop("compression", {})
+    if compression_config:
+        compressions = configure_compression(compression_config)
+        for compression in compressions:
+            model.apply(compression)
+
+    # apply selective gradients
+    selective_grad_config = params["model"].pop("selective_grad", {})
+    if selective_grad_config:
+        selective_grads = configure_selective_gradient(selective_grad_config)
+        for selective_grad in selective_grads:
+            model.apply(selective_grad)
 
     lr_scheduler = cstorch.optim.configure_lr_scheduler(
         optimizer,
@@ -355,7 +421,7 @@ def train_and_eval(
             "lr_scheduler",
             "global_step",
         }
-        if runconfig.get("load_checkpoint_states"):
+        if runconfig.get("load_checkpoint_states", "all") != "all":
             states_to_include = set(
                 runconfig["load_checkpoint_states"].split(",")
             )
@@ -478,6 +544,8 @@ def train_and_eval(
     if runconfig.get("save_initial_checkpoint", False) and not compile_only:
         save_checkpoint(global_step)
 
+    from cerebras.pytorch.utils import tensorboard
+
     train_writer = None
     eval_writer = None
 
@@ -506,7 +574,13 @@ def train_and_eval(
         if log_input_summaries:
             log_input_summary(batch)
 
-        loss = compiled_model(batch)
+        if mixed_precision and target_device != DeviceType.CSX:
+            ctx = cstorch.amp.autocast()
+        else:
+            ctx = nullcontext()
+
+        with ctx:
+            loss = compiled_model(batch)
 
         if log_summaries:
             with cstorch.name_scope("params_norm"):
@@ -651,7 +725,14 @@ def train_and_eval(
         if log_input_summaries:
             log_input_summary(batch)
 
-        loss = compiled_model(batch)
+        if mixed_precision and target_device != DeviceType.CSX:
+            ctx = cstorch.amp.autocast()
+        else:
+            ctx = nullcontext()
+
+        with ctx:
+            loss = compiled_model(batch)
+
         return loss
 
     total_eval_loss = 0
@@ -774,7 +855,7 @@ def train_and_eval(
 
             if train_writer is not None:
                 train_writer.flush()
-            train_writer = cstorch.utils.tensorboard.SummaryWriter(
+            train_writer = tensorboard.SummaryWriter(
                 log_dir=os.path.join(model_dir, "train"),
                 # The post_training_step summaries are written after global_step is
                 # incremented, so +1.
@@ -786,7 +867,6 @@ def train_and_eval(
                 num_steps=train_steps,
                 checkpoint_steps=local_checkpoint_steps,
                 activation_steps=activation_steps,
-                cs_config=cs_config,
                 writer=train_writer,
                 listeners=listeners,
                 micro_batch_size=train_micro_batch_size,
@@ -824,7 +904,7 @@ def train_and_eval(
 
             if eval_writer is not None:
                 eval_writer.flush()
-            eval_writer = cstorch.utils.tensorboard.SummaryWriter(
+            eval_writer = tensorboard.SummaryWriter(
                 log_dir=os.path.join(model_dir, "eval"),
             )
 
@@ -839,7 +919,6 @@ def train_and_eval(
                     num_steps=eval_steps,
                     num_epochs=1 if eval_steps is None else None,
                 ),
-                cs_config=cs_config,
                 writer=eval_writer,
                 listeners=listeners,
                 micro_batch_size=eval_micro_batch_size,

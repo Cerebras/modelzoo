@@ -24,20 +24,18 @@ from cerebras.modelzoo.common.utils.run.cli_pytorch import get_params_from_args
 
 
 def main():
+
     from cerebras.modelzoo.common.run_utils import main
     from cerebras.modelzoo.models.vision.dit.data import (
         eval_input_dataloader,
         train_input_dataloader,
     )
-    from cerebras.modelzoo.models.vision.dit.model import DiTModel
-    from cerebras.modelzoo.models.vision.dit.utils import set_defaults
 
     params = get_params_from_args()
-    params = set_defaults(params)
 
     main(
         params,
-        DiTModel,
+        "dit",
         train_input_dataloader,
         eval_input_dataloader,
     )

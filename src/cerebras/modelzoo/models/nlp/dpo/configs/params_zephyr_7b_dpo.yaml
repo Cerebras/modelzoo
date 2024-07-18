@@ -95,4 +95,4 @@ runconfig:
     load_checkpoint_states: model  
     seed: 1
     eval_steps: 15
-    eval_frequency: 100
+    eval_frequency: 128

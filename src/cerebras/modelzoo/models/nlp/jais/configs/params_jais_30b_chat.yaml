@@ -6,18 +6,15 @@ train_input:
     num_workers: 1
     persistent_workers: true
     prefetch_factor: 10
-    repeat: true
     shuffle: false
     shuffle_seed: 1
     use_worker_cache: false
-    vocab_size: 84992
 eval_input:
     batch_size: 8
     data_dir: "./language/datasets/SlimPajama/val_msl8192/"
     data_processor: GptHDF5MapDataProcessor
     num_workers: 1
     shuffle: false
-    vocab_size: 84992
 model:
     attention_dropout_rate: 0.0
     attention_kernel: optimized_beta

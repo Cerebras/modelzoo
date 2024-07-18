@@ -168,20 +168,22 @@ class Hdf5BaseIterDataProcessor(ABC, torch.utils.data.IterableDataset):
             random.shuffle(self.files_in_this_task)
 
         data_loader = torch.utils.data.DataLoader(
-            BufferedShuffleDataset(
-                dataset=self, buffer_size=self.shuffle_buffer
-            )
-            if self.shuffle
-            else self,
+            (
+                BufferedShuffleDataset(
+                    dataset=self, buffer_size=self.shuffle_buffer
+                )
+                if self.shuffle
+                else self
+            ),
             batch_size=self.batch_size,
             drop_last=self.drop_last,
             num_workers=self.num_workers,
-            prefetch_factor=self.prefetch_factor
-            if self.num_workers > 0
-            else None,
-            persistent_workers=self.persistent_workers
-            if self.num_workers > 0
-            else False,
+            prefetch_factor=(
+                self.prefetch_factor if self.num_workers > 0 else None
+            ),
+            persistent_workers=(
+                self.persistent_workers if self.num_workers > 0 else False
+            ),
             worker_init_fn=self._worker_init_fn,
         )
         # set self.data_partitions in case self.num_workers == 0

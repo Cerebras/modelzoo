@@ -1,0 +1,41 @@
+.legend {
+    display: flex;
+    align-items: center;
+    gap: 10px; /* Add space between items */
+    margin-top: 30px;
+    color: #807c7c;
+    border: 1px solid #bbb9b9; /* Use a lighter shade */
+    border-radius: 8px;
+    background-color: white;
+    /* margin-left:53%; */
+}
+
+.legend-item {
+    display: flex;
+    align-items: center;
+    color: #807c7c;
+    font-size: 12px;
+    padding: 10px;
+    text-align: center;
+    gap: 8px; /* Add space between color box and text */
+}
+
+
+.color-box {
+    display: inline-block;
+    width: 15px;
+    height: 15px;
+    border-radius: 3px;
+}
+
+.separator {
+    height: auto; /* Let the separator span the height of the container */
+    align-self: stretch; /* Stretch the separator to cover full height of the container */
+    width: 1px;
+    background-color: #e0e0e0; /* Color of the separator */
+}
+
+.dropdown-containers {
+    display:flex;
+    justify-content: space-between;
+}

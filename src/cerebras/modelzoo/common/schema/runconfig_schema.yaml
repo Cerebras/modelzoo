@@ -9,6 +9,10 @@ properties:
     type:
     - integer
     - 'null'
+  hf_cache_dir:
+    type:
+    - string
+    - 'null'
   compile_crd_memory_gi:
     type:
     - integer
@@ -121,6 +125,9 @@ properties:
     type:
     - boolean
     - 'null'
+  legacy_event_dirs:
+    type:
+    - boolean
   main_process_id:
     type: integer
   max_checkpoints:
@@ -211,10 +218,6 @@ properties:
   variant:
     type:
     - string
-    - 'null'
-  use_cstorch_optimizer_step:
-    type:
-    - boolean
     - 'null'
   eval_frequency:
     type:

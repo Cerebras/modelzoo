@@ -61,7 +61,7 @@ The following few scripts are relatively generic and shared between models. They
 
 The following directories contain the specific implementation details for the current model.
 
-* `configs/`: A directory of YAML files that specifies all the details about a training run. Each config YAML is split into five sections that determine the training run: `train_input`, `eval_input`, `model`, `optimizer`, and `runconfig`. The first two sections specify the data-processor class and its various arguments, such as batch-size, file-paths to data, etc. The `model` section specifies arguments such as hidden-sizes, number of layers, dropout rates, etc. The `optimizer` section specifies which algorithm to use, such as Adam [\[7\]](https://arxiv.org/abs/1412.6980), AdamW [\[8\]](https://arxiv.org/abs/1711.05101), or Adafactor [\[9\]](https://arxiv.org/abs/1804.04235). It also specifies arguments such as decay rates. Finally the `runconfig` section specifies how many steps you want to train for, the interval for saving models, interval for logging loss values in tensorboard, etc.
+* `configs/`: A directory of YAML files that specifies all the details about a training run. Each config YAML is split into five sections that determine the training run: `train_input`, `eval_input`, `model`, `optimizer`, and `runconfig`. The first two sections specify the data-processor class and its various arguments, such as batch-size, file-paths to data, etc. The `model` section specifies arguments such as hidden-sizes, number of layers, dropout rates, etc. The `optimizer` section specifies which algorithm to use, such as Adam [\[4\]](https://arxiv.org/abs/1412.6980), AdamW [\[5\]](https://arxiv.org/abs/1711.05101), or Adafactor [\[6\]](https://arxiv.org/abs/1804.04235). It also specifies arguments such as decay rates. Finally the `runconfig` section specifies how many steps you want to train for, the interval for saving models, interval for logging loss values in tensorboard, etc.
 * `data/nlp/t5`: A directory for scripts relating to data-processing. The `T5DynamicDataProcessor.py` and `TransformerDynamicDataProcessor.py` scripts create the [PyTorch DataLoader](https://pytorch.org/tutorials/beginner/basics/data_tutorial.html) that is used during training and validation. It uses functions from `t5_utils.py` for a lot of the functionality. 
 
 ## Data processing
@@ -114,7 +114,7 @@ For each of these commands,
 There are a couple modifications to both models based on current support for operations on CS systems. Resolving these is currently in progress:
 
 1. We do not currently support the Adafactor optimizer used to train the original T5 model. Instead we use AdamW, which results in a higher loss at the end of pre-training.
-2. For T5, we do not currently support `RMSNorm` [\[10\]](https://arxiv.org/abs/1910.07467). Instead, we use `LayerNorm` [\[11\]](https://arxiv.org/abs/1607.06450v1) as our normalization layer. 
+2. For T5, we do not currently support `RMSNorm` [\[7\]](https://arxiv.org/abs/1910.07467). Instead, we use `LayerNorm` [\[8\]](https://arxiv.org/abs/1607.06450v1) as our normalization layer. 
 
 ## Configs included for this model
 
@@ -128,7 +128,6 @@ In the [configs](./configs/) directory we have files for T5.
 
 These files are just samples, and can be adjusted for any changes in training procedure that you desire, such as different number of layers or hidden sizes, or different number of steps.  
 
-**NOTE:** When trying out a new dataset by switching it in the provided configs, if you run into errors, we advise to disable VTS as a first step of debugging. 
 
 ## Citations
 
@@ -138,20 +137,14 @@ These files are just samples, and can be adjusted for any changes in training pr
 
 [3] [T5v1.1](https://github.com/google-research/text-to-text-transfer-transformer/blob/main/released_checkpoints.md#t511).
 
-[4] [VTS Conceptual Explanation Blog](https://www.cerebras.net/software/increasing-model-throughput-with-variable-tensor-shape-computations/)
+[4] [Adam](https://arxiv.org/abs/1412.6980)
 
-[5] [VTS Software Documentation](https://docs.cerebras.net/en/latest/wsc/general/sparse-input.html)
+[5] [AdamW](https://arxiv.org/abs/1711.05101)
 
-[6] [Pipeline Execution Mode](https://docs.cerebras.net/en/latest/wsc/cerebras-basics/cerebras-execution-modes.html#layer-pipelined-mode)
+[6] [Adafactor](https://arxiv.org/abs/1804.04235)
 
-[7] [Adam](https://arxiv.org/abs/1412.6980)
+[7] [RMSNorm](https://arxiv.org/abs/1910.07467)
 
-[8] [AdamW](https://arxiv.org/abs/1711.05101)
+[8] [LayerNorm](https://arxiv.org/abs/1607.06450v1)
 
-[9] [Adafactor](https://arxiv.org/abs/1804.04235)
-
-[10] [RMSNorm](https://arxiv.org/abs/1910.07467)
-
-[11] [LayerNorm](https://arxiv.org/abs/1607.06450v1)
-
-[12] [An Empirical Study of Pre-Trained Language Model Positional Encoding](https://arxiv.org/pdf/2010.04903.pdf)
+[9] [An Empirical Study of Pre-Trained Language Model Positional Encoding](https://arxiv.org/pdf/2010.04903.pdf)

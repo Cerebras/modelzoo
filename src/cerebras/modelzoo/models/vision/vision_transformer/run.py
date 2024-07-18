@@ -22,25 +22,17 @@ from cerebras.modelzoo.common.utils.run.cli_pytorch import get_params_from_args
 
 
 def main():
-    from cerebras.modelzoo.models.vision.vision_transformer.utils import (
-        set_defaults,
-    )
-
     params = get_params_from_args()
-    set_defaults(params)
 
     from cerebras.modelzoo.common.run_utils import main
     from cerebras.modelzoo.models.vision.vision_transformer.data import (
         eval_input_dataloader,
         train_input_dataloader,
     )
-    from cerebras.modelzoo.models.vision.vision_transformer.model import (
-        ViTClassificationWrapperModel,
-    )
 
     main(
         params,
-        ViTClassificationWrapperModel,
+        "vision_transformer",
         train_input_dataloader,
         eval_input_dataloader,
     )

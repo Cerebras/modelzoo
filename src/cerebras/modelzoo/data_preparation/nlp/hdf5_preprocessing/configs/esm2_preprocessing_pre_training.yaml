@@ -1,0 +1,31 @@
+dataset:
+  ftfy_normalizer: NFC
+  jsonl_key: text
+  training_objective: mlm
+  use_ftfy: false
+  use_vsl: false
+  wikitext_detokenize: false
+  mlm_with_gather: true
+processing:
+  eos_id: 2
+  huggingface_tokenizer: facebook/esm2_t48_15B_UR50D
+  read_chunk_size: 8192
+  write_chunk_size: 204800
+  max_seq_length: 1026
+  output_dir: ./non-vsl
+  pad_id: 1
+  processes: 32
+  read_hook: cerebras.modelzoo.data_preparation.data_preprocessing.hooks:text_read_hook
+  read_hook_kwargs:
+    data_keys:
+      text_key: text
+  seed: 0
+  shuffle: false
+  tokenizer_type: HuggingFaceTokenizer
+setup:
+  data:
+    source: /net/ke-dev/srv/nfs/ke-data/ws/esm2/dataset/ur50_4M/
+    type: local
+  mode: pretraining
+  output_dir: ./out_dir
+  processes: 32

@@ -94,7 +94,7 @@ class Converter_LLaVA_CLIPViT_WithoutModel_HF_CS22(
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-2.2"))
+        return (FormatVersions("hf"), FormatVersions("cs-2.2", "cs-2.3"))
 
     @staticmethod
     def get_config_converter_class() -> BaseConfigConverter:
@@ -195,7 +195,7 @@ class Converter_LLaVA_LLaMA_WithoutModel_HF_CS22(BaseCheckpointConverter_HF_CS):
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-2.2"))
+        return (FormatVersions("hf"), FormatVersions("cs-2.2", "cs-2.3"))
 
     @staticmethod
     def get_config_converter_class() -> BaseConfigConverter:
@@ -296,7 +296,7 @@ class Converter_LLaVA_WithoutModel_HF_CS22(
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-2.2"))
+        return (FormatVersions("hf"), FormatVersions("cs-2.2", "cs-2.3"))
 
     @staticmethod
     def architectures() -> Tuple[List[str], str]:
@@ -465,9 +465,9 @@ class ConfigConverter_LLaVA_HF_CS22(BaseConfigConverter_UnpackedHF_PackedCS):
             new_text_config["name"] = "LlamaModel"
             new_text_config.pop("mixed_precision")
 
-            new_config["model"][
-                "image_feature_select_mode"
-            ] = new_text_config.pop("image_feature_select_mode")
+            new_config["model"]["image_feature_select_mode"] = (
+                new_text_config.pop("image_feature_select_mode")
+            )
 
             # We are doing this to get "projector_image_model" under "projector" key in CS yaml
             # Convert `mm_projector_type` here since we depend on other values in the config
@@ -499,9 +499,9 @@ class ConfigConverter_LLaVA_HF_CS22(BaseConfigConverter_UnpackedHF_PackedCS):
             # Add other params at `model` level for CS
             new_config["model"]["freeze"] = new_text_config.pop("freeze")
 
-            new_config["model"][
-                "image_feature_select_layer_idx"
-            ] = new_text_config.pop("image_feature_select_layer_idx")
+            new_config["model"]["image_feature_select_layer_idx"] = (
+                new_text_config.pop("image_feature_select_layer_idx")
+            )
             new_config["model"]["image_model"].pop("fp16_type", None)
 
         else:  # CS -> HF
@@ -523,7 +523,7 @@ class ConfigConverter_LLaVA_HF_CS22(BaseConfigConverter_UnpackedHF_PackedCS):
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-2.2"))
+        return (FormatVersions("hf"), FormatVersions("cs-2.2", "cs-2.3"))
 
     @staticmethod
     def converters():
@@ -564,9 +564,9 @@ class ConfigConverter_LLaVA_HF_CS22(BaseConfigConverter_UnpackedHF_PackedCS):
             config["model"]["text_model"]["freeze"] = config["model"].pop(
                 "freeze"
             )
-            config["model"]["text_model"][
-                "image_feature_select_layer_idx"
-            ] = config["model"].pop("image_feature_select_layer_idx")
+            config["model"]["text_model"]["image_feature_select_layer_idx"] = (
+                config["model"].pop("image_feature_select_layer_idx")
+            )
             config["model"]["text_model"]["image_feature_select_mode"] = config[
                 "model"
             ].pop("image_feature_select_mode")
@@ -760,7 +760,7 @@ class ConfigConverter_LLaMaProjector_HF_CS22(ConfigConverter_LLaMa_HF_CS21):
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.2"),
+            FormatVersions("cs-2.2", "cs-2.3"),
         )
 
     def post_config_convert(
