@@ -46,8 +46,6 @@ model:
     ctx_encoder:
         <<: *base_model
 
-    scale_similarity: False
-
 optimizer:
     optimizer_type: "Adam"
     weight_decay: 0.0

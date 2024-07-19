@@ -204,12 +204,12 @@ class Hdf5BaseDataProcessor(torch.utils.data.Dataset):
             batch_size=self.batch_size,
             drop_last=self.drop_last,
             num_workers=self.num_workers,
-            prefetch_factor=self.prefetch_factor
-            if self.num_workers > 0
-            else None,
-            persistent_workers=self.persistent_workers
-            if self.num_workers > 0
-            else False,
+            prefetch_factor=(
+                self.prefetch_factor if self.num_workers > 0 else None
+            ),
+            persistent_workers=(
+                self.persistent_workers if self.num_workers > 0 else False
+            ),
             worker_init_fn=self._worker_init_fn,
             sampler=data_sampler,
         )

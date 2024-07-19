@@ -1,4 +1,4 @@
-# [Beta] ESM-2: Evolutionary Scale Modeling for Protein Language
+# ESM-2: Evolutionary Scale Modeling for Protein Language
 
 # Overview of the model
 
@@ -18,12 +18,12 @@ Follow these steps to prepare the dataset in HDF5 format for training ESM-2 mode
 * Download the Uniref 50 dataset using this command  
   `curl -O https://ftp.uniprot.org/pub/databases/uniprot/current_release/uniref/uniref50/uniref50.fasta.gz `
 * Split the dataset into training and validation splits in the ratio 90:10
-* Follow the steps to preprocess the esm2 dataset from the README here - [`README.md`](../../../data_preparation/nlp/chunk_data_processing/README.md).The command for creating the ESM2 dataset is given below - 
-`python create_hdf5_dataset MLM --params /path/to/data_config`
+* Follow the steps to preprocess the esm2 dataset in our data preprocessing documentation. Refer to example data config file for esm2 dataset [`esm2_preprocessing_pre_training.yaml`] (../../../data_preparation/nlp/hdf5_preprocessing/configs/esm2_preprocessing_pre_training.yaml). The command for creating the ESM2 dataset is given below - 
+`python preprocess_data.py --config /path/to/data_config`
 
 #### ESM2 DataProcessor output
 
-The `BertCSVDataProcessor` class in [`BertCSVDataProcessor.py`](../../../data/nlp/bert/BertCSVDataProcessor.py) is used to process the preprocessed esm2 data and feed it to the model. 
+The `BertHDF5DataProcessor` class in [`BertHDF5DataProcessor.py`](../../../data/nlp/bert/BertHDF5DataProcessor.py) is used to process the preprocessed esm2 data and feed it to the model. 
 
 # How to run
 
@@ -45,7 +45,7 @@ In the following example run commands, we use `/path/to/yaml`, `/path/to/model_d
 Please follow the instructions on our [quickstart in the Developer Docs](https://docs.cerebras.net/en/latest/wsc/getting-started/cs-appliance.html).
 
 ## To run train and eval on GPU/CPU
-If running on a cpu or gpu, activate the environment from [Python GPU Environment setup](../../../../PYTHON-SETUP.md), and simply run:
+If running on a CPU or GPU, activate the environment for GPU given in our documentation, and simply run:
 
 ```
 python run.py {CPU,GPU} --mode train --params /path/to/yaml --model_dir /path/to/model_dir
@@ -53,14 +53,9 @@ python run.py {CPU,GPU} --mode train --params /path/to/yaml --model_dir /path/to
 
 ## Configs included for this model
 For convenience, we provide the configurations used to train ESM-2.
+* [params_esm2_t12_35M_UR50D.yaml](./configs/params_esm2_t12_35M_UR50D.yaml): A 35M parameter ESM-2 model.
+* [params_esm2_t30_150M_UR50D.yaml](./configs/params_esm2_t30_150M_UR50D.yaml): A 150M parameter ESM-2 model.
 * [params_esm2_t33_650M_UR50D.yaml](./configs/params_esm2_t33_650M_UR50D.yaml): A 650M parameter ESM-2 model.
+* [params_esm2_t33_650M_UR50D_vsl.yaml](./configs/params_esm2_t33_650M_UR50D_vsl.yaml): A 650M parameter ESM-2 model with Variable Sequence Length (VSL). VSL allows short sequences to be packed into max sequence length, and makes training more efficient by reducing paddings.
 * [params_esm2_t36_3B_UR50D.yaml](./configs/params_esm2_t36_3B_UR50D.yaml): A 3B parameter ESM-2 model.
-
-# Release notes
-## Release 2.2.1
-In Release 2.2.1, ESM-2 model is in *early access state* to enable pretraining. The provided configurations in ModelZoo are guaranteed to run, but further batch size and hyperparameter variations are not yet tested in this release. Fine-tuning tasks are going to be supported in future releases.
-
-Please note the following known issues:
-* Changing optimizer configs may cause compile failures. Specifically, for the `optimizer` section in the 650M model configuration, the `total_iters` in learning rate scheduler for the warmup stage needs to match the setting used for `steps_per_increase` in dynamic loss scaling within the optimizer configs, to avoid the compile failure.
-* Continuing training from a checkpoint with the previous optimizer state loaded may cause compile failures. The solution is to load only model weights from checkpoint by setting `load_checkpoint_states: model` in `runconfig` section in the model configuration.
-* For the 650M and 3B model configurations, running train or eval with any micro batch size other than the defaults already specified in `train_input` and/or `eval_input` sections may result in compilation failures.
+* [params_esm2_t48_15B_UR50D.yaml](./configs/params_esm2_t48_15B_UR50D.yaml): A 15B parameter ESM-2 model.

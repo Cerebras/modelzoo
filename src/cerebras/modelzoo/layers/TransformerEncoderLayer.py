@@ -23,7 +23,10 @@ from torch import Tensor
 from torch.nn import Dropout, LayerNorm
 
 from cerebras.modelzoo.layers.AttentionHelper import get_attention_module
-from cerebras.modelzoo.layers.FeedForwardNetwork import FeedForwardNetwork
+from cerebras.modelzoo.layers.FeedForwardNetwork import (
+    FeedForwardNetwork,
+    FeedForwardNetworkConfig,
+)
 from cerebras.modelzoo.layers.RotaryPositionEmbeddingHelper import (
     RotaryPositionEmbeddingHelper,
 )
@@ -54,6 +57,7 @@ class TransformerEncoderLayer(nn.Module):
         use_projection_bias_in_attention: Add bias to Q,K,V projections
             in the Attention layer. Defaults to False.
         attention_type: Should be in ["scaled_dot_product", "dot_product"]
+        scale_qk_dot_by_d (bool): If ``True`` scales QK^T dot product by d(=hidden/d_head) instead of sqrt(d).
         attention_softmax_fp32: Use FP32 softmax in attention block.
         attention_inner_dim (int):  Number of output units in attention query/key/value projection. Defaults to d_model
         add_cross_attention: If ``True``, adds cross-attention layer between encoder/decoder,
@@ -64,6 +68,8 @@ class TransformerEncoderLayer(nn.Module):
         attention_initializer: Attention layer initializer. Defaults to "xavier_uniform".
         attention_q_initializer: Query projection kernel initializer. If not
             specified, the query will be initialized via ``attention_initializer``
+        attention_output_layer_initializer: attention output layer projection initializer. If not
+            specified, the output will be initialized via ``attention_initializer``
         ffn_initializer: FFN layer initializer. Defaults to "xavier_uniform".
         ffn_output_layer_initializer: If not None, initialize the last FFN layer
             with this initializer. Defaults to None.
@@ -94,6 +100,12 @@ class TransformerEncoderLayer(nn.Module):
         device=None,
         attention_dropout_rate: Optional[float] = None,
         attention_type="scaled_dot_product",
+        scale_qk_dot_by_d=False,
+        attention_logits_alpha=1.0,
+        q_projection_scale=1.0,
+        k_projection_scale=1.0,
+        v_projection_scale=1.0,
+        output_projection_scale=1.0,
         attention_softmax_fp32: Optional[bool] = True,
         attention_inner_dim=None,
         use_projection_bias_in_attention=False,
@@ -101,6 +113,7 @@ class TransformerEncoderLayer(nn.Module):
         use_ffn_bias=False,
         attention_initializer="xavier_uniform",
         attention_q_initializer=None,
+        attention_output_layer_initializer=None,
         ffn_initializer="xavier_uniform",
         ffn_output_layer_initializer=None,
         use_ff_layer1_dropout: bool = True,
@@ -124,11 +137,18 @@ class TransformerEncoderLayer(nn.Module):
             dropout=attention_dropout_rate,
             batch_first=batch_first,
             attention_type=attention_type,
+            scale_qk_dot_by_d=scale_qk_dot_by_d,
+            attention_logits_alpha=attention_logits_alpha,
+            q_projection_scale=q_projection_scale,
+            k_projection_scale=k_projection_scale,
+            v_projection_scale=v_projection_scale,
+            output_projection_scale=output_projection_scale,
             softmax_dtype_fp32=attention_softmax_fp32,
             use_projection_bias=use_projection_bias_in_attention,
             use_ffn_bias=use_ffn_bias_in_attention,
             attention_initializer=attention_initializer,
             attention_q_initializer=attention_q_initializer,
+            output_layer_initializer=attention_output_layer_initializer,
             device=device,
             **extra_attention_params,
         )
@@ -137,18 +157,20 @@ class TransformerEncoderLayer(nn.Module):
             ffn_dropout_rate = dropout
 
         self.ffn = FeedForwardNetwork(
-            input_unit=d_model,
-            layers_units=[dim_feedforward, d_model],
-            layers_activation=[activation, None],
-            layers_dropout_rates=[
-                ffn_dropout_rate if use_ff_layer1_dropout else None,
-                dropout if use_ff_layer2_dropout else None,
-            ],
-            use_bias=use_ffn_bias,
-            kernel_initializer=ffn_initializer,
-            output_layer_initializer=ffn_output_layer_initializer,
-            bias_initializer="zeros",
-            device=device,
+            FeedForwardNetworkConfig(
+                input_unit=d_model,
+                layers_units=[dim_feedforward, d_model],
+                layers_activation=[activation, None],
+                layers_dropout_rates=[
+                    ffn_dropout_rate if use_ff_layer1_dropout else None,
+                    dropout if use_ff_layer2_dropout else None,
+                ],
+                use_bias=use_ffn_bias,
+                kernel_initializer=ffn_initializer,
+                output_layer_initializer=ffn_output_layer_initializer,
+                bias_initializer="zeros",
+                device=device,
+            )
         )
 
         self.norm_first = norm_first
@@ -219,7 +241,7 @@ class TransformerEncoderLayer(nn.Module):
                 self_attn_position_bias=self_attn_position_bias,
                 **extra_args,
             )
-            x = x + self.ffn(self.norm2(x))
+            x = x + self._ffn_block(self.norm2(x))
         else:
             x = self.norm1(
                 x
@@ -232,7 +254,7 @@ class TransformerEncoderLayer(nn.Module):
                     **extra_args,
                 )
             )
-            x = self.norm2(x + self.ffn(x))
+            x = self.norm2(x + self._ffn_block(x))
 
         return x
 
@@ -259,4 +281,13 @@ class TransformerEncoderLayer(nn.Module):
             need_weights=False,
             **extra_args,
         )
-        return self.dropout1(x)
+        x = self.dropout1(x)
+        return x
+
+    # ffn block
+    def _ffn_block(
+        self,
+        x: Tensor,
+    ) -> Tensor:
+        x = self.ffn(x)
+        return x

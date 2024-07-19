@@ -427,9 +427,11 @@ def shard_list_of_chunks_contiguous(
         output_for_cur_worker.append(
             (
                 elm,
-                sum(chunk_length_per_worker[:worker_id])
-                if worker_id > 0
-                else 0,  # Start index
+                (
+                    sum(chunk_length_per_worker[:worker_id])
+                    if worker_id > 0
+                    else 0
+                ),  # Start index
                 chunk_length_per_worker[worker_id],  # Length of data chunk
             )
         )
@@ -443,6 +445,7 @@ class SubsetSequentialSampler(torch.utils.data.Sampler[int]):
         data_source (Dataset): dataset to sample from
         start_index (int): index where sampling starts from
     """
+
     data_source: Sized
     start_index: int
 

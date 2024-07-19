@@ -10,8 +10,6 @@ train_input: &train_input
   data_dir: 
     - "./computer_vision/datasets/imagenet1k_ilsvrc2012_vaelatent_im256"
     - "./computer_vision/datasets/imagenet1k_ilsvrc2012_vaelatent_im256_hflipped"
-  image_size: [256, 256]  # [H, W]
-  image_channels: 3
   # In distributed training, batch_size specifies the per-GPU batch size;
   # thus, you should divide by the number of GPU used.
   # The effective batch size, which is evenly divided across "num_csx" systems used for the run
@@ -21,6 +19,7 @@ train_input: &train_input
   num_workers: 8
   split: "train"
   num_diffusion_steps: 1000
+  image_channels: 3
 
 eval_input:
   # This section should only be used for loss
@@ -73,7 +72,7 @@ model:
     use_conv_patchified_embedding: True
 
     mixed_precision: True
-    fp16_type: "bfloat16"
+    fp16_type: "cbfloat16"
 
     vae:
       # https://huggingface.co/stabilityai/sd-vae-ft-ema/blob/main/config.json
@@ -120,6 +119,8 @@ optimizer:
     optimizer_type: "AdamW"
     learning_rate: 0.0001
     weight_decay: 0.0
+    loss_scaling_factor: "dynamic"
+    log_summaries: True
 
 runconfig:
     log_steps: 1

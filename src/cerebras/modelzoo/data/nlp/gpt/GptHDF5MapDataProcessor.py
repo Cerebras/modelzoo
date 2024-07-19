@@ -15,8 +15,8 @@
 import numpy as np
 
 from cerebras.modelzoo.common.registry import registry
-from cerebras.modelzoo.data.common.h5_map_dataset import (
-    HDF5Dataset,
+from cerebras.modelzoo.data.common.h5_map_dataset import HDF5Dataset
+from cerebras.modelzoo.data.common.restartable_dataloader import (
     RestartableDataLoader,
 )
 

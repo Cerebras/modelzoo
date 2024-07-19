@@ -29,6 +29,7 @@ eval_input:
     data_dir: "./language/datasets/pile_original/hdf5_dataset/val_msl2048/"
     # The effective batch size, which is evenly divided across "num_csx" systems used for the run
     batch_size: 264
+    micro_batch_size: 88
     shuffle: False
     num_workers: 8
 

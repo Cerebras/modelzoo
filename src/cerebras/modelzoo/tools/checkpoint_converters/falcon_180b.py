@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import re
 from typing import Tuple
 
 from cerebras.modelzoo.tools.checkpoint_converters.base_converter import (
@@ -24,7 +25,7 @@ from cerebras.modelzoo.tools.checkpoint_converters.base_converter import (
     FormatVersions,
 )
 from cerebras.modelzoo.tools.checkpoint_converters.falcon_40b import (
-    Converter_Falcon_40B_Headless_HF_CS20,
+    Converter_Falcon_40B_Headless_WithoutModelPrefix_HF_CS20,
     Converter_Falcon_40B_HF_CS20,
 )
 from cerebras.modelzoo.tools.checkpoint_converters.helper import (
@@ -32,8 +33,8 @@ from cerebras.modelzoo.tools.checkpoint_converters.helper import (
 )
 
 
-class Converter_Falcon_180B_Headless_HF_CS20(
-    Converter_Falcon_40B_Headless_HF_CS20
+class Converter_Falcon_180B_Headless_WithoutModelPrefix_HF_CS20(
+    Converter_Falcon_40B_Headless_WithoutModelPrefix_HF_CS20
 ):
     def __init__(self):
         super().__init__()
@@ -52,7 +53,7 @@ class Converter_Falcon_180B_Headless_HF_CS20(
                     EquivalentSubkey("input_layernorm.", "norm1."),
                     r"(?:weight|bias)",
                 ],
-                action=self.replaceKey,
+                action=self.replaceNorm1,
             ),
             ConversionRule(
                 [
@@ -61,35 +62,69 @@ class Converter_Falcon_180B_Headless_HF_CS20(
                     EquivalentSubkey("post_attention_layernorm.", "norm3."),
                     r"(?:weight|bias)",
                 ],
-                action=self.replaceKey,
+                action=self.replaceNorm3,
             ),
             *self.rules,
         ]
 
-    @staticmethod
-    def get_config_converter_class() -> BaseConfigConverter:
-        return ConfigConverter_Falcon_180B_HF_CS20
+    def replaceNorm1(
+        self,
+        old_key,
+        new_key,
+        old_state_dict,
+        new_state_dict,
+        from_index,
+        action_fn_args,
+    ):
+        if from_index == 0:
+            new_state_dict[new_key] = old_state_dict[old_key]
+        else:
+            # key is either ln_attn or input_layernorm depending on the
+            # following params: parallel_attn, new_decoder_architecture, and
+            # num_ln_in_parallel_attn
+            hf_config = action_fn_args["configs"][0]
 
+            is_input_layernorm = (not hf_config["parallel_attn"]) or (
+                hf_config["num_ln_in_parallel_attn"] != 2
+            )
 
-class Converter_Falcon_180B_HF_CS20(Converter_Falcon_40B_HF_CS20):
-    def __init__(self):
-        super().__init__()
-        self.rules = [
-            ConversionRule(
-                [
-                    "lm_head",
-                    r"\.(?:weight|bias)",
-                ],
-                action=self.replaceKey,
-            ),
-            ConversionRule(
-                [
-                    EquivalentSubkey("transformer.", ""),
-                    Converter_Falcon_180B_Headless_HF_CS20(),
-                ],
-                action=None,
-            ),
-        ]
+            if not is_input_layernorm:
+                new_key = re.sub(r"\.input_layernorm\.", ".ln_attn.", new_key)
+            new_state_dict[new_key] = old_state_dict[old_key]
+
+    def replaceNorm3(
+        self,
+        old_key,
+        new_key,
+        old_state_dict,
+        new_state_dict,
+        from_index,
+        action_fn_args,
+    ):
+        if from_index == 0:
+            new_state_dict[new_key] = old_state_dict[old_key]
+        else:
+            # key is either ln_mlp or post_attention_layernorm depending on the
+            # following params: parallel_attn, new_decoder_architecture, and
+            # num_ln_in_parallel_attn
+            hf_config = action_fn_args["configs"][0]
+
+            if not hf_config["parallel_attn"]:
+                raise ConfigConversionError(
+                    f"This model cannot be converted to HuggingFace's Falcon "
+                    f"implementation. Your CS model is using "
+                    f"use_untied_layer_norm=True (i.e. the checkpoint contains"
+                    f" norm1 and norm3). The equivalent in HF requires setting"
+                    f" parallel_attn=True..."
+                )
+
+            is_post_attention_layernorm = not hf_config["parallel_attn"]
+
+            if not is_post_attention_layernorm:
+                new_key = re.sub(
+                    r"\.post_attention_layernorm\.", ".ln_mlp.", new_key
+                )
+            new_state_dict[new_key] = old_state_dict[old_key]
 
     @staticmethod
     def get_config_converter_class() -> BaseConfigConverter:
@@ -251,6 +286,7 @@ class ConfigConverter_Falcon_180B_HF_CS20(BaseConfigConverter_HF_CS):
                 "rope_scaling": None,
                 "bos_token_id": 11,
                 "eos_token_id": 11,
+                "num_ln_in_parallel_attn": 2,
             }
         )
         self.pre_convert_defaults[1].update(
@@ -459,8 +495,8 @@ class ConfigConverter_Falcon_180B_HF_CS20(BaseConfigConverter_HF_CS):
 
             new_config["use_untied_layer_norm"] = (
                 old_config["new_decoder_architecture"]
-                or not old_config["parallel_attn"]
-            )
+                and old_config["num_ln_in_parallel_attn"] == 2
+            ) or not old_config["parallel_attn"]
 
         else:
             # embedding dropout check
@@ -494,6 +530,12 @@ class ConfigConverter_Falcon_180B_HF_CS20(BaseConfigConverter_HF_CS):
                 new_config["new_decoder_architecture"] = True
                 new_config["multi_query"] = new_config["num_kv_heads"] == 1
 
+            if "num_ln_in_parallel_attn" not in new_config:
+                if new_config["new_decoder_architecture"]:
+                    new_config["num_ln_in_parallel_attn"] = 2
+                else:
+                    new_config["num_ln_in_parallel_attn"] = None
+
         return super().post_config_convert(
             original_config,
             old_config,
@@ -506,6 +548,58 @@ class ConfigConverter_Falcon_180B_HF_CS20(BaseConfigConverter_HF_CS):
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (FormatVersions("hf"), FormatVersions("cs-2.0"))
 
+
+Converter_Falcon_180B_Headless_HF_CS20 = (
+    Build_HF_CS_Converter_WithOptionalModel(
+        "Converter_Falcon_180B_Headless_HF_CS20",
+        Converter_Falcon_180B_Headless_WithoutModelPrefix_HF_CS20,
+        derived_class=Converter_Falcon_180B_Headless_WithoutModelPrefix_HF_CS20,
+        config_converter_class=ConfigConverter_Falcon_180B_HF_CS20,
+        formats=(
+            FormatVersions("hf"),
+            FormatVersions("cs-2.0"),
+        ),
+    )
+)
+
+
+class Converter_Falcon_180B_WithoutModelPrefix_HF_CS20(
+    Converter_Falcon_40B_HF_CS20
+):
+    def __init__(self):
+        super().__init__()
+        self.rules = [
+            ConversionRule(
+                [
+                    "lm_head",
+                    r"\.(?:weight|bias)",
+                ],
+                action=self.replaceKey,
+            ),
+            ConversionRule(
+                [
+                    EquivalentSubkey("transformer.", ""),
+                    Converter_Falcon_180B_Headless_WithoutModelPrefix_HF_CS20(),
+                ],
+                action=None,
+            ),
+        ]
+
+    @staticmethod
+    def get_config_converter_class() -> BaseConfigConverter:
+        return ConfigConverter_Falcon_180B_HF_CS20
+
+
+Converter_Falcon_180B_HF_CS20 = Build_HF_CS_Converter_WithOptionalModel(
+    "Converter_Falcon_180B_HF_CS20",
+    Converter_Falcon_180B_WithoutModelPrefix_HF_CS20,
+    derived_class=Converter_Falcon_180B_WithoutModelPrefix_HF_CS20,
+    config_converter_class=ConfigConverter_Falcon_180B_HF_CS20,
+    formats=(
+        FormatVersions("hf"),
+        FormatVersions("cs-2.0"),
+    ),
+)
 
 ###########################################################
 # In CS 2.1, we refactored the embedding layer.
@@ -566,11 +660,14 @@ class ConfigConverter_Falcon_180B_HF_CS21(ConfigConverter_Falcon_180B_HF_CS20):
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-2.1", "cs-2.2"))
+        return (
+            FormatVersions("hf"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
+        )
 
 
 class Converter_Falcon_180B_Headless_WithoutOptionalModel_HF_CS21(
-    Converter_Falcon_180B_Headless_HF_CS20
+    Converter_Falcon_180B_Headless_WithoutModelPrefix_HF_CS20
 ):
     def __init__(self):
         super().__init__()
@@ -589,7 +686,10 @@ Converter_Falcon_180B_Headless_HF_CS21 = Build_HF_CS_Converter_WithOptionalModel
     Converter_Falcon_180B_Headless_WithoutOptionalModel_HF_CS21,
     derived_class=Converter_Falcon_180B_Headless_WithoutOptionalModel_HF_CS21,
     config_converter_class=ConfigConverter_Falcon_180B_HF_CS21,
-    formats=(FormatVersions("hf"), FormatVersions("cs-2.1", "cs-2.2")),
+    formats=(
+        FormatVersions("hf"),
+        FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
+    ),
 )
 
 
@@ -614,7 +714,10 @@ class Converter_Falcon_180B_WithoutOptionalModel_HF_CS21(
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-2.1", "cs-2.2"))
+        return (
+            FormatVersions("hf"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
+        )
 
     @staticmethod
     def get_config_converter_class() -> BaseConfigConverter:

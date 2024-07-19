@@ -17,6 +17,7 @@ import math
 import torch
 import torch.nn as nn
 
+import cerebras.pytorch as cstorch
 from cerebras.modelzoo.layers.create_initializer import create_initializer
 from cerebras.modelzoo.layers.RelativePositionEmbeddingLayer import (
     RelativePositionEmbeddingLayer,
@@ -44,6 +45,7 @@ class AlibiPositionEmbeddingLayer(nn.Module):
         alibi_trainable_slopes=False,
         slopes_initializer="xavier_uniform",
         scaling_factor=1.0,
+        constant_pos_embedding=None,
     ):
         super(AlibiPositionEmbeddingLayer, self).__init__()
 
@@ -68,6 +70,7 @@ class AlibiPositionEmbeddingLayer(nn.Module):
         )
 
         self.scaling_factor = scaling_factor
+        self.constant_pos_embedding = constant_pos_embedding
 
         self.__reset_parameters()
 
@@ -83,6 +86,8 @@ class AlibiPositionEmbeddingLayer(nn.Module):
         seq_length,
         key_length,
         past_kv=None,
+        constant_pos_mask=None,
+        batch_size=None,
     ):
         """Return the position bias based on the alibi slopes.
 
@@ -93,7 +98,12 @@ class AlibiPositionEmbeddingLayer(nn.Module):
         Returns:
             Position bias tensor with shape [num_heads, query_length, key_length]
         """
-        position_bias = self._compute_alibi_bias(seq_length, key_length)
+        position_bias = self._compute_alibi_bias(
+            seq_length,
+            key_length,
+            constant_pos_mask=constant_pos_mask,
+            batch_size=batch_size,
+        )
         # if key and values are already calculated we want only
         # the last query position bias
         if past_kv is not None:
@@ -137,8 +147,72 @@ class AlibiPositionEmbeddingLayer(nn.Module):
         alibi = (slopes / -self.scaling_factor).unsqueeze(1) * relative_position
         return alibi
 
-    def _compute_alibi_bias(self, seq_length, key_length, slopes=None):
+    def _constant_image_pos(self, relative_position, constant_pos_mask):
+        mask_dim1 = constant_pos_mask[:, :, None]
+        mask_dim2 = constant_pos_mask[:, None, :]
+        # TODO: only support two modalities, the values in `constant_pos_mask`
+        # are either 0 or 1.
+        image_mask = (1 - mask_dim1) * (1 - mask_dim2)
+        image_pos_id = (1 - image_mask) * self.constant_pos_embedding
+        # Mask image portion's pos id to 0 and then set it to the value of
+        # 'self.constant_pos_embedding'.
+        relative_position = relative_position * image_mask + image_pos_id
+        return relative_position
+
+    def _alibi_implementation_batched(
+        self, batch, seq_length, key_length, slopes, constant_pos_mask
+    ):
+        context_position = torch.arange(
+            seq_length, device=slopes.device, dtype=torch.float32
+        )[None, :, None].broadcast_to(batch, seq_length, key_length)
+        memory_position = torch.arange(
+            key_length, device=slopes.device, dtype=torch.float32
+        )[None, None, :].broadcast_to(batch, key_length, seq_length)
+
+        relative_position = memory_position - context_position
+
+        if constant_pos_mask is not None:
+            # apply constant position embedding.
+            relative_position = self._constant_image_pos(
+                relative_position, constant_pos_mask
+            )
+
+        relative_position = (
+            torch.abs(relative_position)
+            .unsqueeze(1)
+            .expand(batch, self.num_heads, -1, -1)
+        )
+        slopes = slopes / -self.scaling_factor
+        # Cast weight to half type before broadcasting, or adding batch dimension
+        # to it. Cast weight back to float32 after broadcasting.
+        slopes = slopes.to(cstorch.amp.get_half_dtype())[
+            None, :, :, None
+        ].broadcast_to(relative_position.shape)
+        slopes = slopes.to(torch.float32)
+
+        alibi = slopes * relative_position
+        return alibi
+
+    def _compute_alibi_bias(
+        self,
+        seq_length,
+        key_length,
+        slopes=None,
+        constant_pos_mask=None,
+        batch_size=None,
+    ):
+        assert (self.constant_pos_embedding is None) or (
+            self.constant_pos_embedding is not None
+            and constant_pos_mask is not None
+        ), "constant_pos_embedding is enabled, but 'constant_pos_mask' is not provided."
+
         if slopes is None:
             slopes = self.slopes
-
+        if (
+            constant_pos_mask is not None
+            and self.constant_pos_embedding is not None
+        ):
+            return self._alibi_implementation_batched(
+                batch_size, seq_length, key_length, slopes, constant_pos_mask
+            )
         return self._alibi_implementation_expand(seq_length, key_length, slopes)

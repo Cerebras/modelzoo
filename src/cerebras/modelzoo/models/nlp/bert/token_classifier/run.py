@@ -24,25 +24,18 @@ from cerebras.modelzoo.common.utils.run.cli_pytorch import get_params_from_args
 
 
 def main():
-    params = get_params_from_args()
-    from cerebras.modelzoo.models.nlp.bert.token_classifier.utils import (
-        set_defaults,
-    )
 
-    set_defaults(params)
+    params = get_params_from_args()
 
     from cerebras.modelzoo.common.run_utils import main
     from cerebras.modelzoo.models.nlp.bert.token_classifier.data import (
         eval_input_dataloader,
         train_input_dataloader,
     )
-    from cerebras.modelzoo.models.nlp.bert.token_classifier.model import (
-        BertForTokenClassificationModel,
-    )
 
     main(
         params,
-        BertForTokenClassificationModel,
+        "bert/token_classifier",
         train_input_dataloader,
         eval_input_dataloader,
     )

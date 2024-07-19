@@ -15,6 +15,7 @@
 """
 Processor for PyTorch BERT training.
 """
+
 import csv
 import random
 
@@ -191,33 +192,56 @@ class BertCSVDataProcessor(torch.utils.data.IterableDataset):
                `0` indicates the non masked token, and `1` indicates the masked token.
         """
 
+        def make_features(
+            data_row,
+            feature_names,
+            required_features=False,
+            dtype=np.int32,
+        ):
+            if required_features:
+                absent_features = [
+                    feature
+                    for feature in feature_names
+                    if feature not in data_row
+                ]
+                if absent_features:
+                    raise ValueError(
+                        f"{absent_features} are required features, but absent in the dataset"
+                    )
+
+            return {
+                feature: np.array(eval(data_row[feature]), dtype=dtype)
+                for feature in feature_names
+                if feature in data_row
+            }
+
         # Iterate over the data rows to create input features.
         for data_row in self.load_buffer():
             # `data_row` is a dict with keys:
-            features = {
-                "input_ids": np.array(
-                    eval(data_row["input_ids"]), dtype=np.int32
-                ),
-                "masked_lm_mask": np.array(
-                    # Stored as masked_lm_weights, but really masked_lm_mask
-                    eval(data_row["masked_lm_weights"]),
-                    dtype=np.int32,
-                ),
-                "masked_lm_positions": np.array(
-                    eval(data_row["masked_lm_positions"]), dtype=np.int32
-                ),
-                "attention_mask": np.array(
-                    eval(data_row["attention_mask"]), dtype=np.int32
-                ),
-                "labels": np.array(eval(data_row["labels"]), dtype=np.int32),
-            }
+            features = make_features(
+                data_row,
+                [
+                    "input_ids",
+                    "attention_mask",
+                    "labels",
+                ],
+                required_features=True,
+            )
+            features.update(
+                make_features(
+                    data_row, ["masked_lm_weights", "masked_lm_positions"]
+                )
+            )
+            if "masked_lm_weights" in features:
+                # Stored as masked_lm_weights, but really masked_lm_mask
+                features["masked_lm_mask"] = features["masked_lm_weights"]
+                features.pop("masked_lm_weights")
 
             if not self.disable_nsp:
-                features["next_sentence_label"] = np.array(
-                    eval(data_row["next_sentence_label"]), dtype=np.int32
-                )
-                features["token_type_ids"] = np.array(
-                    eval(data_row["token_type_ids"]), dtype=np.int32
+                features.update(
+                    make_features(
+                        data_row, ["next_sentence_label", "token_type_ids"]
+                    )
                 )
             yield features
 

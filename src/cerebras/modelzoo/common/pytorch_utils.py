@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""General purpose Pytorch Utilities"""
+"""General purpose Pytorch Utilities."""
+
 import argparse
 import logging
 import os
@@ -33,6 +34,7 @@ from packaging.version import parse
 import cerebras.pytorch as cstorch
 import cerebras.pytorch.distributed as dist
 from cerebras.appliance.utils.file import create_symlink
+from cerebras.pytorch.utils.call_once import call_once
 
 
 def visit_structure(
@@ -156,7 +158,7 @@ class IterableDatasetSampler(
 
 
 def to_cpu(tensor):
-    """Move tensor from device to cpu"""
+    """Move tensor from device to cpu."""
     if isinstance(tensor, torch.Tensor):
         return tensor.to("cpu")
     if isinstance(tensor, (list, tuple)):
@@ -199,10 +201,10 @@ def setup_logging(
     logging_dir: Optional[str] = None,
     model_dir: Optional[str] = None,
 ):
-    """Configure default logging format"""
+    """Configure default logging format."""
 
     class CustomFormatter(logging.Formatter):
-        """Cerebras Preferred Log Formatting"""
+        """Cerebras Preferred Log Formatting."""
 
         def __init__(self):
             ordinal = dist.get_ordinal()
@@ -300,10 +302,19 @@ def setup_logging(
     logging.getLogger().handlers.clear()
     logging.basicConfig(level=level, handlers=handlers)
 
+    setup_logging_excepthook()
+
+
+@call_once()
+def setup_logging_excepthook():
+    """Setup a logging hook that runs whenever an exception is raised that
+    catches and logs the exception to ensure that the full traceback is printed
+    in the log file.
+    """
     original_hook = sys.excepthook
 
     def cerebras_logging_hook(exc_type, exc_value, exc_traceback):
-        """Pipe uncaught exceptions through logger"""
+        """Pipe uncaught exceptions through logger."""
         msg = "".join(
             traceback.format_exception(exc_type, exc_value, exc_traceback)
         )
@@ -322,10 +333,28 @@ def setup_artifact_dir(model_dir: str, mode: str):
     Create a unique subdirectory for this run by generating a time stamp so
     that parallel runs using the same model_dir don't overwrite common files.
     """
-    time_stamp = time.strftime("%Y%m%d_%H%M%S")
+
+    def _create():
+        time_stamp = time.strftime("%Y%m%d_%H%M%S")
+        artifact_dir = cerebras_logs_path / mode / time_stamp
+        artifact_dir.mkdir(parents=True)
+        return artifact_dir
+
     cerebras_logs_path = Path(model_dir) / "cerebras_logs"
-    artifact_dir = cerebras_logs_path / mode / time_stamp
-    artifact_dir.mkdir(parents=True)
+
+    # CPU runs could potentially finish very fast, so back-to-back runs
+    # may end up getting the same timestamp and we'd fail in creating
+    # the duplicate directory. In case of directory already existing,
+    # sleep for more than 1 second and try again. If we fail again,
+    # then throw.
+    try:
+        artifact_dir = _create()
+    except FileExistsError:
+        time.sleep(1.5)
+        try:
+            artifact_dir = _create()
+        except Exception as e:
+            raise e from None
 
     # Create a symlink to the artifact_dir so that it's easy to find the latest run.
     # The symlink needs to be at the same level as the subdirectories.
@@ -364,7 +393,7 @@ class SampleGenerator(object):
         return self.next()
 
     def next(self):
-        """Generate next data sample"""
+        """Generate next data sample."""
         if self._count >= self._sample_count:
             raise StopIteration
         self._count += 1
@@ -372,7 +401,7 @@ class SampleGenerator(object):
 
 
 class RunConfigParamsValidator:
-    """Validate Run Configs"""
+    """Validate Run Configs."""
 
     def __init__(
         self,
@@ -392,7 +421,7 @@ class RunConfigParamsValidator:
                     self.runconfig_schema["properties"][arg.dest] = {}
 
     def validate(self, config):
-        """Validate params match existing schema"""
+        """Validate params match existing schema."""
 
         if "use_cs_grad_accum" in config:
             raise ValueError(
@@ -405,7 +434,7 @@ class RunConfigParamsValidator:
 
 
 def get_checkpoints(model_dir: str) -> List[str]:
-    """Gather checkpoints in a model directory"""
+    """Gather checkpoints in a model directory."""
     matches = []
     for filename in os.listdir(model_dir):
         m = re.match(r"checkpoint_(\d+)\.mdl", filename)
@@ -414,34 +443,6 @@ def get_checkpoints(model_dir: str) -> List[str]:
     matches.sort(key=lambda x: int(x.group(1)))  # Sort by index not lexically
     checkpoints = [os.path.join(model_dir, match.group()) for match in matches]
     return checkpoints
-
-
-def is_mup_run(params):
-    """
-    Check if the run is configured with muP hyperparameter settings
-    """
-    scale_qk_dot_by_d = params.get('model', {}).get('scale_qk_dot_by_d', False)
-    embeddings_scale = params.get('model', {}).get('embeddings_scale', None)
-    output_logits_scale = params.get('model', {}).get(
-        'output_logits_scale', None
-    )
-    runconfig_params = params.get('runconfig', {})
-
-    if runconfig_params.get('mode', None) == 'train':
-        adjust_learning_rate = (
-            params.get('optimizer', {})
-            .get('adjust_learning_rate', {})
-            .get('decoder_kernel', {})
-        )
-        return (
-            scale_qk_dot_by_d
-            and embeddings_scale
-            and output_logits_scale
-            and adjust_learning_rate
-        )
-    elif runconfig_params.get('mode', None) == 'eval':
-        return scale_qk_dot_by_d and embeddings_scale and output_logits_scale
-    return False
 
 
 def load_from_checkpoint_file(

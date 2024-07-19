@@ -22,7 +22,6 @@ train_input:
     max_predictions_per_seq: 80
     # The effective batch size, which is evenly divided across "num_csx" systems used for the run
     batch_size: 800
-    whole_word_masking: False
     do_lower: True
     masked_lm_prob: 0.15
     shuffle: True
@@ -39,7 +38,6 @@ eval_input:
     max_predictions_per_seq: 80
     # The effective batch size, which is evenly divided across "num_csx" systems used for the run
     batch_size: 256 # for GPU(16GB) set batch_size: 4
-    whole_word_masking: False
     do_lower: True
     masked_lm_prob: 0.15
     shuffle: False

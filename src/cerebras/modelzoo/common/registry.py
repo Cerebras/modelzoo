@@ -15,6 +15,7 @@
 '''
 This is registry for the cerebras modelzoo
 '''
+
 import importlib
 import os
 import pathlib
@@ -32,7 +33,17 @@ class Registry:
         "dataset": {},
         "paths": {},
         "config": {},
+        "submodel_config": {},
+        "model_to_config": {},
+        "data_config": {},
     }
+
+    submodel_mapping = {
+        "gpt2lmhead": "gpt2",
+        "t5forconditionalgeneration": "t5",
+        "vit": "vision_transformer",
+    }
+
     _modules_imported = False
 
     @classmethod
@@ -76,7 +87,11 @@ class Registry:
                 path,
                 import_files_regex="**/*Processor*.py",
             )
-
+        for path in cls.mapping["paths"]["datasetprocessor_path"]:
+            cls._import_modules_for_registry(
+                path,
+                import_files_regex="**/config.py",
+            )
         for path in cls.mapping["paths"]["model_path"]:
             cls._import_modules_for_registry(
                 path,
@@ -103,13 +118,12 @@ class Registry:
                             name, cls.mapping["model"][name]
                         )
                     )
-                cls.mapping["model"][name] = dict()
-                cls.mapping["model"][name]["class"] = model_cls
-                cls.mapping["model"][name]["run"] = cls.register_run_path(name)
-                cls.mapping["model"][name][
-                    "datasetprocessor"
-                ] = datasetprocessor
-                cls.mapping["model"][name]["dataset"] = dataset
+                cls.mapping["model"][name] = {
+                    "class": model_cls,
+                    "run": cls.register_run_path(name),
+                    "datasetprocessor": datasetprocessor,
+                    "dataset": dataset,
+                }
             return model_cls
 
         return wrap
@@ -197,6 +211,29 @@ class Registry:
             cls.mapping["paths"].setdefault(kind, [path])
 
     @classmethod
+    def register_submodel_config(cls, name):
+        """
+        This method is added to register config classes for submodels
+        """
+
+        def wrap(model_cls):
+            cls.mapping["submodel_config"][name] = model_cls
+            # Register the run path as well.
+            if name not in cls.submodel_mapping:
+                raise KeyError(
+                    "Submodel '{}' not mapped to any parent model.".format(name)
+                )
+
+            path = cls.get_path("model_path", cls.submodel_mapping[name])
+            cls.mapping["submodel_config"][path] = model_cls
+            if name in cls.mapping["model"]:
+                model = cls.mapping["model"][name]["class"]
+                cls.mapping["model_to_config"][model] = model_cls
+            return model_cls
+
+        return wrap
+
+    @classmethod
     def register_config(cls, name):
         """
         This method is added to register config classes
@@ -204,6 +241,29 @@ class Registry:
 
         def wrap(model_cls):
             cls.mapping["config"][name] = model_cls
+            # Register the run path as well.
+            path = cls.get_path("model_path", name)
+            if path and os.path.exists(path):
+                path = Path(os.path.realpath(path))
+                path = path.relative_to(
+                    os.path.dirname(os.path.realpath(modelzoo.__file__))
+                )
+            cls.mapping["config"][path] = model_cls
+            if name in cls.mapping["model"]:
+                model = cls.mapping["model"][name]["class"]
+                cls.mapping["model_to_config"][model] = model_cls
+            return model_cls
+
+        return wrap
+
+    @classmethod
+    def register_data_config(cls, name):
+        """
+        This method is added to register config classes
+        """
+
+        def wrap(model_cls):
+            cls.mapping["data_config"][name] = model_cls
             return model_cls
 
         return wrap
@@ -284,13 +344,36 @@ class Registry:
         cls._import_modules()
         if name in cls.mapping["model"]:
             return cls.mapping["model"][name]["class"]
-        return ValueError("{} model is not registered".format(name))
+        raise ValueError("{} model is not registered".format(name))
 
     @classmethod
-    def get_config_class(cls, name):
+    def get_submodel_config_class(cls, key):
         cls._import_modules()
-        if name in cls.mapping["config"]:
-            return cls.mapping["config"][name]
+        if key in cls.mapping["submodel_config"]:
+            return cls.mapping["submodel_config"][key]
+        return None
+
+    @classmethod
+    def get_config_class(cls, key):
+        if key is None:
+            return None
+        cls._import_modules()
+        if key in cls.mapping["config"]:
+            return cls.mapping["config"][key]
+        return None
+
+    @classmethod
+    def get_data_config(cls, name):
+        cls._import_modules()
+        if name in cls.mapping["data_config"]:
+            return cls.mapping["data_config"][name]
+        return None
+
+    @classmethod
+    def get_config_class_from_model(cls, key):
+        cls._import_modules()
+        if key in cls.mapping["model_to_config"]:
+            return cls.mapping["model_to_config"][key]
         return None
 
     @classmethod

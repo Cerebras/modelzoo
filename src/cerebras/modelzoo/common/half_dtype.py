@@ -39,3 +39,15 @@ def set_half_dtype_from_params(params: Dict[str, Any]) -> torch.dtype:
         )
 
     return cstorch.amp.set_half_dtype(params.get("fp16_type", "float16"))
+
+
+def maybe_to_half_dtype(tensor: torch.Tensor) -> torch.Tensor:
+    """Return tensor cast to half dtype if on CSX or autocast CPU/GPU ctx."""
+    if (
+        cstorch.use_cs()
+        or torch.is_autocast_enabled()
+        or torch.is_autocast_cpu_enabled()
+    ):
+        return tensor.to(cstorch.amp.get_half_dtype())
+
+    return tensor

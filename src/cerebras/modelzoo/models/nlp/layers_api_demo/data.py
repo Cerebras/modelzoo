@@ -46,19 +46,21 @@ class AlphabetDataset(Dataset):
         }
 
 
-def train_input_dataloader(params):
-    seed = params["runconfig"]["seed"]
-    torch.manual_seed(seed)
-    input_params = params["train_input"]
+def _input_dataloader(input_params):
+    torch.manual_seed(input_params["seed"])
+
     num_samples = input_params["num_samples"]
     seq_length = input_params["seq_length"]
     batch_size = get_streaming_batch_size(input_params["batch_size"])
-    train_data = []
+
+    data = []
     for _ in range(num_samples):
         start_index = random.randint(0, len(VOCABS) - seq_length - 1)
         end_index = start_index + seq_length + 1
-        train_data.append(VOCABS[start_index:end_index])
-    train_dataset = AlphabetDataset(train_data, seq_length)
+        data.append(VOCABS[start_index:end_index])
+
+    train_dataset = AlphabetDataset(data, seq_length)
+
     train_dataloader = DataLoader(
         train_dataset,
         batch_size=batch_size,
@@ -68,24 +70,9 @@ def train_input_dataloader(params):
     return train_dataloader
 
 
-def eval_input_dataloader(params):
-    seed = params["runconfig"]["seed"]
-    torch.manual_seed(seed)
-    input_params = params["eval_input"]
-    num_samples = input_params["num_samples"]
-    seq_length = input_params["seq_length"]
-    batch_size = input_params["batch_size"]
-    test_data = []
-    for _ in range(num_samples):
-        start_index = random.randint(0, len(VOCABS) - seq_length - 1)
-        end_index = start_index + seq_length + 1
-        test_data.append(VOCABS[start_index:end_index])
+def train_input_dataloader(params):
+    return _input_dataloader(params["train_input"])
 
-    test_dataset = AlphabetDataset(test_data, seq_length)
-    test_dataloader = DataLoader(
-        test_dataset,
-        batch_size=batch_size,
-        shuffle=True,
-        collate_fn=test_dataset.collate,
-    )
-    return test_dataloader
+
+def eval_input_dataloader(params):
+    return _input_dataloader(params["eval_input"])

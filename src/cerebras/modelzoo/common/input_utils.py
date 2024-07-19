@@ -14,6 +14,7 @@
 
 import logging
 import random
+from typing import Optional
 from warnings import warn
 
 import numpy as np
@@ -131,8 +132,10 @@ def bucketed_batch(
         )
 
 
-def get_streaming_batch_size(effective_batch_size: int) -> int:
-    """Returns the streaming batch size of the current task.
+def get_streaming_batch_size(
+    effective_batch_size: int, global_rank: Optional[int] = None
+) -> int:
+    """Returns the streaming batch size of the given task.
 
     In a Wafer-Scaler Cluster setup with more than 1 CS-X node, the batch size
     used in compile and specified by user is the effective batch size at
@@ -144,12 +147,16 @@ def get_streaming_batch_size(effective_batch_size: int) -> int:
 
     Args:
         effective_batch_size: The effective batch size of the model.
+        global_rank: The global rank of the task to return the streaming batch size for. If None,
+            it returns the streaming batch size of the current task.
     Returns:
-        The local batch size to be streamed by this task. If queried on the
+        The local batch size to be streamed by the given task. If queried on the
         user node (used when compiling the model), this returns the original
         effective batch size as passed in the argument.
     """
-    streaming_batch_size = dist.get_streaming_batch_size(effective_batch_size)
+    streaming_batch_size = dist.get_streaming_batch_size(
+        effective_batch_size, global_rank=global_rank
+    )
 
     msg = f"Effective batch size is {effective_batch_size}."
     if cstorch.use_cs() and dist.is_streamer():
@@ -171,6 +178,12 @@ def validate_streaming_and_micro_batch_size(
         micro_batch_size: The micro batch size of the model.
         num_csx: The number of CSX in the cluster.
     """
+    if batch_size < num_csx:
+        raise ValueError(
+            f"Expected batch_size ({batch_size}) to be greater than or equal to "
+            f"num_csx ({num_csx})."
+        )
+
     if micro_batch_size == "auto":
         warn(
             f"Gradient accumulation will search for a well-performing micro "
@@ -214,25 +227,10 @@ def validate_streaming_and_micro_batch_size(
             f"\n\tNone: Disable micro batch tiling."
         )
 
-    if micro_batch_size < 1:
+    if micro_batch_size < 1 or micro_batch_size > batch_size:
         raise ValueError(
-            f"micro_batch_size must be a positive integer. "
-            f"Got {micro_batch_size}."
-        )
-    if batch_size % num_csx != 0:
-        raise ValueError(
-            f"Expected batch_size ({batch_size}) to be a "
-            f"multiple of num_csx ({num_csx})."
-        )
-    streaming_batch_size = batch_size // num_csx
-    if streaming_batch_size % micro_batch_size != 0:
-        raise ValueError(
-            f"With current batch_size ({batch_size}) and num_csx ({num_csx}), "
-            f"per-CSX batch size ({streaming_batch_size}) "
-            f"is not a multiple of micro_batch_size {micro_batch_size}.\n"
-            f"If you want to force micro_batch_size in gradient accumulation, "
-            f"please set num_csx and batch_size such that batch_size//num_csx "
-            f"is a multiple of micro_batch_size."
+            f"Expected micro_batch_size ({micro_batch_size}) to be a positive"
+            f"integer less than or equal to the batch_size ({batch_size})."
         )
 
 

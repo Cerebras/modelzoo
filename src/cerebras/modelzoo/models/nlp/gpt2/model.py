@@ -14,24 +14,37 @@
 
 import logging
 from copy import deepcopy
+from dataclasses import asdict
 from typing import Optional
 
 import torch
 
 import cerebras.pytorch as cstorch
 from cerebras.modelzoo.common.registry import registry
+from cerebras.modelzoo.common.utils.model.generation_utils import sample_tokens
+from cerebras.modelzoo.common.utils.model.mup_utils import (
+    LRAdjustmentGroup,
+    is_mup,
+)
+from cerebras.modelzoo.common.utils.model.transformer_utils import (
+    get_embedding_dtype,
+)
 from cerebras.modelzoo.losses.GPTLMHeadModelLoss import GPTLMHeadModelLoss
+from cerebras.modelzoo.losses.LoadBalancingLoss import LoadBalancingLoss
 from cerebras.modelzoo.models.nlp.gpt2.gpt2_model import GPT2LMHeadModel
+from cerebras.modelzoo.trainer import summarize_scalar
 from cerebras.pytorch.metrics import AccuracyMetric, PerplexityMetric
 
 
 @registry.register_model(
     [
         "gpt2",
+        "gpt3",
         "btlm",
         "bloom",
         "llama",
         "mistral",
+        "mixtral",
         "mpt",
         "santacoder",
         "starcoder",
@@ -47,26 +60,85 @@ from cerebras.pytorch.metrics import AccuracyMetric, PerplexityMetric
 )
 class Gpt2Model(torch.nn.Module):
     """
-    GPT-2 models
+    GPT-2 models.
     """
 
     def __init__(self, params):
         super().__init__()
 
-        model_params = params["model"].copy()
+        self.lr_adjustment_groups = self.create_default_lr_adjustment_groups()
+        if isinstance(params, dict):
+            config_class = registry.get_config_class_from_model(self.__class__)
+            params = config_class(**params)
 
-        self.compute_eval_metrics = model_params.pop(
-            "compute_eval_metrics", True
-        )
+        pol = cstorch.backends.csx.precision.optimization_level
+        if pol == 2 or (pol == 1 and params.model.fp16_type == "cbfloat16"):
+            params.model.attention_softmax_fp32 = False
 
+        # Create a deep copy of the model parameters object to ensure immutability
+        model_params = deepcopy(params.model)
+
+        # Directly access compute_eval_metrics
+        self.compute_eval_metrics = model_params.compute_eval_metrics
+
+        # Initialize evaluation metrics if compute_eval_metrics is enabled
         if self.compute_eval_metrics:
             self.perplexity_metric = PerplexityMetric(name="eval/lm_perplexity")
             self.accuracy_metric = AccuracyMetric(name="eval/accuracy")
 
+        # MoE (Mixture of Experts) settings
+        if not model_params.moe:
+            self.moe_enabled = False
+            model_params.moe = dict(num_experts=1)
+        elif "num_experts" not in model_params.moe:
+            model_params.moe["num_experts"] = 1
+        else:
+            self.moe_enabled = model_params.moe["num_experts"] > 1
+
+        # Load balancing loss if MoE is enabled
+        if self.moe_enabled:
+            self.load_balancing_loss_coef = model_params.moe.get(
+                "load_balancing_loss_coef", 0.01
+            )
+            routing_algorithm = model_params.moe.get(
+                "routing_algorithm", "learned"
+            )
+            if (
+                routing_algorithm == "hash"
+                and self.load_balancing_loss_coef > 0.0
+            ):
+                logging.warning(
+                    "Disabling load balancing loss when using hash routing"
+                )
+                model_params.moe["load_balancing_loss_coef"] = 0.0
+                self.load_balancing_loss_coef = 0.0
+            self.load_balancing_loss_fn = LoadBalancingLoss(
+                model_params.moe["num_experts"], model_params.moe["top_k"]
+            )
+
+        self.vocab_size = params.model.vocab_size
+
+        # Directly assign attributes to instance variables
+        self.start_token = params.model.start_token
+        self.loop_dim = params.model.loop_dim
+        self.stop_sequences = params.model.stop_sequences
+        self.max_tokens = params.model.max_tokens
+
+        # Sampling configuration
+        self.temperature = params.model.temperature
+        self.top_k = params.model.top_k
+        self.top_p = params.model.top_p
+
+        if self.start_token is not None:
+            # Disable eval metrics
+            params.model.compute_eval_metrics = False
+
+        # Build the model using the model parameters object
         self.model = self.build_model(model_params)
 
+        # Initialize the loss function directly using the model attributes
         self.loss_fn = GPTLMHeadModelLoss(
-            params["model"]["vocab_size"],
+            params.model.vocab_size,
             self.loss_scaling,
             self.loss_weight,
         )
@@ -75,136 +147,128 @@ class Gpt2Model(torch.nn.Module):
         self.model.tie_weights()
 
     def build_model(self, model_params):
-        position_embedding_type = model_params.pop(
-            "position_embedding_type", "learned"
-        )
+        mup_config = is_mup(model_params)
 
-        self.loss_weight = model_params.pop("loss_weight", 1.0)
-        self.loss_scaling = model_params.pop(
-            "loss_scaling", "num_tokens"
-        ).lower()
+        # Access other parameters directly
+        self.loss_weight = model_params.loss_weight
+        self.loss_scaling = model_params.loss_scaling.lower()
+
+        # Validate the loss weight
         if self.loss_weight != 1.0 and self.loss_scaling == "num_tokens":
             logging.warning(
                 f"loss_weight cannot be {self.loss_weight} for num_tokens "
                 f"loss_scaling. Setting loss_weight to 1.0."
             )
             self.loss_weight = 1.0
-        self.output_logits_scale = model_params.pop("output_logits_scale", None)
-        self.scale_qk_dot_by_d = model_params.pop("scale_qk_dot_by_d", None)
-        self.embeddings_scale = model_params.pop("embeddings_scale", None)
-        if self.embeddings_scale is None:
-            self.embeddings_scale = 1.0
-        default_dropout_rate = model_params.pop("dropout_rate")
-        embedding_dropout_rate = model_params.pop(
-            "embedding_dropout_rate", default_dropout_rate
-        )
-        attention_dropout_rate = model_params.pop(
-            "attention_dropout_rate", default_dropout_rate
-        )
 
-        model_params.pop("mixed_precision", None)
+        if model_params.scale_qk_dot_by_d is None:
+            if mup_config:
+                model_params.scale_qk_dot_by_d = True
+                logging.warning(
+                    "Found muP params but no scale_qk_dot_by_d was provided, "
+                    "so it will be automatically set to 'True' as the muP "
+                    "default."
+                )
+            else:
+                model_params.scale_qk_dot_by_d = False
 
         model = GPT2LMHeadModel(
             # Embedding
-            vocab_size=model_params.pop("vocab_size"),
-            max_position_embeddings=model_params.pop(
-                "max_position_embeddings", 1024
-            ),
-            embd_pdrop=embedding_dropout_rate,
-            position_embedding_type=position_embedding_type,
-            position_embedding_offset=model_params.pop(
-                "position_embedding_offset", 0
-            ),
-            hidden_size=model_params.pop("hidden_size"),
-            share_embedding_weights=model_params.pop(
-                "share_embedding_weights", True
-            ),
-            embedding_layer_norm=model_params.pop(
-                "embedding_layer_norm", False
-            ),
-            num_relative_attention_buckets=model_params.pop(
-                "num_relative_attention_buckets", 32
-            ),
-            rotary_dim=model_params.pop("rotary_dim", None),
-            rope_theta=model_params.pop("rope_theta", 10000),
-            pad_rope=model_params.pop("pad_rope", False),
+            vocab_size=model_params.vocab_size,
+            max_position_embeddings=model_params.max_position_embeddings,
+            embd_pdrop=model_params.embedding_dropout_rate,
+            position_embedding_type=model_params.position_embedding_type,
+            position_embedding_offset=model_params.position_embedding_offset,
+            hidden_size=model_params.hidden_size,
+            share_embedding_weights=model_params.share_embedding_weights,
+            embedding_layer_norm=model_params.embedding_layer_norm,
+            num_relative_attention_buckets=model_params.num_relative_attention_buckets,
+            rotary_dim=model_params.rotary_dim,
+            rope_theta=model_params.rope_theta,
+            pad_rope=model_params.pad_rope,
             # Encoder
-            num_hidden_layers=model_params.pop("num_hidden_layers"),
-            dropout_rate=default_dropout_rate,
-            norm_type=model_params.pop("norm_type", "layernorm"),
-            layer_norm_epsilon=float(
-                model_params.pop("layer_norm_epsilon", 1.0e-5),
-            ),
+            num_hidden_layers=model_params.num_hidden_layers,
+            dropout_rate=model_params.dropout_rate,
+            norm_type=model_params.norm_type,
+            layer_norm_epsilon=float(model_params.layer_norm_epsilon),
             # Encoder - Attention
-            num_heads=model_params.pop("num_heads"),
-            attention_type=model_params.pop("attention_type"),
-            attention_module=model_params.pop(
-                "attention_module", "aiayn_attention"
+            num_heads=model_params.num_heads,
+            attention_type=model_params.attention_type,
+            attention_module=model_params.attention_module,
+            attention_sliding_window_length=model_params.attention_sliding_window_length,
+            extra_attention_params=model_params.extra_attention_params,
+            extra_ffn_params=model_params.extra_ffn_params,
+            use_projection_bias_in_attention=model_params.use_projection_bias_in_attention,
+            use_ffn_bias_in_attention=model_params.use_ffn_bias_in_attention,
+            attention_dropout_rate=(
+                model_params.attention_dropout_rate or model_params.dropout_rate
             ),
-            attention_sliding_window_length=model_params.pop(
-                "attention_sliding_window_length", None
-            ),
-            extra_attention_params=model_params.pop(
-                "extra_attention_params", {}
-            ),
-            use_projection_bias_in_attention=model_params.pop(
-                "use_projection_bias_in_attention", True
-            ),
-            use_ffn_bias_in_attention=model_params.pop(
-                "use_ffn_bias_in_attention", True
-            ),
-            attention_dropout_rate=attention_dropout_rate,
-            attention_softmax_fp32=model_params.pop(
-                "attention_softmax_fp32", True
-            ),
-            attention_kernel=model_params.pop("attention_kernel", None),
-            # Encoder - ffn
-            filter_size=model_params.pop("filter_size"),
-            nonlinearity=model_params.pop("nonlinearity", "gelu"),
-            use_ffn_bias=model_params.pop("use_ffn_bias", True),
+            attention_softmax_fp32=model_params.attention_softmax_fp32,
+            attention_kernel=model_params.attention_kernel,
+            # Encoder - FFN
+            filter_size=model_params.filter_size,
+            nonlinearity=model_params.nonlinearity,
+            use_ffn_bias=model_params.use_ffn_bias,
             # Task-specific
-            use_bias_in_output=model_params.pop("use_bias_in_output", False),
-            fixed_sparse_attention=model_params.pop(
-                "fixed_sparse_attention", None
-            ),
+            use_bias_in_output=model_params.use_bias_in_output,
+            fixed_sparse_attention=model_params.fixed_sparse_attention,
             # Initializers
-            embedding_initializer=model_params.pop(
-                "embedding_initializer", None
+            embedding_initializer=(
+                asdict(model_params.embedding_initializer)
+                if model_params.embedding_initializer
+                else None
+            ),  # InitializerConfig needs to be casted to dict
+            initializer=(
+                asdict(model_params.initializer)
+                if model_params.initializer
+                else None
             ),
-            initializer=model_params.pop("initializer", None),
-            output_layer_initializer=model_params.pop(
-                "output_layer_initializer", None
+            output_layer_initializer=(
+                asdict(model_params.output_layer_initializer)
+                if model_params.output_layer_initializer
+                else None
             ),
-            initializer_range=model_params.pop("initializer_range", 0.02),
+            initializer_range=model_params.initializer_range,
+            pos_scaling_factor=model_params.pos_scaling_factor,
+            scale_qk_dot_by_layer_idx=model_params.scale_qk_dot_by_layer_idx,
+            ffn_initializer=(
+                asdict(model_params.ffn_initializer)
+                if model_params.ffn_initializer
+                else None
+            ),
+            ffn_output_layer_initializer=(
+                asdict(model_params.ffn_output_layer_initializer)
+                if model_params.ffn_output_layer_initializer
+                else None
+            ),
             # muP (maximal update parameterization)  parameters
-            output_logits_scale=self.output_logits_scale,
-            embeddings_scale=self.embeddings_scale,
-            scale_qk_dot_by_d=self.scale_qk_dot_by_d,
-            alibi_trainable_slopes=model_params.pop(
-                "alibi_trainable_slopes", False
-            ),
-            pos_scaling_factor=float(
-                model_params.pop("pos_scaling_factor", 1.0)
-            ),
-            scale_qk_dot_by_layer_idx=model_params.pop(
-                "scale_qk_dot_by_layer_idx", False
+            lr_adjustment_groups=self.lr_adjustment_groups,
+            embeddings_scale=model_params.embeddings_scale,
+            scale_qk_dot_by_d=model_params.scale_qk_dot_by_d,
+            attention_logits_alpha=model_params.attention_logits_alpha,
+            scale_output_logits_by_d=model_params.scale_output_logits_by_d,
+            mup_base_hidden_size=model_params.mup_base_hidden_size,
+            mup_base_filter_size=model_params.mup_base_filter_size,
+            output_logits_alpha=model_params.output_logits_alpha,
+            # muP backwards compatibility
+            output_logits_scale=model_params.output_logits_scale,
+            alibi_trainable_slopes=model_params.alibi_trainable_slopes,
+            # MoE:
+            moe_params=model_params.moe,
+            dtype=get_embedding_dtype(
+                model_params.mixed_precision,
+                model_params.fp16_type,
             ),
         )
 
-        # `fp16_type` is accessed later,
-        # so we remove these from the list of unused params
-        unused_params = [
-            key for key in model_params.keys() if key != "fp16_type"
-        ]
-        if unused_params:
-            logging.warning(
-                "The following model params are unused: "
-                + ", ".join(unused_params)
-            )
-
         return model
 
-    def forward(
+    def forward(self, *args, autoregressive=False, **kwargs):
+        if autoregressive:
+            return self.inference_step(*args, **kwargs)
+        return self.training_step(*args, **kwargs)
+
+    def training_step(
         self,
         data,
         reduce_batch=True,
@@ -234,7 +298,7 @@ class Gpt2Model(torch.nn.Module):
             and data["labels"].dtype == torch.int32
         ), "The dtype for all inputs should be torch.int32"
 
-        lm_logits = self.model(
+        model_outputs = self.model(
             input_ids=data["input_ids"],
             attention_mask=data[
                 "attention_mask"
@@ -242,6 +306,12 @@ class Gpt2Model(torch.nn.Module):
             attention_span=data.get("attention_span"),  # VSL-only input
             position_ids=data.get("position_ids"),  # VSL-only input
         )
+
+        if self.moe_enabled:
+            lm_logits, routing_weights, expert_masks = model_outputs
+        else:
+            lm_logits = model_outputs
+
         loss = self.loss_fn(
             lm_logits,
             labels=data["labels"],
@@ -249,6 +319,24 @@ class Gpt2Model(torch.nn.Module):
             reduce_batch=reduce_batch,
             average_logps=average_logps,
         )
+
+        if (
+            self.moe_enabled
+            and self.load_balancing_loss_coef > 0.0
+            and self.training
+        ):
+            load_balance_loss = (
+                self.load_balancing_loss_coef
+                * self.load_balancing_loss_fn(
+                    routing_weights,
+                    expert_masks,
+                    attention_mask=data["attention_mask"],
+                )
+            )
+            summarize_scalar(
+                "expert_stats/load_balance_loss", load_balance_loss
+            )
+            loss = loss + load_balance_loss
 
         # Calculate eval metrics if not training
         if not self.model.training and self.compute_eval_metrics:
@@ -287,56 +375,106 @@ class Gpt2Model(torch.nn.Module):
         else:
             return loss
 
+    def create_default_lr_adjustment_groups(self):
+        return {
+            "embedding": LRAdjustmentGroup("*embedding*weight"),
+            # decoder_kernel for muP backward compatibility
+            "decoder_kernel": LRAdjustmentGroup(
+                [
+                    "*decoder*dense*weight",
+                    "*decoder*linear*weight",
+                    "*decoder*linear*expert_weights",  # moe
+                ]
+            ),
+            "decoder_attention": LRAdjustmentGroup(
+                "*decoder*attn*dense*weight"
+            ),
+            "decoder_input_ffn": LRAdjustmentGroup(
+                [
+                    "*decoder*ffn.ffn.[!1]*weight",
+                    "*decoder*ffn.ffn.[!1]*expert_weights",  # moe
+                ]
+            ),
+            "decoder_output_ffn": LRAdjustmentGroup(
+                [
+                    "*decoder*ffn.ffn.[1]*weight",
+                    "*decoder*ffn.ffn.[1]*expert_weights",  # moe
+                ]
+            ),
+        }
 
-class GptInferenceModel(Gpt2Model):
-    def __init__(self, params):
-        params = deepcopy(params)
-
-        if "start_token" not in params["model"]:
+    def inference_step(self, data, stop_sequences: Optional[int] = None):
+        """The forward pass on the input data. This method
+        returns the predictions of the network as tokens.
+        """
+        if self.start_token is None:
             raise KeyError(
                 "Inference requires a start token. "
                 "Please provide `start_token` in the model params."
             )
-        if "stop_sequences" not in params["model"]:
+
+        if self.stop_sequences is None:
             raise KeyError(
                 "Inference requires a stop token sequence. "
                 "Please provide `stop_sequences` in the model params."
             )
 
-        self.loop_dim = params["model"].pop("loop_dim", 1)
-        self.start_token = params["model"].pop("start_token")
-        self.stop_sequences = params["model"].pop("stop_sequences")
-        self.max_tokens = params["model"].pop("max_tokens", None)
+        if self.temperature and self.temperature <= 0:
+            raise ValueError(
+                "If sampling is needed, `temperature` must be a positive float "
+                f"number, got {self.temperature}"
+            )
+        if self.top_k and self.top_k <= 0:
+            raise ValueError(
+                "If top-k sampling is needed, `top_k` must be a positive integer, "
+                f"got {self.top_k}"
+            )
+        if self.top_p and (self.top_p < 0 or self.top_p > 1):
+            raise ValueError(
+                "If top-p sampling is needed, `top_p` must be a float between "
+                f"(0.0, 1.0), got {self.top_p}"
+            )
 
-        super().__init__(params)
-
-    def forward(self, data, stop_sequences: Optional[int] = None):
-        """The forward pass on the input data. This method
-        returns the predictions of the network as tokens.
-        """
         if "input_ids" not in data:
             raise KeyError("GPT-2 model expects these data fields: input_ids")
         elif data["input_ids"].dtype != torch.int32:
             raise TypeError("The dtype for all inputs should be torch.int32")
 
         input_ids = data["input_ids"]
+        loop_index = cstorch.experimental.start_implicit_loop(
+            input_ids, loop_dim=1
+        )
+
         # Note: attention_mask is a misnomer in this model; its contents are
         # ignored and only its shape is used.
-        lm_logits = self.model(
+        model_outputs = self.model(
             input_ids=input_ids,
             attention_mask=input_ids,  # doesn't actually mask anything
+            # By passing this, we get only the current token's logits instead
+            # of all logits from the whole sequence
+            inference_loop_index=loop_index,
         )
 
-        predictions = torch.argmax(lm_logits, dim=-1).int()
+        if self.moe_enabled:
+            token_logits, _, _ = model_outputs
+        else:
+            token_logits = model_outputs
 
-        cstorch.experimental.run_implicit_autoregressive_loop(
+        # run sampling, if needed
+        token_pred = sample_tokens(
+            token_logits, self.temperature, self.top_k, self.top_p
+        )
+
+        sequence_preds = cstorch.experimental.update_implicit_loop(
             input_tensor=input_ids,
-            output_tensor=predictions,
-            loop_dim=self.loop_dim,
+            index_tensor=loop_index,
+            update_tensor=token_pred,
             start_token=self.start_token,
-            stop_sequences=self.stop_sequences
-            if stop_sequences is None
-            else stop_sequences,
+            stop_sequences=(
+                self.stop_sequences
+                if stop_sequences is None
+                else stop_sequences
+            ),
             max_tokens=self.max_tokens,
         )
-        return predictions
+        return sequence_preds

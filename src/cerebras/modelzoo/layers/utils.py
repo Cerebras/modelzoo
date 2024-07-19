@@ -69,6 +69,33 @@ def patchify_helper(input_image, patch_size):
     return patchified_image
 
 
+def unpatchify_helper(inputs, image_size, patch_size):
+    # reverses the patchify process: (B x S x D) -> (B x C x H x W)
+    # image_size: (C, H, W)
+    # patch_size: (patch_height, patch_width)
+    bsz = inputs.shape[0]
+    num_channels, image_height, image_width = image_size
+    patch_height, patch_width = patch_size
+    num_patches = (image_height // patch_height, image_width // patch_width)
+
+    outputs = inputs.reshape(
+        bsz,  # bsz
+        image_height // patch_height,
+        image_width // patch_width,
+        patch_height,
+        patch_width,
+        num_channels,
+    )
+    outputs = torch.einsum('nhwpqc->nchpwq', outputs)
+    outputs = outputs.reshape(
+        bsz,
+        num_channels,
+        image_height,
+        image_width,
+    )
+    return outputs
+
+
 def get_2d_fixed_position_embeddings(
     num_patches, hidden_size, add_cls_token=False
 ):

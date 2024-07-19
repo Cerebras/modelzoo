@@ -160,6 +160,7 @@ class VQAFeaturesDict:
     image: torch.Tensor = None  # (C, H, W)
 
     def __repr__(self):
+
         s = (
             f"VQAFeaturesDict.image_id: {self.image_id}, \n"
             + f"VQAFeaturesDict.image_path: {self.image_path}, \n\n"

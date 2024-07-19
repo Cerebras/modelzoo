@@ -33,7 +33,7 @@ git lfs install
 git clone https://huggingface.co/datasets/cerebras/SlimPajama-627B
 ```
 
-and create preprocessed dataset files using [`create_hdf5_dataset.py`](../../data_processing/scripts/hdf5_preprocessing/).
+and create preprocessed dataset files using our data-preprocessing scripts.
 
 #### Jais DataProcessor output
 
@@ -82,7 +82,7 @@ Please follow the instructions on our [quickstart in the Developer Docs](https:/
 
 ## To run train and eval on GPU/CPU
 
-If running on a cpu or gpu, activate the environment from [Python GPU Environment setup](../../../../PYTHON-SETUP.md), and simply run:
+If running on a CPU or GPU, activate the environment for GPU given in our documentation, and simply run:
 
 ```
 python run.py {CPU,GPU} --mode train --params /path/to/yaml --model_dir /path/to/model_dir

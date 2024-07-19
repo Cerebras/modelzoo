@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import torch
 import torch.nn as nn
 
 from cerebras.modelzoo.layers.create_initializer import create_initializer
+from cerebras.modelzoo.layers.utils import unpatchify_helper
 
 
 class RegressionHead(nn.Module):
@@ -83,23 +83,6 @@ class RegressionHead(nn.Module):
             return self.conv_transpose(outputs)  # (B, C, H, W)
         else:
             outputs = self.linear(inputs)  # (B, (H * W) / (P * P), P * P * C)
-            return self.unpatchify(outputs)  # (B, C, H, W)
-
-    def unpatchify(self, inputs):
-        # reverses the patchify process: (B x S x D) -> (B x C x H x W)
-        outputs = inputs.reshape(
-            inputs.shape[0],
-            self.image_size[0] // self.patch_size[0],
-            self.image_size[1] // self.patch_size[1],
-            self.patch_size[0],
-            self.patch_size[1],
-            self.out_channels,
-        )
-        outputs = torch.einsum('nhwpqc->nchpwq', outputs)
-        outputs = outputs.reshape(
-            inputs.shape[0],
-            self.out_channels,
-            self.image_size[0],
-            self.image_size[1],
-        )
-        return outputs
+            return unpatchify_helper(
+                outputs, (self.out_channels, *self.image_size), self.patch_size
+            )  # (B, C, H, W)

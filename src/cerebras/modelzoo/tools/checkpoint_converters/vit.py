@@ -283,7 +283,7 @@ class Converter_ViT_Headless_HF_CS21(BaseCheckpointConverter_HF_CS):
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.1", "cs-2.2"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
         )
 
     @classmethod
@@ -367,7 +367,7 @@ class Converter_ViT_HF_CS21(BaseCheckpointConverter_HF_CS):
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.1", "cs-2.2"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
         )
 
     @classmethod
@@ -613,7 +613,7 @@ class ConfigConverter_ViT_Core_HF_CS21(BaseConfigConverter_HF_CS):
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.1", "cs-2.2"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
         )
 
 

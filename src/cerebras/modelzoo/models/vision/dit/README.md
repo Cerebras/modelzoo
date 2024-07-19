@@ -46,7 +46,7 @@ size `patch_size`. The lower the patch size, the larger the number of patches (i
 
 In order to change the patch size used, for example to `4 x 4`, set `model.patch_size: [4, 4]` in yaml config. Details on all the configs provided can be found [here](#configuration-files-included-for-this-model).
 
-During training, an image from the dataset is taken and passed through a frozen VAE Encoder (Variational Auto Encoder)[[8](https://arxiv.org/pdf/1312.6114.pdf)] to convert the image into a lower dimensional latent. Then, random gaussian noise is added to the latent tensor (Algorithm 1 of [[2](https://hojonathanho.github.io/diffusion/assets/denoising_diffusion20.pdf)) and passed as input to the DiT .Since the VAE Encoder[[8](https://arxiv.org/pdf/1312.6114.pdf)] is frozen and not updated during the training process, we prefetch the latents for all the images in the dataset using the script [create_imagenet_latents.py](./input/scripts/create_imagenet_latents.py). This helps save computation and memory during the training process. Refer to [Section here](#step-3-preprocessing-and-saving-latent-tensors-from-images-and-vae-encoder-on-gpu).
+During training, an image from the dataset is taken and passed through a frozen VAE Encoder (Variational Auto Encoder)[[8](https://arxiv.org/pdf/1312.6114.pdf)] to convert the image into a lower dimensional latent. Then, random gaussian noise is added to the latent tensor (Algorithm 1 of [[2](https://hojonathanho.github.io/diffusion/assets/denoising_diffusion20.pdf)) and passed as input to the DiT .Since the VAE Encoder[[8](https://arxiv.org/pdf/1312.6114.pdf)] is frozen and not updated during the training process, we prefetch the latents for all the images in the dataset using the script [create_imagenet_latents.py](../../../data_preparation/vision/dit/create_imagenet_latents.py). This helps save computation and memory during the training process. Refer to [Section here](#step-3-preprocessing-and-saving-latent-tensors-from-images-and-vae-encoder-on-gpu).
 
 ## Structure of the code
 
@@ -60,7 +60,6 @@ During training, an image from the dataset is taken and passed through a frozen 
 -   `samplers/`: Folder containing samplers used in Diffusion models to sample images from checkpoints.
 -   `layers/vae/`: Defines VAE(Variational Auto Encoder) model layers.
 -   `layers/*`: Defines building block layers of DiT Model.
--   (tools/checkpoint_converters/internal/vae_hf_cs.py)(../../../tools/checkpoint_converters/internal/vae_hf_cs.py): Converts [pretrained VAE checkpoint from StabilityAI in HuggingFace](https://huggingface.co/stabilityai/sd-vae-ft-mse/resolve/main/diffusion_pytorch_model.bin") to CS namespace format. 
 -   `display_images.py`: Utility script to display images in a folder in a grid format to look at all images at once.
 -   `pipeline.py`: Defines a DiffusionPipeline object that takes in a random gaussian input and performs sampling.
 -   `sample_generator.py`: Defines a Abstract Base Class `SampleGenerator` to define sample generators for diffusion models.
@@ -135,11 +134,11 @@ Once the ImageNet dataset and folder are in the expected format, proceed to Step
 
 ### Step 2: Checkpoint Conversion of Pre-trained VAE
 
-The next step is to convert the pretrained checkpoint provided by StabilityAI and hosted on HuggingFace to CS namespace format. This can be done using the script [vae_hf_cs.py](../../../tools/checkpoint_converters/internal/vae_hf_cs.py). The script downloads the [pretrained VAE checkpoint from StabilityAI in HuggingFace](https://huggingface.co/stabilityai/sd-vae-ft-mse/resolve/main/diffusion_pytorch_model.bin") and converts to CS namespace based on model layers defined in [dit/layers/vae](./layers/vae/). For this script, we only care about the params defined under `model.vae_params` and no changes are needed except for setting the `model.vae_params.latent_size` correctly.
+The next step is to convert the pretrained checkpoint provided by StabilityAI and hosted on HuggingFace to CS namespace format. This can be done using the script [vae_hf_cs.py](../../../data_preparation/vision/dit/vae_hf_cs.py). The script downloads the [pretrained VAE checkpoint from StabilityAI in HuggingFace](https://huggingface.co/stabilityai/sd-vae-ft-mse/resolve/main/diffusion_pytorch_model.bin) and converts to CS namespace based on model layers defined in [dit/layers/vae](./layers/vae/). For this script, we only care about the params defined under `model.vae_params` and no changes are needed except for setting the `model.vae_params.latent_size` correctly.
 
 
 ```
-$ python modelzoo/tools/checkpoint_converter/internal/vae_hf_cs.py -h
+$ python modelzoo/data_preparation/vision/dit/vae_hf_cs.py -h
 usage: vae_hf_cs.py [-h] [--src_ckpt_path SRC_CKPT_PATH] [--dest_ckpt_path DEST_CKPT_PATH]
                     [--params_path PARAMS_PATH]
 
@@ -153,12 +152,12 @@ optional arguments:
                         Path to converted modelzoo compatible checkpoint (default:
                         modelzoo/models/vision/dit/checkpoint_converter/mz_stabilityai-sd-vae-ft-mse_ckpt.bin)
   --params_path PARAMS_PATH
-                        Path to VAE model params yaml (default: modelzoo/models/vision/dit/configs/params_dit_small_patchsize_2x2.yaml)
+                        Path to VAE model params yaml
 ```
 
 Command to run:
 ```
-python modelzoo/tools/checkpoint_converter/internal/vae_hf_cs.py --dest_ckpt_path=/path/to/save/converted/checkpoint
+python modelzoo/data_preparation/vision/dit/vae_hf_cs.py --params_path=/path/to/dit_config.yaml
 ```
 
 ### Step 3: Preprocessing and saving Latent tensors from images and VAE Encoder on GPU
@@ -247,12 +246,12 @@ The output folder shown below for reference and will have the same format as sho
 DiT models use horizontal flip of images as augmentation. The script also supports saving latent tensors from horizontally flipped images by passing the flag `--horizontal_flip`
 ##### c. Create ImageNet Latent Tensors with horizontal flip from VAE for `train` split of dataset
 ```
-torchrun --nnodes 1 --nproc_per_node 4 modelzoo/models/vision/dit/input/scripts/create_imagenet_latents.py --image_height=256 --image_width=256 --src_dir=/path/to/imagenet1k_ilsvrc2012 --dest_dir=/path_to_hflipped_dest_dir --log_steps=10 --dataset_split=train --batch_size_per_gpu=16 --checkpoint_path=/path/to/converted/vae_checkpoint/in_Step2 --horizontal_flip
+torchrun --nnodes 1 --nproc_per_node 4 modelzoo/data_preparation/vision/dit/create_imagenet_latents.py --image_height=256 --image_width=256 --src_dir=/path/to/imagenet1k_ilsvrc2012 --dest_dir=/path_to_hflipped_dest_dir --log_steps=10 --dataset_split=train --batch_size_per_gpu=16 --checkpoint_path=/path/to/converted/vae_checkpoint/in_Step2 --horizontal_flip
 ``` 
 ##### d. Create ImageNet Latent Tensors with horizontal flip from VAE for `val` split of dataset
 
 ```
-torchrun --nnodes 1 --nproc_per_node 4 modelzoo/models/vision/dit/input/scripts/create_imagenet_latents.py --image_height=256 --image_width=256 --src_dir=/path/to/imagenet1k_ilsvrc2012 --dest_dir=/path_to_hflipped_dest_dir --log_steps=10 --dataset_split=val --batch_size_per_gpu=16 --checkpoint_path=/path/to/converted/vae_checkpoint/in_Step2 --horizontal_flip
+torchrun --nnodes 1 --nproc_per_node 4 modelzoo/data_preparation/vision/dit/create_imagenet_latents.py --image_height=256 --image_width=256 --src_dir=/path/to/imagenet1k_ilsvrc2012 --dest_dir=/path_to_hflipped_dest_dir --log_steps=10 --dataset_split=val --batch_size_per_gpu=16 --checkpoint_path=/path/to/converted/vae_checkpoint/in_Step2 --horizontal_flip
 ```
 
 ### Step 4: Training the model on CS system or GPU using `run.py`

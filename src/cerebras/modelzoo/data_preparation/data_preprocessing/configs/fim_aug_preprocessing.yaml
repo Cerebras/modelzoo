@@ -1,0 +1,43 @@
+##############################################################
+## Autoregressive LM Preprocessing Parameters with FIM Augmentation
+##############################################################
+
+setup:
+    data:
+        type: "local"
+        source: "/input/dir/here"
+
+    mode: "pretraining"
+    output_dir: "/output/dir/here"
+    processes: 1
+
+processing:
+    custom_tokenizer: "neoxtokenizer"
+    tokenizer_params:
+        encoder_file: "/path/to/encoder"
+
+    fim_prefix_tok: "<fim_prefix>"
+    fim_middle_tok: "<fim_middle>"
+    fim_suffix_tok: "<fim_suffix>"
+    eos_id: 0
+    
+    max_seq_length: 2048 
+    short_seq_prob: 0.0
+    fim_rate: 0.9
+    spm_rate: 0.5
+
+    write_in_batch: True
+
+    resume_from_checkpoint: False
+    seed: 0
+
+    read_hook: "cerebras.modelzoo.data_preparation.data_preprocessing.hooks:text_read_hook"
+    read_hook_kwargs: 
+        data_keys:
+            text_key: "text"
+
+dataset:
+    use_ftfy: False
+    ftfy_normalizer: "NFC"
+    wikitext_detokenize: False
+    pack_sequences: True

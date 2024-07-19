@@ -5,7 +5,6 @@ train_input:
     data_dir: "./llama_v3_dataset_vocab128256/train"
     batch_size: 40
     micro_batch_size: 10
-    repeat: True 
     shuffle: False
     shuffle_seed: 1337
     num_workers: 8
@@ -17,7 +16,6 @@ eval_input:
     data_dir: "./llama_v3_dataset_vocab128256/val"
     batch_size: 40
     micro_batch_size: 10
-    repeat: True 
     shuffle: False
     shuffle_seed: 1337
     num_workers: 8
@@ -100,4 +98,5 @@ runconfig:
     disable_strict_checkpoint_loading: True
     seed: 1
     eval_steps: 2
+    execute_crd_memory_gi: 50
 

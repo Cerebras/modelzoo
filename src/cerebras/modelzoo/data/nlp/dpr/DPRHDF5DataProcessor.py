@@ -81,8 +81,7 @@ class DPRHDF5DataProcessor(HDF5IterableDataProcessor):
         # The super class will take care of sharding the dataset and creating the dataloader
         super().__init__(params)
 
-    @staticmethod
-    def collate_fn(batch):
+    def collate_fn(self, batch):
         """
         :param batch: Contains the input-ids/attention-mask/token-type-ids
             for a batch of questions and their corresponding documents
@@ -103,9 +102,12 @@ class DPRHDF5DataProcessor(HDF5IterableDataProcessor):
             },
             ...
         ]
+        See the comment in dpr_model.py and dpr_loss.py for more details on the shapes.
         """
         batch = default_collate(batch)
-        batch["labels"] = (
-            torch.arange(batch["questions_input_ids"].shape[0]) * 2
-        )
+        batch_size = batch["questions_input_ids"].shape[0]
+        num_context = batch["ctx_input_ids"].shape[1]
+        batch["labels"] = torch.arange(batch_size) * num_context
+        batch["context_labels"] = torch.arange(batch_size)
+
         return batch

@@ -13,9 +13,8 @@
 # limitations under the License.
 
 """ PyTorch CLI Utilities"""
+
 import argparse
-import inspect
-import os
 import sys
 from typing import Callable, List, Optional
 
@@ -26,24 +25,20 @@ from cerebras.modelzoo.common.utils.run.utils import DeviceType
 
 
 def get_params_from_args(
-    run_dir: Optional[str] = None,
     extra_args_parser_fn: Optional[
         Callable[[], List[argparse.ArgumentParser]]
     ] = None,
 ):
     """Parse commandline and return params"""
-    if not run_dir:
-        parent = inspect.getouterframes(inspect.currentframe())[1]
-        run_dir = os.path.dirname(os.path.abspath(parent.filename))
 
     def pytorch_specific_args_parser():
         extra_args = extra_args_parser_fn() if extra_args_parser_fn else {}
         if isinstance(extra_args, list):
             for item in extra_args:
                 # pylint: disable=protected-access
-                item._action_groups[
-                    1
-                ].title = "User-Defined and/or Model Specific Arguments"
+                item._action_groups[1].title = (
+                    "User-Defined and/or Model Specific Arguments"
+                )
         parser = argparse.ArgumentParser(parents=extra_args, add_help=False)
         # Arguments must be added as part of a group in order to propagate the
         # correct help message to users.
@@ -69,7 +64,6 @@ def get_params_from_args(
     # Parse arguments from the command line and get the params
     # from the specified config file
     params = base_get_params_from_args(
-        run_dir,
         argv=sys.argv[1:],
         extra_args_parser_fn=pytorch_specific_args_parser,
     )

@@ -12,20 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-""" CLI Utilities"""
+""" CLI Utilities."""
+
 import argparse
 import collections
 import logging
 import os
 import sys
-from typing import Callable, List, Optional, Union
+from typing import Callable, List, Optional, Set, Union
 
 import yaml
 
 from cerebras.modelzoo.common.utils.run.utils import DeviceType
-from cerebras.modelzoo.config_manager.config_loader import (
-    validate_config_params,
-)
 
 
 def read_params_file(params_file: str) -> dict:
@@ -58,9 +56,7 @@ def get_all_args(
     ] = None,
 ):
     """Helper for returning all valid params for each device."""
-    parser = get_parser(
-        first_parse=False, extra_args_parser_fn=extra_args_parser_fn
-    )
+    parser = get_parser(extra_args_parser_fn=extra_args_parser_fn)
 
     # Only the top level parser is exposed when get_parser() is called.
     # All subparsers will inherit the extra_arg_parser, so we can use the CPU
@@ -113,45 +109,14 @@ def discard_params(
     return discard_params_list
 
 
-def assemble_disallowlist(
-    params: dict,
-    extra_args_parser_fn: Optional[
-        Callable[[], List[argparse.ArgumentParser]]
-    ] = None,
-) -> list:
-    """Determine invalid parameters for the current device type."""
-    # cpu parser does not currently contain any additional information
-    # or parameters but will parse through its elements as well just
-    # in case that changes in the future.
-    cpu_args, gpu_args, csx_args = get_all_args(extra_args_parser_fn)
-
-    all_params_template = {
-        **vars(cpu_args),
-        **vars(gpu_args),
-        **vars(csx_args),
-    }
-    unacceptable_params = set(all_params_template.keys()).difference(
-        set(params.keys())
-    )
-
-    return all_params_template, list(unacceptable_params)
-
-
 def add_general_arguments(
     parser: argparse.ArgumentParser,
-    default_model_dir: str,
-    first_parse: bool = True,
     modes: List[str] = ["train", "eval", "train_and_eval", "eval_all"],
 ):
     """Injects general parser arguments.
 
     Args:
         parser: Parser into which the arguments are being added.
-        default_model_dir: String containing model directory path.
-        first_parse: Boolean indicating whether this is the first
-          time processing the arguments. If True, the "params" arg
-          is required to get additional parameters, if False then
-          the params file has already been read and is not required.
         modes: Optional list of valid modes to be passed under the `--mode`
             argument of the parser. We default to choices
             ["train", "eval", "train_and_eval", "eval_all"].
@@ -162,15 +127,10 @@ def add_general_arguments(
     required_arguments.add_argument(
         "-p",
         "--params",
-        required=first_parse,
+        required=True,
         help="Path to .yaml file with model parameters",
     )
     if len(modes) > 1:
-        # TODO(SW-99336): Remove this once we properly support train_and_eval with cs
-        if "train_and_eval" in modes:
-            modes.append("sideband_train_and_eval")
-        if "eval_all" in modes:
-            modes.append("sideband_eval_all")
         required_arguments.add_argument(
             "-m",
             "--mode",
@@ -185,11 +145,6 @@ def add_general_arguments(
         "Optional Arguments, All Devices"
     )
     if len(modes) == 1:
-        # TODO(SW-99336): Remove this once we properly support train_and_eval with cs
-        if "train_and_eval" in modes:
-            modes.append("sideband_train_and_eval")
-        if "eval_all" in modes:
-            modes.append("sideband_eval_all")
         optional_arguments.add_argument(
             "-m",
             "--mode",
@@ -202,7 +157,7 @@ def add_general_arguments(
     optional_arguments.add_argument(
         "-o",
         "--model_dir",
-        default=default_model_dir,
+        default=os.path.abspath("./model_dir"),
         help="Model directory where checkpoints will be written.",
     )
     optional_arguments.add_argument(
@@ -213,14 +168,13 @@ def add_general_arguments(
     optional_arguments.add_argument(
         "--disable_strict_checkpoint_loading",
         action="store_true",
-        default=None,
         help=(
             "Disabled strict loading of the model state from the checkpoint."
         ),
     )
     optional_arguments.add_argument(
         "--load_checkpoint_states",
-        default=None,
+        default="all",
         help=(
             "Comma-separated string of keys to explicitly specify the components "
             "whose state should be loaded if present in a checkpoint. If this flag is "
@@ -228,13 +182,13 @@ def add_general_arguments(
             "specified to load via the flag will be ignored. For example, for fine-tuning "
             "runs on a different dataset, setting `--load_checkpoint_states=\"model\" will only "
             "load the model state; any `optimizer` or `dataloader` state present in the "
-            "checkpoint will not be loaded. By default, the config is `None`, i.e. "
+            "checkpoint will not be loaded. By default, the config is `all`, i.e. "
             "everything present in the checkpoint is loaded."
         ),
     )
     optional_arguments.add_argument(
         "--logging",
-        default=None,
+        default="INFO",
         help="Specifies the default logging level. Defaults to INFO.",
     )
 
@@ -285,16 +239,11 @@ def add_general_arguments(
 
 def add_csx_arguments(
     parser: argparse.ArgumentParser,
-    first_parse: bool = True,
 ):
     """Injects Cerebras System specific parser arguments.
 
     Args:
         parser: Parser into which the arguments are being added.
-        first_parse: Boolean indicating whether this is the first
-          time processing the arguments. If True, default args
-          are ignored in case the other has them stored elsewhere.
-          If False, default args are set.
     """
     optional_arguments = parser.add_argument_group(
         "Optional Arguments, CSX Specific"
@@ -303,30 +252,25 @@ def add_csx_arguments(
     group.add_argument(
         "--compile_only",
         action="store_true",
-        default=None,
-        help="Enables compile only workflow. Defaults to None.",
+        help="Enables compile only workflow.",
     )
     group.add_argument(
         "--validate_only",
         action="store_true",
-        default=None,
         help="Enables validate only workflow"
-        "validate_only stops the compilation at ws_km stage for weight streaming mode."
-        "for pipeline mode, the compilation is stopped at the optimize_graph stage."
-        "Defaults to None.",
+        "validate_only stops the compilation at ws_km stage for weight streaming mode.",
     )
     optional_arguments.add_argument(
         "--num_workers_per_csx",
-        default=None if first_parse else 0,
+        default=1,
         type=int,
         help="Number of workers to use for streaming inputs per CS node. If "
         "0, a default value based on the model will be chosen. Defaults "
-        "to 0.",
+        "to 1.",
     )
     optional_arguments.add_argument(
         "-c",
         "--compile_dir",
-        default=None,
         help="Remote compile directory where compile artifacts will be written."
         " This path is appended to a base root directory common for all"
         " compiles on the Wafer-Scale Cluster and is written in the remote"
@@ -335,6 +279,7 @@ def add_csx_arguments(
     optional_arguments.add_argument(
         "--job_labels",
         nargs="+",
+        default=list(),
         help="A list of equal-sign-separated key value pairs served as job labels.",
     )
     optional_arguments.add_argument(
@@ -346,12 +291,12 @@ def add_csx_arguments(
     )
     optional_arguments.add_argument(
         "--debug_args_path",
-        default=None,
         help="Path to debugs args file. Defaults to None.",
     )
     optional_arguments.add_argument(
         "--mount_dirs",
         nargs="+",
+        default=list(),
         help="A list of paths to be mounted to the appliance containers. "
         "It should generally contain path to the directory containing the "
         "Cerebras modelzoo.",
@@ -359,60 +304,57 @@ def add_csx_arguments(
     optional_arguments.add_argument(
         "--python_paths",
         nargs="+",
+        default=list(),
         help="A list of paths to be exported into PYTHONPATH for worker containers. "
         "It should generally contain path to the directory containing the "
         "Cerebras modelzoo, as well as any external python packages needed.",
     )
     optional_arguments.add_argument(
         "--credentials_path",
-        default=None,
         help="Credentials for cluster access. Defaults to None. If None, the value from "
         "a pre-configured location will be used if available.",
     )
     optional_arguments.add_argument(
         "--mgmt_address",
-        default=None,
-        help="<host>:<port> for cluster management. Defaults to None. If None, the value from "
-        "a pre-configured location will be used if available.",
+        help="<host>:<port> for cluster management. If None, the value from "
+        "a pre-configured location will be used if available. Defaults to None.",
     )
     optional_arguments.add_argument(
         "--job_time_sec",
         type=int,
-        default=None,
         help="time limit in seconds for the appliance jobs. When the time limit "
         "is hit, the appliance jobs will be cancelled and the run will be terminated",
     )
     optional_arguments.add_argument(
         "--disable_version_check",
         action="store_true",
-        default=None,
         help="Disable version check for local experimentation and debugging",
     )
     optional_arguments.add_argument(
         "--num_csx",
-        default=None if first_parse else 1,
+        default=1,
         type=int,
         help="Number of CS nodes. Defaults to 1",
     )
     optional_arguments.add_argument(
         "--num_wgt_servers",
-        default=None,
+        default=24,
         type=int,
         help="Maximum number of weight servers to use in weight streaming "
-        "execution strategy. Defaults to None.",
+        "execution strategy. Defaults to 24.",
     )
     optional_arguments.add_argument(
         "--num_act_servers",
-        default=None,
+        default=60,
         type=int,
         help="Maximum number of activation servers to use per device. "
-        "Defaults to None",
+        "Defaults to 60",
     )
 
     def parse_value(value: str) -> Union[bool, int, float, str]:
         """
         Parses an value from the commandline into its most restricted primitive
-        type
+        type.
 
         Args:
             value: The string from the commandline
@@ -434,10 +376,11 @@ def add_csx_arguments(
 
     class ParseKV(argparse.Action):
         def __call__(self, parser, namespace, values, option_string=None):
-            setattr(namespace, self.dest, dict())
+            dest = getattr(namespace, self.dest, None) or {}
             for value in values:
                 key, value = value.split('=')
-                getattr(namespace, self.dest)[key] = parse_value(value)
+                dest[key] = parse_value(value)
+            setattr(namespace, self.dest, dest)
 
     optional_arguments.add_argument(
         "--debug_args",
@@ -458,15 +401,12 @@ def add_csx_arguments(
     )
     optional_arguments.add_argument(
         "--mgmt_namespace",
-        default=None,
         help=argparse.SUPPRESS,
     )
     return
 
 
-def add_gpu_arguments(
-    gpu_parser: argparse.ArgumentParser, first_parse: bool = True
-):
+def add_gpu_arguments(gpu_parser: argparse.ArgumentParser):
     """Injects GPU specific parser arguments.
 
     Args:
@@ -478,20 +418,20 @@ def add_gpu_arguments(
     optional_arguments.add_argument(
         "-dist_addr",
         "--dist_addr",
-        default=None if first_parse else "localhost:8888",
+        default="localhost:8888",
         help="To init master_addr and master_port of distributed. Defaults to localhost:8888.",
     )
     optional_arguments.add_argument(
         "-dist_backend",
         "--dist_backend",
         choices=["nccl", "mpi", "gloo"],
-        default=None if first_parse else "nccl",
+        default="nccl",
         help="Distributed backend engine. Defaults to nccl.",
     )
     optional_arguments.add_argument(
         "-init_method",
         "--init_method",
-        default=None if first_parse else "env://",
+        default="env://",
         help="URL specifying how to initialize the process group. Defaults to env://",
     )
 
@@ -499,8 +439,6 @@ def add_gpu_arguments(
 
 
 def get_parser(
-    run_dir: Optional[str] = None,
-    first_parse: bool = True,
     extra_args_parser_fn: Optional[
         Callable[[], List[argparse.ArgumentParser]]
     ] = None,
@@ -512,11 +450,6 @@ def get_parser(
     """Returns an ArgumentParser for parsing commandline options.
 
     Args:
-        run_dir: String to be used to determine model directory.
-        first_parse: Boolean indicating whether this is the first
-          time processing the arguments. If True, the parser is
-          being used to collect commandline inputs. If False, it
-          is only being used for verification on existing params.
         extra_args_parser_fn: Parent parser passed in by models with
           unique specific arguments.
         device_type: The device type for which to fetch to add the args
@@ -535,17 +468,6 @@ def get_parser(
     Returns:
         A parser instance.
     """
-    default_model_dir = None
-
-    if first_parse:
-        # Set default model dir to be inside same directory
-        # as the top level run.py
-        if run_dir:
-            default_model_dir = os.path.join(run_dir, "model_dir")
-
-        if not default_model_dir:
-            raise ValueError("Could not get default model directory")
-
     parents = []
     extra_args = {}
     if extra_args_parser_fn:
@@ -553,34 +475,36 @@ def get_parser(
 
         if isinstance(extra_args, argparse.ArgumentParser):
             # pylint: disable=protected-access
-            extra_args._action_groups[
-                1
-            ].title = "User-Defined and/or Model Specific Arguments"
+            extra_args._action_groups[1].title = (
+                "User-Defined and/or Model Specific Arguments"
+            )
             parents.append(extra_args)
         if not isinstance(extra_args, dict):
             # Rename the action groups of each parser passed into this parser generator
             if isinstance(extra_args, list):
                 for item in extra_args:
                     # pylint: disable=protected-access
-                    item._action_groups[
-                        1
-                    ].title = "User-Defined and/or Model Specific Arguments"
+                    item._action_groups[1].title = (
+                        "User-Defined and/or Model Specific Arguments"
+                    )
             extra_args = {DeviceType.ANY: extra_args}
 
         parents.extend(extra_args.get(DeviceType.ANY, []))
 
     parent = argparse.ArgumentParser(parents=parents, add_help=False)
-    add_general_arguments(parent, default_model_dir, first_parse, modes)
+    add_general_arguments(parent, modes)
 
     parser = argparse.ArgumentParser(
         epilog=(
-            "Please run 'python run.py {CPU,GPU,CSX} -h'. \n \n"
-            "Here are some example commands for running on different devices: \n \n"
-            "    python run.py CSX --params /path/to/params --mode train --num_csx 1 \n \n"
-            "    python run.py CPU --params /path/to/params --mode eval --checkpoint_path /path/to/checkpoint \n \n"
-        )
-        if parser_epilog is None
-        else parser_epilog,
+            (
+                "Please run 'python run.py {CPU,GPU,CSX} -h'. \n \n"
+                "Here are some example commands for running on different devices: \n \n"
+                "    python run.py CSX --params /path/to/params --mode train --num_csx 1 \n \n"
+                "    python run.py CPU --params /path/to/params --mode eval --checkpoint_path /path/to/checkpoint \n \n"
+            )
+            if parser_epilog is None
+            else parser_epilog
+        ),
         formatter_class=argparse.RawTextHelpFormatter,
     )
     sp = parser.add_subparsers(title="Target Device", dest="target_device")
@@ -599,7 +523,7 @@ def get_parser(
             parents=[parent] + extra_args.get(DeviceType.GPU, []),
             help="Run on GPU",
         )
-        add_gpu_arguments(gpu_parser, first_parse)
+        add_gpu_arguments(gpu_parser)
 
     if device_type == None or device_type == DeviceType.CSX:
         csx_parser = sp.add_parser(
@@ -607,20 +531,22 @@ def get_parser(
             help="Run on Cerebras System",
             parents=[parent] + extra_args.get(DeviceType.CSX, []),
             epilog=(
-                "To see a complete list of all available arguments for \n"
-                "please run 'python run.py CSX -h'. \n\n"
-                "Here is an example command for running with CSX: \n \n"
-                "    python run.py CSX --params /path/to/params --mode train --num_csx 1 \n \n"
-                "When running from the Cerebras Model Zoo, you generally specify --python_paths and \n"
-                "--mount_dirs. This can be done here or in your params.yaml under the 'runconfig' section. \n"
-                "Both should at least include a path \n"
-                "to the directory in which the Cerebras Model Zoo resides. \n"
-            )
-            if csx_parser_epilog is None
-            else csx_parser_epilog,
+                (
+                    "To see a complete list of all available arguments for \n"
+                    "please run 'python run.py CSX -h'. \n\n"
+                    "Here is an example command for running with CSX: \n \n"
+                    "    python run.py CSX --params /path/to/params --mode train --num_csx 1 \n \n"
+                    "When running from the Cerebras Model Zoo, you generally specify --python_paths and \n"
+                    "--mount_dirs. This can be done here or in your params.yaml under the 'runconfig' section. \n"
+                    "Both should at least include a path \n"
+                    "to the directory in which the Cerebras Model Zoo resides. \n"
+                )
+                if csx_parser_epilog is None
+                else csx_parser_epilog
+            ),
             formatter_class=argparse.RawTextHelpFormatter,
         )
-    add_csx_arguments(csx_parser, first_parse)
+    add_csx_arguments(csx_parser)
 
     return parser
 
@@ -636,7 +562,7 @@ def update_defaults(params: dict, default_params: dict) -> dict:
         params: dict holding the params.
         default_params: dict holding the default params.
     Returns:
-        A dict containing the params, with the defaults updated
+        A dict containing the params, with the defaults updated.
     """
     for k, v in default_params.items():
         if isinstance(v, collections.abc.Mapping):
@@ -647,26 +573,24 @@ def update_defaults(params: dict, default_params: dict) -> dict:
 
 
 def update_params_from_file(params, params_file):
-    """Update provided params from provided file"""
+    """Update provided params from provided file."""
     if os.path.exists(params_file):
         default_params = read_params_file(params_file)
         update_defaults(params, default_params)
 
 
-def update_params_from_args(
-    args: argparse.Namespace, params: dict, sysadmin_params: dict
-):
+def update_params_from_args(args: dict, specified_args: Set[str], params: dict):
     """Update params in-place with the arguments from args.
 
     Args:
         args: The namespace containing args from the commandline.
         params: The params to be updated.
-        first_parse: Indicates whether to keep in the params path.
     """
     # First checking to see if wsc_log_level was given as a string.
     # If so, convert to dict so that we can merge with the dict
     # generated by cli.
     wsc_log_level = params.get("wsc_log_level", None)
+    run_legacy_cstorch_flow = os.environ.get("RUN_LEGACY_CSTORCH_FLOW")
     if wsc_log_level:
         if isinstance(wsc_log_level, str):
             wsc_log_level = {'': wsc_log_level}
@@ -676,8 +600,14 @@ def update_params_from_args(
                 wsc_log_level, dict
             ), "wsc_log_level must be a string or dict."
     if args:
-        for k, v in list(vars(args).items()):
+        for k, v in vars(args).items():
             if k in ["config", "params"]:
+                continue
+            if (
+                not run_legacy_cstorch_flow or k in params
+            ) and k not in specified_args:
+                # If a CLI arg was not specified but it's in the params
+                # already, don't overwrite it.
                 continue
             elif k in ["debug_args", "ini", "wsc_log_level"]:
                 # merge dict settings recursively
@@ -690,29 +620,16 @@ def update_params_from_args(
             elif k in ["python_paths", "mount_dirs"]:
                 append_args = []
                 if v is not None:
-                    logging.info(v)
                     append_args.extend([v] if isinstance(v, str) else v)
                 if params.get(k) is not None:
-                    logging.info(params[k])
                     append_args.extend(
                         [params[k]] if isinstance(params[k], str) else params[k]
-                    )
-                if sysadmin_params.get(k) is not None:
-                    logging.info(sysadmin_params[k])
-                    append_args.extend(
-                        [sysadmin_params[k]]
-                        if isinstance(sysadmin_params[k], str)
-                        else sysadmin_params[k]
                     )
                 if append_args:
                     params[k] = append_args
                 continue
 
-            params[k] = (
-                v
-                if v is not None
-                else (params.get(k) or sysadmin_params.get(k))
-            )
+            params[k] = v if v is not None else params.get(k)
 
     mode = params.get("mode")
 
@@ -746,68 +663,65 @@ def update_params_from_args(
                     "`--load_checkpoint_states` with the components to include."
                 )
 
-    model_dir = params["model_dir"]
-    os.makedirs(model_dir, exist_ok=True)
+    if "model_dir" in params:
+        os.makedirs(params["model_dir"], exist_ok=True)
 
 
-def update_params_from_args_and_env(args: argparse.Namespace, params: dict):
-    """Update params in-place with the arguments from args and the cerebras
-    sysadmin overrides..
+def patch_to_collect_specified_args(
+    parser: argparse.ArgumentParser,
+) -> Set[str]:
+    """Patch all actions in the parser to record specified CLI arguments.
 
-    Args:
-        args: The namespace containing args from the commandline.
-        params: The params to be updated.
+    argparse doesn't provide a mechanism to know which CLI args were specified
+    on cmdline and which come from default values. This method patches the
+    parser actions to record what was specified in CLI and adds it to `args_seen`
+    that is returned from this method.
     """
-    sysadmin_file = os.getenv('CEREBRAS_WAFER_SCALE_CLUSTER_DEFAULTS')
-    sysadmin_params = (
-        get_params(sysadmin_file) if sysadmin_file is not None else {}
-    )
-    return update_params_from_args(args, params, sysadmin_params)
+    args_seen = set()
+    actions_seen = set()
 
+    def patch_call(instance):
+        class _(type(instance)):
+            def __call__(self, *args, **kwargs):
+                args_seen.add(self.dest)
+                return super().__call__(*args, **kwargs)
 
-def post_process_params(
-    params: dict, valid_arguments: list, invalid_arguments: list
-) -> list:
-    """Removes arguments that are not used by this target device."""
-    target_device = params["runconfig"].pop("target_device", None)
-    assert target_device is not None
+        instance.__class__ = _
 
-    new_command, invalid_params = [], []
-    new_command.append(target_device)
+    def override_actions(parser: argparse.ArgumentParser):
+        for action in parser._actions:
+            if action in actions_seen:
+                continue
+            actions_seen.add(action)
 
-    for k, v in params["runconfig"].copy().items():
-        if v is None or v is False:
-            continue
+            if isinstance(action, argparse._SubParsersAction):
+                for a in action.choices.values():
+                    override_actions(a)
 
-        if k in ["debug_args", "ini", "wsc_log_level"]:
-            # Undo the ArgParse action on dicts...
-            v = [f"{ik}={iv}" for ik, iv in v.items()]
+            call_method = getattr(action, "__call__", None)
+            if call_method is None:
+                continue
 
-        # Ignore arguments from params.yaml that apply to different devices
-        if k in invalid_arguments:
-            invalid_params.append(k)
-            params["runconfig"].pop(k)
-        # Construct new parser input ignoring extra args that the parser
-        # does not handle, such as num_epochs
-        elif k in valid_arguments:
-            new_command.append(f"--{k}")
-            if isinstance(v, list):
-                new_command.extend(map(str, v))
-            elif not isinstance(v, bool):
-                new_command.append(f"{v}")
+            patch_call(action)
 
-    if invalid_params:
-        logging.info(
-            f"User specified a {target_device} run, but the following "
-            f"non-{target_device} configurations were found in params file: "
-            f"{str(invalid_params)}. Ignoring these arguments and continuing."
-        )
+        for group in parser._action_groups:
+            if group in actions_seen:
+                continue
+            actions_seen.add(group)
+            override_actions(group)
 
-    return new_command
+        for group in parser._mutually_exclusive_groups:
+            if group in actions_seen:
+                continue
+            actions_seen.add(group)
+            override_actions(group)
+
+    override_actions(parser)
+
+    return args_seen
 
 
 def get_params_from_args(
-    run_dir: Optional[str] = None,
     argv: Optional[List] = None,
     extra_args_parser_fn: Optional[
         Callable[[], List[argparse.ArgumentParser]]
@@ -816,10 +730,9 @@ def get_params_from_args(
     **parser_args,
 ) -> dict:
     """
-    Parse the arguments and get the params dict from the resulting args
+    Parse the arguments and get the params dict from the resulting args.
 
     Args:
-        run_dir: The path to the `run.py` file
         argv: The args to be parse. Defaults to sys.argv if not provided
         extra_args_parser_fn: An optional callable that adds any
             extra parser args in the parser.
@@ -830,74 +743,21 @@ def get_params_from_args(
             method for constructing the parser
     """
     parser = get_parser(
-        run_dir,
         extra_args_parser_fn=extra_args_parser_fn,
         device_type=device_type,
         **parser_args,
     )
-
+    seen_args = patch_to_collect_specified_args(parser)
     args = parser.parse_args(argv if argv else sys.argv[1:])
+    specified_args = set(filter(lambda a: a in seen_args, vars(args).keys()))
 
-    params_template, invalid_params = assemble_disallowlist(
-        vars(args), extra_args_parser_fn=extra_args_parser_fn
+    params = get_params(
+        args.params,
     )
 
-    params = get_params(args.params)
+    runconfig_params = params.setdefault("runconfig", {})
+    update_params_from_args(args, specified_args, runconfig_params)
+    runconfig_params.pop("config", None)
+    runconfig_params.pop("params", None)
 
-    update_params_from_args_and_env(args, params["runconfig"])
-
-    rerun_command = post_process_params(
-        params, params_template.keys(), invalid_params
-    )
-    parser = get_parser(
-        run_dir,
-        first_parse=False,
-        extra_args_parser_fn=extra_args_parser_fn,
-        device_type=device_type,
-        **parser_args,
-    )
-    try:
-        logging.info(rerun_command)
-        params_final = parser.parse_args(rerun_command)
-    except SystemExit:
-        logging.error(
-            f"A mismatch was detected between your params.yaml file "
-            f"and specified command-line arguments. "
-            f"Please correct the error and run again."
-        )
-        raise
-
-    params["runconfig"] = {**params["runconfig"], **vars(params_final)}
-    params["runconfig"] = {**params_template, **params["runconfig"]}
-    params["runconfig"].pop("config", None)
-    params["runconfig"].pop("params", None)
-    # Validate config using config class
-    model_key = os.path.basename(run_dir)
-
-    # If we got additional parser, there may be new params added to runconfig which are not supported by config class.
-    # We remove them before passing for validation and then add them back
-    extra_parser_param_keys = []
-    if extra_args_parser_fn:
-        parser_fn = extra_args_parser_fn()
-        for parser_fn_instance in parser_fn:
-            if parser_fn_instance and isinstance(
-                parser_fn_instance, argparse.ArgumentParser
-            ):
-                extra_parser_param_keys.extend(
-                    [
-                        action.dest
-                        for action in parser_fn_instance._actions
-                        if not isinstance(action, argparse._HelpAction)
-                    ]
-                )
-    runconfig_params = params["runconfig"]
-    extra_parser_params = {}
-    for key in extra_parser_param_keys:
-        if key in runconfig_params:
-            extra_parser_params[key] = runconfig_params.pop(key, None)
-    curr_log_level = logging.getLogger().getEffectiveLevel()
-    logging.getLogger().setLevel(logging.INFO)
-    params = validate_config_params(params, model_key)
-    logging.getLogger().setLevel(curr_log_level)
-    runconfig_params.update(extra_parser_params)
     return params

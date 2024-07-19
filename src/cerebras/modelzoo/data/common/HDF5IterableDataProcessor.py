@@ -96,15 +96,17 @@ class HDF5IterableDataProcessor:
             drop_last=self.drop_last,
             collate_fn=self.collate_fn,
             num_workers=self.num_workers,
-            prefetch_factor=self.prefetch_factor
-            if self.num_workers > 0
-            else None,
-            persistent_workers=self.persistent_workers
-            if self.num_workers > 0
-            else False,
-            worker_init_fn=self._worker_init_fn
-            if self.num_workers > 0 and self.shuffle_seed is not None
-            else None,
+            prefetch_factor=(
+                self.prefetch_factor if self.num_workers > 0 else None
+            ),
+            persistent_workers=(
+                self.persistent_workers if self.num_workers > 0 else False
+            ),
+            worker_init_fn=(
+                self._worker_init_fn
+                if self.num_workers > 0 and self.shuffle_seed is not None
+                else None
+            ),
         )
 
         return data_loader

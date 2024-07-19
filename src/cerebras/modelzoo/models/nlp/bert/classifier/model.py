@@ -19,7 +19,6 @@ from cerebras.modelzoo.models.nlp.bert.bert_finetune_models import (
     BertForSequenceClassification,
     BertForSequenceClassificationLoss,
 )
-from cerebras.modelzoo.models.nlp.bert.utils import check_unused_model_params
 from cerebras.pytorch.metrics import AccuracyMetric, FBetaScoreMetric
 
 
@@ -28,66 +27,47 @@ class BertForSequenceClassificationModel(torch.nn.Module):
     def __init__(self, params):
         super().__init__()
 
-        model_params = params["model"].copy()
-        self.num_labels = model_params.pop("num_labels")
-        problem_type = model_params.pop("problem_type")
-        classifier_dropout = model_params.pop("task_dropout")
-        dropout_rate = model_params.pop("dropout_rate")
-        embedding_dropout_rate = model_params.pop(
-            "embedding_dropout_rate", dropout_rate
-        )
+        self._model_params = params.model
+        model_params = self._model_params
 
         model_kwargs = {
-            "vocab_size": model_params.pop("vocab_size"),
-            "hidden_size": model_params.pop("hidden_size"),
-            "num_hidden_layers": model_params.pop("num_hidden_layers"),
-            "num_heads": model_params.pop("num_heads"),
-            "filter_size": model_params.pop("filter_size"),
-            "nonlinearity": model_params.pop("encoder_nonlinearity"),
-            "pooler_nonlinearity": model_params.pop(
-                "pooler_nonlinearity", None
-            ),
-            "embedding_dropout_rate": embedding_dropout_rate,
-            "dropout_rate": dropout_rate,
-            "attention_dropout_rate": model_params.pop(
-                "attention_dropout_rate"
-            ),
-            "attention_kernel": model_params.pop("attention_kernel", None),
-            "max_position_embeddings": model_params.pop(
-                "max_position_embeddings"
-            ),
-            "layer_norm_epsilon": float(model_params.pop("layer_norm_epsilon")),
+            "vocab_size": model_params.vocab_size,
+            "hidden_size": model_params.hidden_size,
+            "num_hidden_layers": model_params.num_hidden_layers,
+            "num_heads": model_params.num_heads,
+            "filter_size": model_params.filter_size,
+            "nonlinearity": model_params.encoder_nonlinearity,
+            "pooler_nonlinearity": model_params.pooler_nonlinearity,
+            "embedding_dropout_rate": model_params.embedding_dropout_rate,
+            "dropout_rate": model_params.dropout_rate,
+            "attention_dropout_rate": model_params.attention_dropout_rate,
+            "attention_kernel": model_params.attention_kernel,
+            "max_position_embeddings": model_params.max_position_embeddings,
+            "layer_norm_epsilon": model_params.layer_norm_epsilon,
         }
 
         self.model = BertForSequenceClassification(
-            self.num_labels,
-            problem_type,
-            classifier_dropout,
+            model_params.num_labels,
+            model_params.problem_type,
+            model_params.task_dropout,
             **model_kwargs,
         )
         self.loss_fn = BertForSequenceClassificationLoss(
-            self.num_labels, problem_type
+            model_params.num_labels, model_params.problem_type
         )
 
-        self.compute_eval_metrics = model_params.pop(
-            "compute_eval_metrics", False
-        )
-        # Below flag helps create two more accuracy objects for
-        # matched and mismatched partitions
-        self.is_mnli_dataset = model_params.pop("is_mnli_dataset", False)
-
-        check_unused_model_params(model_params)
-
-        if self.compute_eval_metrics:
+        if model_params.compute_eval_metrics:
             self.accuracy_metric = AccuracyMetric(name="eval/accuracy")
-            if self.num_labels == 2:
+            if model_params.num_labels == 2:
                 self.f1_metric = FBetaScoreMetric(
-                    num_classes=self.num_labels,
+                    num_classes=model_params.num_labels,
                     beta=1.0,
                     average_type="micro",
                     name="eval/f1_score",
                 )
-            if self.is_mnli_dataset:
+            # Below flag helps create two more accuracy objects for
+            # matched and mismatched partitions
+            if model_params.is_mnli_dataset:
                 self.matched_accuracy_metric = AccuracyMetric(
                     name="eval/accuracy_matched"
                 )
@@ -102,7 +82,8 @@ class BertForSequenceClassificationModel(torch.nn.Module):
             attention_mask=data["attention_mask"],
         )
         loss = self.loss_fn(data["labels"], logits)
-        if not self.model.training and self.compute_eval_metrics:
+        model_params = self._model_params
+        if not self.model.training and model_params.compute_eval_metrics:
             labels = data["labels"].clone()
 
             predictions = logits.argmax(-1).int()
@@ -111,10 +92,10 @@ class BertForSequenceClassificationModel(torch.nn.Module):
                 labels=labels, predictions=predictions, dtype=logits.dtype
             )
 
-            if self.num_labels == 2:
+            if model_params.num_labels == 2:
                 self.f1_metric(labels=labels, predictions=predictions)
 
-            if self.is_mnli_dataset:
+            if model_params.is_mnli_dataset:
                 self.matched_accuracy_metric(
                     labels=labels,
                     predictions=predictions,

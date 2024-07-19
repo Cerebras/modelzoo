@@ -56,6 +56,7 @@ class ViTClassificationModel(nn.Module):
         ffn_initializer=None,
         pooler_initializer=None,
         norm_first=True,
+        use_final_layer_norm=True,
         # vision related params
         image_size=[224, 224],
         num_channels=3,
@@ -108,6 +109,7 @@ class ViTClassificationModel(nn.Module):
             ffn_initializer=ffn_initializer,
             pooler_initializer=pooler_initializer,
             norm_first=norm_first,
+            use_final_layer_norm=use_final_layer_norm,
             # vision related params
             image_size=image_size,
             num_channels=num_channels,
@@ -117,8 +119,9 @@ class ViTClassificationModel(nn.Module):
             use_encoder_pooler_layer=use_encoder_pooler_layer,
         )
 
+        classifier_hidden_size = hidden_size
         self.classifier = BertClassifierHead(
-            hidden_size=hidden_size,
+            hidden_size=classifier_hidden_size,
             num_classes=num_classes,
             use_bias=use_bias_in_output,
             kernel_initializer=default_initializer,

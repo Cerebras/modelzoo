@@ -18,6 +18,7 @@ Adapted from https://github.com/pytorch/pytorch/blob/master/torch/nn/modules/tra
 
 from typing import List, Optional, Tuple, Union
 
+import torch
 import torch.nn as nn
 from torch import Tensor
 
@@ -25,6 +26,7 @@ from cerebras.modelzoo.layers.RotaryPositionEmbeddingHelper import (
     RotaryPositionEmbeddingHelper,
 )
 from cerebras.modelzoo.layers.utils import _get_clones
+from cerebras.modelzoo.trainer import summarize_scalar
 
 SelfAttnKV = Tuple[Tensor, Tensor]
 SelfAndCrossAttnKV = Tuple[Tensor, Tensor, Tensor, Tensor]
@@ -51,6 +53,7 @@ class TransformerDecoder(nn.Module):
         self.layers = _get_clones(decoder_layer, num_layers)
         self.num_layers = num_layers
         self.norm = norm
+        self.moe_enabled = self.layers[0].moe_enabled
         # Re-initialize all layers to get new set of weights for each layer
         self.__reset_parameters()
 
@@ -61,9 +64,12 @@ class TransformerDecoder(nn.Module):
         for layer in self.layers:
             layer.reset_parameters()
         if self.norm:
-            if hasattr(self.norm, 'bias'):
+            if hasattr(self.norm, 'bias') and hasattr(self.norm.bias, 'data'):
                 self.norm.bias.data.zero_()
-            self.norm.weight.data.fill_(1.0)
+            if hasattr(self.norm, 'weight') and hasattr(
+                self.norm.weight, 'data'
+            ):
+                self.norm.weight.data.fill_(1.0)
 
     def forward(
         self,
@@ -82,6 +88,7 @@ class TransformerDecoder(nn.Module):
         past_kv: Optional[List[Union[SelfAttnKV, SelfAndCrossAttnKV]]] = None,
         cache_present_kv: bool = False,
         extract_layer_idx: Optional[int] = None,
+        expert_hash_idx: Optional[Tensor] = None,
         **extra_args,
     ) -> Union[
         Tensor, Tuple[Tensor, List[Union[SelfAttnKV, SelfAndCrossAttnKV]]]
@@ -111,6 +118,9 @@ class TransformerDecoder(nn.Module):
                 and return outputs from decoder_block_3.
                 If `extract_layer_idx` = None and `norm` != None, then
                 the output returned would be decoder_block_{self.num_layers-1} -> norm -> output (return)
+            expert_hash_idx: Optional tensor for mixture-of-experts models
+                with hash-based routing. Tensor contains the expert ID for
+                each token in the batch based on a hashing calculation.
 
         Shape:
             see the docs in Transformer class.
@@ -125,6 +135,8 @@ class TransformerDecoder(nn.Module):
         if extract_layer_idx == None:
             extract_layer_idx = self.num_layers - 1
 
+        routing_weights = []
+        expert_masks = []
         for layer_idx in range(extract_layer_idx + 1):
             mod = self.layers[layer_idx]
             output = mod(
@@ -132,9 +144,11 @@ class TransformerDecoder(nn.Module):
                 memory=memory,
                 # Alternate between dense and fixed sparse attention,
                 # This is used in GPT-3 model.
-                tgt_mask=sparse_mask
-                if layer_idx % 2 != 0 and sparse_mask is not None
-                else tgt_mask,
+                tgt_mask=(
+                    sparse_mask
+                    if layer_idx % 2 != 0 and sparse_mask is not None
+                    else tgt_mask
+                ),
                 memory_mask=memory_mask,
                 tgt_key_padding_mask=tgt_key_padding_mask,
                 memory_key_padding_mask=memory_key_padding_mask,
@@ -144,16 +158,51 @@ class TransformerDecoder(nn.Module):
                 self_attn_position_bias=self_attn_position_bias,
                 cross_attn_position_bias=cross_attn_position_bias,
                 layer_idx=layer_idx,
+                expert_hash_idx=expert_hash_idx,
                 **extra_args,
             )
-            if cache_present_kv:
-                present_kv.append(output[1])
+
+            if self.moe_enabled:
+                layer_routing_weights = output[1]
+                num_experts = layer_routing_weights.shape[-1]
+                routing_weights.append(layer_routing_weights)
+                layer_expert_masks = output[2]
+                expert_masks.append(layer_expert_masks)
+                if cache_present_kv:
+                    present_kv.append(output[3])
                 output = output[0]
+
+                # Log the entropy of the probabilities output from the routing.
+                # We add an epsilon of 1e-5 for small probabilities, and we
+                # normalize to maximum entropy for the given number of experts.
+                entropy = (
+                    layer_routing_weights
+                    * -torch.log(layer_routing_weights + 1e-5)
+                ).sum(axis=-1)
+                max_entropy = torch.log(
+                    torch.tensor(num_experts, dtype=layer_routing_weights.dtype)
+                )
+                entropy = entropy.mean() / max_entropy
+                summarize_scalar(
+                    f"expert_stats/entropy_l{layer_idx}",
+                    entropy,
+                )
+
+            else:
+                if cache_present_kv:
+                    present_kv.append(output[1])
+                    output = output[0]
 
         if self.norm is not None and _is_extract_idx_was_none:
             output = self.norm(output)
 
-        if cache_present_kv:
-            return (output, present_kv)
+        if self.moe_enabled:
+            if cache_present_kv:
+                return output, routing_weights, expert_masks, present_kv
+            else:
+                return output, routing_weights, expert_masks
         else:
-            return output
+            if cache_present_kv:
+                return (output, present_kv)
+            else:
+                return output

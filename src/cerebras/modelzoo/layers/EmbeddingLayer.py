@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
-
 import torch.nn as nn
 
 from cerebras.modelzoo.layers.create_initializer import create_initializer
@@ -68,8 +66,10 @@ class EmbeddingLayer(nn.Module):
         initializer="xavier_uniform",
         embeddings_initializer='uniform',
         device=None,
+        dtype=None,
         # Positional Embedding Parameters:
         position_embedding_type="learned",
+        constant_pos_embedding=None,
         max_position_embeddings=None,
         positional_embedding_size=None,
         position_embedding_offset=0,
@@ -116,6 +116,7 @@ class EmbeddingLayer(nn.Module):
 
         self.max_position_embeddings = max_position_embeddings
         self.position_embedding_type = position_embedding_type
+        self.constant_pos_embedding = constant_pos_embedding
         self.pad_token_id = pad_token_id
         self.mask_padding_in_positional_embed = mask_padding_in_positional_embed
         if self.mask_padding_in_positional_embed:
@@ -149,11 +150,6 @@ class EmbeddingLayer(nn.Module):
                 raise ValueError("max_position_embeddings should be specified.")
 
             if (
-                not os.environ.get("CEREBRAS_ALLOW_LONG_MSL")
-            ) and max_position_embeddings > 32768:
-                raise ValueError("max_position_embeddings cannot exceed 32768")
-
-            if (
                 pos_scaling_factor != 1.0
                 and self.position_embedding_type
                 not in [
@@ -163,6 +159,17 @@ class EmbeddingLayer(nn.Module):
             ):
                 raise ValueError(
                     "pos_scaling_factor is only supported for ALiBi and RoPE."
+                )
+            if (
+                self.constant_pos_embedding is not None
+                and self.position_embedding_type
+                not in [
+                    "rotary",
+                    "alibi",
+                ]
+            ):
+                raise ValueError(
+                    "Constant image embedding is only supported for ALiBi and RoPE."
                 )
 
             if position_embedding_type == "learned":
@@ -196,6 +203,7 @@ class EmbeddingLayer(nn.Module):
                     base=rope_theta,
                     scaling_factor=pos_scaling_factor,
                     pad_fixed_pos_emb=pad_rope,
+                    constant_pos_embedding=constant_pos_embedding,
                 )
             elif self.position_embedding_type == "relative":
                 assert (
@@ -220,6 +228,7 @@ class EmbeddingLayer(nn.Module):
                     alibi_trainable_slopes=alibi_trainable_slopes,
                     slopes_initializer=initializer,
                     scaling_factor=pos_scaling_factor,
+                    constant_pos_embedding=constant_pos_embedding,
                 )
             else:
                 raise ValueError(
@@ -233,6 +242,8 @@ class EmbeddingLayer(nn.Module):
                 segment_embedding_size,
                 device=device,
             )
+
+        self.dtype = dtype
 
         # Initialize weights
         self.__reset_parameters()
@@ -311,6 +322,10 @@ class EmbeddingLayer(nn.Module):
             embeddings = embeddings + self.compute_segment_embeddings(
                 segment_ids
             )
+
+        if self.dtype is not None:
+            embeddings = embeddings.to(self.dtype)
+
         return embeddings
 
     def compute_token_embeddings(self, input_ids):
@@ -353,7 +368,14 @@ class EmbeddingLayer(nn.Module):
             segment_embeddings = self.segment_embeddings(segment_ids.int())
         return segment_embeddings
 
-    def compute_position_bias(self, seq_length, key_length, past_kv=None):
+    def compute_position_bias(
+        self,
+        seq_length,
+        key_length,
+        past_kv=None,
+        constant_pos_mask=None,
+        batch_size=None,
+    ):
         self_attn_position_bias = None
         if self.position_embed_helper and isinstance(
             self.position_embed_helper,
@@ -362,19 +384,18 @@ class EmbeddingLayer(nn.Module):
                 AlibiPositionEmbeddingLayer,
             ),
         ):
-            if (not os.environ.get("CEREBRAS_ALLOW_LONG_MSL")) and (
-                seq_length > 32768 or key_length > 32768
-            ):
-                raise ValueError(
-                    f"The tokenized data exceeded the 32768 MSL limit. Make "
-                    f"sure that the tokenized data length and "
-                    f"{self.position_embedding_type}'s max_position_embeddings "
-                    f"<= 32768."
+            if self.constant_pos_embedding is not None:
+                self_attn_position_bias = self.position_embed_helper(
+                    seq_length,
+                    key_length,
+                    past_kv=past_kv,
+                    constant_pos_mask=constant_pos_mask,
+                    batch_size=batch_size,
                 )
-
-            self_attn_position_bias = self.position_embed_helper(
-                seq_length, key_length, past_kv=past_kv
-            )
+            else:
+                self_attn_position_bias = self.position_embed_helper(
+                    seq_length, key_length, past_kv=past_kv
+                )
         return self_attn_position_bias
 
     def get_rope_helper(self):

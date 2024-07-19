@@ -5,9 +5,7 @@
 train_input:
     data_processor : "TransformerDynamicDataProcessor"
     src_vocab_file: "./transformer/wmt16_en_de/vocab.bpe.32000.en"
-    tgt_vocab_file: "./transformer/wmt16_en_de/vocab.bpe.32000.de"
     src_data_dir: "./transformer/wmt16_en_de/pytorch/train.tok.clean.bpe.32000.en"
-    tgt_data_dir: "./transformer/wmt16_en_de/pytorch/train.tok.clean.bpe.32000.de"
     src_max_sequence_length: 256
     tgt_max_sequence_length: 256
     # The effective batch size, which is evenly divided across "num_csx" systems used for the run
@@ -22,9 +20,7 @@ train_input:
 eval_input:
     data_processor : "TransformerDynamicDataProcessor"
     src_vocab_file: "./transformer/wmt16_en_de/vocab.bpe.32000.en"
-    tgt_vocab_file: "./transformer/wmt16_en_de/vocab.bpe.32000.de"
     src_data_dir: "./transformer/wmt16_en_de/pytorch/newstest2014.tok.clean.bpe.32000.en"
-    tgt_data_dir: "./transformer/wmt16_en_de/pytorch/newstest2014.tok.clean.bpe.32000.de"
     src_max_sequence_length: 256
     tgt_max_sequence_length: 256
     shuffle: False

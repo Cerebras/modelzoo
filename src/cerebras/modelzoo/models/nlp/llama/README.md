@@ -2,7 +2,7 @@
 
 ## Overview of the model
 
-[LLaMa](https://arxiv.org/pdf/2302.13971) is a very similar architecture to [GPT-2](https://d4mucfpksywv.cloudfront.net/better-language-models/language-models.pd) except that:
+[LLaMa](https://arxiv.org/pdf/2302.13971) is a very similar architecture to [GPT-2](https://d4mucfpksywv.cloudfront.net/better-language-models/language-models.pdf) except that:
 1. RMSNorm (equivalent to T5-style normalization) instead of LayerNorm during pre-normalization.
 2. It uses the SwiGLU (equivalent to silu) activation rather than ReLU, similar to the PaLM model.
 3. It uses rotary positional embeddings instead of absolute positional embeddings, like in the GPT-NeoX models.
@@ -50,11 +50,9 @@ For convenience, we provide different configurations of common model setups desi
 
 All configs are meant to be run on Weight Streaming mode using Appliance mode and Kubernetes flow.
 
-All configs are meant to be run on Weight Streaming mode using Appliance mode and Kubernetes flow.
-
 ## Appendix
 
-**Reference**: Radford, A. et al. (2019). [Language Models are Unsupervised Multitask Learners](https://d4mucfpksywv.cloudfront.net/better-language-models/language-models).
+**Reference**: Radford, A. et al. (2019). [Language Models are Unsupervised Multitask Learners](https://d4mucfpksywv.cloudfront.net/better-language-models/language-models.pdf).
 
 **Reference**: Touvron, Hugo, et al. (2023). [Llama: Open and efficient foundation language models](https://arxiv.org/pdf/2302.13971)
 

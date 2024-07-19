@@ -1,0 +1,35 @@
+##############################################################
+## Customized NLG Dataset Preprocessing Parameters
+##############################################################
+
+setup:
+    data:
+        source: "/input/dir/here" 
+        type: local
+
+    mode: "nlg"
+    output_dir: "/output/dir/here" # replace with your directory
+    processes: 1
+
+processing:
+    custom_tokenizer: "gpt2tokenizer"
+    tokenizer_params:
+        vocab_file: "/path/to/vocab"
+        encoder_file: "/path/to/encoder"
+
+    max_seq_length: 1024
+    short_seq_prob: 0.0
+
+    write_in_batch: True
+
+    resume_from_checkpoint: False
+    seed: 0
+
+    read_hook: "cerebras.modelzoo.data_preparation.data_preprocessing.hooks:nlg_read_hook"
+    read_hook_kwargs:
+        data_keys:
+            context_key: "context"
+            completion_key: "completion"
+
+dataset:
+    use_ftfy: True

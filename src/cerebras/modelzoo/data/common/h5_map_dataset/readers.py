@@ -117,9 +117,9 @@ class H5Reader:
                 )
             by_sample = True
 
-        if by_sample and use_vsl and data_shape[1] != 5:
+        if by_sample and use_vsl and data_shape[1] not in [4, 5]:
             raise ValueError(
-                f"Expected all dataset H5 files to have 5 features for "
+                f"Expected all dataset H5 files to have [4-5] features for "
                 f"variable sequence length training, but got "
                 f"{data_shape[1]} features in {files[0]}."
             )
@@ -168,6 +168,15 @@ class H5Reader:
     @property
     def vdataset(self):
         v = getattr(self._impl, "vdataset", None)
+        if v is None:
+            raise AttributeError(
+                "Trying to access virtual dataset attribute, but none was found"
+            )
+        return v
+
+    @property
+    def vdataset_full(self):
+        v = getattr(self._impl, "vdataset_full", None)
         if v is None:
             raise AttributeError(
                 "Trying to access virtual dataset attribute, but none was found"
@@ -235,6 +244,10 @@ class _SequencedH5Reader:
     @property
     def vdataset(self):
         return self._vdataset["data"]
+
+    @property
+    def vdataset_full(self):
+        return self._vdataset
 
     def __getitem__(self, i: int) -> np.ndarray:
         """Reads a single item of the dataset from disk."""
@@ -531,62 +544,53 @@ class Mixture:
                 new_weights.append(w)
         weights = new_weights
 
+        # Normalize the weights to sum up to 1
         s = sum(weights)
         weights = [w / s for w in weights]
 
         # 1 epoch of a mixture is defined to be the number of samples required
-        # to see every sample in each sub-dataset of weight at least 5% at least
-        # once. Note that this means that some samples will be seen multiple
-        # times in each epoch
+        # to see every sample at least once in each sub-dataset with mixture
+        # weight > 5%. Note that this means that some samples will be seen
+        # multiple times in each epoch.
         total_samples = max(
             len(d) / w for (d, w) in zip(datasets, weights) if w > 0.05
         )
+
+        # Find sample index boundaries of each dataset
+        self.boundaries = np.cumsum([int(total_samples * w) for w in weights])
+        self.boundaries = np.insert(self.boundaries, 0, 0)
+
         if self.interleave:
-            self.dataset_indices = [
-                np.full(int(total_samples * w), i, dtype=np.uint16)
-                for i, w in enumerate(weights)
-            ]
-            self.dataset_samples = [
-                np.arange(int(total_samples * w)) % len(d)
-                for d, w in zip(self.datasets, weights)
-            ]
-            self.dataset_indices = np.concatenate(self.dataset_indices)
-            self.dataset_samples = np.concatenate(self.dataset_samples)
-            self.total_samples = len(self.dataset_indices)
-            indices = np.arange(self.total_samples)
+            size = len(self)
+            dtype = np.min_scalar_type(size)
+            self.indices = np.arange(size, dtype=dtype)
             rng = np.random.default_rng(seed)
-            rng.shuffle(indices)
+            rng.shuffle(self.indices)
+
             # we want samples within a dataset to appear in order to take
             # advantage of sequential read patterns, so we sort the
             # sub-components after the shuffle
-            boundaries = [int(total_samples * w) for w in weights]
-            boundaries = np.insert(np.cumsum(boundaries), 0, 0)
-            for start, end in zip(boundaries[:-1], boundaries[1:]):
-                indices[
-                    np.where((start <= indices) & (indices < end))
-                ] = np.arange(start, end)
-            self.dataset_indices = self.dataset_indices[indices]
-            self.dataset_samples = self.dataset_samples[indices]
-        else:
-            self.boundaries = [int(total_samples * w) for w in weights]
-            self.boundaries = np.cumsum(self.boundaries)
-            self.total_samples = self.boundaries[-1]
-            self.boundaries = self.boundaries[:-1]
+            for start, end in zip(self.boundaries[:-1], self.boundaries[1:]):
+                self.indices[
+                    np.where((start <= self.indices) & (self.indices < end))
+                ] = np.arange(start, end, dtype=dtype)
 
     @property
     def by_sample(self):
         return self._by_sample
 
     def __getitem__(self, i):
-        if self.interleave:
-            dataset = self.datasets[self.dataset_indices[i]]
-            return dataset[self.dataset_samples[i]]
-        else:
-            dataset_index = np.searchsorted(self.boundaries, i, side="right")
-            dataset = self.datasets[dataset_index]
-            offset = self.boundaries[dataset_index - 1] if dataset_index else 0
-            sample_index = (i - offset) % len(dataset)
-            return dataset[sample_index]
+        if i < 0 or i >= len(self):
+            raise RuntimeError(
+                f"Index ({i} is out of bounds for mixture with length {len(self)}"
+            )
+
+        idx = self.indices[i] if self.interleave else i
+        dataset_idx = np.searchsorted(self.boundaries, idx, side="right") - 1
+        dataset = self.datasets[dataset_idx]
+        offset = self.boundaries[dataset_idx]
+        sample_index = (idx - offset) % len(dataset)
+        return dataset[sample_index]
 
     def __len__(self):
-        return self.total_samples
+        return self.boundaries[-1]

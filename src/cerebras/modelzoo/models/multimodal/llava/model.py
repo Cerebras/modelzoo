@@ -17,11 +17,13 @@ import torch.nn as nn
 
 from cerebras.modelzoo.common.registry import registry
 from cerebras.modelzoo.losses.GPTLMHeadModelLoss import GPTLMHeadModelLoss
+from cerebras.modelzoo.losses.LoadBalancingLoss import LoadBalancingLoss
 from cerebras.modelzoo.models.multimodal.llava.modeling_llava import Llava
 from cerebras.modelzoo.models.multimodal.multimodal_base_model import (
     ModalityType,
     MultimodalBaseModelWrapper,
 )
+from cerebras.modelzoo.trainer import summarize_scalar
 
 
 @registry.register_model(
@@ -31,20 +33,45 @@ class LlavaModel(MultimodalBaseModelWrapper, nn.Module):
     def __init__(self, params):
         super(LlavaModel, self).__init__()
         self._modalities = [ModalityType.IMAGE, ModalityType.TEXT]
-        model_params = params["model"].copy()
-        self.freeze = model_params["freeze"]
-        self.image_feature_select_layer_idx = model_params[
-            "image_feature_select_layer_idx"
-        ]
-        self.image_start_idx = model_params["image_start_idx"]
-        self.image_feature_select_mode = model_params[
-            "image_feature_select_mode"
-        ]
+        self._model_params = params.model
+        model_params = self._model_params
+        self.freeze = model_params.freeze
+        self.image_feature_select_layer_idx = (
+            model_params.image_feature_select_layer_idx
+        )
+        self.image_start_idx = model_params.image_start_idx
+        self.image_feature_select_mode = model_params.image_feature_select_mode
+
+        text_model_params = model_params.text_model
+        if hasattr(text_model_params, 'moe'):
+            self.moe_enabled = False
+            text_model_params.moe = dict(num_experts=1)
+        elif "num_experts" not in text_model_params.moe:
+            self.moe_enabled = False
+            text_model_params.moe = dict(num_experts=1)
+        else:
+            self.moe_enabled = text_model_params.moe["num_experts"] > 1
+
+        if self.moe_enabled:
+            self.load_balancing_loss_coef = text_model_params.moe.pop(
+                "load_balancing_loss_coef", 0.01
+            )
+            self.load_balancing_loss_fn = LoadBalancingLoss(
+                text_model_params.moe["num_experts"],
+                text_model_params.moe["top_k"],
+            )
+        text_model_params.moe_params = text_model_params.moe
+
         self.model = self.build_model(model_params)
+        vocab_size = getattr(model_params, ModalityType.TEXT.value).vocab_size
         self.loss_fn = GPTLMHeadModelLoss(
-            model_params[ModalityType.TEXT.value]["vocab_size"],
-            model_params.pop("loss_scaling"),
-            model_params.pop("loss_weight"),
+            vocab_size,
+            model_params.loss_scaling,
+            model_params.loss_weight,
+        )
+        del (
+            model_params.loss_scaling,
+            model_params.loss_weight,
         )
 
     @property
@@ -99,7 +126,6 @@ class LlavaModel(MultimodalBaseModelWrapper, nn.Module):
             f"3. `labels` \n"
             f"4. `loss_mask` \n"
             f"5. `key_padding_mask` \n"
-            f"6. `position_ids`"
         )
         assert (
             ("image_data" in data or "image_embeddings" in data)
@@ -107,19 +133,17 @@ class LlavaModel(MultimodalBaseModelWrapper, nn.Module):
             and "loss_mask" in data
             and "labels" in data
             and "key_padding_mask" in data
-            and "position_ids" in data
         ), _msg
 
         _msg = (
             f"The dtype for `text_input_ids`, "
-            f"`loss_mask`, `labels`, `position_ids`, `key_padding_mask "
+            f"`loss_mask`, `labels`, `key_padding_mask "
             f"should be torch.int32"
         )
         assert (
             data["text_input_ids"].dtype == torch.int32
             and data["loss_mask"].dtype == torch.int32
             and data["labels"].dtype == torch.int32
-            and data["position_ids"].dtype == torch.int32
             and data["key_padding_mask"].dtype == torch.int32
         ), _msg
 
@@ -133,7 +157,7 @@ class LlavaModel(MultimodalBaseModelWrapper, nn.Module):
                 * torch.finfo(tgt_key_padding_mask.dtype).min
             )
 
-        logits = self.model(
+        model_outputs = self.model(
             image_data=data.get("image_data"),
             text_input_ids=data.get("text_input_ids"),
             image_embeddings=data.get("image_embeddings"),
@@ -141,7 +165,13 @@ class LlavaModel(MultimodalBaseModelWrapper, nn.Module):
             tgt_key_padding_mask=tgt_key_padding_mask,
             attention_span=data.get("attention_span"),
             position_ids=data.get("position_ids"),
+            img_start_idx=data.get("img_start_idx"),
         )
+
+        if self.moe_enabled:
+            logits, routing_weights, expert_mask = model_outputs
+        else:
+            logits = model_outputs
 
         loss = self.loss_fn(
             logits,
@@ -149,6 +179,22 @@ class LlavaModel(MultimodalBaseModelWrapper, nn.Module):
             attention_mask=data["loss_mask"],  # acts as a loss mask
             reduce_batch=reduce_batch,
         )
+
+        if (
+            self.moe_enabled
+            and self.load_balancing_loss_coef > 0.0
+            and self.training
+        ):
+            load_balance_loss = (
+                self.load_balancing_loss_coef
+                * self.load_balancing_loss_fn(
+                    routing_weights,
+                    expert_mask,
+                    attention_mask=data["loss_mask"],  # acts as a loss mask
+                )
+            )
+            summarize_scalar("load_balance_loss", load_balance_loss)
+            loss = loss + load_balance_loss
 
         if output_logits:
             return loss, logits

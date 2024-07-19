@@ -24,9 +24,7 @@ def set_defaults(params):
     params["train_input"]["mixed_precision"] = params["model"][
         "mixed_precision"
     ]
-    params["train_input"]["fp16_type"] = params["model"]["fp16_type"]
     params["eval_input"]["mixed_precision"] = params["model"]["mixed_precision"]
-    params["eval_input"]["fp16_type"] = params["model"]["fp16_type"]
 
     return params
 

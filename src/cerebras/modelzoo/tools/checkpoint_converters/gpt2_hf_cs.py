@@ -360,9 +360,9 @@ class Converter_GPT2Model_HF_CS17(BaseCheckpointConverter_HF_CS):
                 old_state_dict.get("embedding_layer.word_embeddings.weight", 0)
                 is None
             ):
-                old_state_dict[
-                    "embedding_layer.word_embeddings.weight"
-                ] = old_state_dict["lm_head.weight"]
+                old_state_dict["embedding_layer.word_embeddings.weight"] = (
+                    old_state_dict["lm_head.weight"]
+                )
 
     def post_model_convert(
         self,
@@ -455,9 +455,9 @@ class Converter_GPT2LMHeadModel_HF_CS17(BaseCheckpointConverter_HF_CS):
                 old_state_dict.get("embedding_layer.word_embeddings.weight", 0)
                 is None
             ):
-                old_state_dict[
-                    "embedding_layer.word_embeddings.weight"
-                ] = old_state_dict["lm_head.weight"]
+                old_state_dict["embedding_layer.word_embeddings.weight"] = (
+                    old_state_dict["lm_head.weight"]
+                )
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
@@ -724,9 +724,9 @@ class Converter_GPT2LMHeadModel_HF_CS17(BaseCheckpointConverter_HF_CS):
                 old_state_dict.get("embedding_layer.word_embeddings.weight", 0)
                 is None
             ):
-                old_state_dict[
-                    "embedding_layer.word_embeddings.weight"
-                ] = old_state_dict["lm_head.weight"]
+                old_state_dict["embedding_layer.word_embeddings.weight"] = (
+                    old_state_dict["lm_head.weight"]
+                )
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
@@ -1001,7 +1001,6 @@ class Converter_GPT2LMHeadModel_CS20_CS21(BaseCheckpointConverter_CS_CS):
 class ConfigConverter_GPT2Model_CS20_CS21(BaseConfigConverter_CS_CS):
     def __init__(self):
         super().__init__()
-        # No differences in config
         self.rules = [
             ConversionRule([".*"], action=self.replaceKey),
         ]
@@ -1016,7 +1015,10 @@ class ConfigConverter_GPT2Model_HF_CS21(ConfigConverter_GPT2Model_HF_CS20):
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-2.1", "cs-2.2"))
+        return (
+            FormatVersions("hf"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
+        )
 
 
 class Converter_GPT2Model_WithoutOptionalModel_HF_CS21(
@@ -1046,7 +1048,10 @@ Converter_GPT2Model_HF_CS21 = Build_HF_CS_Converter_WithOptionalModel(
     Converter_GPT2Model_WithoutOptionalModel_HF_CS21,
     derived_class=Converter_GPT2Model_WithoutOptionalModel_HF_CS21,
     config_converter_class=ConfigConverter_GPT2Model_HF_CS21,
-    formats=(FormatVersions("hf"), FormatVersions("cs-2.1", "cs-2.2")),
+    formats=(
+        FormatVersions("hf"),
+        FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
+    ),
 )
 
 
@@ -1071,7 +1076,10 @@ class Converter_GPT2LMHeadModel_WithoutOptionalModel_HF_CS21(
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-2.1", "cs-2.2"))
+        return (
+            FormatVersions("hf"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
+        )
 
     @staticmethod
     def get_config_converter_class() -> BaseConfigConverter:
@@ -1089,3 +1097,40 @@ Converter_GPT2LMHeadModel_HF_CS21 = Build_HF_CS_Converter_WithOptionalModel(
         cls.formats()[0], cls.formats()[1]
     ),
 )
+
+
+class Converter_GPT2LMHeadModel_CS22_CS23(BaseCheckpointConverter_CS_CS):
+    def __init__(self):
+        super().__init__()
+        self.rules = [
+            ConversionRule([".*"], action=self.replaceKey),
+        ]
+
+    @classmethod
+    def converter_note(cls) -> str:
+        return "GPT2LMHeadModel class"
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("cs-2.2"), FormatVersions("cs-2.3"))
+
+    @staticmethod
+    def get_config_converter_class() -> BaseConfigConverter:
+        return ConfigConverter_GPT2Model_CS22_CS23
+
+
+class ConfigConverter_GPT2Model_CS22_CS23(BaseConfigConverter_CS_CS):
+    def __init__(self):
+        super().__init__()
+        self.rules = [
+            # The following params were deprecated:
+            ConversionRule(["use_position_embedding"], action=None),
+            ConversionRule(["alibi_implementation"], action=None),
+            ConversionRule(["weight_initialization_seed"], action=None),
+            # Remaining params can be copied:
+            ConversionRule([".*"], action=self.replaceKey),
+        ]
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("cs-2.2"), FormatVersions("cs-2.3"))

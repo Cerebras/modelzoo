@@ -20,7 +20,6 @@ from cerebras.modelzoo.models.nlp.bert.bert_finetune_models import (
     BertForTokenClassification,
     BertForTokenClassificationLoss,
 )
-from cerebras.modelzoo.models.nlp.bert.utils import check_unused_model_params
 from cerebras.pytorch.metrics import FBetaScoreMetric
 
 
@@ -32,55 +31,38 @@ class BertForTokenClassificationModel(torch.nn.Module):
     def __init__(self, params):
         super().__init__()
 
-        model_params = params["model"].copy()
-        num_classes = model_params.pop("num_classes")
-        loss_weight = model_params.pop("loss_weight")
-        include_padding_in_loss = model_params.pop("include_padding_in_loss")
-
-        classifier_dropout = model_params.pop("encoder_output_dropout_rate")
-        dropout_rate = model_params.pop("dropout_rate", 0.0)
-        embedding_dropout_rate = model_params.pop(
-            "embedding_dropout_rate", dropout_rate
-        )
+        self._model_params = params.model
+        model_params = self._model_params
+        num_classes = self._model_params.num_classes
+        loss_weight = self._model_params.loss_weight
 
         model_kwargs = {
-            "vocab_size": model_params.pop("vocab_size"),
-            "hidden_size": model_params.pop("hidden_size"),
-            "num_hidden_layers": model_params.pop("num_hidden_layers"),
-            "num_heads": model_params.pop("num_heads"),
-            "filter_size": model_params.pop("filter_size"),
-            "nonlinearity": model_params.pop("encoder_nonlinearity"),
-            "pooler_nonlinearity": model_params.pop(
-                "pooler_nonlinearity", None
-            ),
-            "embedding_dropout_rate": embedding_dropout_rate,
-            "dropout_rate": dropout_rate,
-            "attention_dropout_rate": model_params.pop(
-                "attention_dropout_rate", 0.0
-            ),
-            "attention_kernel": model_params.pop("attention_kernel", None),
-            "max_position_embeddings": model_params.pop(
-                "max_position_embeddings"
-            ),
-            "layer_norm_epsilon": float(model_params.pop("layer_norm_epsilon")),
+            "vocab_size": model_params.vocab_size,
+            "hidden_size": model_params.hidden_size,
+            "num_hidden_layers": model_params.num_hidden_layers,
+            "num_heads": model_params.num_heads,
+            "filter_size": model_params.filter_size,
+            "nonlinearity": model_params.encoder_nonlinearity,
+            "pooler_nonlinearity": model_params.pooler_nonlinearity,
+            "embedding_dropout_rate": model_params.embedding_dropout_rate,
+            "dropout_rate": model_params.dropout_rate,
+            "attention_dropout_rate": model_params.attention_dropout_rate,
+            "attention_kernel": model_params.attention_kernel,
+            "max_position_embeddings": model_params.max_position_embeddings,
+            "layer_norm_epsilon": model_params.layer_norm_epsilon,
         }
 
         self.model = BertForTokenClassification(
             num_classes,
-            classifier_dropout=classifier_dropout,
+            classifier_dropout=model_params.encoder_output_dropout_rate,
             loss_weight=loss_weight,
-            include_padding_in_loss=include_padding_in_loss,
+            include_padding_in_loss=model_params.include_padding_in_loss,
             **model_kwargs,
         )
         self.loss_fn = BertForTokenClassificationLoss(num_classes, loss_weight)
 
-        self.compute_eval_metrics = model_params.pop(
-            "compute_eval_metrics", False
-        )
-        if self.compute_eval_metrics:
-            self.label_map_id = get_label_id_map(
-                model_params.pop("label_vocab_file")
-            )
+        if model_params.compute_eval_metrics:
+            self.label_map_id = get_label_id_map(model_params.label_vocab_file)
             # Ignore token labels in eval which dont
             # refer to a token beginning or inside.
             # Labels such as
@@ -99,7 +81,6 @@ class BertForTokenClassificationModel(torch.nn.Module):
                 ignore_labels=eval_ignore_labels,
                 name="eval/f1_score",
             )
-        check_unused_model_params(model_params)
 
     def forward(self, data):
         logits = self.model(
@@ -108,7 +89,7 @@ class BertForTokenClassificationModel(torch.nn.Module):
             token_type_ids=data["token_type_ids"],
         )
         loss = self.loss_fn(logits, data["labels"], data["loss_mask"])
-        if not self.model.training and self.compute_eval_metrics:
+        if not self.model.training and self._model_params.compute_eval_metrics:
             labels = data["labels"].clone()
             predictions = logits.argmax(-1).int()
 

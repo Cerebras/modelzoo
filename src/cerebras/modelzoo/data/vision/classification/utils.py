@@ -18,7 +18,6 @@ def create_preprocessing_params_with_defaults(params):
     pp_params = dict()
     pp_params["noaugment"] = params.get("noaugment", False)
     pp_params["mixed_precision"] = params["mixed_precision"]
-    pp_params["fp16_type"] = params["fp16_type"]
     pp_params["transforms"] = params["transforms"]
 
     return pp_params

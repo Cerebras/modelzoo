@@ -24,19 +24,16 @@ from cerebras.modelzoo.common.utils.run.cli_pytorch import get_params_from_args
 
 def main():
     params = get_params_from_args()
-    from cerebras.modelzoo.models.nlp.gpt2.utils import set_defaults
 
-    set_defaults(params)
     from cerebras.modelzoo.common.run_utils import main
     from cerebras.modelzoo.models.nlp.gpt2.data import (
         eval_input_dataloader,
         train_input_dataloader,
     )
-    from cerebras.modelzoo.models.nlp.gpt2.model import Gpt2Model
 
     main(
         params,
-        Gpt2Model,
+        "llama",
         train_input_dataloader,
         eval_input_dataloader,
     )

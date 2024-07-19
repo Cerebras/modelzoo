@@ -72,7 +72,7 @@ class DiT(nn.Module):
         init_conv_like_linear=False,
         attention_initializer=None,
         ffn_initializer=None,
-        timestep_embeddding_initializer=None,
+        timestep_embedding_initializer=None,
         label_embedding_initializer=None,
         head_initializer=None,
         norm_first=True,
@@ -110,8 +110,8 @@ class DiT(nn.Module):
             attention_initializer = default_initializer
         if ffn_initializer is None:
             ffn_initializer = default_initializer
-        if timestep_embeddding_initializer is None:
-            timestep_embeddding_initializer = default_initializer
+        if timestep_embedding_initializer is None:
+            timestep_embedding_initializer = default_initializer
         if label_embedding_initializer is None:
             label_embedding_initializer = default_initializer
         if head_initializer is None:
@@ -138,7 +138,7 @@ class DiT(nn.Module):
             frequency_embedding_size=frequency_embedding_size,
             hidden_size=hidden_size,
             nonlinearity=embedding_nonlinearity,
-            kernel_initializer=timestep_embeddding_initializer,
+            kernel_initializer=timestep_embedding_initializer,
         )
 
         use_cfg_embedding = label_dropout_rate > 0
@@ -226,6 +226,7 @@ class DiT(nn.Module):
         diffusion_noise,
         timestep,
     ):
+
         latent = input
 
         # NOTE: numerical differences observed due to

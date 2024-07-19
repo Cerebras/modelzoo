@@ -12,11 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from copy import deepcopy
+from dataclasses import asdict
+
 import torch
 from torch.nn import CrossEntropyLoss
 
 from cerebras.modelzoo.common.registry import registry
-from cerebras.modelzoo.models.nlp.bert.utils import check_unused_model_params
 from cerebras.modelzoo.models.vision.vision_transformer.ViTClassificationModel import (
     ViTClassificationModel,
 )
@@ -30,89 +32,80 @@ class ViTClassificationWrapperModel(torch.nn.Module):
     def __init__(self, params):
         super().__init__()
 
-        model_params = params["model"].copy()
+        model_params = deepcopy(params.model)
         self.model = self.build_model(model_params)
         self.loss_fn = CrossEntropyLoss()
 
-        self.compute_eval_metrics = model_params.pop(
-            "compute_eval_metrics", True
-        )
+        self.compute_eval_metrics = model_params.compute_eval_metrics
         if self.compute_eval_metrics:
             self.accuracy_metric_cls = AccuracyMetric(name="eval/accuracy_cls")
 
     def build_model(self, model_params):
-        self.num_classes = model_params.pop("num_classes")
+        self.num_classes = model_params.num_classes
 
         model = ViTClassificationModel(
             num_classes=self.num_classes,
             # Embedding
-            embedding_dropout_rate=model_params.pop(
-                "embedding_dropout_rate", 0.0
-            ),
-            hidden_size=model_params.pop("hidden_size"),
-            use_post_embed_layer_norm=model_params.pop(
-                "use_post_embed_layer_norm", False
-            ),
-            use_embed_proj_bias=model_params.pop("use_embed_proj_bias", True),
+            embedding_dropout_rate=model_params.embedding_dropout_rate,
+            hidden_size=model_params.hidden_size,
+            use_post_embed_layer_norm=model_params.use_post_embed_layer_norm,
+            use_embed_proj_bias=model_params.use_embed_proj_bias,
             # Encoder
-            num_hidden_layers=model_params.pop("num_hidden_layers"),
-            layer_norm_epsilon=float(model_params.pop("layer_norm_epsilon")),
+            num_hidden_layers=model_params.num_hidden_layers,
+            layer_norm_epsilon=float(model_params.layer_norm_epsilon),
             # Encoder Attn
-            num_heads=model_params.pop("num_heads"),
-            attention_type=model_params.pop(
-                "attention_type", "scaled_dot_product"
-            ),
-            attention_softmax_fp32=model_params.pop(
-                "attention_softmax_fp32", True
-            ),
-            dropout_rate=model_params.pop("dropout_rate"),
-            nonlinearity=model_params.pop("nonlinearity", "gelu"),
-            pooler_nonlinearity=model_params.pop("pooler_nonlinearity", "tanh"),
-            attention_dropout_rate=model_params.pop(
-                "attention_dropout_rate", 0.0
-            ),
-            use_projection_bias_in_attention=model_params.pop(
-                "use_projection_bias_in_attention", True
-            ),
-            use_ffn_bias_in_attention=model_params.pop(
-                "use_ffn_bias_in_attention", True
-            ),
+            num_heads=model_params.num_heads,
+            attention_type=model_params.attention_type,
+            attention_softmax_fp32=model_params.attention_softmax_fp32,
+            dropout_rate=model_params.dropout_rate,
+            nonlinearity=model_params.nonlinearity,
+            pooler_nonlinearity=model_params.pooler_nonlinearity,
+            attention_dropout_rate=model_params.attention_dropout_rate,
+            use_projection_bias_in_attention=model_params.use_projection_bias_in_attention,
+            use_ffn_bias_in_attention=model_params.use_ffn_bias_in_attention,
             # Encoder ffn
-            filter_size=model_params.pop("filter_size"),
-            use_ffn_bias=model_params.pop("use_ffn_bias", True),
+            filter_size=model_params.filter_size,
+            use_ffn_bias=model_params.use_ffn_bias,
             # Task-specific
-            initializer_range=model_params.pop("initializer_range", 0.02),
-            projection_initializer=model_params.pop(
-                "projection_initializer", None
+            initializer_range=model_params.initializer_range,
+            projection_initializer=(
+                asdict(model_params.projection_initializer)
+                if model_params.projection_initializer
+                else None
             ),
-            position_embedding_initializer=model_params.pop(
-                "position_embedding_initializer", None
+            position_embedding_initializer=(
+                asdict(model_params.position_embedding_initializer)
+                if model_params.position_embedding_initializer
+                else None
             ),
-            position_embedding_type=model_params.pop(
-                "position_embedding_type", "learned"
+            position_embedding_type=model_params.position_embedding_type,
+            attention_initializer=(
+                asdict(model_params.attention_initializer)
+                if model_params.attention_initializer
+                else None
             ),
-            attention_initializer=model_params.pop(
-                "attention_initializer", None
+            ffn_initializer=(
+                asdict(model_params.ffn_initializer)
+                if model_params.ffn_initializer
+                else None
             ),
-            ffn_initializer=model_params.pop("ffn_initializer", None),
-            pooler_initializer=model_params.pop("pooler_initializer", None),
-            norm_first=model_params.pop("norm_first", True),
+            pooler_initializer=(
+                asdict(model_params.pooler_initializer)
+                if model_params.pooler_initializer
+                else None
+            ),
+            norm_first=model_params.norm_first,
+            use_final_layer_norm=model_params.use_final_layer_norm,
             # vision related params
-            image_size=model_params.pop("image_size"),
-            num_channels=model_params.pop("num_channels"),
-            patch_size=model_params.pop("patch_size"),
-            use_conv_patchified_embedding=model_params.pop(
-                "use_conv_patchified_embedding", False
-            ),
-            use_encoder_pooler_layer=model_params.pop(
-                "use_encoder_pooler_layer", False
-            ),
-            prepend_cls_token=model_params.pop("prepend_cls_token", True),
+            image_size=model_params.image_size,
+            num_channels=model_params.num_channels,
+            patch_size=model_params.patch_size,
+            use_conv_patchified_embedding=model_params.use_conv_patchified_embedding,
+            use_encoder_pooler_layer=model_params.use_encoder_pooler_layer,
+            prepend_cls_token=model_params.prepend_cls_token,
             # classifier related
-            use_bias_in_output=model_params.pop("use_bias_in_output", True),
+            use_bias_in_output=model_params.use_bias_in_output,
         )
-
-        check_unused_model_params(model_params)
 
         return model
 

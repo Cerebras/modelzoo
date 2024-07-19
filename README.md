@@ -38,26 +38,29 @@ For advanced use cases and porting your existing code please refer to the [devel
 | BERT (fine-tuning) Summarization | [Code](./src/cerebras/modelzoo/models/nlp/bert/extractive_summarization/) |
 | BLOOM | [Code](./src/cerebras/modelzoo/models/nlp/bloom/) |
 | BTLM  | [Code](./src/cerebras/modelzoo/models/nlp/btlm/) |
+| DiT | [Code](./src/cerebras/modelzoo/models/vision/dit) |
+| DPO | [Code](./src/cerebras/modelzoo/models/nlp/dpo) |
+| DPR | [Code](./src/cerebras/modelzoo/models/nlp/dpr) |
+| ESM-2 | [Code](./src/cerebras/modelzoo/models/nlp/esm2) |
+| Falcon | [Code](./src/cerebras/modelzoo/models/nlp/falcon) |
 | GPT-2 | [Code](./src/cerebras/modelzoo/models/nlp/gpt2/) |
 | GPT-3 | [Code](./src/cerebras/modelzoo/models/nlp/gpt3/) |
 | GPT-J | [Code](./src/cerebras/modelzoo/models/nlp/gptj/) |
 | GPT-NeoX | [Code](./src/cerebras/modelzoo/models/nlp/gptj/) |
 | GPT-J (fine-tuning) Summarization |[Code](./src/cerebras/modelzoo/models/nlp/gptj/continuous_pretraining/) |
-| RoBERTa | [Code](./src/cerebras/modelzoo/models/nlp/bert/) |
-| T5 | [Code](./src/cerebras/modelzoo/models/nlp/t5/) |
-| Transformer | [Code](./src/cerebras/modelzoo/models/nlp/transformer/) |
-| MNIST (fully connected) | [Code](./src/cerebras/modelzoo/fc_mnist/pytorch/) |
-| Falcon | [Code](./src/cerebras/modelzoo/models/nlp/falcon) |
-| StarCoder | [Code](./src/cerebras/modelzoo/models/nlp/starcoder) |
-| LLaMA, LLaMA-2 and LLaMA-3 | [Code](./src/cerebras/modelzoo/models/nlp/llama) |
-| DiT | [Code](./src/cerebras/modelzoo/models/vision/dit) |
-| MPT | [Code](./src/cerebras/modelzoo/models/nlp/mpt) |
-| Mistral | [Code](./src/cerebras/modelzoo/models/nlp/mistral) |
-| DPO | [Code](./src/cerebras/modelzoo/models/nlp/dpo) |
-| DPR | [Code](./src/cerebras/modelzoo/models/nlp/dpr) |
 | JAIS | [Code](./src/cerebras/modelzoo/models/nlp/jais) |
+| LLaMA, LLaMA-2 and LLaMA-3 | [Code](./src/cerebras/modelzoo/models/nlp/llama) |
 | LLaVA | [Code](./src/cerebras/modelzoo/models/multimodal/llava) |
-| ESM-2 | [Code](./src/cerebras/modelzoo/models/nlp/esm2) |
+| Mistral | [Code](./src/cerebras/modelzoo/models/nlp/mistral) |
+| Mixtral of Experts | [Code](./src/cerebras/modelzoo/models/nlp/mixtral) |
+| MNIST (fully connected) | [Code](./src/cerebras/modelzoo/fc_mnist/pytorch/) |
+| Multimodal Simple | [Code](./src/cerebras/modelzoo/models/multimodal/multimodal_simple) |
+| MPT | [Code](./src/cerebras/modelzoo/models/nlp/mpt) |
+| RoBERTa | [Code](./src/cerebras/modelzoo/models/nlp/bert/) |
+| SantaCoder | [Code](./src/cerebras/modelzoo/models/nlp/santacoder) |
+| StarCoder | [Code](./src/cerebras/modelzoo/models/nlp/starcoder) |
+| Transformer | [Code](./src/cerebras/modelzoo/models/nlp/transformer/) |
+| T5 | [Code](./src/cerebras/modelzoo/models/nlp/t5/) |
 
 ## License
 

@@ -21,91 +21,12 @@ from PIL import Image
 
 import cerebras.pytorch as cstorch
 import cerebras.pytorch.distributed as dist
-from cerebras.modelzoo.common.input_utils import (
-    PaddingSample,
-    get_streaming_batch_size,
-)
+from cerebras.modelzoo.common.input_utils import PaddingSample
 from cerebras.modelzoo.data.vision.preprocessing import get_preprocess_transform
 from cerebras.modelzoo.data.vision.utils import create_worker_cache
-from cerebras.pytorch.distributed import get_worker_state
+from cerebras.pytorch.utils.data.sampler import pad_index
 
 from .readers import H5Reader, Mixture
-from .samplers import CBSampler
-
-
-class RestartableDataLoader(torch.utils.data.DataLoader):
-    """
-    The state we care about for allowing deterministic restart of instances
-    of `HDF5Dataset` is the total number of samples streamed globally,
-    which gets consumed by the sampler. Accordingly each worker saves the number
-    of samples that it has streamed in `state_dict()`. We aggregate these
-    together via summation to save the global number of samples streamed across
-    all workers, which is the same thing that is used to set the state of the
-    sampler on state dict load.
-    """
-
-    def __init__(self, *args, **kwargs):
-        # keep track of how many samples were streamed in the previous portion
-        # of the run so that we can track cumulative samples streamed in the
-        # state_dict
-        self.previous_samples_streamed = 0
-        super().__init__(*args, **kwargs)
-
-    def state_dict(self):
-        """
-        Save number of samples streamed for current worker
-        """
-        worker_state = get_worker_state()
-        return {
-            "samples_streamed": worker_state.samples_streamed,
-            "previous_samples_streamed": self.previous_samples_streamed,
-        }
-
-    def load_state_dict(self, state_dict):
-        """
-        Set sampler state with the total number of samples streamed globally
-        """
-        self.validate_state_dict(state_dict)
-        self.previous_samples_streamed = state_dict["samples_streamed"]
-        if (
-            self.dataset.shuffle or isinstance(self.dataset.reader, Mixture)
-        ) and state_dict["seed"] != self.dataset.seed:
-            raise ValueError(
-                f"shuffle seed {self.dataset.seed} doesn't match the seed used "
-                f"for the previous portion of the run {state_dict['seed']}"
-            )
-        self.dataset.sampler.set_state(state_dict["samples_streamed"])
-
-    def aggregate_state_dict(self, worker_states):
-        """
-        Sum samples streamed across all workers to get the number of samples
-        streamed globally
-        """
-        return {
-            "samples_streamed": sum(
-                sd["samples_streamed"] for sd in worker_states
-            )
-            + worker_states[0]["previous_samples_streamed"],
-            "seed": self.dataset.seed,
-        }
-
-    def deaggregate_state_dict(self, aggregated_state_dict):
-        """
-        No deaggregation needed since the sampler needs the global number of
-        samples streamed
-        """
-        return aggregated_state_dict
-
-    @staticmethod
-    def validate_state_dict(sd):
-        if len(sd) != 2 or "samples_streamed" not in sd or "seed" not in sd:
-            raise RuntimeError(
-                "The keys in state_dict must be 'samples_streamed' and 'seed', "
-                f"found {sd.keys()}. This means that the dataloader state in "
-                "the checkpoint you are loading from is not compatible with "
-                "the dataloader currently in use. Consider re-running without "
-                "loading the dataloader state."
-            )
 
 
 class HDF5Dataset(torch.utils.data.Dataset):
@@ -190,32 +111,45 @@ class HDF5Dataset(torch.utils.data.Dataset):
 
     def __init__(self, params):
         self.use_worker_cache = params.get("use_worker_cache", False)
-        self.msl = params.get("max_sequence_length", None)
+        self.max_sequence_length = params.get("max_sequence_length", None)
         self.shuffle = params.get("shuffle", False)
-        self._seed = params.get("shuffle_seed", 0)
-        data_dir = params.get("data_dir", None)
-        mixture_params = params.get("mixture", None)
-        batch_size = get_streaming_batch_size(params["batch_size"])
-        micro_batch_size = params.get("micro_batch_size")
-        drop_last = params.get("drop_last", True)
-        num_samples = params.get("num_samples", None)
+        self.shuffle_seed = params.get("shuffle_seed", 0)
+        self.data_dir = params.get("data_dir", None)
+        self.mixture_params = params.get("mixture", None)
+        self.batch_size = params["batch_size"]
+        self.drop_last = params.get("drop_last", True)
+        self.num_samples = params.get("num_samples", None)
         self.sort_files = params.get("sort_files", True)
         self.use_vsl = params.get("use_vsl", False)
         self.pad_last = params.get("pad_last", False)
+        self.map_fn = None
 
-        if drop_last and self.pad_last:
+        # Set of member variables that should be ignored when returning state_dict
+        self._state_dict_ignore_keys = {
+            "map_fn",
+            "reader",
+            "sampler",
+            "_state_dict_ignore_keys",
+            "_load_state_ignore_keys",
+        }
+        # Set of member variables that should be ignored when comparing previous
+        # and current state_dict. These variables don't affect the samples returned
+        # from the dataset which is why they are ignored.
+        self._load_state_ignore_keys = {"use_worker_cache", "batch_size"}
+
+        if self.drop_last and self.pad_last:
             logging.warning(
                 "Both drop_last and pad_last were specified to be True. "
                 "Note that pad_last only has any effect when drop_last is False."
             )
 
-        if data_dir and mixture_params:
+        if self.data_dir and self.mixture_params:
             raise ValueError(
-                "you can't specify `data_dir` and `mixture` at the same time"
+                "Only one of `data_dir` or `mixture` can be specified."
             )
-        if data_dir is not None:
+        if self.data_dir is not None:
             self.reader = self._set_up_reader(
-                data_dir, params.get("data_subset", None)
+                self.data_dir, params.get("data_subset", None)
             )
         else:
             self.reader = Mixture(
@@ -223,25 +157,23 @@ class HDF5Dataset(torch.utils.data.Dataset):
                     self._set_up_reader(
                         x["data_dir"], x.get("data_subset", None)
                     )
-                    for x in mixture_params
+                    for x in self.mixture_params
                 ],
-                [x["weight"] for x in mixture_params],
+                [x["weight"] for x in self.mixture_params],
                 interleave=not self.shuffle,
-                seed=self._seed,
+                seed=self.shuffle_seed,
             )
 
-        self.sampler = CBSampler(
+        self.sampler = cstorch.utils.data.DistributedSampler(
             self,
             shuffle=self.shuffle,
-            seed=self._seed,
+            seed=self.shuffle_seed,
             shard=True,
-            batch_size=batch_size,
-            drop_last=drop_last,
-            num_samples=num_samples,
+            batch_size=self.batch_size,
+            drop_last=self.drop_last,
+            num_samples=self.num_samples,
             pad_last=self.pad_last,
         )
-
-        self.map_fn = None
 
         if self.by_sample and self.shuffle:
             logging.warning(
@@ -250,6 +182,63 @@ class HDF5Dataset(torch.utils.data.Dataset):
                 "to shuffle at preprocessing time instead of runtime. On some "
                 "storage setups, shuffling at runtime can cause performance "
                 "degredation."
+            )
+
+    def state_dict(self):
+        return {
+            k: v
+            for k, v in self.__dict__.items()
+            if k not in self._state_dict_ignore_keys
+        }
+
+    def load_state_dict(self, state_dict, strict: bool = True):
+        if not strict:
+            # Don't run any checks
+            return
+
+        mismatches = []
+        missing = []
+        unknown = set(state_dict.keys())
+        for k, v in self.state_dict().items():
+            unknown.discard(k)
+            if k in self._load_state_ignore_keys:
+                continue
+
+            if k not in state_dict:
+                missing.append(k)
+            elif state_dict[k] != v:
+                mismatches.append([k, v, state_dict[k]])
+
+        error_str = ""
+
+        if unknown:
+            error_str += (
+                f"The following keys are unknown in the state_dict: "
+                f"{','.join(unknown)}.\n"
+            )
+        if mismatches:
+            error_str += (
+                (
+                    "The following keys mismatch between the currently loaded dataset "
+                    "and the state_dict being loaded onto the dataset:\n    "
+                )
+                + "\n    ".join(
+                    f"key={a}, current_value={b}, state_dict_value={c}"
+                    for a, b, c, in mismatches
+                )
+                + "\n"
+            )
+        if missing:
+            error_str += (
+                f"The following keys are missing in the state_dict: "
+                f"{','.join(missing)}.\n"
+            )
+
+        if error_str:
+            raise RuntimeError(
+                f"state_dict is incompatible with the dataset settings. "
+                f"If these incompatibilities are expected, load with "
+                f"`strict=False` setting. \n{error_str}"
             )
 
     def generate_sample(self):
@@ -266,15 +255,15 @@ class HDF5Dataset(torch.utils.data.Dataset):
     def by_sample(self):
         return self.reader.by_sample
 
-    @property
-    def seed(self):
-        return self._seed
-
-    def map(self, fn):
+    def map(self, fn: callable):
         if self.map_fn is not None:
             raise ValueError(
                 f"You may only apply one map function to a H5MapDataset"
             )
+
+        if not callable(fn):
+            raise ValueError("Mapping function must be a callable.")
+
         self.map_fn = fn
 
     def _set_up_reader(self, data_dir, subset):
@@ -285,7 +274,7 @@ class HDF5Dataset(torch.utils.data.Dataset):
 
         reader = H5Reader(
             data_dirs=data_dir,
-            sequence_length=self.msl,
+            sequence_length=self.max_sequence_length,
             read_extra_token=True,
             data_subset=subset,
             sort=self.sort_files,
@@ -294,7 +283,7 @@ class HDF5Dataset(torch.utils.data.Dataset):
         return reader
 
     def __getitem__(self, i):
-        if i == self.sampler.pad_index:
+        if i == pad_index:
             if not self.pad_last:
                 raise RuntimeError(
                     "Unexpectedly encountered the pad index when pad_last was False"
@@ -311,28 +300,85 @@ class HDF5Dataset(torch.utils.data.Dataset):
         return len(self.reader)
 
 
-class MultiModalHDF5Dataset(HDF5Dataset):
-    """
-    Specialized HDF5 dataset class to handle image preprocessing in
-    multimodal datasets
-    Functionality is largely the same as `HDF5Dataset` except
-    with added image loading and preprocessing
-    Args:
-        params (dict): a dictionary containing the following added fields:
-            - "img_data_dir" (str): the path to the directory containing
-                the images.
-            - "fp16_type" (str): the half dtype cast for the image
-            - "image_data_size" (list[int]): the final C x H x W shape of
-                the image
-            - "transforms" (list[dict]): a specification of the torchvision
-                transforms
+class MLMHDF5Dataset(HDF5Dataset):
+    """Dataset class to handle text preprocessing in bert mlm datasets.
 
+    Args:
+        params (dict): A dictionary containing parameters that `HDF5Dataset` accepts
+            along with the following add-ons:
+            - "data_dir" (str): the path to the directory containing the images.
+            - "transforms" (list[dict]): a specification of the torchvision transforms.
     """
 
     def __init__(self, params):
         super().__init__(params)
+
+    def _set_up_reader(self, data_dir, subset):
+        if not isinstance(data_dir, list):
+            data_dir = [data_dir]
+        if self.use_worker_cache and cstorch.use_cs() and dist.is_streamer():
+            data_dir = [create_worker_cache(d) for d in data_dir]
+
+        reader = H5Reader(
+            data_dirs=data_dir,
+            extra_data_keys=["labels"],
+            sequence_length=self.max_sequence_length,
+            read_extra_token=True,
+            data_subset=subset,
+            sort=self.sort_files,
+            use_vsl=self.use_vsl,
+        )
+        return reader
+
+    def generate_sample(self):
+        data_sample = super().generate_sample()
+        # generate an empty tensor with the same shape and dtype
+        # as an processed image from its dataset
+
+        shape = self.reader.vdataset_full["labels"].shape[1:]
+        np_dtype = self.reader.vdataset_full["labels"].dtype
+        dtype = cstorch.from_numpy(numpy.empty(0).astype(np_dtype)).dtype
+        labels_sample = PaddingSample(shape, dtype)
+
+        return data_sample, labels_sample
+
+    def __getitem__(self, i):
+        if i == pad_index:
+            if not self.pad_last:
+                raise RuntimeError(
+                    "Unexpectedly encountered the pad index when pad_last was False"
+                )
+            x = self.generate_sample()
+        else:
+            x = self.reader[i]
+
+        if self.map_fn is not None:
+            data = self.map_fn(x)
+            return data
+
+        data, labels = x["data"], x["labels"]
+
+        return data, labels
+
+
+class MultiModalHDF5Dataset(HDF5Dataset):
+    """Dataset class to handle image preprocessing in multimodal datasets.
+
+    This class is largely the same as the parent class `HDF5Dataset` except
+    with added image loading and preprocessing.
+
+    Args:
+        params (dict): A dictionary containing parameters that `HDF5Dataset` accepts
+            along with the following add-ons:
+            - "img_data_dir" (str): the path to the directory containing the images.
+            - "image_data_size" (list[int]): the final C x H x W shape of the image.
+            - "transforms" (list[dict]): a specification of the torchvision transforms.
+    """
+
+    def __init__(self, params):
+        super().__init__(params)
+
         self.img_data_dir = params["img_data_dir"]
-        self.fp16_type = params["fp16_type"]
         self.image_data_size = params["image_data_size"]  # (C, H, W)
         self.transforms = get_preprocess_transform(
             {
@@ -341,11 +387,15 @@ class MultiModalHDF5Dataset(HDF5Dataset):
             }
         )
 
+        self._state_dict_ignore_keys.add("transforms")
+        self._load_state_ignore_keys.add("img_data_dir")
+        self._load_state_ignore_keys.add("image_data_size")
+
     def generate_sample(self):
         text_sample = super().generate_sample()
         # generate an empty tensor with the same shape and dtype
         # as an processed image from its dataset
-        dtype = cstorch.from_numpy(numpy.empty(0).astype(self.fp16_type)).dtype
+        dtype = cstorch.amp.get_half_dtype()
         img_sample = PaddingSample(self.image_data_size, dtype)
         return text_sample, img_sample
 
@@ -370,7 +420,7 @@ class MultiModalHDF5Dataset(HDF5Dataset):
         reader = H5Reader(
             data_dirs=data_dir,
             extra_data_keys=["img_path"],
-            sequence_length=self.msl,
+            sequence_length=self.max_sequence_length,
             read_extra_token=True,
             data_subset=subset,
             sort=self.sort_files,
@@ -379,7 +429,7 @@ class MultiModalHDF5Dataset(HDF5Dataset):
         return reader
 
     def __getitem__(self, i):
-        if i == self.sampler.pad_index:
+        if i == pad_index:
             if not self.pad_last:
                 raise RuntimeError(
                     "Unexpectedly encountered the pad index when pad_last was False"
@@ -396,3 +446,97 @@ class MultiModalHDF5Dataset(HDF5Dataset):
             return data
 
         return text_data, img_data
+
+
+### H5 format
+# 1. Data: B x 7 x S -- original 6 + token_modality_idx
+# 2. Img_path: list of strings
+# 3. image_data_loc: B x 1 x I * num_patches
+
+
+class MultimodalSimpleHDF5Dataset(MultiModalHDF5Dataset):
+    """Dataset class to handle image preprocessing in multimodal datasets.
+
+    This class is largely the same as the parent class `MultimodalHDF5Dataset` except
+    with added support for multiple images and intermingling of text and images.
+
+    Args:
+        params (dict): A dictionary containing parameters that `HDF5Dataset` accepts
+            along with the following add-ons:
+            - "img_data_dir" (str): the path to the directory containing the images.
+            - "image_data_size" (list[int]): the final C x H x W shape of the image.
+            - "transforms" (list[dict]): a specification of the torchvision transforms.
+    """
+
+    def __init__(self, params):
+        super().__init__(params)
+
+        self.max_num_img = params["max_num_img"]
+        self.num_patches = params["num_patches"]
+        self.image_data_size = list(self.image_data_size)
+        self.image_data_size.insert(0, self.max_num_img)
+
+    def _set_up_reader(self, data_dir, subset):
+        if not isinstance(data_dir, list):
+            data_dir = [data_dir]
+        if self.use_worker_cache and cstorch.use_cs() and dist.is_streamer():
+            data_dir = [create_worker_cache(d) for d in data_dir]
+
+        reader = H5Reader(
+            data_dirs=data_dir,
+            extra_data_keys=["img_path", "img_data_loc"],
+            sequence_length=self.max_sequence_length,
+            read_extra_token=True,
+            data_subset=subset,
+            sort=self.sort_files,
+            use_vsl=self.use_vsl,
+        )
+        return reader
+
+    def generate_sample(self):
+        text_sample, img_sample = super().generate_sample()
+        img_data_loc_sample = PaddingSample(
+            [self.max_num_img, self.num_patches], dtype
+        )
+        return text_sample, img_sample, img_data_loc_sample
+
+    def preprocess_img(self, path_list):
+        img_list = []
+        for path in path_list:
+            path = path.decode("utf-8")
+            if path != "None":
+                image_path = os.path.join(self.img_data_dir, path)
+                image = Image.open(image_path).convert("RGB")
+            else:
+                image = Image.new(
+                    mode="RGB",
+                    size=(self.image_data_size[2], self.image_data_size[1]),
+                )
+            img_list.append(self.transforms(image).unsqueeze(0))
+
+        img = torch.cat(img_list, dim=0)
+        return img
+
+    def __getitem__(self, i):
+        if i == pad_index:
+            if not self.pad_last:
+                raise RuntimeError(
+                    "Unexpectedly encountered the pad index when pad_last was False"
+                )
+            text_data, img_data, img_data_loc = self.generate_sample()
+        else:
+            data = self.reader[i]
+            text_data, img_path, img_data_loc = (
+                data["data"],
+                data["img_path"],
+                data["img_data_loc"],
+            )
+            img_data = self.preprocess_img(img_path)
+
+        if self.map_fn is not None:
+            data = self.map_fn(text_data)
+            data["image_data"] = img_data
+            data["image_data_loc"] = img_data_loc
+            return data
+
+        return text_data, img_data, img_data_loc

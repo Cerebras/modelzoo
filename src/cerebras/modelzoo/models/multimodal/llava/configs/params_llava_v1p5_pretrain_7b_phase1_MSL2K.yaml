@@ -5,11 +5,8 @@
 
 train_input: 
   data_processor: "LlavaHDF5MapDataProcessor"
-  data_dir: "./llava_phase_1_shuffled"
+  data_dir: "./llava_phase_1_shuffled_4_features"
   img_data_dir: "./LLaVA/LLaVA-Pretrain/images"
-  bos_token_id: 1
-  pad_token_id: 0
-  fp16_type: bfloat16
   image_data_size: [3, 336, 336]
   mixed_precision: true
   transforms:
@@ -37,11 +34,8 @@ train_input:
 
 eval_input: 
   data_processor: "LlavaHDF5MapDataProcessor"
-  data_dir: "./llava_phase_1_shuffled"
+  data_dir: "./llava_phase_1_shuffled_4_features"
   img_data_dir: "./LLaVA/LLaVA-Pretrain/images"
-  bos_token_id: 1
-  pad_token_id: 0
-  fp16_type: bfloat16
   image_data_size: [3, 336, 336]
   mixed_precision: true
   transforms:
@@ -154,7 +148,7 @@ model:
   image_feature_select_mode: "patch"
   
   mixed_precision: True
-  fp16_type: "bfloat16"
+  fp16_type: "cbfloat16"
 
 # FIXME: filler
 optimizer:
@@ -174,6 +168,7 @@ optimizer:
       end_learning_rate: 0.0
       total_iters: 2114
   log_summaries: True
+  loss_scaling_factor: "dynamic"
   
 runconfig:
   max_steps: 2180

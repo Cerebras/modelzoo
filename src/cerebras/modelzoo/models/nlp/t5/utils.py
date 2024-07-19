@@ -18,7 +18,7 @@ def set_defaults(params):
     Update any missing parameters in the params dictionary with default values
 
     Args:
-        params: The dictionary containing the params
+        params/dict: The dictionary containing the params
     """
     params["model"]["src_max_position_embeddings"] = params["model"].get(
         "src_max_position_embeddings",

@@ -24,24 +24,18 @@ from cerebras.modelzoo.common.utils.run.cli_pytorch import get_params_from_args
 
 
 def main():
-    params = get_params_from_args()
-    from cerebras.modelzoo.models.nlp.bert.extractive_summarization.utils import (
-        set_defaults,
-    )
 
-    set_defaults(params)
+    params = get_params_from_args()
+
     from cerebras.modelzoo.common.run_utils import main
     from cerebras.modelzoo.models.nlp.bert.extractive_summarization.data import (
         eval_input_dataloader,
         train_input_dataloader,
     )
-    from cerebras.modelzoo.models.nlp.bert.extractive_summarization.model import (
-        BertSummarizationModel,
-    )
 
     main(
         params,
-        BertSummarizationModel,
+        "bert/extractive_summarization",
         train_input_dataloader,
         eval_input_dataloader,
     )

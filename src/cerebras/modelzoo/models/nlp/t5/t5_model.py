@@ -37,6 +37,9 @@ import torch
 import torch.nn as nn
 
 import cerebras.pytorch as cstorch
+from cerebras.modelzoo.common.utils.model.mup_utils import (
+    scale_initializers_by_dimension,
+)
 from cerebras.modelzoo.common.utils.model.transformer_utils import (
     create_broadcasted_autoregressive_mask,
     make_key_padding_mask_broadcastable,
@@ -179,8 +182,21 @@ class T5ForConditionalGeneration(nn.Module):
         use_ffn_bias=False,
         label_smoothing=0.0,
         use_transformer_initialization=False,
+        # muP (maximal update parameterization)  parameters
+        lr_adjustment_groups=None,
+        mup_base_d_model=None,
+        mup_base_d_ff=None,
+        mup_base_d_kv=None,
+        embeddings_alpha=1.0,
+        encoder_attention_logits_alpha=1.0,
+        decoder_attention_logits_alpha=1.0,
+        scale_encoder_qk_dot_by_d=False,
+        scale_decoder_qk_dot_by_d=False,
+        scale_output_logits_by_d=False,
+        output_logits_alpha=None,
         attention_module="aiayn_attention",
         extra_attention_params={},
+        dtype=None,
         **kwargs,
     ):
         super().__init__()
@@ -199,6 +215,8 @@ class T5ForConditionalGeneration(nn.Module):
         self.position_embedding_type = position_embedding_type
         self.label_smoothing = label_smoothing
         self.decoder_num_heads = num_heads
+
+        self.dtype = dtype
 
         if decoder_num_hidden_layers is None:
             decoder_num_hidden_layers = encoder_num_hidden_layers
@@ -220,52 +238,202 @@ class T5ForConditionalGeneration(nn.Module):
         if position_embedding_type == "learned_absolute":
             position_embedding_type = "learned"
 
-        self.encoder_embeddings = EmbeddingLayer(
-            src_vocab_size,
-            d_model,
-            embeddings_initializer={
+        # Initialization
+        if use_transformer_initialization:
+            embeddings_initializer = {
                 "name": "truncated_normal",
                 "mean": 0.0,
                 "std": 1.0,
                 "a": -2.0,
                 "b": 2.0,
             }
-            if use_transformer_initialization
-            else {
+            attention_q_initializer = {
+                "name": "variance_scaling",
+                "scale": 1.0 / (d_kv * 9.0),
+                "mode": "fan_avg",
+                "distribution": "uniform",
+            }
+            attention_initializer = {
+                "name": "variance_scaling",
+                "scale": 1.0 / 9.0,
+                "mode": "fan_avg",
+                "distribution": "uniform",
+            }
+            ffn_initializer = {"name": "xavier_uniform", "gain": 1.0}
+            ffn_output_layer_initializer = {
+                "name": "xavier_uniform",
+                "gain": 1.0,
+            }
+        else:
+            embeddings_initializer = {
                 "name": "normal",
                 "mean": 0.0,
                 "std": initializer_factor * 1.0,
-            },
+            }
+            attention_q_initializer = {
+                "name": "normal",
+                "mean": 0.0,
+                "std": initializer_factor * ((d_model * d_kv) ** -0.5),
+            }
+            attention_initializer = {
+                "name": "normal",
+                "mean": 0.0,
+                "std": initializer_factor * (d_model**-0.5),
+            }
+            ffn_initializer = {
+                "name": "normal",
+                "mean": 0.0,
+                "std": initializer_factor * (d_model**-0.5),
+            }
+            ffn_output_layer_initializer = {
+                "name": "normal",
+                "mean": 0.0,
+                "std": initializer_factor * (d_ff**-0.5),
+            }
+        encoder_output_layer_initializer = attention_initializer.copy()
+        decoder_output_layer_initializer = attention_initializer.copy()
+        encoder_ffn_output_layer_initializer = (
+            ffn_output_layer_initializer.copy()
+        )
+        decoder_ffn_output_layer_initializer = (
+            ffn_output_layer_initializer.copy()
+        )
+
+        scale_qk_dot = (
+            use_transformer_initialization or mup_base_d_model or mup_base_d_ff
+        )
+        # Handle muP scaling
+        q_projection_scale = 1.0
+        k_projection_scale = 1.0
+        v_projection_scale = 1.0
+        output_projection_scale = 1.0
+        self.embeddings_scale = embeddings_alpha
+        self.output_logits_scale = None
+        self.mup_base_d_model = mup_base_d_model
+        if mup_base_d_model and not use_transformer_initialization:
+            d_model_width_mult = d_model / mup_base_d_model
+            self.embeddings_scale *= d_model**0.5
+            scale_initializers_by_dimension(
+                embeddings_initializer,
+                width_scale=d_model**-0.5,
+            )
+            for lr_adjustment_group in [
+                "embedding",
+                "lm_head",
+            ]:
+                lr_adjustment_groups[lr_adjustment_group].set_scale(
+                    1 / d_model_width_mult**0.5
+                )
+            for lr_adjustment_group in [
+                "decoder_input_ffn",
+                "encoder_input_ffn",
+            ]:
+                lr_adjustment_groups[lr_adjustment_group].set_scale(
+                    1 / d_model_width_mult
+                )
+            if not output_logits_alpha:
+                output_logits_alpha = 1.0
+            if scale_output_logits_by_d:
+                self.output_logits_scale = (
+                    output_logits_alpha / d_model_width_mult
+                )
+            else:
+                self.output_logits_scale = (
+                    output_logits_alpha / d_model_width_mult**0.5
+                )
+            if mup_base_d_kv:
+                # If varying d_kv, the q, k, v projections are considered
+                # hidden weights
+                scale_initializers_by_dimension(
+                    encoder_output_layer_initializer,
+                    width_scale=(d_model**0.5)
+                    / (self.attention_inner_dim**0.5),
+                    depth_scale=2 * encoder_num_hidden_layers,
+                )
+                scale_initializers_by_dimension(
+                    decoder_output_layer_initializer,
+                    width_scale=(d_model**0.5)
+                    / (self.attention_inner_dim**0.5),
+                    depth_scale=2 * decoder_num_hidden_layers,
+                )
+                for lr_adjustment_group in [
+                    "decoder_qkv_projection",
+                    "encoder_qkv_projection",
+                ]:
+                    lr_adjustment_groups[lr_adjustment_group].set_scale(
+                        1 / d_model_width_mult
+                    )
+                for lr_adjustment_group in [
+                    "decoder_output_projection",
+                    "encoder_output_projection",
+                ]:
+                    lr_adjustment_groups[lr_adjustment_group].set_scale(
+                        mup_base_d_kv / d_kv
+                    )
+            else:
+                q_projection_scale = d_model_width_mult**-0.5
+                k_projection_scale = d_model_width_mult**-0.5
+                v_projection_scale = d_model_width_mult**-0.5
+                output_projection_scale = d_model_width_mult**0.5
+                scale_initializers_by_dimension(
+                    encoder_output_layer_initializer,
+                    depth_scale=2 * encoder_num_hidden_layers,
+                )
+                scale_initializers_by_dimension(
+                    decoder_output_layer_initializer,
+                    depth_scale=2 * decoder_num_hidden_layers,
+                )
+                for lr_adjustment_group in [
+                    "decoder_qkv_projection",
+                    "encoder_qkv_projection",
+                    "decoder_output_projection",
+                    "encoder_output_projection",
+                ]:
+                    lr_adjustment_groups[lr_adjustment_group].set_scale(
+                        1 / d_model_width_mult**0.5
+                    )
+
+        if mup_base_d_ff and not use_transformer_initialization:
+            scale_initializers_by_dimension(
+                encoder_ffn_output_layer_initializer,
+                depth_scale=2 * encoder_num_hidden_layers,
+            )
+            scale_initializers_by_dimension(
+                decoder_ffn_output_layer_initializer,
+                depth_scale=2 * decoder_num_hidden_layers,
+            )
+            for lr_adjustment_group in [
+                "encoder_output_ffn",
+                "decoder_output_ffn",
+            ]:
+                lr_adjustment_groups[lr_adjustment_group].set_scale(
+                    mup_base_d_ff / d_ff
+                )
+
+        self.encoder_embeddings = EmbeddingLayer(
+            src_vocab_size,
+            d_model,
+            embeddings_initializer=embeddings_initializer,
             max_position_embeddings=src_max_position_embeddings,
             position_embedding_type=position_embedding_type,
             # RPE:
             num_heads=num_heads,
             bidirectional=True,
             num_relative_attention_buckets=relative_attention_num_buckets,
+            dtype=dtype,
         )
 
         self.decoder_embeddings = EmbeddingLayer(
             tgt_vocab_size,
             d_model,
-            embeddings_initializer={
-                "name": "truncated_normal",
-                "mean": 0.0,
-                "std": 1.0,
-                "a": -2.0,
-                "b": 2.0,
-            }
-            if use_transformer_initialization
-            else {
-                "name": "normal",
-                "mean": 0.0,
-                "std": initializer_factor * 1.0,
-            },
+            embeddings_initializer=embeddings_initializer,
             max_position_embeddings=tgt_max_position_embeddings,
             position_embedding_type=position_embedding_type,
             # RPE:
             num_heads=num_heads,
             bidirectional=False,
             num_relative_attention_buckets=relative_attention_num_buckets,
+            dtype=dtype,
         )
 
         if self.share_encoder_decoder_embedding:
@@ -325,9 +493,15 @@ class T5ForConditionalGeneration(nn.Module):
             norm_first=use_pre_encoder_decoder_layer_norm,
             batch_first=True,
             extra_attention_params=extra_attention_params,
-            attention_type="scaled_dot_product"
-            if use_transformer_initialization
-            else "dot_product",
+            attention_type=(
+                "scaled_dot_product" if scale_qk_dot else "dot_product"
+            ),
+            scale_qk_dot_by_d=scale_encoder_qk_dot_by_d,
+            attention_logits_alpha=encoder_attention_logits_alpha,
+            q_projection_scale=q_projection_scale,
+            k_projection_scale=k_projection_scale,
+            v_projection_scale=v_projection_scale,
+            output_projection_scale=output_projection_scale,
             attention_module=attention_module,
             attention_inner_dim=self.attention_inner_dim,
             attention_softmax_fp32=attention_softmax_fp32,
@@ -337,44 +511,11 @@ class T5ForConditionalGeneration(nn.Module):
             ffn_dropout_rate=relu_dropout_rate,
             use_ff_layer1_dropout=True,
             use_ff_layer2_dropout=True,
-            attention_q_initializer={
-                "name": "variance_scaling",
-                "scale": 1.0 / (d_kv * 9.0),
-                "mode": "fan_avg",
-                "distribution": "uniform",
-            }
-            if use_transformer_initialization
-            else {
-                "name": "normal",
-                "mean": 0.0,
-                "std": initializer_factor * ((d_model * d_kv) ** -0.5),
-            },
-            attention_initializer={
-                "name": "variance_scaling",
-                "scale": 1.0 / 9.0,
-                "mode": "fan_avg",
-                "distribution": "uniform",
-            }
-            if use_transformer_initialization
-            else {
-                "name": "normal",
-                "mean": 0.0,
-                "std": initializer_factor * (d_model**-0.5),
-            },
-            ffn_initializer={"name": "xavier_uniform", "gain": 1.0}
-            if use_transformer_initialization
-            else {
-                "name": "normal",
-                "mean": 0.0,
-                "std": initializer_factor * (d_model**-0.5),
-            },
-            ffn_output_layer_initializer={"name": "xavier_uniform", "gain": 1.0}
-            if use_transformer_initialization
-            else {
-                "name": "normal",
-                "mean": 0.0,
-                "std": initializer_factor * (d_ff**-0.5),
-            },
+            attention_q_initializer=attention_q_initializer,
+            attention_initializer=attention_initializer,
+            attention_output_layer_initializer=encoder_output_layer_initializer,
+            ffn_initializer=ffn_initializer,
+            ffn_output_layer_initializer=encoder_ffn_output_layer_initializer,
         )
 
         encoder_final_layer_norm = norm_class(d_model, eps=layer_norm_epsilon)
@@ -400,9 +541,15 @@ class T5ForConditionalGeneration(nn.Module):
             norm_first=use_pre_encoder_decoder_layer_norm,
             batch_first=True,
             extra_attention_params=extra_attention_params,
-            attention_type="scaled_dot_product"
-            if use_transformer_initialization
-            else "dot_product",
+            attention_type=(
+                "scaled_dot_product" if scale_qk_dot else "dot_product"
+            ),
+            scale_qk_dot_by_d=scale_decoder_qk_dot_by_d,
+            attention_logits_alpha=decoder_attention_logits_alpha,
+            q_projection_scale=q_projection_scale,
+            k_projection_scale=k_projection_scale,
+            v_projection_scale=v_projection_scale,
+            output_projection_scale=output_projection_scale,
             attention_module=attention_module,
             attention_inner_dim=self.attention_inner_dim,
             use_projection_bias_in_attention=use_projection_bias_in_attention,
@@ -411,44 +558,11 @@ class T5ForConditionalGeneration(nn.Module):
             use_ffn_bias=use_ffn_bias,
             use_ff_layer1_dropout=True,
             use_ff_layer2_dropout=True,
-            attention_q_initializer={
-                "name": "variance_scaling",
-                "scale": 1.0 / (d_kv * 9.0),
-                "mode": "fan_avg",
-                "distribution": "uniform",
-            }
-            if use_transformer_initialization
-            else {
-                "name": "normal",
-                "mean": 0.0,
-                "std": initializer_factor * ((d_model * d_kv) ** -0.5),
-            },
-            attention_initializer={
-                "name": "variance_scaling",
-                "scale": 1.0 / 9.0,
-                "mode": "fan_avg",
-                "distribution": "uniform",
-            }
-            if use_transformer_initialization
-            else {
-                "name": "normal",
-                "mean": 0.0,
-                "std": initializer_factor * (d_model**-0.5),
-            },
-            ffn_initializer={"name": "xavier_uniform", "gain": 1.0}
-            if use_transformer_initialization
-            else {
-                "name": "normal",
-                "mean": 0.0,
-                "std": initializer_factor * (d_model**-0.5),
-            },
-            ffn_output_layer_initializer={"name": "xavier_uniform", "gain": 1.0}
-            if use_transformer_initialization
-            else {
-                "name": "normal",
-                "mean": 0.0,
-                "std": initializer_factor * (d_ff**-0.5),
-            },
+            attention_q_initializer=attention_q_initializer,
+            attention_initializer=attention_initializer,
+            attention_output_layer_initializer=decoder_output_layer_initializer,
+            ffn_initializer=ffn_initializer,
+            ffn_output_layer_initializer=decoder_ffn_output_layer_initializer,
         )
 
         decoder_final_layer_norm = norm_class(d_model, eps=layer_norm_epsilon)
@@ -486,9 +600,15 @@ class T5ForConditionalGeneration(nn.Module):
     def __reset_parameters(self):
         # Initialize LM head
         if not self.share_embedding_weights:
-            self.lm_head.weight.data.normal_(
-                mean=0.0, std=self.initializer_factor * 1.0
-            )
+            if self.mup_base_d_model:
+                self.lm_head.weight.data.normal_(
+                    mean=0.0,
+                    std=self.initializer_factor / self.d_model**0.5,
+                )
+            else:
+                self.lm_head.weight.data.normal_(
+                    mean=0.0, std=self.initializer_factor
+                )
 
     # Helper function `forward` for computing everything up to (but not
     # including) the model head. This is helpful for models that inherit from
@@ -499,10 +619,13 @@ class T5ForConditionalGeneration(nn.Module):
         attention_mask=None,
         prepend_embeddings=None,
     ):
+
         src = self.encoder_embeddings(input_ids)
 
         if prepend_embeddings is not None:
             src = torch.cat([prepend_embeddings, src], dim=1)
+
+        src = src * torch.tensor(float(self.embeddings_scale), dtype=src.dtype)
 
         # Transformer uses pre-encoder dropout
         if self.pre_encoder_dropout:
@@ -562,6 +685,10 @@ class T5ForConditionalGeneration(nn.Module):
             decoder_input_ids = self._shift_right(labels)
 
         decoder_inputs_embeds = self.decoder_embeddings(decoder_input_ids)
+
+        decoder_inputs_embeds = decoder_inputs_embeds * torch.tensor(
+            float(self.embeddings_scale), dtype=decoder_inputs_embeds.dtype
+        )
 
         # Transformer uses dropout before feeding to decoder module while
         # T5 does not use this layer
@@ -625,6 +752,7 @@ class T5ForConditionalGeneration(nn.Module):
         use_cache=None,
         prepend_embeddings=None,
     ):
+
         if encoder_outputs is None:
             hidden_states = self.compute_hidden_states(
                 input_ids,
@@ -699,17 +827,27 @@ class T5ForConditionalGeneration(nn.Module):
             prepend_embeddings=prepend_embeddings,
         )
 
-        if self.share_embedding_weights:
+        if self.share_embedding_weights and not self.output_logits_scale:
             # Rescale output before projecting on vocab
             # See https://github.com/tensorflow/mesh/blob/fa19d69eafc9a482aff0b59ddd96b025c0cb207d/mesh_tensorflow/transformer/transformer.py#L586
             sequence_output = sequence_output * (self.d_model**-0.5)
 
         if (
             cstorch.use_cs()
-            and cstorch.current_executor().cs_config.precision_opt_level == 1
+            and cstorch.backends.csx.precision.optimization_level == 1
         ):
-            return cstorch.pol(bwd_level=0)(self.lm_head)(sequence_output)
-        return self.lm_head(sequence_output)
+            lm_logits = cstorch.pol(bwd_level=0)(self.lm_head)(sequence_output)
+        else:
+            lm_logits = self.lm_head(sequence_output)
+
+        # scale lm_logits for muP transfer
+        if self.output_logits_scale:
+            lm_logits = lm_logits * torch.tensor(
+                float(self.output_logits_scale),
+                dtype=lm_logits.dtype,
+            )
+
+        return lm_logits
 
     def tie_weights(self):
         """

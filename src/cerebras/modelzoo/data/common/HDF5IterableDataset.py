@@ -150,6 +150,12 @@ class HDF5IterableDataset(torch.utils.data.IterableDataset):
         self.data_dir = params["data_dir"]
         self.batch_size = get_streaming_batch_size(params["batch_size"])
 
+        if params["batch_size"] % self.batch_size != 0:
+            raise ValueError(
+                f"\"{self.__class__.__name__}\" requires the global batch size "
+                f"{params['batch_size']} to be divisible by num_csx."
+            )
+
         self.shuffle = params["shuffle"]
         self.shuffle_seed = params.get("shuffle_seed", None)
 

@@ -920,7 +920,10 @@ class Converter_LlamaForCausalLM_CS20_CS21(Converter_GPT2LMHeadModel_CS20_CS21):
 class Converter_LlamaModel_HF_CS21(Converter_LlamaModel_HF_CS20):
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-2.1", "cs-2.2"))
+        return (
+            FormatVersions("hf"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
+        )
 
     @staticmethod
     def get_config_converter_class() -> BaseConfigConverter:
@@ -930,7 +933,10 @@ class Converter_LlamaModel_HF_CS21(Converter_LlamaModel_HF_CS20):
 class Converter_LlamaForCausalLM_HF_CS21(Converter_LlamaForCausalLM_HF_CS20):
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-2.1", "cs-2.2"))
+        return (
+            FormatVersions("hf"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
+        )
 
     @staticmethod
     def get_config_converter_class() -> BaseConfigConverter:
@@ -993,7 +999,10 @@ class ConfigConverter_LLaMa_HF_CS21(ConfigConverter_LLaMa_HF_CS20):
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-2.1", "cs-2.2"))
+        return (
+            FormatVersions("hf"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
+        )
 
     def supports_mup_conversion(self):
         return True

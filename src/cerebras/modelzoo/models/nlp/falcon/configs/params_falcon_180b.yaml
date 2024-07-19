@@ -9,7 +9,6 @@
 train_input:
     data_processor: "GptHDF5MapDataProcessor"
     data_dir: "./shuffled/falcon_data_test/val"
-    vocab_size: 65024
     shuffle: False
     shuffle_seed: 1
     batch_size: 30
@@ -20,7 +19,6 @@ train_input:
 eval_input:
     data_processor: "GptHDF5MapDataProcessor"
     data_dir: "./shuffled/falcon_data_test/test"
-    vocab_size: 65024
     shuffle: False
     shuffle_seed: 1
     batch_size: 30
@@ -90,4 +88,4 @@ runconfig:
     checkpoint_steps: 5000
     seed: 1
     eval_frequency: 5000
-
+    execute_crd_memory_gi: 50

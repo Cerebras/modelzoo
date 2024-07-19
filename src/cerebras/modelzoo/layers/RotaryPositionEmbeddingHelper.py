@@ -34,6 +34,7 @@ class RotaryPositionEmbeddingHelper:
         base=10000,
         scaling_factor=1.0,
         pad_fixed_pos_emb=False,
+        constant_pos_embedding=None,
     ):
         super(RotaryPositionEmbeddingHelper, self).__init__()
         self.max_position_embeddings = max_position_embeddings
@@ -44,8 +45,24 @@ class RotaryPositionEmbeddingHelper:
         self.offset = 0
         self.scaling_factor = scaling_factor
         self.pad_fixed_pos_emb = pad_fixed_pos_emb
+        self.constant_pos_embedding = constant_pos_embedding
+        # force pad_fixed_pos_emb to True when constant_pos_embedding is enabled.
+        if constant_pos_embedding is not None:
+            self.pad_fixed_pos_emb = True
 
-    def _create_padded_fixed_pos_emb(self, x, offset):
+    def _constant_image_pos(self, x, t, constant_pos_mask):
+        constant_pos_mask = constant_pos_mask[:, :, None, None].broadcast_to(
+            x.shape
+        )
+        # TODO: only support two modalities, the values in `constant_pos_mask`
+        # are either 0 or 1.
+        image_mask = 1 - constant_pos_mask
+        image_pos_id = constant_pos_mask * self.constant_pos_embedding
+        t = t * image_mask  # Mask image portion to 0
+        t = t + image_pos_id  # set pos id of image portion to the constant
+        return t
+
+    def _create_padded_fixed_pos_emb(self, x, offset, constant_pos_mask=None):
         assert (
             self.max_position_embeddings >= x.shape[1] + offset
         ), "RoPE requires max position embeddings ({}) >= sequence length ({}) + offset ({})".format(
@@ -53,6 +70,10 @@ class RotaryPositionEmbeddingHelper:
             x.shape[1],
             offset,
         )
+        assert (self.constant_pos_embedding is None) or (
+            self.constant_pos_embedding is not None
+            and constant_pos_mask is not None
+        ), "constant_pos_embedding is enabled, but 'constant_pos_mask' is not provided."
 
         inv_freq_arange = (
             torch.arange(
@@ -67,8 +88,12 @@ class RotaryPositionEmbeddingHelper:
         t = torch.arange(
             offset, x.shape[1] + offset, device=x.device, dtype=torch.float32
         )[:, None, None].broadcast_to(x.shape)
+        if (
+            constant_pos_mask is not None
+            and self.constant_pos_embedding is not None
+        ):
+            t = self._constant_image_pos(x, t, constant_pos_mask)
         t = t / self.scaling_factor
-
         sinusoid_inp = t * inv_freq
 
         sin, cos = (
@@ -143,7 +168,9 @@ class RotaryPositionEmbeddingHelper:
         self.cos_cached = cstorch.make_constant(cos)
         return self.sin_cached, self.cos_cached
 
-    def _apply_rotary_pos_emb(self, x, real_seq_length, offset=0, pad=False):
+    def _apply_rotary_pos_emb(
+        self, x, real_seq_length, offset=0, pad=False, constant_pos_mask=None
+    ):
         def rotate_every_two(x):
             x1 = x[:, :, :, ::2]
             x2 = x[:, :, :, 1::2]
@@ -152,7 +179,9 @@ class RotaryPositionEmbeddingHelper:
             return x.flatten(-2)
 
         if pad:
-            sin, cos = self._create_padded_fixed_pos_emb(x, offset)
+            sin, cos = self._create_padded_fixed_pos_emb(
+                x, offset, constant_pos_mask=constant_pos_mask
+            )
         else:
             sin, cos = self._create_fixed_pos_emb(x, offset)
 
@@ -168,12 +197,18 @@ class RotaryPositionEmbeddingHelper:
         x = torch.cat([x_rotated, x_pass], dim=-1)
         return x
 
-    def rotate_tensor(self, x, real_seq_length, offset=0):
+    def rotate_tensor(
+        self, x, real_seq_length, offset=0, constant_pos_mask=None
+    ):
         assert (
             len(x.shape) == 4
         ), "Tensor should be of shape [batch_size, seq_length, num_heads, head_dim] !"
         if self.pad_fixed_pos_emb:
             return self._apply_rotary_pos_emb(
-                x, real_seq_length, offset=offset, pad=True
+                x,
+                real_seq_length,
+                offset=offset,
+                pad=True,
+                constant_pos_mask=constant_pos_mask,
             )
         return self._rotate_sliced_tensor(x, real_seq_length, offset=offset)

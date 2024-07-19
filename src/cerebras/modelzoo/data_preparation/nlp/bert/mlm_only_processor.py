@@ -173,6 +173,7 @@ def data_generator(
     elif (min_short_seq_length < (2 + overlap_size)) or (
         min_short_seq_length > max_seq_length - 2
     ):
+
         raise ValueError(
             f"The min_short_seq_len param {min_short_seq_length} is invalid. \n"
             f"Allowed values are [{2 + overlap_size}, {max_seq_length - 2})"
@@ -300,6 +301,7 @@ def create_masked_lm_features(
     output_type_shapes,
     inverted_mask,
 ):
+
     exclude_from_masking = list(
         set(["[CLS]", "[SEP]", document_separator_token])
     )

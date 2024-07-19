@@ -108,6 +108,7 @@ def pad_instance_to_max_seq_length(
     output_type_shapes,
     inverted_mask,
 ):
+
     input_ids = tokenizer.convert_tokens_to_ids(instance.tokens)
     input_mask = [1] * len(input_ids)
 

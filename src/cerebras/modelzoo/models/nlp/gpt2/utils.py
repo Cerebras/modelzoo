@@ -15,9 +15,9 @@
 
 def set_attention_params(params):
     '''
-    Set attention related params
-    :param params: model_params
-    :return:
+    Set attention-related parameters.
+    :param params: An object containing model, runconfig attributes
+    :return: None
     '''
     # Attention softmax is fp32 by default.
     params["model"]["attention_softmax_fp32"] = True
@@ -37,7 +37,7 @@ def set_defaults(params):
     Update any missing parameters in the params dictionary with default values
 
     Args:
-        params: The dictionary containing the params
+        params/object: The dictionary containing the params
     """
     if (
         params.get("train_input", {}).get("data_processor")
@@ -83,6 +83,7 @@ def set_defaults(params):
     params["runconfig"]["precision_opt_level"] = params["runconfig"].get(
         "precision_opt_level", 1
     )
+
     set_attention_params(params)
 
     return params

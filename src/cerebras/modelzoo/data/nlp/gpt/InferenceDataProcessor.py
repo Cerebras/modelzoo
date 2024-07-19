@@ -15,42 +15,121 @@
 import os
 from abc import abstractmethod
 from enum import IntEnum
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
-from tokenizers import Tokenizer
 from tqdm import tqdm
 from transformers import PreTrainedTokenizerBase
 
-from cerebras.modelzoo.common.input_utils import get_streaming_batch_size
+import cerebras.pytorch as cstorch
 from cerebras.modelzoo.common.registry import registry
-from cerebras.modelzoo.common.utils.input.utils import (
-    SamplesSaver,
-    SamplesViewer,
-)
+from cerebras.modelzoo.common.utils.input.utils import SamplesSaver
 
-# RequestType defines how we preprocess task data samples. For generative tasks ("generate_until"),
-# we tokenize the context string only and extract its length and the end token sequences as metadata;
+# RequestType defines how we preprocess task data samples.
+# For Eleuther Eval Harness (EEH),
+# we have generative tasks ("generate_until") where we tokenize the context string only
+# and extract its length and the stop token words as metadata;
 # whereas for nongenerative tasks ("loglikehood"), we tokenize both the context and continuation
 # strings and extract the tokenized lengths as metadata for postprocessing
 # https://github.com/EleutherAI/lm-evaluation-harness/blob/65b8761db922513dada0320b860fabb1b4f01dc3/lm_eval/api/instance.py#L7
-RequestType = IntEnum("RequestType", ["loglikelihood", "generate_until"])
+#
+# For BigCode Eval Harness,
+# we specify "bigcode_eh" as the request type and return the sample idx
+# and prompt encoding length as metadata
+RequestType = IntEnum(
+    "RequestType", ["eeh_loglikelihood", "eeh_generate_until", "bigcode_eh"]
+)
+
+
+class EvalHarnessDataset(torch.utils.data.Dataset):
+    def __init__(
+        self,
+        samples_file_list: List[Tuple[str, int]],
+        dataset_size: int,
+    ):
+        super().__init__()
+
+        if not samples_file_list:
+            raise RuntimeError(
+                "No samples files to load. Please provide a list of "
+                "valid paths to .npy files to load Eval Harness data samples."
+            )
+
+        self._samples_file_paths = []  # Paths of chunked `.npy` files
+        self._num_chunked_samples = []  # Num samples in chunked files
+
+        for samples_file_path, samples_len in samples_file_list:
+            if not os.path.isfile(samples_file_path):
+                raise ValueError(
+                    f"Samples file path is invalid: {samples_file_path}"
+                )
+            self._samples_file_paths.append(samples_file_path)
+            self._num_chunked_samples.append(samples_len)
+
+        self._dataset_size = dataset_size
+        self._chunk_idx = 0
+        self._cumulative_num_samples = np.cumsum(self._num_chunked_samples)
+        self._prev_chunk_len = 0
+        self._samples = None
+
+        self.map_fn = None
+
+    def map(self, fn):
+        if self.map_fn is not None:
+            raise ValueError(
+                f"You may only apply one map function to EvalHarnessDataset"
+            )
+        self.map_fn = fn
+
+    def __len__(self):
+        return self._dataset_size
+
+    def __getitem__(self, idx):
+        if idx >= self._cumulative_num_samples[-1]:
+            raise IndexError(
+                f"Sample index {idx} is out of bounds for samples of size "
+                f"{self._cumulative_num_samples[-1]}"
+            )
+        elif idx >= self._cumulative_num_samples[self._chunk_idx]:
+            # Pick the correct chunked file that comprises the sample
+            self._chunk_idx = np.searchsorted(self._cumulative_num_samples, idx)
+            if idx == self._cumulative_num_samples[self._chunk_idx]:
+                self._chunk_idx += 1
+            self._prev_chunk_len = self._cumulative_num_samples[self._chunk_idx]
+            self._samples = None
+
+        if self._samples is None:
+            samples_file = self._samples_file_paths[self._chunk_idx]
+            try:
+                with open(samples_file, 'rb') as f:
+                    self._samples = np.load(f)
+            except Exception as e:
+                raise RuntimeError(
+                    f"Failed to read chunked samples file: {samples_file}"
+                ) from e
+
+        sample_idx = idx - self._prev_chunk_len
+        sample = self._samples[sample_idx]
+
+        if self.map_fn is not None:
+            return self.map_fn(sample)
+        return sample
 
 
 @registry.register_datasetprocessor("InferenceDataProcessor")
-class InferenceDataProcessor(torch.utils.data.IterableDataset):
+class InferenceDataProcessor:
     def __init__(self, params, samples_file_list, dataset_size):
         super().__init__()
 
-        self.batch_size = get_streaming_batch_size(params["batch_size"])
+        self.batch_size = params["batch_size"]
         self.num_workers = params.get("num_workers", 0)
         if self.num_workers is not None and self.num_workers > 1:
             raise ValueError(
                 "Eval harness does not support multiple process data "
-                "loading for `eval_input.num_workers` > 1, but specified "
+                "loading for `num_workers` > 1, but specified "
                 f"{self.num_workers} worker processes.\nPlease ensure that "
-                "`eval_input.num_workers` is either 0 (default) or 1."
+                "`num_workers` is either 0 (default) or 1."
             )
         self.prefetch_factor = params.get("prefetch_factor", 10)
         self.persistent_workers = params.get("persistent_workers", True)
@@ -64,15 +143,15 @@ class InferenceDataProcessor(torch.utils.data.IterableDataset):
         # input requests for the user-specified evaluation tasks
         self.drop_last = params.get("drop_last", True)
 
-        self.features_list = None
-
-        for samples_file_path in samples_file_list:
-            if not os.path.isfile(samples_file_path):
-                raise ValueError(
-                    f"Samples file path is invalid: {samples_file_path}"
-                )
-        self.samples_iter = SamplesViewer(samples_file_list)
-        self.dataset_size = dataset_size
+        self.dataset = EvalHarnessDataset(samples_file_list, dataset_size)
+        self.sampler = cstorch.utils.data.DistributedSampler(
+            data_source=self.dataset,
+            shuffle=False,
+            shard=True,
+            batch_size=self.batch_size,
+            drop_last=self.drop_last,
+            num_samples=dataset_size,
+        )
 
     @classmethod
     def from_request_type(
@@ -82,19 +161,23 @@ class InferenceDataProcessor(torch.utils.data.IterableDataset):
         samples_file_list: List[str],
         dataset_size: int,
     ) -> "InferenceDataProcessor":
-        if request_type == RequestType.loglikelihood.value:
+        if request_type == RequestType.eeh_loglikelihood.value:
             return InferenceDataProcessorLL(
                 params, samples_file_list, dataset_size
             )
-        elif request_type == RequestType.generate_until.value:
+        elif request_type == RequestType.eeh_generate_until.value:
             return InferenceDataProcessorGU(
+                params, samples_file_list, dataset_size
+            )
+        elif request_type == RequestType.bigcode_eh.value:
+            return InferenceDataProcessorBCEH(
                 params, samples_file_list, dataset_size
             )
         else:
             raise TypeError(
                 f"Invalid request type: {request_type}. At present, only "
-                "`RequestType.loglikelihood` and `RequestType.generate_until` "
-                "request types are supported."
+                "`RequestType.eeh_loglikelihood`, `RequestType.eeh_generate_until` "
+                "and `RequestType.bigcode_eh`request types are supported."
             )
 
     @staticmethod
@@ -102,11 +185,12 @@ class InferenceDataProcessor(torch.utils.data.IterableDataset):
     def _create_data_sample(
         request,
         max_sequence_length: int,
-        tokenizer: Union[Tokenizer, PreTrainedTokenizerBase],
+        tokenizer: PreTrainedTokenizerBase,
         eos_token_id: int,
         inf_start_token: Optional[int] = None,
         max_gen_tokens: Optional[int] = None,
         padded_sample: bool = False,
+        sample_idx: Optional[int] = None,
     ) -> Tuple[np.ndarray, Optional[Any]]:
         """Creates np data sample from the given raw text request. This helper
         is called by `gen_data_samples` and it specifies data sample creation for
@@ -119,13 +203,13 @@ class InferenceDataProcessor(torch.utils.data.IterableDataset):
         requests: List,
         batch_size: int,
         max_sequence_length: int,
-        tokenizer: Union[Tokenizer, PreTrainedTokenizerBase],
+        tokenizer: PreTrainedTokenizerBase,
         eos_token_id: int,
         samples_saver: SamplesSaver,
         request_type: RequestType,
         inf_start_token: Optional[int] = None,
         max_gen_tokens: Optional[int] = None,
-    ) -> Tuple[List[str], int, Tuple[int, int]]:
+    ) -> Tuple[List[str], int, List[Tuple[int, int]]]:
         """Preprocess raw text requests as fetched from
         EEH script into data samples consumable by GPT2
         model and dump these to numpy file.
@@ -154,8 +238,9 @@ class InferenceDataProcessor(torch.utils.data.IterableDataset):
             - int representing the size of the dataset (total no. of samples;
             - tuple of request metadata needed for EEH postprocessing.
         """
-        is_generative = request_type == RequestType.generate_until
-        if is_generative and (
+        is_generative = request_type == RequestType.eeh_generate_until
+        is_bceh = request_type == RequestType.bigcode_eh
+        if (is_bceh or is_generative) and (
             inf_start_token is None or max_gen_tokens is None
         ):
             raise RuntimeError(
@@ -164,25 +249,30 @@ class InferenceDataProcessor(torch.utils.data.IterableDataset):
                 "model params for generative inference tasks."
             )
 
-        data_sample_fn = (
-            InferenceDataProcessorGU._create_data_sample
-            if is_generative
-            else (InferenceDataProcessorLL._create_data_sample)
-        )
+        if is_bceh:
+            data_sample_fn = InferenceDataProcessorBCEH._create_data_sample
+        elif is_generative:
+            data_sample_fn = InferenceDataProcessorGU._create_data_sample
+        else:
+            data_sample_fn = InferenceDataProcessorLL._create_data_sample
 
         requests_len = len(requests)
         requests_metadata = []
 
         ## Generate data samples from request
-        requests_list = [request.args for request in requests]
-        for request in tqdm(requests_list):
+        if is_bceh:
+            requests_list = requests
+        else:
+            requests_list = [request.args for request in requests]
+        for idx, request in tqdm(enumerate(requests_list)):
             sample, metadata = data_sample_fn(
                 request,
-                max_sequence_length,
-                tokenizer,
-                eos_token_id,
-                inf_start_token,
-                max_gen_tokens,
+                max_sequence_length=max_sequence_length,
+                tokenizer=tokenizer,
+                eos_token_id=eos_token_id,
+                inf_start_token=inf_start_token,
+                max_gen_tokens=max_gen_tokens,
+                sample_idx=idx,
             )
             # Add the data sample to the `SamplesSaver` object
             samples_saver.add_sample(sample)
@@ -214,24 +304,13 @@ class InferenceDataProcessor(torch.utils.data.IterableDataset):
             requests_metadata,
         )
 
-    def __len__(self):
-        return self.dataset_size
-
-    def __iter__(self):
-        for sample in self.samples_iter:
-            yield {
-                feature: sample[i]
-                for i, feature in enumerate(self.features_list)
-            }
-
     def create_dataloader(self):
         """
         Classmethod to create the dataloader object.
         """
         dataloader = torch.utils.data.DataLoader(
-            self,
-            batch_size=self.batch_size,
-            drop_last=self.drop_last,
+            dataset=self.dataset,
+            batch_sampler=self.sampler,
             num_workers=self.num_workers,
             prefetch_factor=self.prefetch_factor,
             persistent_workers=self.persistent_workers,
@@ -246,23 +325,30 @@ class InferenceDataProcessorLL(InferenceDataProcessor):
 
     def __init__(self, params, samples_file_list, dataset_size):
         super().__init__(params, samples_file_list, dataset_size)
-
-        self.features_list = [
-            "input_ids",
-            "continuation",
-            "attention_mask",
-            "labels",
-        ]
+        self.dataset.map(
+            fn=lambda x: {
+                f: x[i]
+                for i, f in enumerate(
+                    [
+                        "input_ids",
+                        "continuation",
+                        "attention_mask",
+                        "labels",
+                    ]
+                )
+            }
+        )
 
     @staticmethod
     def _create_data_sample(
         request,
         max_sequence_length: int,
-        tokenizer: Union[Tokenizer, PreTrainedTokenizerBase],
+        tokenizer: PreTrainedTokenizerBase,
         eos_token_id: int,
         inf_start_token: Optional[int] = None,
         max_gen_tokens: Optional[int] = None,
         padded_sample: bool = False,
+        sample_idx: Optional[int] = None,
     ) -> Tuple[np.ndarray, tuple]:
         if padded_sample:
             return np.zeros((4, max_sequence_length), dtype=np.int32), (0, 0)
@@ -332,17 +418,20 @@ class InferenceDataProcessorGU(InferenceDataProcessor):
 
     def __init__(self, params, samples_file_list, dataset_size):
         super().__init__(params, samples_file_list, dataset_size)
-        self.features_list = ["input_ids"]
+        self.dataset.map(
+            fn=lambda x: {f: x[i] for i, f in enumerate(["input_ids"])}
+        )
 
     @staticmethod
     def _create_data_sample(
         request,
         max_sequence_length: int,
-        tokenizer: Union[Tokenizer, PreTrainedTokenizerBase],
+        tokenizer: PreTrainedTokenizerBase,
         eos_token_id: int,
         inf_start_token: Optional[int] = None,
         max_gen_tokens: Optional[int] = None,
         padded_sample: bool = False,
+        sample_idx: Optional[int] = None,
     ) -> Tuple[np.ndarray, tuple]:
         if padded_sample:
             return np.zeros((1, max_sequence_length), dtype=np.int32), ()
@@ -353,11 +442,9 @@ class InferenceDataProcessorGU(InferenceDataProcessor):
         if isinstance(until, str):
             until = [until]
 
-        until_token_seqs = []
-
-        for until_tok_str in until:
-            tokens = get_token_ids(until_tok_str, tokenizer)
-            until_token_seqs.append(tokens)
+        # Add eos token to until (stop words)
+        eos_str = tokenizer.decode([eos_token_id], skip_special_tokens=False)
+        until.append(eos_str)
 
         context_enc = get_token_ids(context, tokenizer)
 
@@ -373,14 +460,56 @@ class InferenceDataProcessorGU(InferenceDataProcessor):
 
         sample_full[0][: len(input_ids)] = input_ids
 
-        # Return sample and (until token sequences, ctx length) as metadata for generative tasks
-        return sample_full, (until_token_seqs, len(context_enc))
+        # Return sample and (until tokens, ctx length) as metadata for generative tasks
+        return sample_full, (until, len(context_enc))
+
+
+@registry.register_datasetprocessor("InferenceDataProcessorBCEH")
+class InferenceDataProcessorBCEH(InferenceDataProcessor):
+    """Subclass for processing BigCode data, i.e. `bigcode_eh` requests."""
+
+    def __init__(self, params, samples_file_list, dataset_size):
+        super().__init__(params, samples_file_list, dataset_size)
+        self.dataset.map(
+            fn=lambda x: {f: x[i] for i, f in enumerate(["input_ids"])}
+        )
+
+    @staticmethod
+    def _create_data_sample(
+        request,
+        max_sequence_length: int,
+        tokenizer: PreTrainedTokenizerBase,
+        eos_token_id: int,
+        inf_start_token: Optional[int] = None,
+        max_gen_tokens: Optional[int] = None,
+        padded_sample: bool = False,
+        sample_idx: Optional[int] = None,
+    ) -> Tuple[np.ndarray, tuple]:
+        if padded_sample:
+            return np.zeros((1, max_sequence_length), dtype=np.int32), ()
+
+        prompt_enc = get_token_ids(request, tokenizer)
+
+        # Truncate context so that generation fits within msl
+        prompt_enc = prompt_enc[-(max_sequence_length - max_gen_tokens) :]
+        input_ids = np.array(prompt_enc, dtype=np.int32)
+
+        sample_full = np.full(
+            shape=(1, max_sequence_length),
+            fill_value=inf_start_token,
+            dtype=np.int32,
+        )
+
+        sample_full[0][: len(input_ids)] = input_ids
+
+        # Return sample and (sample_idx, prompt_enc) as metadata for bigcode generative tasks
+        return sample_full, (sample_idx, len(prompt_enc))
 
 
 def _encode_pair(
     context: str,
     continuation: str,
-    tokenizer: Union[Tokenizer, PreTrainedTokenizerBase],
+    tokenizer: PreTrainedTokenizerBase,
     eos_token_id: int,
 ) -> Tuple[List[int], List[int]]:
     """Encodes a pair of context and continuation strings
@@ -391,7 +520,7 @@ def _encode_pair(
     Args:
         context (str): Context string for a given task.
         continuation (str): Continuation string for a given task.
-        tokenizer (Tokenizer): Tokenizer class from huggingface tokenizers
+        tokenizer (PreTrainedTokenizerBase): Tokenizer class from huggingface transformers
             library.
         eos_token_id (int): int representing the end-of-sentence token id.
 
@@ -417,23 +546,52 @@ def _encode_pair(
     return context_enc, continuation_enc
 
 
-def get_token_ids(
-    text: str, tokenizer: Union[Tokenizer, PreTrainedTokenizerBase]
-) -> List[int]:
+def get_token_ids(text: str, tokenizer: PreTrainedTokenizerBase) -> List[int]:
     """Get encoded token ids from a string using the specified tokenizer.
 
     Args:
         text (str): The input string.
-        tokenizer (Tokenizer): Tokenizer class from huggingface tokenizers
+        tokenizer (PreTrainedTokenizerBase): Tokenizer class from huggingface transformers
             library.
 
     Returns:
         List[int]: List of token ids.
     """
-    encoded_ids = tokenizer.encode(text, add_special_tokens=False)
+    return tokenizer.encode(text, add_special_tokens=False)
 
-    if not isinstance(encoded_ids, list):
-        # depending on the tokenizer instance from pre-trained or file,
-        # the encoded_ids can be a list or an Encoding instance.
-        encoded_ids = encoded_ids.ids
-    return encoded_ids
+
+def tokenize_stop_words(
+    stop_words: List[str], tokenizer: PreTrainedTokenizerBase
+) -> List[List[int]]:
+    """Helper to construct a list of stop token sequences
+    from the given list of stop words using the specified tokenizer.
+
+    For stop words that tokenize to a single token, we iterate the tokenizer's
+    vocab and add all the token_ids that detokenize to the stop word. This is done
+    to handle the case where different token ids map to the same stop word,
+    since RT uses stop tokens, not words to stop inferring.
+
+    For stop words that tokenize to multiple token sequence, we add the sequence
+    directly.
+
+    Args:
+        stop_words (str): The input string.
+        tokenizer (PreTrainedTokenizerBase): Tokenizer class from huggingface transformers
+            library.
+
+    Returns:
+        List[List[int]]: Sorted (by first token id) list of stop token sequences.
+    """
+    stop_sequences = []
+    for stop_word in stop_words:
+        stop_seq = get_token_ids(stop_word, tokenizer)
+        found = False
+        if len(stop_seq) == 1:
+            for _, token_id in tokenizer.get_vocab().items():
+                decoded = tokenizer.decode([token_id], skip_special_tokens=True)
+                if decoded == stop_word:
+                    found = True
+                    stop_sequences.append([token_id])
+        if not found:
+            stop_sequences.append(stop_seq)
+    return sorted(stop_sequences)

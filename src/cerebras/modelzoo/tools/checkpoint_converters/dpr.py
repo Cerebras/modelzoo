@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
+import math
 import re
 from typing import List, Tuple, Type
 
@@ -19,9 +21,11 @@ import torch
 
 from cerebras.modelzoo.tools.checkpoint_converters.base_converter import (
     BaseCheckpointConverter,
+    BaseCheckpointConverter_CS_CS,
     BaseCheckpointConverter_HF_CS,
     BaseCheckpointConverter_UnpackedHF_PackedCS,
     BaseConfigConverter,
+    BaseConfigConverter_CS_CS,
     BaseConfigConverter_UnpackedHF_PackedCS,
     ConversionRule,
     EquivalentSubkey,
@@ -89,7 +93,7 @@ class Converter_DPR_BertWrapper(
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-2.2"))
+        return (FormatVersions("hf"), FormatVersions("cs-2.2", "cs-2.3"))
 
     @staticmethod
     def get_config_converter_class() -> BaseConfigConverter:
@@ -126,7 +130,7 @@ class Converter_DPRQuestionEncoder_HF_CS(BaseCheckpointConverter_HF_CS):
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-2.2"))
+        return (FormatVersions("hf"), FormatVersions("cs-2.2", "cs-2.3"))
 
     @classmethod
     def converter_note(cls) -> str:
@@ -169,7 +173,7 @@ class Converter_DPRContextEncoder_HF_CS(BaseCheckpointConverter_HF_CS):
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-2.2"))
+        return (FormatVersions("hf"), FormatVersions("cs-2.2", "cs-2.3"))
 
     @classmethod
     def converter_note(cls) -> str:
@@ -204,7 +208,7 @@ class Converter_DPRModel_HF_CS22(BaseCheckpointConverter_UnpackedHF_PackedCS):
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-2.2"))
+        return (FormatVersions("hf"), FormatVersions("cs-2.2", "cs-2.3"))
 
     @staticmethod
     def get_config_converter_class() -> BaseConfigConverter:
@@ -257,7 +261,7 @@ class ConfigConverter_DPR_HF_CS(ConfigConverter_Bert_HF_CS21):
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-2.2"))
+        return (FormatVersions("hf"), FormatVersions("cs-2.2", "cs-2.3"))
 
 
 class ConfigConverter_DPRModel_HF_CS22(BaseConfigConverter_UnpackedHF_PackedCS):
@@ -266,6 +270,11 @@ class ConfigConverter_DPRModel_HF_CS22(BaseConfigConverter_UnpackedHF_PackedCS):
         # rules are empty because sub-converters are used in the convert fn
         # but tests require presence of self.rules
         self.rules = []
+        self.post_convert_defaults[1].update(
+            {
+                "scale_similarity": False,
+            }
+        )
 
     @staticmethod
     def converters() -> List[Type[BaseCheckpointConverter]]:
@@ -277,4 +286,138 @@ class ConfigConverter_DPRModel_HF_CS22(BaseConfigConverter_UnpackedHF_PackedCS):
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-2.2"))
+        return (FormatVersions("hf"), FormatVersions("cs-2.2", "cs-2.3"))
+
+
+class ConfigConverter_DPR_HF_CS23(ConfigConverter_DPR_HF_CS):
+    def __init__(self):
+        self.model_type = "dpr"
+        super().__init__()
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-2.3"))
+
+
+class ConfigConverter_DPRModel_HF_CS23(ConfigConverter_DPRModel_HF_CS22):
+    def __init__(self):
+        super().__init__()
+        self.post_convert_defaults[1].pop("scale_similarity")
+        self.post_convert_defaults[1].update(
+            {
+                "pooler_type": "cls",
+                "use_biencoder": True,
+                "mutual_information": False,
+                "softmax_temperature": 1,
+                "compute_eval_metrics": False,
+            }
+        )
+
+    @staticmethod
+    def converters() -> List[Type[BaseCheckpointConverter]]:
+        return (ConfigConverter_DPR_HF_CS23, ConfigConverter_DPR_HF_CS23)
+
+    @staticmethod
+    def component_names() -> List[str]:
+        return ("q_encoder", "ctx_encoder")
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-2.3"))
+
+
+class Converter_DPRModel_HF_CS23(Converter_DPRModel_HF_CS22):
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("hf"), FormatVersions("cs-2.3"))
+
+    @staticmethod
+    def get_config_converter_class() -> BaseConfigConverter:
+        return ConfigConverter_DPRModel_HF_CS23
+
+
+class Converter_DPRModel_CS22_CS23(BaseCheckpointConverter_CS_CS):
+    def __init__(self):
+        super().__init__()
+
+        self.rules = [
+            ConversionRule([".*"], action=self.replaceKey),
+        ]
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("cs-2.2"), FormatVersions("cs-2.3"))
+
+    @staticmethod
+    def get_config_converter_class() -> BaseConfigConverter:
+        return ConfigConverter_DPRModel_CS22_CS23
+
+
+class ConfigConverter_DPRModel_CS22_CS23(BaseConfigConverter_CS_CS):
+    def __init__(self):
+        super().__init__()
+        self.rules = [
+            ConversionRule(
+                [EquivalentSubkey("scale_similarity", "softmax_temperature")],
+                action=self.convert_softmax_temperature,
+            ),
+            ConversionRule([".*"], action=self.replaceKey),
+        ]
+
+        self.post_convert_defaults[1].update(
+            {
+                "pooler_type": "cls",
+                "use_biencoder": True,
+                "mutual_information": False,
+                "softmax_temperature": 1,
+                "compute_eval_metrics": False,
+            }
+        )
+
+        self.post_convert_defaults[0].update(
+            {
+                "scale_similarity": False,
+            }
+        )
+
+    def convert_softmax_temperature(
+        self,
+        old_key,
+        new_key,
+        old_state_dict,
+        new_state_dict,
+        from_index,
+        action_fn_args,
+    ):
+        if from_index == 0:
+            scale_similarity = old_state_dict[old_key]
+            hidden_size = old_state_dict["q_encoder"]["hidden_size"]
+
+            if scale_similarity is True:
+                new_state_dict[new_key] = math.sqrt(hidden_size)
+            else:
+                new_state_dict[new_key] = 1.0
+        else:
+            softmax_temperature = old_state_dict[old_key]
+            hidden_size = old_state_dict["q_encoder"]["hidden_size"]
+
+            if math.isclose(
+                softmax_temperature,
+                math.sqrt(hidden_size),
+                abs_tol=1.0,
+            ):
+                new_state_dict[new_key] = True
+            elif softmax_temperature == 1.0:
+                new_state_dict[new_key] = False
+            else:
+                logging.warning(
+                    "When converting from 2.3 to 2.2, we do not support "
+                    "arbitrary `softmax_temperature` value. "
+                    "We only support `softmax_temperature` that are either close to "
+                    "sqrt(hidden size) or 1.0. "
+                )
+                new_state_dict[new_key] = False
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("cs-2.2"), FormatVersions("cs-2.3"))

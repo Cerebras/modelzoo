@@ -15,6 +15,19 @@
 import logging
 from enum import Enum
 
+# Pass model settings into data loader.
+_model_to_input_map = [
+    # latent shape
+    "label_dropout_rate",
+    "latent_size",
+    "latent_channels",
+    # Other params
+    "mixed_precision",
+    "fp16_type",
+    # diffusion & related params for performing gd
+    "schedule_name",
+]
+
 
 class BlockType(Enum):
     ADALN_ZERO = "adaln_zero"
@@ -39,19 +52,16 @@ def set_defaults(params):
     """
     Update any missing parameters in the params dictionary with default values
     Args:
-        params: The dictionary containing the params
+        params: The dictionary/object containing the params
     """
-
-    tparams = params["train_input"]
-    eparams = params["eval_input"]
-    mparams = params["model"]
     runconfig = params["runconfig"]
 
     # train input_required parameters
     _set_input_defaults(params)
     _set_model_defaults(params)
     _copy_params_across(params)
-
+    if params.model.fp16_type is None:
+        params.model.fp16_type = "bfloat16"
     # Runconfig related
     if runconfig["checkpoint_steps"] == 0:
         logging.warning(
@@ -91,11 +101,8 @@ def _set_model_defaults(params):
     if latent_size is None:
         mparams["latent_size"] = mparams["vae"]["latent_size"]
 
-    image_dims = [tparams["image_channels"]] + tparams["image_size"]
     latent_dims = [mparams["latent_channels"]] + mparams["latent_size"]
-    logging.info(
-        f"Using Image Dimensions (C, H, W): {image_dims} and VAE output Dimensions (C, H, W): {latent_dims}"
-    )
+    logging.info(f"Using VAE output Dimensions (C, H, W): {latent_dims}")
     mparams["block_type"] = mparams.get(
         "block_type", BlockType.ADALN_ZERO.value
     )
@@ -154,7 +161,7 @@ def _set_layer_initializer_defaults(params):
     )
 
     # Timestep Embedding MLP
-    mparams["timestep_embeddding_initializer"] = {
+    mparams["timestep_embedding_initializer"] = {
         "name": "normal",
         "mean": 0.0,
         "std": mparams["initializer_range"],
@@ -215,19 +222,6 @@ def _set_input_defaults(params):
 
 
 def _copy_params_across(params):
-    # Pass model settings into data loader.
-    _model_to_input_map = [
-        # latent shape
-        "label_dropout_rate",
-        "latent_size",
-        "latent_channels",
-        # Other params
-        "mixed_precision",
-        "fp16_type",
-        # diffusion & related params for performing gd
-        "schedule_name",
-    ]
-
     for _key_map in _model_to_input_map:
         if isinstance(_key_map, tuple):
             assert len(_key_map) == 2, f"Tuple {_key_map} does not have len=2"

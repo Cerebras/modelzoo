@@ -5,7 +5,6 @@ train_input:
     data_dir: "./llama_v3_dataset_vocab128256/train"
     batch_size: 80
     micro_batch_size: 20
-    repeat: True 
     shuffle: False
     shuffle_seed: 1337
     num_workers: 8
@@ -17,7 +16,6 @@ eval_input:
     data_dir: "./llama_v3_dataset_vocab128256/val"
     batch_size: 80
     micro_batch_size: 20
-    repeat: True 
     shuffle: False
     shuffle_seed: 1337
     num_workers: 8

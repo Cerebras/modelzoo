@@ -237,7 +237,7 @@ class Converter_Falcon_7B_Attention_HF_CS19(
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-1.9", "cs-2.0", "cs-2.1", "cs-2.2"),
+            FormatVersions("cs-1.9", "cs-2.0", "cs-2.1", "cs-2.2", "cs-2.3"),
         )
 
     @staticmethod
@@ -355,9 +355,9 @@ class Converter_Falcon_7B_Headless_WithoutModelPrefix_HF_CS19(
                 old_state_dict.get("embedding_layer.word_embeddings.weight", 0)
                 is None
             ):
-                old_state_dict[
-                    "embedding_layer.word_embeddings.weight"
-                ] = old_state_dict["lm_head.weight"]
+                old_state_dict["embedding_layer.word_embeddings.weight"] = (
+                    old_state_dict["lm_head.weight"]
+                )
 
     def post_model_convert(
         self,
@@ -402,7 +402,7 @@ class Converter_Falcon_7B_Headless_WithoutModelPrefix_HF_CS19(
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-1.9", "cs-2.0", "cs-2.1", "cs-2.2"),
+            FormatVersions("cs-1.9", "cs-2.0", "cs-2.1", "cs-2.2", "cs-2.3"),
         )
 
     @classmethod
@@ -484,15 +484,15 @@ class Converter_Falcon_7B_WithoutModelPrefix_HF_CS19(
                 old_state_dict.get("embedding_layer.word_embeddings.weight", 0)
                 is None
             ):
-                old_state_dict[
-                    "embedding_layer.word_embeddings.weight"
-                ] = old_state_dict["lm_head.weight"]
+                old_state_dict["embedding_layer.word_embeddings.weight"] = (
+                    old_state_dict["lm_head.weight"]
+                )
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-1.9", "cs-2.0", "cs-2.1", "cs-2.2"),
+            FormatVersions("cs-1.9", "cs-2.0", "cs-2.1", "cs-2.2", "cs-2.3"),
         )
 
     @classmethod
@@ -794,5 +794,5 @@ class ConfigConverter_Falcon_7B_HF_CS19(BaseConfigConverter_HF_CS):
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-1.9", "cs-2.0", "cs-2.1", "cs-2.2"),
+            FormatVersions("cs-1.9", "cs-2.0", "cs-2.1", "cs-2.2", "cs-2.3"),
         )

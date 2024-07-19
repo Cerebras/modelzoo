@@ -50,6 +50,7 @@ class GptHDF5DataProcessor(HDF5IterableDataProcessor):
     """
 
     def __init__(self, params):
+
         if params.get("max_sequence_length") is not None:
             logging.warning(
                 "`max_sequence_length` is not used in for GptHDF5DataProcessor "

@@ -79,6 +79,7 @@ class VisualQuestionAnsweringBase(data.Dataset):
         self.image_transforms = image_transforms
 
     def __getitem__(self, index):
+
         features = self.data_obj[index]
         img_tensor = features.image  # shape=(C, H, W)
         if img_tensor is None:
@@ -123,6 +124,7 @@ class VisualQuestionAnsweringBase(data.Dataset):
         return len(self.data_obj)
 
     def display_sample(self, data_features):
+
         input_tokens = self.tokenizer.convert_ids_to_tokens(
             data_features["input_ids"].tolist()
         )
@@ -162,6 +164,7 @@ class VisualQuestionAnswering(VisualQuestionAnsweringBase):
         pad_token="<pad>",
         extra_token="<extra_id_0>",
     ):
+
         super().__init__(
             data_obj,
             src_max_sequence_length,
@@ -207,6 +210,7 @@ class VisualQuestionAnswering(VisualQuestionAnsweringBase):
         return encoder_input
 
     def build_decoder_input(self, features):
+
         ans = features.multiple_choice_answer
 
         # space necessary for single token output for sos token
@@ -246,6 +250,7 @@ class VisualQuestionGeneration(VisualQuestionAnsweringBase):
         pad_token="<pad>",
         extra_token="<extra_id_0>",
     ):
+
         super().__init__(
             data_obj,
             src_max_sequence_length,
@@ -293,6 +298,7 @@ class VisualQuestionGeneration(VisualQuestionAnsweringBase):
         return encoder_input
 
     def build_decoder_input(self, features):
+
         q = features.question
 
         # space necessary for single token output for sos token

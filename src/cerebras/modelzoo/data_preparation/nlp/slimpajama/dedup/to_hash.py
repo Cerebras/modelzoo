@@ -125,6 +125,7 @@ def generate_hashes(args):
                 total=cpu_count(),
             )
         ):
+
             for chunk in chunks:
                 if len(results) == args.k:
                     output_results(

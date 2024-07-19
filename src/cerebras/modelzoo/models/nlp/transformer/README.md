@@ -58,7 +58,7 @@ The following few scripts are relatively generic and shared between models. They
 
 The following directories contain the specific implementation details for the current model.
 
-* `configs/`: A directory of YAML files that specifies all the details about a training run. Each config YAML is split into five sections that determine the training run: `train_input`, `eval_input`, `model`, `optimizer`, and `runconfig`. The first two sections specify the data-processor class and its various arguments, such as batch-size, file-paths to data, etc. The `model` section specifies arguments such as hidden-sizes, number of layers, dropout rates, etc. The `optimizer` section specifies which algorithm to use, such as Adam [\[7\]](https://arxiv.org/abs/1412.6980), AdamW [\[8\]](https://arxiv.org/abs/1711.05101), or Adafactor [\[9\]](https://arxiv.org/abs/1804.04235). It also specifies arguments such as decay rates. Finally the `runconfig` section specifies how many steps you want to train for, the interval for saving models, interval for logging loss values in tensorboard, etc.
+* `configs/`: A directory of YAML files that specifies all the details about a training run. Each config YAML is split into five sections that determine the training run: `train_input`, `eval_input`, `model`, `optimizer`, and `runconfig`. The first two sections specify the data-processor class and its various arguments, such as batch-size, file-paths to data, etc. The `model` section specifies arguments such as hidden-sizes, number of layers, dropout rates, etc. The `optimizer` section specifies which algorithm to use, such as Adam [\[4\]](https://arxiv.org/abs/1412.6980), AdamW [\[5\]](https://arxiv.org/abs/1711.05101), or Adafactor [\[6\]](https://arxiv.org/abs/1804.04235). It also specifies arguments such as decay rates. Finally the `runconfig` section specifies how many steps you want to train for, the interval for saving models, interval for logging loss values in tensorboard, etc.
 * `data_preparation/nlp/transformer/`: A directory for scripts relating to data-processing.
 
 ## Data processing
@@ -132,7 +132,7 @@ For each of these commands,
 There are a couple modifications to both models based on current support for operations on CS systems. Resolving these is currently in progress:
 
 1. We do not currently support the Adafactor optimizer used to train the original Transformer model. Instead we use AdamW, which results in a higher loss at the end of pre-training.
-2. For Transformer, we use learned absolute position embeddings instead of fixed position embeddings, which slightly degrades the performance of the model. For explanation and analysis of the different position embeddings, see [\[12\]](https://arxiv.org/pdf/2010.04903.pdf).
+2. For Transformer, we use learned absolute position embeddings instead of fixed position embeddings, which slightly degrades the performance of the model. For explanation and analysis of the different position embeddings, see [\[7\]](https://arxiv.org/pdf/2010.04903.pdf).
 
 ## Configs included for this model
 
@@ -151,20 +151,10 @@ These files are just samples, and can be adjusted for any changes in training pr
 
 [3] [T5v1.1](https://github.com/google-research/text-to-text-transfer-transformer/blob/main/released_checkpoints.md#t511).
 
-[4] [VTS Conceptual Explanation Blog](https://www.cerebras.net/software/increasing-model-throughput-with-variable-tensor-shape-computations/)
+[4] [Adam](https://arxiv.org/abs/1412.6980)
 
-[5] [VTS Software Documentation](https://docs.cerebras.net/en/latest/wsc/general/sparse-input.html)
+[5] [AdamW](https://arxiv.org/abs/1711.05101)
 
-[6] [Pipeline Execution Mode](https://docs.cerebras.net/en/latest/wsc/cerebras-basics/cerebras-execution-modes.html#layer-pipelined-mode)
+[6] [Adafactor](https://arxiv.org/abs/1804.04235)
 
-[7] [Adam](https://arxiv.org/abs/1412.6980)
-
-[8] [AdamW](https://arxiv.org/abs/1711.05101)
-
-[9] [Adafactor](https://arxiv.org/abs/1804.04235)
-
-[10] [RMSNorm](https://arxiv.org/abs/1910.07467)
-
-[11] [LayerNorm](https://arxiv.org/abs/1607.06450v1)
-
-[12] [An Empirical Study of Pre-Trained Language Model Positional Encoding](https://arxiv.org/pdf/2010.04903.pdf)
+[7] [An Empirical Study of Pre-Trained Language Model Positional Encoding](https://arxiv.org/pdf/2010.04903.pdf)

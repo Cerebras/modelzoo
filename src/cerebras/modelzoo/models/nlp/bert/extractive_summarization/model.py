@@ -19,7 +19,6 @@ from cerebras.modelzoo.models.nlp.bert.bert_finetune_models import (
     BertForSummarization,
     BertForSummarizationLoss,
 )
-from cerebras.modelzoo.models.nlp.bert.utils import check_unused_model_params
 
 
 @registry.register_model(
@@ -30,42 +29,32 @@ class BertSummarizationModel(torch.nn.Module):
     def __init__(self, params):
         super().__init__()
 
-        model_params = params["model"].copy()
-        dropout_rate = model_params.pop("dropout_rate")
-        embedding_dropout_rate = model_params.pop(
-            "embedding_dropout_rate", dropout_rate
-        )
+        self._model_params = params.model
+        model_params = self._model_params
 
         num_labels = 2
-        loss_weight = model_params.pop("loss_weight")
-        use_cls_bias = model_params.pop("use_cls_bias")
+        loss_weight = model_params.loss_weight
 
         model_kwargs = {
-            "vocab_size": model_params.pop("vocab_size"),
-            "hidden_size": model_params.pop("hidden_size"),
-            "num_hidden_layers": model_params.pop("num_hidden_layers"),
-            "num_heads": model_params.pop("num_heads"),
-            "filter_size": model_params.pop("filter_size"),
-            "nonlinearity": model_params.pop("encoder_nonlinearity"),
-            "pooler_nonlinearity": model_params.pop(
-                "pooler_nonlinearity", None
-            ),
-            "embedding_dropout_rate": embedding_dropout_rate,
-            "dropout_rate": dropout_rate,
-            "attention_dropout_rate": model_params.pop(
-                "attention_dropout_rate"
-            ),
-            "attention_kernel": model_params.pop("attention_kernel", None),
-            "max_position_embeddings": model_params.pop(
-                "max_position_embeddings"
-            ),
-            "layer_norm_epsilon": float(model_params.pop("layer_norm_epsilon")),
+            "vocab_size": model_params.vocab_size,
+            "hidden_size": model_params.hidden_size,
+            "num_hidden_layers": model_params.num_hidden_layers,
+            "num_heads": model_params.num_heads,
+            "filter_size": model_params.filter_size,
+            "nonlinearity": model_params.encoder_nonlinearity,
+            "pooler_nonlinearity": model_params.pooler_nonlinearity,
+            "embedding_dropout_rate": model_params.embedding_dropout_rate,
+            "dropout_rate": model_params.dropout_rate,
+            "attention_dropout_rate": model_params.attention_dropout_rate,
+            "attention_kernel": model_params.attention_kernel,
+            "max_position_embeddings": model_params.max_position_embeddings,
+            "layer_norm_epsilon": model_params.layer_norm_epsilon,
         }
 
         self.model = BertForSummarization(
             num_labels=num_labels,
             loss_weight=loss_weight,
-            use_cls_bias=use_cls_bias,
+            use_cls_bias=model_params.use_cls_bias,
             **model_kwargs,
         )
         self.loss_fn = BertForSummarizationLoss(
@@ -73,21 +62,20 @@ class BertSummarizationModel(torch.nn.Module):
             loss_weight,
         )
 
-        self.compute_eval_metrics = model_params.pop(
-            "compute_eval_metrics", False
-        )
-        self.vocab_file = model_params.pop("vocab_file")
-        check_unused_model_params(model_params)
-        if self.compute_eval_metrics:
+        if model_params.compute_eval_metrics:
             raise NotImplementedError(
                 "RougeScoreMetric not yet supported in weight streaming"
             )
 
             self.rouge1_score = RougeScoreMetric(
-                max_n=1, vocab_file=self.vocab_file, name="eval/rouge1"
+                max_n=1,
+                vocab_file=model_params.vocab_file,
+                name="eval/rouge1",
             )
             self.rouge2_score = RougeScoreMetric(
-                max_n=2, vocab_file=self.vocab_file, name="eval/rouge2"
+                max_n=2,
+                vocab_file=model_params.vocab_file,
+                name="eval/rouge2",
             )
 
     def forward(self, data):
@@ -100,7 +88,7 @@ class BertSummarizationModel(torch.nn.Module):
         loss = self.loss_fn(
             logits, data["labels"], data["cls_weights"].clone().to(logits.dtype)
         )
-        if not self.model.training and self.compute_eval_metrics:
+        if not self.model.training and self._model_params.compute_eval_metrics:
             labels = data["labels"].clone()
             predictions = logits.argmax(-1).int()
             input_ids = data["input_ids"].clone()

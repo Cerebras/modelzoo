@@ -18,10 +18,10 @@ import os
 
 def set_defaults(params):
     """
-    Update any missing parameters in the params dictionary with default values
+    Update any missing parameters in the params object with default values.
 
     Args:
-        params: The dictionary containing the params
+        params: An dict/object containing the parameters
     """
     for section in ["train_input", "eval_input"]:
         for key in ["vocab_file"]:
@@ -62,6 +62,7 @@ def set_defaults(params):
         params["model"]["attention_softmax_fp32"] = False
 
 
+# models/internal use this utility so cant remove it as of now. Will clean up in future PR
 def check_unused_model_params(model_params):
     """
     While setting up the model, we pop used settings from model_params.

@@ -2,12 +2,8 @@
 # Based on: https://huggingface.co/facebook/esm2_t33_650M_UR50D
 
 train_input:
-    data_processor: "BertCSVDataProcessor"
-    data_dir: "./language/datasets/esm2/train/"
-    vocab_file: "./language/datasets/esm2/vocab.txt"
-    max_sequence_length: 1026
-    max_predictions_per_seq: 154
-    masked_lm_prob: 0.15
+    data_processor: "BertHDF5DataProcessor"
+    data_dir: "./language/datasets/scratch/esm2/non_vsl"
     batch_size: 162
     micro_batch_size: 162
     shuffle: True
@@ -19,10 +15,6 @@ train_input:
 eval_input:
     data_processor: "BertCSVDataProcessor"
     data_dir: "./language/datasets/esm2/validation/"
-    vocab_file: "./language/datasets/esm2/vocab.txt"
-    vocab_size: 33
-    max_sequence_length: 1026
-    masked_lm_prob: 0.15
     batch_size: 162
     micro_batch_size: 162
     shuffle: True
@@ -75,7 +67,6 @@ optimizer:
           end_learning_rate: 3.0e-07
           total_iters: 5700000
     loss_scaling_factor: "dynamic"
-    steps_per_increase: 25000 # hack to workaround SW-119191
     log_summaries: True
 
 runconfig:
@@ -86,4 +77,3 @@ runconfig:
     #save_initial_checkpoint: True
     seed: 1
     model_dir: "./model_dir"
-    load_checkpoint_states: model # workaround for SW-120031

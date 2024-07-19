@@ -99,6 +99,7 @@ class Transformer(nn.Module):
         ffn_initializer="xavier_uniform",
         device=None,
     ) -> None:
+
         super(Transformer, self).__init__()
         assert batch_first, "Currently, only batch_first=True is supported"
 

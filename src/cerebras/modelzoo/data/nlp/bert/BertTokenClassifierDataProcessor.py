@@ -15,6 +15,7 @@
 """
 Processor for PyTorch BERT fine tuning - Token classifier.
 """
+
 import csv
 import json
 import os
@@ -59,13 +60,9 @@ class BertTokenClassifierDataProcessor(torch.utils.data.IterableDataset):
             - "prefetch_factor" (int): Number of samples loaded in advance by each worker.
             - "persistent_workers" (bool): If True, the data loader will not shutdown
                 the worker processes after a dataset has been consumed once.
-    :pram model_params (dict): Model parameters for creating the dataset.
-        Expects the following to be defined:
-        - "include_padding_in_loss" (bool): If set to true then a loss mask will be
-            generated such that padding tokens will be included in the loss calculation.
     """
 
-    def __init__(self, params, model_params):
+    def __init__(self, params):
         super(BertTokenClassifierDataProcessor, self).__init__()
 
         # Input params.
@@ -176,9 +173,7 @@ class BertTokenClassifierDataProcessor(torch.utils.data.IterableDataset):
 
         self.max_sequence_length = params["max_sequence_length"]
 
-        self.include_padding_in_loss = model_params.get(
-            "include_padding_in_loss"
-        )
+        self.include_padding_in_loss = params.get("include_padding_in_loss")
 
         # Store params.
         self.data_buffer = []

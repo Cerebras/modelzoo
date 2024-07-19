@@ -14,10 +14,6 @@
 
 import sys
 
-from cerebras.modelzoo.data.nlp.dpo.DPOSyntheticDataset import (  # noqa
-    DPOSyntheticDataProcessor,
-)
-
 from cerebras.modelzoo.data.nlp.dpo.DpoHDF5DataProcessor import (  # noqa
     DpoHDF5DataProcessor,
 )

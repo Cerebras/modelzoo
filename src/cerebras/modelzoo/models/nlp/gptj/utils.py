@@ -15,12 +15,11 @@
 
 def set_defaults(params):
     """
-    Update any missing parameters in the params dictionary with default values
+    Update any missing parameters in the params object with default values.
 
     Args:
-        params: The dictionary containing the params
+        params: An dict/object containing the nested params.
     """
-
     if params["train_input"]["data_processor"] == "Gpt2SyntheticDataProcessor":
         if "train_input" in params and params["train_input"] is not None:
             params["train_input"]["vocab_size"] = params["train_input"].get(

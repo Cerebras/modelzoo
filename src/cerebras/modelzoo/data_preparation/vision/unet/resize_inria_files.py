@@ -88,6 +88,7 @@ def apply_transform_to_files(
         raise ValueError(f"Unsupported transform: {transform_op}")
 
     for fname in image_names:
+
         img_in_path = os.path.join(input_dir, split, "images", fname)
         img_out_path = os.path.join(output_dir, split, "images", fname)
         transform_fn(

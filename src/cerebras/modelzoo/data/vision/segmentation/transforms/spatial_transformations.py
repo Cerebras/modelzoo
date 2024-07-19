@@ -150,6 +150,7 @@ def augment_spatial(
             modified_coords = True
 
         if do_rotation and np.random.uniform() < p_rot_per_sample:
+
             if np.random.uniform() <= p_rot_per_axis:
                 a_x = np.random.uniform(angle_x[0], angle_x[1])
             else:

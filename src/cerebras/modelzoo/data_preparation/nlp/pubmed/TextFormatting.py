@@ -55,6 +55,7 @@ class TextFormatting:
         self.filename = output_filename
 
     def merge_abstracts(self):
+
         file_num = 0
         num_articles = 0
         total_articles = 0
@@ -77,6 +78,7 @@ class TextFormatting:
 
             dicts_out = pmp.parse_medline_xml(filename)
             for dict_out in dicts_out:
+
                 if not dict_out['abstract']:
                     # Some articles have no abstract : https://pubmed.ncbi.nlm.nih.gov/13787/
                     continue
@@ -159,9 +161,11 @@ class TextFormatting:
         not_written = os.path.join(self.output_folder, "exceptions.txt")
 
         with open(not_written, mode='w', newline='\n') as ex_fh:
+
             ofile = open(output_filename, mode='w', newline='\n')
 
             for folder in top_level_folders:
+
                 it = glob.iglob(folder + '/**/*.nxml', recursive=self.recursive)
 
                 for filename in it:
@@ -253,6 +257,7 @@ class TextFormatting:
                 )
 
     def merge(self, dataset_name):
+
         if (
             dataset_name == "pubmed_baseline"
             or dataset_name == "pubmed_daily_update"

@@ -63,6 +63,7 @@ class CityscapesDataProcessor(UNetDataProcessor):
         ) = self.image_shape
 
     def _update_image_shape(self):
+
         # image_shape is of format (H, W, C)
         image_shape = []
 
@@ -89,6 +90,7 @@ class CityscapesDataProcessor(UNetDataProcessor):
         return dataset
 
     def preprocess_mask(self, mask):
+
         # Refer to :
         # https://github.com/mcordts/cityscapesScripts/blob/master/cityscapesscripts/helpers/labels.py#L56-L99
         # Mapping all classes with `ignoreInEval`=True(from above link)

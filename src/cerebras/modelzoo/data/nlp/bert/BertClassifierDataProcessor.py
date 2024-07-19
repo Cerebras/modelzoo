@@ -330,12 +330,10 @@ class DataProcessor(abc.ABC):
                 - "prefetch_factor" (int): Number of samples loaded in advance by each worker.
                 - "persistent_workers" (bool): If True, the data loader will not shutdown
                     the worker processes after a dataset has been consumed once.
-        model_params (dict, optional): Model parameters for creating the dataset, unused.
     """
 
-    def __init__(self, data_params, model_params) -> None:
+    def __init__(self, data_params) -> None:
         self.data_params = data_params
-        self.model_params = model_params
         self.batch_size = get_streaming_batch_size(data_params["batch_size"])
         self.shuffle = data_params.get("shuffle", True)
         self.shuffle_seed = data_params.get("shuffle_seed", None)
@@ -382,8 +380,8 @@ class SST2DataProcessor(DataProcessor):
     The data processor responsible for creating the SST2 dataloader instance.
     """
 
-    def __init__(self, data_params, model_params) -> None:
-        super(SST2DataProcessor, self).__init__(data_params, model_params)
+    def __init__(self, data_params) -> None:
+        super(SST2DataProcessor, self).__init__(data_params)
 
     def create_dataset(self, is_training=True):
         self.dataset = SST2Dataset(self.data_params, is_training)
@@ -395,8 +393,8 @@ class MNLIDataProcessor(DataProcessor):
     The data processor responsible for creating the MNLI dataloader instance.
     """
 
-    def __init__(self, data_params, model_params) -> None:
-        super(MNLIDataProcessor, self).__init__(data_params, model_params)
+    def __init__(self, data_params) -> None:
+        super(MNLIDataProcessor, self).__init__(data_params)
 
     def create_dataset(self, is_training=True):
         self.dataset = MNLIDataset(self.data_params, is_training)

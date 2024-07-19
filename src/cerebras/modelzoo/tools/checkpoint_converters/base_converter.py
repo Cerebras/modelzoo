@@ -31,7 +31,6 @@ import torch
 import yaml
 from tqdm import tqdm
 
-import cerebras.pytorch as cstorch
 from cerebras.modelzoo.tools.checkpoint_converters.streaming_checkpoints import (
     OnDemandDictionaryConverter,
     StreamingCSWriter,
@@ -81,7 +80,7 @@ class ConversionRule:
         1. a key can be matched against
         2. procedure for converting this old key to a new one upon a successful match
         3. and an action to be taken once the new key is created (ex: updating the
-           state dictionary)
+           state dictionary).
 
     A rule consists of a sequence of regex pattern (supplied as a string),
     EquivalentSubkey object, and (possibly) a BaseDictionaryConverter as long as this
@@ -212,10 +211,8 @@ class ConversionRule:
         debug: bool = False,
     ) -> bool:
         regex_str = ""
-        maybe_escape = (
-            lambda elm, idx: re.escape(elm[idx])
-            if isinstance(elm, EquivalentSubkey)
-            else elm
+        maybe_escape = lambda elm, idx: (
+            re.escape(elm[idx]) if isinstance(elm, EquivalentSubkey) else elm
         )
         regex_str = ""
         chained_converter = ConversionRule.segment_is_converter(
@@ -633,7 +630,7 @@ class BaseCheckpointConverter(BaseDictionaryConverter, ABC):
         converter_indices: FormatIndices,
     ):
         r"""
-        Hook to extract model state dicts out of the input/output checkpoint
+        Hook to extract model state dicts out of the input/output checkpoint.
         """
         return input_checkpoint, output_checkpoint
 
@@ -656,6 +653,8 @@ class BaseCheckpointConverter_CS_CS(BaseCheckpointConverter):
 
     @classmethod
     def load(cls, file: str, converter_indices: FormatIndices) -> OrderedDict:
+        import cerebras.pytorch as cstorch
+
         return cstorch.load(file, map_location="cpu")
 
     @classmethod
@@ -665,6 +664,8 @@ class BaseCheckpointConverter_CS_CS(BaseCheckpointConverter):
         checkpoint: OrderedDict,
         converter_indices: FormatIndices,
     ) -> OrderedDict:
+        import cerebras.pytorch as cstorch
+
         if isinstance(checkpoint, StreamingCSWriter):
             checkpoint.save()
             return checkpoint.checkpoint_file
@@ -853,6 +854,8 @@ class BaseCheckpointConverter_HF_CS(BaseCheckpointConverter_CS_CS):
         file: str,
         converter_indices: FormatIndices,
     ) -> OrderedDict:
+        import cerebras.pytorch as cstorch
+
         if os.path.isdir(file):
             raise AssertionError(
                 """
@@ -882,6 +885,8 @@ class BaseCheckpointConverter_HF_CS(BaseCheckpointConverter_CS_CS):
         checkpoint: OrderedDict,
         converter_indices: FormatIndices,
     ) -> OrderedDict:
+        import cerebras.pytorch as cstorch
+
         if isinstance(checkpoint, StreamingCSWriter):
             checkpoint.save()
             return checkpoint.checkpoint_file
@@ -939,6 +944,23 @@ class BaseCheckpointConverter_HF_CS(BaseCheckpointConverter_CS_CS):
         if converter_indices.direction == 0:
             output_checkpoint["model"] = {}
 
+        format_versions = self.formats()
+        from_index = converter_indices.direction
+
+        src_fmt = format_versions[from_index][converter_indices.src_index]
+
+        # In CS 2.3, our config formats changed.
+        if src_fmt == "cs-2.3":
+            # Create an alias for the model key
+            for config in configs:
+                if "trainer" in config:
+                    if isinstance(config["trainer"], (list, tuple)):
+                        raise ValueError(
+                            "Converting a config with multiple "
+                            "trainer configs is not supported."
+                        )
+                    config["model"] = config["trainer"]["init"]["model"]
+
     def extract_model_dict(
         self,
         input_checkpoint,
@@ -950,20 +972,22 @@ class BaseCheckpointConverter_HF_CS(BaseCheckpointConverter_CS_CS):
         if converter_indices.direction == 0:
             return input_checkpoint, output_checkpoint["model"]
         else:
-            from cerebras.modelzoo.tools.checkpoint_converters.mup import (
-                Converter_sP_muP,
-            )
-
             to_state_dict = input_checkpoint["model"]
 
-            if self.attempt_mup_to_sp() and Converter_sP_muP.is_mup(configs[1]):
-                if not self.supports_mup_conversion():
-                    raise ConfigConversionError(
-                        "This model currently does not support muP checkpoint conversion to HF."
-                    )
-                to_state_dict = OnDemandDictionaryConverter(
-                    to_state_dict, Converter_sP_muP, {"configs": configs}
+            if self.attempt_mup_to_sp():
+                mup_converter = select_mup_converter(
+                    configs[1], override_converter=self.get_mup_converter()
                 )
+                if mup_converter:
+                    if not self.supports_mup_conversion():
+                        raise ConfigConversionError(
+                            "This model currently does not support muP checkpoint conversion to HF."
+                        )
+                    to_state_dict = OnDemandDictionaryConverter(
+                        to_state_dict,
+                        mup_converter,
+                        {"configs": configs},
+                    )
 
             return to_state_dict, output_checkpoint
 
@@ -994,6 +1018,10 @@ class BaseCheckpointConverter_HF_CS(BaseCheckpointConverter_CS_CS):
 
     def attempt_mup_to_sp(self) -> bool:
         return True
+
+    def get_mup_converter(self) -> bool:
+        r"""Allows models to override the default muP converters with their own"""
+        return None
 
 
 class BaseCheckpointConverter_UnpackedHF_PackedCS(
@@ -1225,7 +1253,7 @@ class BaseCheckpointConverter_UnpackedHF_PackedCS(
 
 
 class FallbackConverter_CS_CS(BaseCheckpointConverter_CS_CS):
-    """Generic fallback converter class"""
+    """Generic fallback converter class."""
 
     def __init__(self):
         super().__init__()
@@ -1235,7 +1263,7 @@ class FallbackConverter_CS_CS(BaseCheckpointConverter_CS_CS):
 
 
 class BaseCheckpointConverter_CS18_CS19(FallbackConverter_CS_CS):
-    """Generic fallback converter class for cs-1.8 -> cs-1.9"""
+    """Generic fallback converter class for cs-1.8 -> cs-1.9."""
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
@@ -1247,7 +1275,7 @@ class BaseCheckpointConverter_CS18_CS19(FallbackConverter_CS_CS):
 
 
 class BaseCheckpointConverter_CS19_CS20(FallbackConverter_CS_CS):
-    """Generic fallback converter class for cs-1.9 -> cs-2.0"""
+    """Generic fallback converter class for cs-1.9 -> cs-2.0."""
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
@@ -1259,7 +1287,7 @@ class BaseCheckpointConverter_CS19_CS20(FallbackConverter_CS_CS):
 
 
 class BaseCheckpointConverter_CS20_CS21(FallbackConverter_CS_CS):
-    """Generic fallback converter class for cs-2.0 -> cs-2.1"""
+    """Generic fallback converter class for cs-2.0 -> cs-2.1."""
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
@@ -1270,26 +1298,8 @@ class BaseCheckpointConverter_CS20_CS21(FallbackConverter_CS_CS):
         return BaseConfigConverter_CS20_CS21
 
 
-class BaseCheckpointConverter_CS21_CS22(BaseCheckpointConverter_CS_CS):
-    """Generic fallback converter class for cs-2.1-> cs-2.2"""
-
-    def __init__(self):
-        super().__init__()
-        self.rules = [
-            ConversionRule([".*"], action=self.replaceKey),
-        ]
-
-    @staticmethod
-    def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("cs-2.1"), FormatVersions("cs-2.2"))
-
-    @staticmethod
-    def get_config_converter_class() -> BaseConfigConverter:
-        return BaseConfigConverter_CS21_CS22
-
-
 class BaseCheckpointConverter_CS21_CS22(FallbackConverter_CS_CS):
-    """Generic fallback converter class for cs-2.1 -> cs-2.2"""
+    """Generic fallback converter class for cs-2.1 -> cs-2.2."""
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
@@ -1298,6 +1308,18 @@ class BaseCheckpointConverter_CS21_CS22(FallbackConverter_CS_CS):
     @staticmethod
     def get_config_converter_class() -> BaseConfigConverter:
         return BaseConfigConverter_CS21_CS22
+
+
+class BaseCheckpointConverter_CS22_CS23(FallbackConverter_CS_CS):
+    """Generic fallback converter class for cs-2.2 -> cs-2.3."""
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("cs-2.2"), FormatVersions("cs-2.3"))
+
+    @staticmethod
+    def get_config_converter_class() -> BaseConfigConverter:
+        return BaseConfigConverter_CS22_CS23
 
 
 # Base converters to be used as fallback if converter does not exist
@@ -1306,11 +1328,12 @@ fallback_converters: List[BaseCheckpointConverter] = [
     BaseCheckpointConverter_CS19_CS20,
     BaseCheckpointConverter_CS20_CS21,
     BaseCheckpointConverter_CS21_CS22,
+    BaseCheckpointConverter_CS22_CS23,
 ]
 
 
 class ConfigConversionError(Exception):
-    "Raised when a config cannot be converted"
+    "Raised when a config cannot be converted."
 
 
 class BaseConfigConverter(BaseDictionaryConverter, ABC):
@@ -1513,26 +1536,24 @@ class BaseConfigConverter_HF_CS(BaseConfigConverter):
         config,
         converter_indices,
     ):
-        from cerebras.modelzoo.tools.checkpoint_converters.mup import (
-            ConfigConverter_sP_muP,
-        )
-
         from_index = converter_indices.direction
-        model_config = config["model"] if from_index == 1 else config
 
-        if (
-            from_index == 1
-            and self.attempt_mup_to_sp()
-            and ConfigConverter_sP_muP.is_mup(model_config)
-        ):
-            if not self.supports_mup_conversion():
-                raise ConfigConversionError(
-                    "This model currently does not support muP config conversion to HF."
+        format_versions = self.formats()
+
+        src_fmt = format_versions[from_index][converter_indices.src_index]
+
+        # In CS 2.3, our config formats changed.
+        if src_fmt == "cs-2.3" and "trainer" in config:
+            if isinstance(config["trainer"], (list, tuple)):
+                raise ValueError(
+                    "Converting a config with multiple "
+                    "trainer configs is not supported."
                 )
-            model_config = ConfigConverter_sP_muP.convert(
-                model_config,
-                converter_indices,
-            )
+            # Create an alias for the model config
+            config["model"] = config["trainer"]["init"]["model"]
+
+        model_config = config["model"] if from_index == 1 else config
+        model_config = self._handle_mup_conversion(config, converter_indices)
 
         return super().pre_config_convert(model_config, converter_indices)
 
@@ -1582,8 +1603,34 @@ class BaseConfigConverter_HF_CS(BaseConfigConverter):
         else:
             return model_config
 
+    def _handle_mup_conversion(self, config, converter_indices):
+        from_index = converter_indices.direction
+        to_index = 1 - from_index
+
+        format_versions = self.formats()
+        tgt_fmt = format_versions[to_index][converter_indices.tgt_index]
+        model_config = config["model"] if from_index == 1 else config
+
+        if from_index == 1 and self.attempt_mup_to_sp():
+            mup_converter = select_mup_converter(
+                model_config,
+                override_converter=self.get_mup_converter(),
+                config_converter=True,
+            )
+            if mup_converter:
+                if not self.supports_mup_conversion():
+                    raise ConfigConversionError(
+                        "This model currently does not support muP checkpoint conversion to HF."
+                    )
+                model_config = mup_converter.convert(
+                    model_config,
+                    converter_indices,
+                )
+
+        return model_config
+
     def supports_mup_conversion(self) -> bool:
-        r"""Determines whether muP -> sP conversion is supported for this model"""
+        r"""Determines whether muP -> sP conversion is supported for this model."""
         return False
 
     def attempt_mup_to_sp(self) -> bool:
@@ -1592,6 +1639,10 @@ class BaseConfigConverter_HF_CS(BaseConfigConverter):
         since they can natively handle muP.
         """
         return True
+
+    def get_mup_converter(self) -> bool:
+        r"""Allows models to override the default muP converters with their own"""
+        return None
 
 
 class BaseConfigConverter_UnpackedHF_PackedCS(BaseConfigConverter_HF_CS):
@@ -1755,7 +1806,9 @@ class BaseConfigConverter_CS_CS(BaseConfigConverter):
         config,
         converter_indices,
     ):
-        return super().pre_config_convert(config["model"], converter_indices)
+        model_config = config["model"]
+        model_config = self._handle_mup_conversion(config, converter_indices)
+        return super().pre_config_convert(model_config, converter_indices)
 
     def post_config_convert(
         self,
@@ -1816,7 +1869,35 @@ class BaseConfigConverter_CS_CS(BaseConfigConverter):
             self._apply_pol_transforms(final_config)
             self._apply_fp16_transforms(final_config["model"])
 
+        # In CS 2.3, our config formats changed.
+        if src_fmt == "cs-2.2" and tgt_fmt == "cs-2.3":
+            from cerebras.modelzoo.trainer.utils import (
+                convert_legacy_params_to_trainer_params,
+            )
+
+            final_config = convert_legacy_params_to_trainer_params(final_config)
+
         return final_config
+
+    def _handle_mup_conversion(self, config, converter_indices):
+        from cerebras.modelzoo.tools.checkpoint_converters.mup import (
+            ConfigConverter_muP_CS22_CS23,
+        )
+
+        from_index = converter_indices.direction
+        to_index = 1 - from_index
+
+        format_versions = self.formats()
+        tgt_fmt = format_versions[to_index][converter_indices.tgt_index]
+        model_config = config["model"]
+        if tgt_fmt == "cs-2.3" and ConfigConverter_muP_CS22_CS23.is_mup(
+            model_config
+        ):
+            model_config = ConfigConverter_muP_CS22_CS23.convert(
+                config,
+                converter_indices,
+            )
+        return model_config
 
     def _remove_deprecated_runconfig_params_2_2(self, config):
         """Deletes deprecated runconfig params when moving from 2.1 to 2.2."""
@@ -2035,7 +2116,7 @@ class BaseConfigConverter_CS_CS(BaseConfigConverter):
 
 
 class FallbackConfigConverter_CS_CS(BaseConfigConverter_CS_CS):
-    """Generic fallback config converter class"""
+    """Generic fallback config converter class."""
 
     def __init__(self):
         super().__init__()
@@ -2045,7 +2126,7 @@ class FallbackConfigConverter_CS_CS(BaseConfigConverter_CS_CS):
 
 
 class BaseConfigConverter_CS18_CS19(FallbackConfigConverter_CS_CS):
-    """Generic fallback config converter class for cs-1.8 -> cs-1.9"""
+    """Generic fallback config converter class for cs-1.8 -> cs-1.9."""
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
@@ -2053,7 +2134,7 @@ class BaseConfigConverter_CS18_CS19(FallbackConfigConverter_CS_CS):
 
 
 class BaseConfigConverter_CS19_CS20(FallbackConfigConverter_CS_CS):
-    """Generic fallback config converter class for cs-1.9 -> cs-2.0"""
+    """Generic fallback config converter class for cs-1.9 -> cs-2.0."""
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
@@ -2061,33 +2142,27 @@ class BaseConfigConverter_CS19_CS20(FallbackConfigConverter_CS_CS):
 
 
 class BaseConfigConverter_CS20_CS21(FallbackConfigConverter_CS_CS):
-    """Generic fallback config converter class for cs-2.0 -> cs-2.1"""
+    """Generic fallback config converter class for cs-2.0 -> cs-2.1."""
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (FormatVersions("cs-2.0"), FormatVersions("cs-2.1"))
 
 
-class BaseConfigConverter_CS21_CS22(BaseConfigConverter_CS_CS):
-    """Generic fallback config converter class for cs-2.1 -> cs-2.2"""
-
-    def __init__(self):
-        super().__init__()
-        self.rules = [
-            ConversionRule([".*"], action=self.replaceKey),
-        ]
-
-    @staticmethod
-    def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("cs-2.1"), FormatVersions("cs-2.2"))
-
-
 class BaseConfigConverter_CS21_CS22(FallbackConfigConverter_CS_CS):
-    """Generic fallback config converter class for cs-2.1 -> cs-2.2"""
+    """Generic fallback config converter class for cs-2.1 -> cs-2.2."""
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (FormatVersions("cs-2.1"), FormatVersions("cs-2.2"))
+
+
+class BaseConfigConverter_CS22_CS23(FallbackConfigConverter_CS_CS):
+    """Generic fallback config converter class for cs-2.2 -> cs-2.3."""
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("cs-2.2"), FormatVersions("cs-2.3"))
 
 
 def _addindent(s_, numSpaces):
@@ -2247,3 +2322,32 @@ def no_ckpt_conversion_necessary(converter: BaseDictionaryConverter) -> bool:
             ]
         )
     )
+
+
+def select_mup_converter(
+    config, override_converter=None, config_converter=False
+):
+    from cerebras.modelzoo.tools.checkpoint_converters.mup import (
+        ConfigConverter_sP_muP_post_CS23,
+        ConfigConverter_sP_muP_pre_CS23,
+        Converter_sP_muP_post_CS23,
+        Converter_sP_muP_pre_CS23,
+    )
+
+    if override_converter:
+        if override_converter.is_mup(config):
+            return override_converter
+        return None
+
+    if config_converter:
+        if ConfigConverter_sP_muP_post_CS23.is_mup(config):
+            return ConfigConverter_sP_muP_post_CS23
+        elif ConfigConverter_sP_muP_pre_CS23.is_mup(config):
+            return ConfigConverter_sP_muP_pre_CS23
+    else:
+        if Converter_sP_muP_post_CS23.is_mup(config):
+            return Converter_sP_muP_post_CS23
+        elif Converter_sP_muP_pre_CS23.is_mup(config):
+            return Converter_sP_muP_pre_CS23
+
+    return None

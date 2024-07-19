@@ -19,23 +19,13 @@ Base implementation for config classes with helper modules
 
 import ast
 import logging
-from dataclasses import asdict, dataclass, field, fields, is_dataclass
-from typing import List, Literal, Optional  # pylint: disable=W0611
+from dataclasses import dataclass, field, fields, is_dataclass
+from typing import Any, Callable, Optional, Union, get_args, get_type_hints
 
-import yaml
-
-from cerebras.modelzoo.common.registry import registry  # no qa
-
-# pylint: disable=wildcard-import
-from cerebras.modelzoo.config_manager.config_validators import *
-
-from typing import (  # noqa
-    Any,
-    Callable,
-    Union,
-    get_args,
+from cerebras.modelzoo.config_manager.config_validators import (
+    get_origin,
+    validate_field_type,
 )
-
 
 # Alias required as an empty object to check for values that are mandatory and not provided
 required = object()
@@ -81,6 +71,18 @@ def get_member_type_hints(cls):
     return type_hints
 
 
+def get_class_type(config_class, parameter):
+    annotations = get_type_hints(config_class)
+    field_type = annotations[parameter]
+    if get_origin(field_type) is Union:
+        for union_type in get_args(field_type):
+            if is_dataclass(union_type):
+                return union_type
+    elif is_dataclass(field_type):
+        return field_type
+    return None
+
+
 def set_constraint(current_constraint, updated_constraint):
     """Set the required constraint type if not already set"""
     if current_constraint[0] is not None:
@@ -94,17 +96,7 @@ def set_constraint(current_constraint, updated_constraint):
 class BaseConfig:
     """This class represents a Base Model config, inherited by sub config classes"""
 
-    def to_yaml(self, file_path):
-        """
-        This method writes the config to a yaml file
-
-        Args:
-            file_path: The path of output yaml file
-        """
-        with open(file_path, "w") as file:
-            yaml.dump(asdict(self), file)
-
-    def validate(self):
+    def __validate__(self):
         """Validation method that iterates over class members with validation meta attached"""
         type_hints = get_member_type_hints(self)
         class_fields = fields(self)
@@ -112,12 +104,12 @@ class BaseConfig:
         for class_field in class_fields:
             field_name = class_field.name
             field_value = getattr(self, field_name)
-            if field_name != "validate" and hasattr(self, field_name):
+            if field_name != "__validate__" and hasattr(self, field_name):
                 curr_field = getattr(self, field_name)
                 # Check if the field is an instance of a child class
                 if isinstance(curr_field, BaseConfig):
-                    # If it's an instance of a child class, recursively call its validate method
-                    curr_field.validate()
+                    # If it's an instance of a child class, recursively call its __validate__ method
+                    curr_field.__validate__()
                     type_hints_child = get_member_type_hints(curr_field)
                     type_hints.update(type_hints_child)
 
@@ -133,7 +125,7 @@ class BaseConfig:
                         f"required value for {field_name}, which is mandatory and must be set"
                     )
 
-                # Check if the field is maked optional
+                # Check if the field is made optional
                 is_optional = is_union_type_hint(class_field.type) and type(
                     None
                 ) in get_args(class_field.type)
@@ -151,30 +143,36 @@ class BaseConfig:
                     # If its a valid value, check for type based validation
                     validate_field_type(class_field, field_value)
 
-    def set_class_type(self, field_name, class_type, field_value):
+    def _set_class_type(self, field_name, class_type, field_value):
         """
         Set the field to class type instance
         It calls the constructor of the class object type
         Init params are the same as the dict/list we get.
         The typecase will fail in class init if the param list
-        doesnt match the class signature
+        doesn`t match the class signature
 
         """
-        if isinstance(field_value, str):
-            field_dict = ast.literal_eval(field_value)
-            setattr(self, field_name, class_type(**field_dict))
-        elif isinstance(field_value, list):
-            for value in field_value:
-                setattr(self, field_name, class_type(**value))
-        elif isinstance(field_value, dict):
-            field_dict = field_value
-            setattr(self, field_name, class_type(**field_dict))
-        elif not is_dataclass(field_value) and not isinstance(
-            field_value, dict
-        ):
-            logging.error(
-                f"We got a config class initialization with invalid type {type(field_value)}"
-            )
+        try:
+            if isinstance(field_value, str):
+                field_dict = ast.literal_eval(field_value)
+                setattr(self, field_name, class_type(**field_dict))
+            elif isinstance(field_value, list):
+                for i, item in enumerate(field_value):
+                    if isinstance(item, dict):
+                        field_value[i] = class_type(**item)
+            elif isinstance(field_value, dict):
+                field_dict = field_value
+                setattr(self, field_name, class_type(**field_dict))
+            elif not is_dataclass(field_value) and not isinstance(
+                field_value, dict
+            ):
+                logging.warning(
+                    f"We got a config class initialization with invalid type {type(field_value)}"
+                )
+        except Exception as e:
+            raise RuntimeError(
+                f"Failed to set field \"{field_name}\" with class type \"{class_type}\"."
+            ) from e
 
     def __post_init__(self):
         """
@@ -182,7 +180,6 @@ class BaseConfig:
         from dict type initializations
 
         """
-
         for curr_field in fields(self):
             field_name = curr_field.name
             field_type = curr_field.type
@@ -190,17 +187,46 @@ class BaseConfig:
             # Check if the field type is a Union
             if get_origin(field_type) is Union:
                 for union_type in get_args(field_type):
-                    if is_dataclass(union_type) and field_value is not None:
-                        self.set_class_type(
+                    if (
+                        is_dataclass(union_type)
+                        and field_value is not None
+                        and field_value is not required
+                    ):
+                        self._set_class_type(
                             field_name=field_name,
                             class_type=union_type,
                             field_value=field_value,
                         )
                         break
+                    elif get_origin(union_type) is list and get_args(
+                        union_type
+                    ):
+                        if (
+                            is_dataclass(get_args(union_type)[0])
+                            and field_value is not None
+                            and field_value is not required
+                        ):
+                            self._set_class_type(
+                                field_name=field_name,
+                                class_type=get_args(union_type)[0],
+                                field_value=field_value,
+                            )
+                        break
             elif is_dataclass(field_type):
-                if field_value is not None:
-                    self.set_class_type(
+                if field_value is not None and field_value is not required:
+                    self._set_class_type(
                         field_name=field_name,
                         class_type=field_type,
+                        field_value=field_value,
+                    )
+            elif get_origin(field_type) is list and get_args(field_type):
+                if (
+                    is_dataclass(get_args(field_type)[0])
+                    and field_value is not None
+                    and field_value is not required
+                ):
+                    self._set_class_type(
+                        field_name=field_name,
+                        class_type=get_args(field_type)[0],
                         field_value=field_value,
                     )

@@ -22,10 +22,6 @@ from typing import Union
 import safetensors.torch as safetensors_torch
 import torch
 
-from cerebras.appliance.utils.units import convert_byte_unit
-from cerebras.pytorch.saver.pt_h5_saver import PyTorchH5Saver
-from cerebras.pytorch.utils.nest import recurse_spec
-
 
 def convert_file_size_to_int(size: Union[int, str]):
     """
@@ -43,6 +39,8 @@ def convert_file_size_to_int(size: Union[int, str]):
     10737418240
     ```
     """
+    from cerebras.appliance.utils.units import convert_byte_unit
+
     if isinstance(size, str):
         match = re.search(r'(\d+)(.*)', size)
         if not match:
@@ -493,6 +491,8 @@ class StreamingCSWriterView:
         return item in self.state
 
     def __getitem__(self, key):
+        from cerebras.pytorch.saver.pt_h5_saver import PyTorchH5Saver
+
         value = self.state[key]
 
         if isinstance(value, StreamingCSLeaf):
@@ -523,6 +523,9 @@ class StreamingCSWriterView:
         return default
 
     def __setitem__(self, key, value):
+        from cerebras.pytorch.saver.pt_h5_saver import PyTorchH5Saver
+        from cerebras.pytorch.utils.nest import recurse_spec
+
         if key in self.state and not isinstance(
             self.state[key], StreamingCSLeaf
         ):
@@ -587,6 +590,8 @@ class StreamingCSWriter(StreamingCSWriterView):
         super().__init__(checkpoint_file, {})
 
     def save(self):
+        from cerebras.pytorch.saver.pt_h5_saver import PyTorchH5Saver
+
         saver = PyTorchH5Saver()
         _, spec = saver.flatten_state_dict(self.state)
         saver.save_spec(self.checkpoint_file, spec)

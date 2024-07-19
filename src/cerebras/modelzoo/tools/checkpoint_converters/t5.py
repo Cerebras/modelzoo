@@ -31,6 +31,10 @@ from cerebras.modelzoo.tools.checkpoint_converters.helper import (
     Build_HF_CS_Converter_WithOptionalModel,
     convert_use_rms_layer_norm_helper,
 )
+from cerebras.modelzoo.tools.checkpoint_converters.mup import (
+    ConfigConverter_T5_sP_muP,
+    Converter_T5_sP_muP,
+)
 
 
 class Converter_T5_CS16_CS17(BaseCheckpointConverter_CS_CS):
@@ -731,9 +735,9 @@ class Converter_T5_HF_CS17(
                 )
                 is None
             ):
-                old_state_dict[
-                    "encoder_embeddings.word_embeddings.weight"
-                ] = old_state_dict["lm_head.weight"]
+                old_state_dict["encoder_embeddings.word_embeddings.weight"] = (
+                    old_state_dict["lm_head.weight"]
+                )
             if (
                 configs[1]["model"]["share_embedding_weights"]
                 and configs[1]["model"]["share_encoder_decoder_embedding"]
@@ -742,9 +746,9 @@ class Converter_T5_HF_CS17(
                 )
                 is None
             ):
-                old_state_dict[
-                    "decoder_embeddings.word_embeddings.weight"
-                ] = old_state_dict["lm_head.weight"]
+                old_state_dict["decoder_embeddings.word_embeddings.weight"] = (
+                    old_state_dict["lm_head.weight"]
+                )
 
     def pre_checkpoint_convert(
         self,
@@ -1327,7 +1331,10 @@ class ConfigConverter_T5_HF_CS21(ConfigConverter_T5_HF_CS20):
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-2.1", "cs-2.2"))
+        return (
+            FormatVersions("hf"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
+        )
 
 
 class Converter_T5_WithoutOptionalModel_HF_CS21(Converter_T5_HF_CS17):
@@ -1412,15 +1419,59 @@ class Converter_T5_WithoutOptionalModel_HF_CS21(Converter_T5_HF_CS17):
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-2.1", "cs-2.2"))
+        return (
+            FormatVersions("hf"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
+        )
 
     @staticmethod
     def get_config_converter_class() -> BaseConfigConverter:
         return ConfigConverter_T5_HF_CS21
 
 
+class ConfigConverter_T5_HF_CS23(ConfigConverter_T5_HF_CS21):
+    def supports_mup_conversion(self):
+        return True
+
+    def get_mup_converter(self):
+        return ConfigConverter_T5_sP_muP
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (
+            FormatVersions("hf"),
+            FormatVersions("cs-2.3"),
+        )
+
+
+class Converter_T5_WithoutOptionalModel_HF_CS23(
+    Converter_T5_WithoutOptionalModel_HF_CS21
+):
+    def supports_mup_conversion(self):
+        return True
+
+    def get_mup_converter(self):
+        return Converter_T5_sP_muP
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (
+            FormatVersions("hf"),
+            FormatVersions("cs-2.3"),
+        )
+
+    @staticmethod
+    def get_config_converter_class() -> BaseConfigConverter:
+        return ConfigConverter_T5_HF_CS23
+
+
 Converter_T5_HF_CS21 = Build_HF_CS_Converter_WithOptionalModel(
     "Converter_T5_HF_CS21",
     Converter_T5_WithoutOptionalModel_HF_CS21,
     derived_class=Converter_T5_WithoutOptionalModel_HF_CS21,
+)
+Converter_T5_HF_CS23 = Build_HF_CS_Converter_WithOptionalModel(
+    "Converter_T5_HF_CS23",
+    Converter_T5_WithoutOptionalModel_HF_CS23,
+    derived_class=Converter_T5_WithoutOptionalModel_HF_CS23,
 )

@@ -215,6 +215,7 @@ class Fair2CS_Collator(object):
     config_name="biencoder_train_cfg",
 )
 def main(cfg: DictConfig):
+
     assert cfg.output_dir is not None, "Must provided output_dir"
     os.makedirs(cfg.output_dir)
 

@@ -14,10 +14,13 @@
 
 import copy
 from dataclasses import dataclass, field
-from typing import Optional, Tuple
+from typing import List, Literal, Optional, Tuple
 
 from cerebras.modelzoo.common.registry import registry
-from cerebras.modelzoo.config_manager.config_classes.base.base_config import *
+from cerebras.modelzoo.config_manager.config_classes.base.base_config import (
+    BaseConfig,
+    required,
+)
 from cerebras.modelzoo.config_manager.config_classes.base.data_config import (
     DataConfig,
 )
@@ -34,7 +37,6 @@ from cerebras.modelzoo.config_manager.config_classes.base.run_config import (
 from cerebras.modelzoo.config_manager.config_classes.base.sparsity_config import (
     SparsityConfig,
 )
-from cerebras.modelzoo.config_manager.config_validators import *
 from cerebras.modelzoo.models.vision.dit.samplers.sampler_utils import (
     configure_sampler_params,
 )
@@ -47,6 +49,8 @@ class ReverseProcessConfig(BaseConfig):
 
     sampler: Optional[dict] = None
     "Sampler configuration for reverse process."
+
+    batch_size: int = 32
 
     def __post_init__(self):
         configure_sampler_params(copy.deepcopy(self.sampler))
@@ -108,9 +112,9 @@ class DiTModelConfig(ModelConfig):
     position_embedding_type: str = "learned"
     """The type of position embedding to use in the model. Can be one of:
     `fixed` - Sinusoidal from original Transformer, (https://arxiv.org/abs/1706.03762).
-    `relative` - Relative position embedding, to exploit pairwise, 
+    `relative` - Relative position embedding, to exploit pairwise,
       relative positional information, (https://arxiv.org/abs/1803.02155).
-    `rotary` - a.k.a RoPE 
+    `rotary` - a.k.a RoPE
     `learned` - Learned embedding matrix, (https://arxiv.org/pdf/2104.09864v4.pdf)"""
 
     # Transformer Attention
@@ -149,7 +153,7 @@ class DiTModelConfig(ModelConfig):
     "The dropout probability for all fully connected layers."
 
     nonlinearity: str = "gelu"
-    """The non-linear activation function used in the feed forward network 
+    """The non-linear activation function used in the feed forward network
     in each transformer block. Some may have to use autogen_policy: `medium`."""
 
     filter_size: int = 3072
@@ -159,14 +163,14 @@ class DiTModelConfig(ModelConfig):
     "Whether to use bias in the feedforward network."
 
     norm_first: Optional[bool] = True
-    """Enables normalization before the Attention & FFN blocks (i.e Pre-LN as 
+    """Enables normalization before the Attention & FFN blocks (i.e Pre-LN as
     described in https://arxiv.org/pdf/2002.04745.pdf. When disabled,
     normalization is applied *after* the residual (Post-LN)"""
 
-    latent_size: List = field(default_factory=lambda: [32, 32])
+    latent_size: Optional[List] = None
     "Latent Tensor(output of VAEEncoder) [height, width]."
 
-    latent_channels: int = 4
+    latent_channels: Optional[int] = None
     "Number of channels in Latent Tensor."
 
     patch_size: List[int] = field(default_factory=lambda: [16, 16])
@@ -184,7 +188,7 @@ class DiTModelConfig(ModelConfig):
     label_dropout_rate: float = 0.1
     "Probability of dropout applied to label tensor."
 
-    block_type: str = "adaln_zero"
+    block_type: Literal["adaln_zero",] = "adaln_zero"
     "DiT Block variant. Accepted values: adaln_zero."
 
     encoder_nonlinearity: str = "gelu"
@@ -196,26 +200,32 @@ class DiTModelConfig(ModelConfig):
 
     # Initialization
     initializer_range: float = 0.02
-    """The standard deviation of the truncated_normal_initializer as the 
+    """The standard deviation of the truncated_normal_initializer as the
     default initializer"""
 
-    projection_initializer: Optional[InitializerConfig] = None
-    """Initializer for embedding linear layer. Either a string indicating the name of the 
-    initializer or a dict that includes the name + other params if relevant. If left 
+    projection_initializer: InitializerConfig = InitializerConfig(
+        name="xavier_uniform", gain=1.0
+    )
+    """Initializer for embedding linear layer. Either a string indicating the name of the
+    initializer or a dict that includes the name + other params if relevant. If left
     unspecified will apply truncated normal initialization."""
 
     position_embedding_initializer: Optional[str] = None
-    """Initializer for position embedding layer. Either a string indicating the name of 
-    the initializer or a dict that includes the name + other params if relevant. If left 
+    """Initializer for position embedding layer. Either a string indicating the name of
+    the initializer or a dict that includes the name + other params if relevant. If left
     unspecified will apply truncated normal initialization."""
 
-    init_conv_like_linear: Optional[bool] = False
+    init_conv_like_linear: Optional[bool] = None
     "If True, modify fan-in fan-out by reshaping before initializing."
 
-    attention_initializer: Optional[InitializerConfig] = None
+    attention_initializer: InitializerConfig = InitializerConfig(
+        name="xavier_uniform", gain=1.0
+    )
     "Attention layer initializer. Defaults to `xavier_uniform`."
 
-    ffn_initializer: Optional[InitializerConfig] = None
+    ffn_initializer: InitializerConfig = InitializerConfig(
+        name="xavier_uniform", gain=1.0
+    )
     "FFN layer initializer. Defaults to `xavier_uniform`."
 
     timestep_embedding_initializer: Optional[InitializerConfig] = None
@@ -224,7 +234,7 @@ class DiTModelConfig(ModelConfig):
     label_embedding_initializer: Optional[InitializerConfig] = None
     "Initializer used in label embedding."
 
-    head_initializer: Optional[InitializerConfig] = None
+    head_initializer: InitializerConfig = InitializerConfig(name="zeros")
     "Initializer used in regression head."
 
     # Diffusion
@@ -244,11 +254,79 @@ class DiTModelConfig(ModelConfig):
     """Configuration for reverse diffusion process. This is only used for inference
     and should be left as None in train mode."""
 
+    var_loss: bool = False
+
+    fp16_type: Literal["bfloat16", "float16", "cbfloat16"] = "bfloat16"
+    "Type of 16bit precision used"
+
+    def __post_init__(self):
+        super().__post_init__()
+
+        if self.latent_channels is None:
+            self.latent_channels = self.vae.latent_channels
+        if self.latent_size is None:
+            self.latent_size = self.vae.latent_size
+        if self.init_conv_like_linear is None:
+            self.init_conv_like_linear = self.use_conv_patchified_embedding
+        if self.timestep_embedding_initializer is None:
+            self.timestep_embedding_initializer = InitializerConfig(
+                name="normal", mean=0.0, std=self.initializer_range
+            )
+        if self.label_embedding_initializer is None:
+            self.label_embedding_initializer = InitializerConfig(
+                name="normal", mean=0.0, std=self.initializer_range
+            )
+
+
+@dataclass
+class DiTTrainDataConfig(DataConfig):
+    split: Optional[Literal["train", "val"]] = None
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def __post_init__(self):
+        self.params.setdefault("shuffle", True)
+        self.params.setdefault("shuffle_seed", 4321)
+        self.params.setdefault("num_classes", 1000)
+        self.params.setdefault("noaugment", False)
+        self.params.setdefault("drop_last", True)
+        self.params.setdefault("num_workers", 0)
+        self.params.setdefault("prefetch_factor", 10)
+        self.params.setdefault("persistent_workers", True)
+        self.params.setdefault("use_worker_cache", False)
+        if self.params["noaugment"]:
+            self.params["transforms"] = None
+
+        super().__post_init__()
+
+
+@dataclass
+class DiTEvalDataConfig(DataConfig):
+    split: Optional[Literal["train", "val"]] = None
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def __post_init__(self):
+        self.params.setdefault("shuffle", False)
+        self.params.setdefault("shuffle_seed", 4321)
+        self.params.setdefault("noaugment", False)
+        self.params.setdefault("drop_last", True)
+        self.params.setdefault("num_workers", 0)
+        self.params.setdefault("prefetch_factor", 10)
+        self.params.setdefault("persistent_workers", True)
+        self.params.setdefault("use_worker_cache", False)
+        if self.params["noaugment"]:
+            self.params["transforms"] = None
+
+        super().__post_init__()
+
 
 @registry.register_config("dit")
 @dataclass
 class DiTConfig(BaseConfig):
-    eval_input: Optional[DataConfig] = None
+    eval_input: Optional[DiTEvalDataConfig] = None
     "Input params class for eval mode."
 
     model: DiTModelConfig = required
@@ -260,8 +338,54 @@ class DiTConfig(BaseConfig):
     runconfig: RunConfig = None
     "Params class to define params for controlling runs."
 
-    train_input: Optional[DataConfig] = None
+    train_input: Optional[DiTTrainDataConfig] = None
     "Input params class for train mode."
 
     sparsity: Optional[SparsityConfig] = None
     "Params class for sparsity related configurations."
+
+    def __post_init__(self):
+        super().__post_init__()
+        self.set_config_defaults(
+            self.model,
+            self.train_input.params if self.train_input else None,
+            [self.eval_input.params if self.eval_input else None],
+        )
+
+    @staticmethod
+    def set_config_defaults(mparams, tparams, eparams_list):
+        from .utils import _model_to_input_map
+
+        # Set Model related defaults
+        if tparams is not None:
+            mparams.num_diffusion_steps = tparams["num_diffusion_steps"]
+            mparams.num_classes = tparams["num_classes"]
+            mparams.vae.in_channels = tparams["image_channels"]
+            mparams.vae.out_channels = tparams["image_channels"]
+
+        if mparams.reverse_process:
+            rparams = mparams.reverse_process
+            rparams.sampler.setdefault(
+                "num_diffusion_steps", mparams.num_diffusion_steps
+            )
+            rparams.pipeline.setdefault("num_classes", mparams.num_classes)
+            rparams.pipeline.setdefault("custom_labels", None)
+            # For DDPM Sampler only
+
+        # Copy params across
+        for section in [tparams, *eparams_list]:
+            if section is None:
+                continue
+
+            section["vae_scaling_factor"] = mparams.vae.scaling_factor
+
+            for _key_map in _model_to_input_map:
+                if isinstance(_key_map, tuple):
+                    assert (
+                        len(_key_map) == 2
+                    ), f"Tuple {_key_map} does not have len=2"
+                    model_key, input_key = _key_map
+                else:
+                    model_key = input_key = _key_map
+
+                section[input_key] = getattr(mparams, model_key)

@@ -22,6 +22,7 @@ from cerebras.modelzoo.common.utils.run.cli_pytorch import get_params_from_args
 
 
 def main():
+
     params = get_params_from_args()
 
     from cerebras.modelzoo.common.run_utils import main
@@ -29,11 +30,10 @@ def main():
         eval_input_dataloader,
         train_input_dataloader,
     )
-    from cerebras.modelzoo.models.nlp.dpo.model import DPOModel
 
     main(
         params,
-        DPOModel,
+        "dpo",
         train_input_dataloader,
         eval_input_dataloader,
     )

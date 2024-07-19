@@ -75,7 +75,8 @@ class GPTLMHeadModelLoss(nn.Module):
                     torch.sum(lm_loss) / labels.shape[0]
                 ) * self.loss_weight
 
-            loss = lm_loss.to(lm_logits.dtype)
+            loss = lm_loss
+
         else:
             loss = lm_loss.view(attention_mask.shape) * attention_mask.to(
                 dtype=lm_logits.dtype

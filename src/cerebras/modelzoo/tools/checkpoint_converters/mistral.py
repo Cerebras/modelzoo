@@ -30,7 +30,10 @@ from cerebras.modelzoo.tools.checkpoint_converters.llama import (
 class Converter_MistralModel_HF_CS21(Converter_LlamaModel_HF_CS21):
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-2.1", "cs-2.2"))
+        return (
+            FormatVersions("hf"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
+        )
 
     @staticmethod
     def get_config_converter_class() -> BaseConfigConverter:
@@ -50,7 +53,10 @@ class Converter_MistralModel_HF_CS21(Converter_LlamaModel_HF_CS21):
 class Converter_MistralForCausalLM_HF_CS21(Converter_LlamaForCausalLM_HF_CS21):
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-2.1", "cs-2.2"))
+        return (
+            FormatVersions("hf"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
+        )
 
     @staticmethod
     def get_config_converter_class() -> BaseConfigConverter:
@@ -79,8 +85,13 @@ class ConfigConverter_Mistral_HF_CS21(ConfigConverter_LLaMa_HF_CS21):
             *self.rules,
         ]
 
-        self.post_convert_defaults[0].update({"model_type": "mistral"})
+        self.post_convert_defaults[0].update(
+            {"model_type": "mistral", "architectures": ["MistralForCausalLM"]}
+        )
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-2.1", "cs-2.2"))
+        return (
+            FormatVersions("hf"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
+        )

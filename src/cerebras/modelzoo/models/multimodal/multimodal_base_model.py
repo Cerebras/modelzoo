@@ -13,9 +13,13 @@
 # limitations under the License.
 
 from abc import ABC, abstractmethod
+from dataclasses import asdict
 from enum import Enum
-from typing import Dict
+from typing import Any, Dict
 
+from cerebras.modelzoo.config_manager.config_classes.base.base_config import (
+    BaseConfig,
+)
 from cerebras.modelzoo.models.multimodal.multimodal_utils import (
     get_model_handle_from_mapping,
     get_projector_model_handle_from_mapping,
@@ -28,12 +32,12 @@ class ModalityType(Enum):
 
     @classmethod
     def values(cls):
-        return [b.value for b in BlockType]
+        return [b.value for b in ModalityType]
 
     @classmethod
     def get(cls, blk):
         if isinstance(blk, str):
-            return BlockType(blk)
+            return ModalityType(blk)
         elif isinstance(blk, Enum):
             return blk
         else:
@@ -58,24 +62,41 @@ class MultimodalBaseModelWrapper(ABC):
     def _init_component_model(self, component_params: Dict) -> object:
         component_name = component_params.pop("name")
         component_handle = get_model_handle_from_mapping(component_name)
+        # Remove unused params.
         component_model = component_handle(**component_params)
         return component_model
 
-    def build_modality_models(self, model_params: Dict) -> Dict[str, object]:
+    def build_modality_models(self, model_params: Any) -> Dict[str, object]:
         modality_models = {}
         for mmode in self.modalities:
-            if mmode.value in model_params.keys():
-                modality_models[mmode.value] = self._init_component_model(
-                    model_params[mmode.value]
-                )
+            mmode_value_present = False
+            if isinstance(model_params, Dict):
+                if mmode.value in model_params.keys():
+                    modality_models[mmode.value] = self._init_component_model(
+                        model_params[mmode.value]
+                    )
+                    mmode_value_present = True
+
+            elif isinstance(model_params, BaseConfig):
+                if hasattr(model_params, mmode.value):
+                    modality_models[mmode.value] = self._init_component_model(
+                        asdict(getattr(model_params, mmode.value))
+                    )
+                    mmode_value_present = True
+
             else:
+                raise ValueError(
+                    f"Unsupported type {type(model_params)}, supported are `Dict` and `BaseConfig`"
+                )
+
+            if not mmode_value_present:
                 # No model for this modality
                 modality_models[mmode.value] = None
         return modality_models
 
-    def build_projectors(self, model_params: Dict) -> object:
+    def build_projectors(self, model_params: Any) -> object:
         projector_models = {}
-        projector_params = model_params["projector"]
+        projector_params = model_params.projector
 
         for mmode in self.modalities:
             _k = f"projector_{mmode.value}"
