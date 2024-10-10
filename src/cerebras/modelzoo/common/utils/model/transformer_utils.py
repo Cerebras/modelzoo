@@ -473,3 +473,4 @@ def get_embedding_dtype(mixed_precision, fp16_type):
             dtype = None
     else:
         dtype = None
+    return dtype

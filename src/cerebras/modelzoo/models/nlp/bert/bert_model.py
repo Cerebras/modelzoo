@@ -157,6 +157,8 @@ class BertModel(nn.Module):
         num_relative_attention_buckets=32,
         alibi_trainable_slopes=False,
         pos_scaling_factor=1.0,
+        pos_scaling_type="linear",
+        pos_scaling_extra_args=None,
         # Encoder
         num_hidden_layers=12,
         layer_norm_epsilon=1.0e-5,
@@ -286,6 +288,8 @@ class BertModel(nn.Module):
             pad_rope=pad_rope,
             alibi_trainable_slopes=alibi_trainable_slopes,
             pos_scaling_factor=pos_scaling_factor,
+            pos_scaling_type=pos_scaling_type,
+            pos_scaling_extra_args=pos_scaling_extra_args,
             dtype=dtype,
         )
 

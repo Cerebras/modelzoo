@@ -38,6 +38,7 @@ from cerebras.modelzoo.layers.RelativePositionEmbeddingLayer import (
     RelativePositionEmbeddingLayer,
 )
 from cerebras.modelzoo.layers.RMSNorm import RMSNorm
+from cerebras.modelzoo.layers.StochasticDepth import StochasticDepth
 from cerebras.modelzoo.layers.Transformer import Transformer
 from cerebras.modelzoo.layers.TransformerDecoder import TransformerDecoder
 from cerebras.modelzoo.layers.TransformerDecoderLayer import (
@@ -61,6 +62,7 @@ __all__ = [
     "MultiQueryAttention",
     "RelativePositionEmbeddingLayer",
     "RMSNorm",
+    "StochasticDepth",
     "Transformer",
     "TransformerDecoder",
     "TransformerDecoderLayer",

@@ -133,6 +133,10 @@ from cerebras.modelzoo.tools.checkpoint_converters.esm2 import (  # noqa
     Converter_Esm2PretrainModel_HF_CS21,
 )
 
+from cerebras.modelzoo.tools.checkpoint_converters.gemma2 import (  # noqa
+    Converter_Gemma2ForCausalLM_HF_CS23,
+)
+
 
 from cerebras.modelzoo.tools.checkpoint_converters.mpt import (  # noqa
     Converter_MPTForCausalLM_HF_CS21,
@@ -220,6 +224,10 @@ converters: Dict[str, List[BaseCheckpointConverter]] = {
         Converter_Codegen_Headless_HF_CS20,
     ],
     "esm-2": [Converter_Esm2PretrainModel_HF_CS21],
+    "dpo": [
+        Converter_DPO_HF_CS21,
+        Converter_NON_DPO_TO_DPO_CS21,
+    ],
     "falcon": [
         Converter_Falcon_CS20_CS21,
         Converter_Falcon_HF_CS21,

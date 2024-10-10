@@ -49,6 +49,10 @@ class EmbeddingLayer(nn.Module):
     :param Optional[int] max_timescale: The scale of the longest sinusoid. Default to 1.0e4. (only need to be specified when position_embedding_type is fixed).
     :param Optional[str,Callable] position_embeddings_initializer: Position
         embeddings initializer. Defaults to "uniform".
+    :param Optional[int] pos_scaling_factor: Scales the position embeddings by pos_scaling_factor. Default to 1.
+    :param Optional[str] pos_scaling_type: Scales the position scaling type. Possible values are 'YaRN' and "linear".
+        Default to "linear".
+    :param Optional[str] pos_scaling_extra_args: A dict containing args for YaRN (and future) position scaling methods.
     :param Optional[int] num_segments: Number of segments for the segment
         embedding layer. Defaults to None, in which case the segment embedding
         layer is not created.
@@ -93,6 +97,8 @@ class EmbeddingLayer(nn.Module):
         alibi_trainable_slopes=False,
         # Rotary & Alibi PE:
         pos_scaling_factor=1.0,
+        pos_scaling_type="linear",
+        pos_scaling_extra_args=None,
         # Segment Embedding Parameters:
         num_segments=None,
         segment_embedding_size=None,
@@ -149,6 +155,12 @@ class EmbeddingLayer(nn.Module):
             if max_position_embeddings is None:
                 raise ValueError("max_position_embeddings should be specified.")
 
+            pos_scaling_type = pos_scaling_type.lower()
+            if pos_scaling_type not in ["linear", "yarn", "llama3"]:
+                raise ValueError(
+                    f"Unsupported position_embedding_type {pos_scaling_type}, should be 'linear' or 'YaRN'"
+                )
+
             if (
                 pos_scaling_factor != 1.0
                 and self.position_embedding_type
@@ -170,6 +182,14 @@ class EmbeddingLayer(nn.Module):
             ):
                 raise ValueError(
                     "Constant image embedding is only supported for ALiBi and RoPE."
+                )
+
+            if (
+                pos_scaling_type != "linear"
+                and self.position_embedding_type == "alibi"
+            ):
+                raise ValueError(
+                    "ALiBi position embedding only works with pos_scaling_type = 'linear'"
                 )
 
             if position_embedding_type == "learned":
@@ -202,6 +222,8 @@ class EmbeddingLayer(nn.Module):
                     rotary_dim,
                     base=rope_theta,
                     scaling_factor=pos_scaling_factor,
+                    scaling_type=pos_scaling_type,
+                    scaling_extra_args=pos_scaling_extra_args,
                     pad_fixed_pos_emb=pad_rope,
                     constant_pos_embedding=constant_pos_embedding,
                 )

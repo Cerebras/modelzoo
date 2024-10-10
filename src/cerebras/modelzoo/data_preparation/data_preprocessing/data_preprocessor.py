@@ -29,8 +29,7 @@ import sys
 import time
 from collections import defaultdict
 from functools import partial
-from multiprocessing import Event, Lock, Process, Queue, Value, cpu_count
-from multiprocessing.synchronize import Event
+from multiprocessing import Lock, Pool, Process, Queue, Value, cpu_count
 from threading import Event, Thread
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -611,17 +610,6 @@ class DataPreprocessor:
         hf_tokenizer = processing_params.pop("huggingface_tokenizer", None)
         custom_tokenizer = processing_params.pop("custom_tokenizer", None)
 
-        if hf_tokenizer:
-            hf_tokenizer = hf_tokenizer.lower()
-
-        if custom_tokenizer:
-            # We do not want to convert to lowercase in case it is a custom tokenizer as it would be a path.
-            if (
-                custom_tokenizer.casefold() == "gpt2tokenizer"
-                or custom_tokenizer.casefold() == "neoxtokenizer"
-            ):
-                custom_tokenizer = custom_tokenizer.lower()
-
         if hf_tokenizer and custom_tokenizer:
             raise ValueError(
                 f"Both custom and huggingface tokenizer cannot be provided. Please provide one tokenizer"
@@ -992,9 +980,8 @@ class DataPreprocessor:
                             )
                             prefix_sequences += int(h5f.attrs["n_examples"])
                     else:
-                        chunk_buffer = [chunk_data]
-                        n_examples = self.append_buffer_to_hdf5(
-                            chunk_buffer,
+                        n_examples = self.append_df_to_hdf5(
+                            df_chunk,
                             self.output_dir,
                             chunk_locks,
                         )
@@ -1005,22 +992,21 @@ class DataPreprocessor:
 
                     self.final_data_stats["examples"] += prefix_sequences
 
-    def shuffle_second_pass(self, file_list, progress_counter, pid) -> None:
-        """
-        This function performs the second pass of shuffling.
-        Parameters:
-            file_list:  List of hdf5 file paths to shuffle
-            progress_counter: A shared counter to track progress across processes.
-        """
+    @staticmethod
+    def shuffle_single_file(args):
 
-        np.random.seed(self.shuffle_seed + pid)
-        for file_path in file_list:
-            with h5py.File(file_path, 'r+') as hf:
-                data = hf["data"]
-                data_array = data[:]
-                np.random.shuffle(data_array)
-                data[...] = data_array
-            progress_counter.value += 1
+        file_path, shuffle_seed, pid = args
+        np.random.seed(shuffle_seed + pid)
+        with h5py.File(file_path, 'r+') as hf:
+            dataset_length = hf[list(hf.keys())[0]].shape[0]
+            # Generate a consistent shuffle index
+            shuffle_index = np.arange(dataset_length)
+            np.random.shuffle(shuffle_index)
+            # Apply the shuffle index to each dataset
+            for key in hf.keys():
+                dataset = hf[key]
+                data_array = dataset[:]
+                dataset[...] = data_array[shuffle_index]
 
     def split_shuffle_second_pass(self):
         """
@@ -1028,58 +1014,37 @@ class DataPreprocessor:
         second pass of shuffling.
         """
 
-        ## Perform the second pass of shuffling:
         logger.info("The second pass of shuffling has started")
         hdf5_file_list = sorted(
             glob.glob(os.path.join(self.output_dir, "*.h5"))
         )
         hdf5_file_list_length = len(hdf5_file_list)
-        chunk_size = hdf5_file_list_length // self.processes
-        file_list_per_process = [
-            hdf5_file_list[i * chunk_size : (i + 1) * chunk_size]
-            for i in range(self.processes)
+        first_file_path = hdf5_file_list[0]
+        with h5py.File(first_file_path, 'r') as hf:
+            dataset = hf["data"]
+            available_memory = psutil.virtual_memory().available
+            dataset_size = dataset.dtype.itemsize * np.prod(dataset.shape)
+            estimate_second_phase_processes = math.ceil(
+                (0.4 * available_memory) / (dataset_size)
+            )
+        second_phase_processes = min(
+            estimate_second_phase_processes, self.processes
+        )
+        args_list = [
+            (file_path, self.shuffle_seed, pid)
+            for pid, file_path in enumerate(hdf5_file_list)
         ]
 
-        remainder = hdf5_file_list_length % self.processes
-        for i in range(remainder):
-            file_list_per_process[i].append(
-                hdf5_file_list[self.processes * chunk_size + i]
-            )
-
-        progress_counter = multiprocessing.Value("i", 0)
-        start_time = time.time()
-        shuffle_processes = [
-            Process(
-                target=self.shuffle_second_pass,
-                args=(
-                    file_list_per_process[i],
-                    progress_counter,
-                    i,
-                ),
-            )
-            for i in range(self.processes)
-        ]
-        for proc in shuffle_processes:
-            proc.start()
-        with tqdm(
-            total=hdf5_file_list_length, desc="Processing", dynamic_ncols=True
-        ) as pbar:
-            stop_event = Event()
-            progress_thread = Thread(
-                target=update_progress,
-                args=(
-                    pbar,
-                    progress_counter,
-                    hdf5_file_list_length,
-                    start_time,
-                    stop_event,
-                ),
-            )
-            progress_thread.start()
-            for i, proc in enumerate(shuffle_processes):
-                proc.join()
-            stop_event.set()
-            progress_thread.join()
+        with Pool(processes=second_phase_processes) as pool:
+            with tqdm(
+                total=hdf5_file_list_length,
+                desc="Processing",
+                dynamic_ncols=True,
+            ) as pbar:
+                for _ in pool.imap_unordered(
+                    DataPreprocessor.shuffle_single_file, args_list
+                ):
+                    pbar.update()
 
     def stats_collation(self, num_writer_processes) -> None:
         """
@@ -1161,7 +1126,7 @@ class DataPreprocessor:
         process_stats_path = root + f'_process_stats_{process_idx}.json'
 
         buffer = {}
-        chunk_buffer = []
+        cum_size = 0
 
         for df_chunk in reader.stream_data(checkpoint_args):
             # Tokenize chunk
@@ -1203,17 +1168,17 @@ class DataPreprocessor:
                     num_chunks_written += 1
                     buffer = {}
             else:
-                chunk_buffer.append((process_chunk_number, df_chunk))
-                if get_size(buffer) >= self.write_chunk_size:
-                    n_examples = self.append_buffer_to_hdf5(
-                        chunk_buffer,
-                        self.output_dir,
-                        chunk_locks,
-                    )
-                    # Update progress counter
+                n_examples = self.append_df_to_hdf5(
+                    df_chunk,
+                    self.output_dir,
+                    chunk_locks,
+                )
+                cum_data_stats["examples"] += n_examples
+                cum_size += get_size(df_chunk.tokenized_data)
+                if cum_size >= self.write_chunk_size:
                     num_chunks_written += 1
-                    cum_data_stats["examples"] += n_examples
-                    chunk_buffer = []
+                    cum_size = 0
+
             progress_counter.value += 1
             process_chunk_number += 1
             checkpoint_data = [
@@ -1225,22 +1190,14 @@ class DataPreprocessor:
             ]
             self.update_checkpoint(process_checkpoint_path, checkpoint_data)
 
-        if len(buffer) != 0 or len(chunk_buffer) != 0:
+        if len(buffer) > 0:
             output_file_name = os.path.join(
                 self.output_dir,
                 f"output_chunk_{process_idx}_{df_chunk.file_idx}_{df_chunk.start_doc_idx}_{process_chunk_number}.h5",
             )
-            if not self.shuffle:
-                with h5py.File(output_file_name, "w") as h5f:
-                    self.save_buffer_to_hdf5(h5f, buffer, self.write_in_batch)
-                    cum_data_stats["examples"] += int(h5f.attrs["n_examples"])
-            else:
-                n_examples = self.append_buffer_to_hdf5(
-                    chunk_buffer,
-                    self.output_dir,
-                    chunk_locks,
-                )
-                cum_data_stats["examples"] += n_examples
+            with h5py.File(output_file_name, "w") as h5f:
+                self.save_buffer_to_hdf5(h5f, buffer, self.write_in_batch)
+                cum_data_stats["examples"] += int(h5f.attrs["n_examples"])
             num_chunks_written += 1
             checkpoint_data = [
                 df_chunk.file_idx,
@@ -1462,7 +1419,7 @@ class DataPreprocessor:
             np.random.seed(self.shuffle_seed + writer_idx)
 
         buffer = {}
-        chunk_buffer = []
+        cum_size = 0
         while True:
             try:
                 chunk_data = self.writer_queues[tokenizer_idx].get()
@@ -1514,17 +1471,16 @@ class DataPreprocessor:
                             num_chunks_written += 1
                             buffer = {}
                     else:
-                        chunk_buffer.append(chunk_data)
-                        if get_size(buffer) >= self.write_chunk_size:
-                            n_examples = self.append_buffer_to_hdf5(
-                                chunk_buffer,
-                                self.output_dir,
-                                chunk_locks,
-                                process_checkpoint_path,
-                            )
-                            cum_data_stats["examples"] += n_examples
+                        n_examples = self.append_df_to_hdf5(
+                            df_chunk,
+                            self.output_dir,
+                            chunk_locks,
+                        )
+                        cum_data_stats["examples"] += n_examples
+                        cum_size += get_size(df_chunk.tokenized_data)
+                        if cum_size >= self.write_chunk_size:
                             num_chunks_written += 1
-                            chunk_buffer = []
+                            cum_size = 0
                     progress_counter.value += 1
                     checkpoint_data = [
                         df_chunk.file_idx,
@@ -1536,27 +1492,18 @@ class DataPreprocessor:
                     self.update_checkpoint(
                         process_checkpoint_path, checkpoint_data
                     )
+
             except Exception as e:
                 logger.error(f'Exception in writer process {os.getpid()}: {e}')
 
-        if len(buffer) != 0 or len(chunk_buffer) != 0:
+        if len(buffer) > 0:
             output_file_name = os.path.join(
                 self.output_dir,
                 f"output_chunk_remaining_{df_chunk.file_idx}_{df_chunk.start_doc_idx}.h5",
             )
-
-            if not self.shuffle:
-                with h5py.File(output_file_name, "w") as h5f:
-                    self.save_buffer_to_hdf5(h5f, buffer, self.write_in_batch)
-                    cum_data_stats["examples"] += int(h5f.attrs["n_examples"])
-            else:
-                n_examples = self.append_buffer_to_hdf5(
-                    chunk_buffer,
-                    self.output_dir,
-                    chunk_locks,
-                    process_checkpoint_path,
-                )
-                cum_data_stats["examples"] += n_examples
+            with h5py.File(output_file_name, "w") as h5f:
+                self.save_buffer_to_hdf5(h5f, buffer, self.write_in_batch)
+                cum_data_stats["examples"] += int(h5f.attrs["n_examples"])
             num_chunks_written += 1
             checkpoint_data = [
                 df_chunk.file_idx,
@@ -1568,7 +1515,6 @@ class DataPreprocessor:
             self.update_checkpoint(process_checkpoint_path, checkpoint_data)
 
         dump_args(cum_data_stats, process_stats_path)
-
         self.stats_queue.put(cum_data_stats)
         self.stats_queue.put(None)
 
@@ -1691,6 +1637,11 @@ class DataPreprocessor:
         self.final_data_stats["sample_features"] = getattr(
             self.token_generator, 'sample_features', []
         )
+        if self.mode == "dpo":
+            self.final_data_stats["features"] = self.final_data_stats[
+                "sample_features"
+            ]
+
         return self.final_data_stats
 
     def get_vocab_size(self):
@@ -1735,83 +1686,72 @@ class DataPreprocessor:
 
         h5file.attrs["n_examples"] = n_examples
 
-    def append_buffer_to_hdf5(
-        self,
-        buffer,
-        output_dir,
-        chunk_locks,
-        dtype="i4",
-        compression="gzip",
+    def append_df_to_hdf5(
+        self, df_chunk, output_dir, chunk_locks, dtype="i4", compression="gzip"
     ):
         """
-        Appends an entire buffer of chunk to multiple HDF5 files. This method
-        is called as part of the shuffling process.
-
+        Appends each sequence in a dataframe to a different hdf5 file.
         """
 
-        if len(buffer) == 0:
-            return 0
-
-        n_examples = 0
-        for chunk_number, chunk in buffer:
-            sample_key = next(iter(chunk.tokenized_data.keys()))
-            n_examples += np.concatenate(
-                chunk.tokenized_data[sample_key], axis=0
-            ).shape[0]
-
+        first_value = np.concatenate(
+            next(iter(df_chunk.tokenized_data.values())), axis=0
+        )
+        n_examples = first_value.shape[0]
         shuffled_indices = np.random.choice(
             np.arange(self.total_output_files), n_examples
         )
-        for chunk_number, chunk in buffer:
-            for i, (data_label, data) in enumerate(
-                chunk.tokenized_data.items()
-            ):
+        data = None
+        for data_label, data in df_chunk.tokenized_data.items():
+            if data is None:
+                data = first_value
+            else:
                 data = np.concatenate(data, axis=0)
-                if data.dtype.kind == 'S':
-                    dtype = h5py.string_dtype(encoding='utf-8')
-                elif data.dtype == np.bool_:
-                    dtype = np.bool_
-                else:
-                    dtype = "i4"
-                if len(data.shape) > 1:
-                    chunks_shape = (
-                        1,
-                        *data.shape[1:],
-                    )  # Set chunk shape for multidimensional data
-                    maxshape = (None, *data.shape[1:])
-                else:
-                    chunks_shape = None
-                    maxshape = None
+            if data.dtype.kind == 'S':
+                dtype = h5py.string_dtype(encoding='utf-8')
+            elif data.dtype == np.bool_:
+                dtype = np.bool_
+            else:
+                dtype = "i4"
 
-                for idx, element in enumerate(data):
-                    idx_seq = shuffled_indices[idx]
-                    output_file_name = os.path.join(
-                        output_dir, f"output_chunk_{idx_seq}.h5"
-                    )
-                    if chunk_locks:
-                        lock = chunk_locks[idx_seq % len(chunk_locks)]
-                    else:
-                        lock = None
+            if len(data.shape) > 1:
+                chunks_shape = (
+                    1,
+                    *data.shape[1:],
+                )  # Set chunk shape for multidimensional data
+                maxshape = (None, *data.shape[1:])
+            else:
+                chunks_shape = None
+                maxshape = None
 
-                    with optional_lock(lock):
-                        with h5py.File(output_file_name, "a") as h5f:
-                            element = np.expand_dims(element, axis=0)
-                            if data_label not in h5f:
-                                h5f.create_dataset(
-                                    data_label,
-                                    data=element,
-                                    dtype=dtype,
-                                    chunks=chunks_shape,
-                                    maxshape=maxshape,
-                                    compression=compression,
-                                )
-                                h5f.attrs["n_examples"] = 1
-                            else:
-                                h5f[data_label].resize(
-                                    (h5f[data_label].shape[0] + 1), axis=0
-                                )
-                                h5f[data_label][-1:] = element
-                                h5f.attrs["n_examples"] += 1
+            for idx, element in enumerate(data):
+                idx_seq = shuffled_indices[idx]
+                output_file_name = os.path.join(
+                    output_dir, f"output_chunk_{idx_seq}.h5"
+                )
+                if chunk_locks:
+                    lock = chunk_locks[idx_seq % len(chunk_locks)]
+                else:
+                    lock = None
+
+                with optional_lock(lock):
+                    with h5py.File(output_file_name, "a") as h5f:
+                        element = np.expand_dims(element, axis=0)
+                        if data_label not in h5f:
+                            h5f.create_dataset(
+                                data_label,
+                                data=element,
+                                dtype=dtype,
+                                chunks=chunks_shape,
+                                maxshape=maxshape,
+                                compression=compression,
+                            )
+                            h5f.attrs["n_examples"] = 1
+                        else:
+                            h5f[data_label].resize(
+                                (h5f[data_label].shape[0] + 1), axis=0
+                            )
+                            h5f[data_label][-1:] = element
+                            h5f.attrs["n_examples"] += 1
 
         return n_examples
 

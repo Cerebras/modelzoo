@@ -151,7 +151,7 @@ class ConfigConverter_T5_sP_muP(ConfigConverter_sP_muP_post_CS23):
         super().__init__()
         self.rules = [
             ConversionRule(["mup_base_d_model"]),
-            ConversionRule(["mup_base_d_ffn"]),
+            ConversionRule(["mup_base_d_ff"]),
             ConversionRule(["mup_base_d_kv"]),
             ConversionRule(["encoder_attention_logits_alpha"]),
             ConversionRule(["decoder_attention_logits_alpha"]),
@@ -594,19 +594,19 @@ class Converter_T5_sP_muP(BaseDictionaryConverter):
         self.rules = [
             ConversionRule(
                 [r".+\.proj_q_dense_layer.*"],
-                action=self.scale_qv_projection,
+                action=self.scale_q_projection,
             ),
             ConversionRule(
-                [r".+\.encoder.*proj_k_dense_layer.*"],
+                [r".*encoder.*proj_k_dense_layer.*"],
                 action=self.scale_encoder_k_projection,
             ),
             ConversionRule(
-                [r".+\.decoder.*proj_k_dense_layer.*"],
+                [r".*decoder.*proj_k_dense_layer.*"],
                 action=self.scale_decoder_k_projection,
             ),
             ConversionRule(
                 [r".+\.proj_v_dense_layer.*"],
-                action=self.scale_qv_projection,
+                action=self.scale_v_projection,
             ),
             ConversionRule(
                 [r".+\.proj_output_dense_layer.*"],
@@ -617,23 +617,37 @@ class Converter_T5_sP_muP(BaseDictionaryConverter):
                 action=self.scale_lm_head,
             ),
             ConversionRule(
-                [r"(?:model\.|)embedding_layer\.word_embeddings\.weight"],
+                [r"(?:model\.|).*embeddings\.word_embeddings\.weight"],
                 action=self.scale_embeddings,
-            ),
-            ConversionRule(
-                [
-                    r"(?:model\.|)embedding_layer\.position_embeddings(?:\.embed)?\.weight"
-                ],
-                action=self.scale_embeddings,
-            ),
-            ConversionRule(
-                [r"(?:model\.|)embedding_ln_f\.(?:weight|bias)"],
-                action=self.scale_embedding_layernorm,
             ),
             ConversionRule(
                 [r".*"], action=self.replaceKey
             ),  # Catch-all for everything else
         ]
+
+    def scale_q_projection(
+        self,
+        old_key,
+        new_key,
+        old_state_dict,
+        new_state_dict,
+        from_index,
+        action_fn_args,
+    ):
+        config = action_fn_args["configs"][1]
+        d_model = config["model"]["d_model"]
+
+        mup_base_d_model = config["model"].get("mup_base_d_model", None)
+        if mup_base_d_model is None:
+            mup_base_d_model = d_model
+
+        d_model_width_mult = d_model / mup_base_d_model
+        d_sqrt = math.sqrt(config["model"]["d_kv"])
+        projection_scale = d_model_width_mult**-0.5
+        if config["model"].get("mup_base_d_kv", None):
+            projection_scale = 1.0
+        total_scale = projection_scale / d_sqrt
+        new_state_dict[new_key] = old_state_dict[old_key] * total_scale
 
     def scale_encoder_k_projection(
         self,
@@ -668,12 +682,11 @@ class Converter_T5_sP_muP(BaseDictionaryConverter):
 
         projection_scale = d_model_width_mult**-0.5
 
-        if config.get("mup_base_d_kv", None):
+        if config["model"].get("mup_base_d_kv", None):
             projection_scale = 1.0
 
         if scale_qk_dot_by_d:
-            n_heads = config["model"]["num_heads"]
-            d_sqrt = math.sqrt(d_model // n_heads)
+            d_sqrt = math.sqrt(config["model"]["d_kv"])
             total_scale = attention_logits_alpha * projection_scale / d_sqrt
         else:
             total_scale = attention_logits_alpha * projection_scale
@@ -706,26 +719,25 @@ class Converter_T5_sP_muP(BaseDictionaryConverter):
         d_model_width_mult = d_model / mup_base_d_model
 
         attention_logits_alpha = config["model"].get(
-            "decoder_attention_logits_alpha", None
+            "decoder_attention_logits_alpha"
         )
         if attention_logits_alpha is None:
             attention_logits_alpha = 1.0
 
         projection_scale = d_model_width_mult**-0.5
 
-        if config.get("mup_base_d_kv", None):
+        if config["model"].get("mup_base_d_kv", None):
             projection_scale = 1.0
 
         if scale_qk_dot_by_d:
-            n_heads = config["model"]["num_heads"]
-            d_sqrt = math.sqrt(d_model // n_heads)
+            d_sqrt = math.sqrt(config["model"]["d_kv"])
             total_scale = attention_logits_alpha * projection_scale / d_sqrt
         else:
             total_scale = attention_logits_alpha * projection_scale
 
         new_state_dict[new_key] = old_state_dict[old_key] * total_scale
 
-    def scale_qv_projection(
+    def scale_v_projection(
         self,
         old_key,
         new_key,
@@ -743,7 +755,7 @@ class Converter_T5_sP_muP(BaseDictionaryConverter):
 
         d_model_width_mult = d_model / mup_base_d_model
         projection_scale = d_model_width_mult**-0.5
-        if config.get("mup_base_d_kv", None):
+        if config["model"].get("mup_base_d_kv", None):
             projection_scale = 1.0
         new_state_dict[new_key] = projection_scale * old_state_dict[old_key]
 
@@ -764,8 +776,8 @@ class Converter_T5_sP_muP(BaseDictionaryConverter):
             mup_base_d_model = d_model
 
         d_model_width_mult = d_model / mup_base_d_model
-        projection_scale = d_model_width_mult**-0.5
-        if config.get("mup_base_d_kv", None):
+        projection_scale = d_model_width_mult**0.5
+        if config["model"].get("mup_base_d_kv", None):
             projection_scale = 1.0
         new_state_dict[new_key] = projection_scale * old_state_dict[old_key]
 
@@ -779,47 +791,17 @@ class Converter_T5_sP_muP(BaseDictionaryConverter):
         action_fn_args,
     ):
         config = action_fn_args["configs"][1]
-
         # Fold embeddings_scale into word/position embeddings if embedding
         # layer norm *is not* enabled
-        if "embeddings_alpha" in config["model"] and not config["model"].get(
-            "embedding_layer_norm", False
-        ):
-            emb_alpha = config["model"]["embeddings_alpha"]
-            if _is_mup(config["model"]):
-                d_model = config["model"]["d_model"]
-                emb_scale = emb_alpha * d_model**0.5
-            else:
-                emb_scale = emb_alpha
+        if _is_mup(config["model"]):
+            emb_alpha = config["model"].get("embeddings_alpha", None)
+            d_model = config["model"]["d_model"]
+            if not emb_alpha:
+                emb_alpha = 1.0
+            emb_scale = emb_alpha * d_model**0.5
 
             new_state_dict[new_key] = old_state_dict[old_key] * emb_scale
-        else:
-            new_state_dict[new_key] = old_state_dict[old_key]
 
-    def scale_embedding_layernorm(
-        self,
-        old_key,
-        new_key,
-        old_state_dict,
-        new_state_dict,
-        from_index,
-        action_fn_args,
-    ):
-        config = action_fn_args["configs"][1]
-
-        # Fold embeddings_scale into embedding layer norm if embedding
-        # layer norm *is* enabled
-        if "embeddings_scale" in config["model"] and config["model"].get(
-            "embedding_layer_norm", False
-        ):
-            emb_alpha = config["model"]["embeddings_alpha"]
-            if _is_mup(config["model"]):
-                d_model = config["model"]["d_model"]
-                emb_scale = emb_alpha * d_model**0.5
-            else:
-                emb_scale = emb_alpha
-
-            new_state_dict[new_key] = old_state_dict[old_key] * emb_scale
         else:
             new_state_dict[new_key] = old_state_dict[old_key]
 

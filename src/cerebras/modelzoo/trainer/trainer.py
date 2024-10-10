@@ -536,7 +536,7 @@ class Trainer:
     @final
     @cstorch.trace
     def training_step(self, batch) -> Dict[str, Any]:
-        """Run a single training step on the given batch..
+        """Run a single training step on the given batch.
 
         Note that if retrace is off, content of this method will only run on
         the first iteration. So any inputs to this method must either be
@@ -747,8 +747,6 @@ class Trainer:
             )
 
         with ExitStack() as stack:
-            stack.enter_context(self.name_scope("train"))
-
             self.call("on_enter_train", stack, train_dataloader, loop, loop_idx)
 
             self.call(

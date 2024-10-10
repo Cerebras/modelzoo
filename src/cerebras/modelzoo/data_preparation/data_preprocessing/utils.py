@@ -110,6 +110,11 @@ def dump_result(
     post_process["raw_chars_count"] = results.pop("raw_chars_count", 0)
     post_process["raw_bytes_count"] = results.pop("raw_bytes_count", 0)
 
+    ## dump features for dpo to be used in DPODataProcessor
+    if "features" in results:
+        features = results.pop("features")
+        data["features"] = features
+
     ## put remaining key,value pairs in post process
     for key, value in results.items():
         post_process[key] = value
@@ -1063,15 +1068,20 @@ def append_eos_to_multiple_semantic_regions(
     while current_eos_pos < len(eos_indices) and current_data_range_pos < len(
         data_ranges
     ):
-        ## Check if eos occurs between current and next region
         eos_start_idx, eos_end_idx = eos_indices[current_eos_pos]
         region_start_idx, region_end_idx = data_ranges[
             current_data_range_pos
         ].get("indices")
+        ## EOS occurs in the current region
+        if region_start_idx <= eos_start_idx < region_end_idx:
+            current_eos_pos += 1
+            continue
+
         if current_data_range_pos + 1 < len(data_ranges):
             next_region_start_idx, next_region_end_idx = data_ranges[
                 current_data_range_pos + 1
             ].get("indices")
+            ## Check if eos occurs between current and next region
             if region_end_idx <= eos_start_idx < next_region_start_idx:
                 image_start_idx = (
                     -1
@@ -1087,7 +1097,7 @@ def append_eos_to_multiple_semantic_regions(
                     ] = indices_incl_eos
                     current_eos_pos += 1
         else:
-            ## insert eos in the last region
+            ## insert EOS in the last region
             image_start_idx = (
                 -1
                 if image_token is None
@@ -1121,16 +1131,40 @@ def append_eos_to_multiple_semantic_regions(
     return data_ranges
 
 
-def find_token_range(region, offsets):
+def find_region_in_formatted_string(text_semantic_region_list, formatted_data):
+
+    string_search_idx = 0
+    for semantic_region in text_semantic_region_list:
+        region_name = semantic_region.get("region_modality")
+        region_identifier = semantic_region.pop("region_identifier", "")
+        region_len = semantic_region.get("region_len")
+        loss_weight = semantic_region.get("loss_weight")
+        attention_mask = semantic_region.get("attention_mask", None)
+        region_identifier_start_idx = formatted_data.find(
+            region_identifier, string_search_idx
+        )
+        assert (
+            region_identifier_start_idx != -1
+        ), f"Unable to find region_identifier - {region_identifier} in the string - {formatted_data}"
+        formatted_data = formatted_data.replace(region_identifier, "")
+        start_idx = region_identifier_start_idx
+        end_idx = start_idx + region_len
+        string_search_idx = end_idx
+        semantic_region.update({"indices": (start_idx, end_idx)})
+
+    return formatted_data, text_semantic_region_list
+
+
+def find_token_range(region, offsets, starting_offset_position):
 
     string_start, string_end = region.pop('indices')
     token_start = next(
         (
             i
-            for i, (offset_start, offset_end) in enumerate(offsets)
-            if (offset_start <= string_start and offset_end > string_start)
+            for i in range(starting_offset_position, len(offsets))
+            if (offsets[i][0] <= string_start and offsets[i][1] > string_start)
             or (
-                offset_start > string_start
+                offsets[i][0] > string_start
             )  ## this condition is useful for neox tokenizer which treats space as an additional token
         ),
         None,
@@ -1142,8 +1176,8 @@ def find_token_range(region, offsets):
     token_end = next(
         (
             i
-            for i, (offset_start, offset_end) in enumerate(offsets)
-            if offset_end >= string_end and offset_start < string_end
+            for i in range(starting_offset_position, len(offsets))
+            if offsets[i][1] >= string_end and offsets[i][0] < string_end
         ),
         None,
     )
@@ -1158,9 +1192,3 @@ def find_token_range(region, offsets):
     }
 
     return data
-
-
-## _text _ ,text
-## formatted_data = prompt_completion
-## tokens = tokenizer.tokenize(formatted_data)
-## tokens -> formatted_data

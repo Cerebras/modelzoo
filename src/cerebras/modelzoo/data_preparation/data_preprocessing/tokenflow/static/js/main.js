@@ -1,4 +1,12 @@
 var globalHDF5Data = {};
+
+function escapeSpecialCharacters(str) {
+    return str
+        .replace(/\\/g, '\\\\')  // Escape backslashes
+        .replace(/\n/g, '\\n')   // Escape newlines
+        .replace(/\t/g, '\\t')   // Escape tabs
+}
+
 document.addEventListener('DOMContentLoaded', function() {
     const controlsSection = document.querySelector('.controls-section');
     const controls = document.querySelector('.controls');
@@ -32,6 +40,9 @@ function loadData(sequence, file=false) {
     })
     .then(response => response.json())
     .then(data => {
+
+        data.input_strings = data.input_strings.map(escapeSpecialCharacters);
+
         globalHDF5Data = data;
         updateDisplay(globalHDF5Data);
         if(file) updateStringOptions(globalHDF5Data.nstrings);

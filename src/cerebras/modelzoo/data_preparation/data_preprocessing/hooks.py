@@ -85,7 +85,7 @@ def finetuning_llava_hook(
         semantic_drop_mask = []
         role = "user" if i % 2 == 0 else "assistant"
         content_parts = []
-        if role == "user" and image_path:
+        if role == "user":
             # Check for multiple image tokens in the user's role
             if turn[multi_turn_content_key].count(image_token) > 1:
                 raise ValueError(
@@ -98,13 +98,15 @@ def finetuning_llava_hook(
             if len(parts) == 2:
                 # Add the image part before the text
                 content_parts.append({"image": image_path})
-                content_parts.append(
-                    {"text": parts[0].strip() + parts[1].strip()}
-                )
-                if phase == 1:
-                    semantic_drop_mask.extend([False, True])
+                parts = [part.strip() for part in parts]
+                if parts[0] != '' and parts[1] != '':
+                    content_parts.append({"text": parts[0] + parts[1]})
+                    if phase == 1:
+                        semantic_drop_mask.extend([False, True])
+                    else:
+                        semantic_drop_mask.extend([False, False])
                 else:
-                    semantic_drop_mask.extend([False, False])
+                    semantic_drop_mask.extend([False])
             else:
                 # No image token found, add the text as is
                 content_parts.append({"text": turn[multi_turn_content_key]})
@@ -616,7 +618,7 @@ def finetuning_llava_hook_prompt_completion(
         semantic_drop_mask = []
         role = "prompt" if i % 2 == 0 else "completion"
         content_parts = []
-        if role == "prompt" and image_path:
+        if role == "prompt":
             # Check for multiple image tokens in the user's role
             if turn[multi_turn_content_key].count(image_token) > 1:
                 raise ValueError(
@@ -629,13 +631,15 @@ def finetuning_llava_hook_prompt_completion(
             if len(parts) == 2:
                 # Add the image part before the text
                 content_parts.append({"image": image_path})
-                content_parts.append(
-                    {"text": parts[0].strip() + parts[1].strip()}
-                )
-                if phase == 1:
-                    semantic_drop_mask.extend([False, True])
+                parts = [part.strip() for part in parts]
+                if parts[0] != '' and parts[1] != '':
+                    content_parts.append({"text": parts[0] + parts[1]})
+                    if phase == 1:
+                        semantic_drop_mask.extend([False, True])
+                    else:
+                        semantic_drop_mask.extend([False, False])
                 else:
-                    semantic_drop_mask.extend([False, False])
+                    semantic_drop_mask.extend([False])
             else:
                 # No image token found, add the text as is
                 content_parts.append({"text": turn[multi_turn_content_key]})

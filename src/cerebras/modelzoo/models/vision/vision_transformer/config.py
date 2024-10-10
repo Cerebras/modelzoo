@@ -171,6 +171,13 @@ class VisionTransformerModelConfig(ModelConfig):
     pooler_initializer: Optional[dict] = None
     use_final_layer_norm: Optional[bool] = True
     use_bias_in_output: Optional[bool] = True
+    layerscale_value: Optional[float] = None
+    use_dinov2_classifier: Optional[bool] = False
+    stochastic_depth_drop_prob: Optional[float] = 0.0
+    stochastic_depth_drop_prob_schedule: Literal["linear", "constant"] = (
+        "linear"
+    )
+    stochastic_depth_mode: Optional[str] = "batch"
     compute_eval_metrics: bool = True
     fp16_type: Literal["bfloat16", "float16", "cbfloat16"] = "bfloat16"
     "Type of 16bit precision used"
@@ -204,6 +211,7 @@ class ViTModelConfig(BaseConfig):
     position_embedding_type: str = "learned"
     projection_initializer: Optional[dict] = None
     prepend_cls_token: bool = True
+    cls_token_initializer: Optional[InitializerConfig] = None
     use_conv_patchified_embedding: Optional[bool] = False
     use_embed_proj_bias: bool = True
     use_encoder_pooler_layer: bool = False
@@ -216,6 +224,13 @@ class ViTModelConfig(BaseConfig):
     ffn_initializer: Optional[dict] = None
     pooler_initializer: Optional[dict] = None
     image_layer_idx: Optional[int] = None
+    layerscale_value: Optional[float] = None
+    stochastic_depth_drop_prob: float = 0.0
+    stochastic_depth_drop_prob_schedule: str = "linear"
+    stochastic_depth_drop_prob_schedule: Literal["linear", "constant"] = (
+        "linear"
+    )
+    stochastic_depth_mode: str = "batch"
 
     def __post_init__(self):
         super().__post_init__()

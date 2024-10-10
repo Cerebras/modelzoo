@@ -254,6 +254,8 @@ class GptjModel(torch.nn.Module):
             output_logits_alpha=model_params.output_logits_alpha,
             alibi_trainable_slopes=model_params.alibi_trainable_slopes,
             pos_scaling_factor=float(model_params.pos_scaling_factor),
+            pos_scaling_type=model_params.pos_scaling_type,
+            pos_scaling_extra_args=model_params.pos_scaling_extra_args,
             # MoE:
             moe_params=model_params.moe,
             dtype=get_embedding_dtype(

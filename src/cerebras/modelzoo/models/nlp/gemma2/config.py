@@ -18,7 +18,7 @@ from cerebras.modelzoo.common.registry import registry
 from cerebras.modelzoo.models.nlp.gpt2.config import GPT2Config
 
 
-@registry.register_config("mpt")
+@registry.register_config("gemma2")
 @dataclass
-class MPTConfig(GPT2Config):
+class Gemma2lConfig(GPT2Config):
     pass

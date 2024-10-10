@@ -23,8 +23,8 @@ from cerebras.modelzoo.common.utils.run.cli_pytorch import get_params_from_args
 
 
 def main():
-
     params = get_params_from_args()
+
     from cerebras.modelzoo.common.run_utils import main
     from cerebras.modelzoo.models.nlp.gpt2.data import (
         eval_input_dataloader,
@@ -33,7 +33,7 @@ def main():
 
     main(
         params,
-        "mpt",
+        "gemma2",
         train_input_dataloader,
         eval_input_dataloader,
     )

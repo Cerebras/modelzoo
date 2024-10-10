@@ -33,8 +33,8 @@ from cerebras.modelzoo.trainer.extensions.eleuther.eval_harness_utils import (
 from cerebras.modelzoo.trainer.utils import (
     configure_trainer_from_params,
     convert_legacy_params_to_trainer_params,
+    inject_cli_args_to_trainer_params,
     is_legacy_params,
-    merge_trainer_params,
 )
 
 
@@ -269,16 +269,9 @@ def run_eval_harness():
             params["trainer"].pop(key, None)
 
     elif "runconfig" in params:
-        converted = convert_legacy_params_to_trainer_params(
-            {"runconfig": params.pop("runconfig")}
+        params = inject_cli_args_to_trainer_params(
+            params.pop("runconfig"), params
         )
-        trainers = params["trainer"]
-        if isinstance(trainers, (list, tuple)):
-            params["trainer"] = [
-                merge_trainer_params(trainer, converted) for trainer in trainers
-            ]
-        else:
-            params = merge_trainer_params(params, converted)
 
     if "trainer" not in params:
         raise KeyError(
@@ -318,6 +311,9 @@ def run_eval_harness():
         eeh_callback.setdefault("eeh_args", {}).update(
             (key, value) for key, value in deepcopy(eeh_args).items()
         )
+        # Set the data_processor key of the callback
+        # for the dataloader config validation
+        eeh_callback["data_processor"] = "InferenceDataProcessor"
 
     trainer = configure_trainer_from_params(params, model_name)
 

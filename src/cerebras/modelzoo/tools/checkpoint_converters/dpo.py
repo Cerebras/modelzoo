@@ -66,12 +66,12 @@ class Converter_DPO_HF_CS21(BaseCheckpointConverter_HF_CS):
     def convert(cls, checkpoint, configs, converter_indices, **kwargs):
         model_name = configs[1]["model"]["model_name"]
         formats = get_dpoless_formats(cls, converter_indices.direction)
-        model_converter_class = cls.make_dpo_model_converter(
-            model_name, *formats, configs
+        model_converter_class, model_converter_indices = (
+            cls.make_dpo_model_converter(model_name, *formats, configs)
         )
         instance = model_converter_class()
         new_checkpoint = instance.convert_helper(
-            checkpoint, configs, converter_indices, **kwargs
+            checkpoint, configs, model_converter_indices, **kwargs
         )
         return new_checkpoint
 
@@ -138,7 +138,7 @@ class Converter_DPO_HF_CS21(BaseCheckpointConverter_HF_CS):
                         )
                         new_state_dict[ref_key] = new_state_dict[policy_key]
 
-        return DPO_Converter
+        return DPO_Converter, checkpoint_from_index
 
     @classmethod
     def converter_note(cls) -> str:
@@ -222,15 +222,17 @@ class ConfigConverter_DPO_HF_CS21(BaseConfigConverter_HF_CS):
             )
 
         formats = get_dpoless_formats(cls, converter_indices.direction)
-        config_converter_class = cls.make_dpo_config_converter(
-            model_name,
-            *formats,
-            config,
+        config_converter_class, model_converter_indices = (
+            cls.make_dpo_config_converter(
+                model_name,
+                *formats,
+                config,
+            )
         )
         instance = config_converter_class()
         return instance.convert_helper(
             config,
-            converter_indices,
+            model_converter_indices,
             drop_unmatched_keys=drop_unmatched_keys,
             no_progress_bar=no_progress_bar,
             debug=debug,
@@ -279,7 +281,7 @@ class ConfigConverter_DPO_HF_CS21(BaseConfigConverter_HF_CS):
                     }
                 )
 
-        return DPO_Config_Converter
+        return DPO_Config_Converter, checkpoint_from_index
 
 
 class Converter_NON_DPO_TO_DPO_CS21(BaseCheckpointConverter_CS_CS):

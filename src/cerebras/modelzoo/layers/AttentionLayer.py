@@ -89,6 +89,7 @@ class MultiheadAttention(nn.Module):
         softmax_dtype_fp32=True,
         attention_kernel=None,
         scale_qk_dot_by_layer_idx=False,
+        logit_softcapping=None,
         device=None,
     ):
         _SUPPORTED_ATTENTION_TYPES = [
@@ -180,6 +181,7 @@ class MultiheadAttention(nn.Module):
         self.v_projection_scale = v_projection_scale
         self.output_projection_scale = output_projection_scale
         self.scale_qk_dot_by_layer_idx = scale_qk_dot_by_layer_idx
+        self.logit_softcapping = logit_softcapping
 
         self.__reset_parameters()
 
@@ -503,6 +505,12 @@ class MultiheadAttention(nn.Module):
                 self.logits_scale, max=math.log(1.0 / 0.01)
             ).exp()
             logits = logits * logits_scale
+
+        if self.logit_softcapping is not None:
+            logits = (
+                torch.tanh(logits / self.logit_softcapping)
+                * self.logit_softcapping
+            )
 
         return logits
 

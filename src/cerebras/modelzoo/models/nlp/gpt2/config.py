@@ -99,6 +99,13 @@ class GPT2ModelConfig(ModelConfig):
     """Position interpolation scaling factor for rotary & alibi. See
     https://arxiv.org/pdf/2306.15595.pdf for details"""
 
+    pos_scaling_type: str = "linear"
+    """Can be either `linear` or `YaRN`,
+    For YaRN see https://arxiv.org/pdf/2309.00071"""
+
+    pos_scaling_extra_args: Optional[dict] = None
+    """A dict including parameters for YaRN RoPE scaling"""
+
     # Transformer:
     hidden_size: int = 768
     "The size of the transformer hidden layers."
@@ -114,6 +121,18 @@ class GPT2ModelConfig(ModelConfig):
 
     layer_norm_epsilon: float = 1e-5
     "The epsilon value used in layer normalization layers."
+
+    norm_first_sandwich: bool = False
+    """Normally pre-LN (norm_first=True) performs the following computation:
+    y = f(norm(x)) + x (where f could be either the attention block or the
+    the FFN). Notice how the norm is applied in parallel to the residual branch,
+    and before the input to f. Architectures like Gemma2 "sandwich" f with
+    layernorms rather than only applying them before f. In other words, the
+    computation is: y = norm(f(norm(x))) + x. Notice how both normalization's
+    are still parallel to the residual, and so we're still applying pre-LN
+    (norm_first=True). The difference is that we're applying LN before and after
+    f.
+    """
 
     # Transformer Attention:
     num_heads: int = 12
@@ -170,10 +189,24 @@ class GPT2ModelConfig(ModelConfig):
     attention_sliding_window_length: Optional[int] = None
     "If specified, sliding window attention is used (as seen in Mistral)."
 
+    sliding_window_every_other_decoder_layer: bool = False
+    """When enabled, sliding window attention is only applied every other
+    decoder layer. Note that attention_sliding_window_length must be specified
+    when using this feature. Cannot be used in conjunction with
+    fixed_sparse_attention."""
+
+    attention_inner_dim: Optional[int] = None
+    """The dimensionality after QKV projection within the attention module.
+    When set to None, hidden_size will be used.
+    """
+
     scale_qk_dot_by_layer_idx: bool = False
     """Scales the attention QK dot product by the layer index (as seen in Santacoder)
     Note that using this flag in conjunction with attention_type=scaled_dot_product
     will result in scaling by both: QK^T / (sqrt(d) * (layer idx + 1))"""
+
+    attention_logit_softcapping: Optional[float] = None
+    "Scaling factor when applying tanh softcapping on the attention scores (as seen in Gemma2)"
 
     fixed_sparse_attention: Optional[dict] = None
     "Applies a fixed sparse attention mask in attention. See GPT-3 configs for examples."
@@ -193,6 +226,10 @@ class GPT2ModelConfig(ModelConfig):
 
     use_bias_in_output: bool = False
     "Whether to use bias in the final output layer."
+
+    # Language Model Head:
+    final_logit_softcapping: Optional[float] = None
+    "Scaling factor when applying tanh softcapping on the LM head's logits"
 
     # Loss:
     loss_scaling: Literal["batch_size", "num_tokens"] = "num_tokens"
@@ -304,9 +341,14 @@ class GPT2ModelConfig(ModelConfig):
                 self.rotary_dim = int(self.hidden_size // self.num_heads * 0.25)
             # https://github.com/huggingface/transformers/blob/f0577df6de36e7e7f28e90fa76da0657de038a39/src/transformers/models/gpt_neox/modeling_gpt_neox.py#L84-L85
             # https://arxiv.org/pdf/2104.09864.pdf Section 3.3
+            inner_dim = (
+                self.attention_inner_dim
+                if self.attention_inner_dim is not None
+                else self.hidden_size
+            )
             assert (
-                self.rotary_dim <= self.hidden_size / self.num_heads
-            ), "Rotary dimensions should be <= hidden size divided by number of attention heads."
+                self.rotary_dim <= inner_dim / self.num_heads
+            ), "Rotary dimensions should be <= head_dim of the attention layer, where head_dim = attention_inner_dim // num_heads"
             assert (
                 self.rotary_dim % 2 == 0
             ), "Rotary dimension must be an even number."
@@ -503,6 +545,13 @@ class GPT2LMHeadModelConfig(BaseConfig):
     """Position interpolation scaling factor for rotary & alibi. See
     https://arxiv.org/pdf/2306.15595.pdf for details"""
 
+    pos_scaling_type: str = "linear"
+    """Can be either `linear` or `YaRN`,
+    For YaRN see https://arxiv.org/pdf/2309.00071"""
+
+    pos_scaling_extra_args: Optional[dict] = None
+    """A dict including parameters for YaRN RoPE scaling"""
+
     # Transformer:
     hidden_size: int = 768
     "The size of the transformer hidden layers."
@@ -573,6 +622,11 @@ class GPT2LMHeadModelConfig(BaseConfig):
 
     attention_sliding_window_length: Optional[int] = None
     "If specified, sliding window attention is used (as seen in Mistral)."
+
+    attention_inner_dim: Optional[int] = None
+    """The dimensionality after QKV projection within the attention module.
+    When set to None, hidden_size will be used.
+    """
 
     scale_qk_dot_by_layer_idx: bool = False
     """Scales the attention QK dot product by the layer index (as seen in Santacoder)

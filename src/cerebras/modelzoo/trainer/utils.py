@@ -285,10 +285,6 @@ def configure_trainer_from_params(
         # set model cls in params post-conversion
         trainer_params["init"]["model"]["cls"] = model_fn_or_name
 
-    metadata_params["trainer"]["init"]["model"][
-        "cls"
-    ] = model_fn_or_name.__name__
-
     def backend_fn():
         backend_params = init_params.pop("backend", {})
         if device := init_params.pop("device", None):
@@ -340,7 +336,6 @@ def configure_trainer_from_params(
                 lora_params = asdict(lora_params)
 
             model = make_model_lora(model, lora_params)
-
         return model
 
     def optimizer_fn(model):
@@ -730,6 +725,7 @@ TRAINER_PARAMS_TO_LEGACY = {
                     "job_type": "wandb.job_type",
                     "tags": "wandb.tags",
                     "resume": "wandb.resume",
+                    "entity": "wandb.entity",
                 }
             },
         ],
@@ -992,6 +988,13 @@ def convert_legacy_params_to_trainer_params(params, obj_filter=None):
                 "fit"
             ]["val_dataloader"]
 
+    # Disallow fit without train dataloader
+    if (
+        "fit" in trainer_params
+        and "train_dataloader" not in trainer_params["fit"]
+    ):
+        trainer_params.pop("fit")
+
     # Read adjust_learning_rate before convert_optimizer_params since
     # that changes the structure.
     adjust_learning_rate = None
@@ -1067,6 +1070,51 @@ def convert_legacy_params_to_trainer_params(params, obj_filter=None):
         )
 
     return {"trainer": trainer_params}
+
+
+def inject_cli_args_to_trainer_params(runconfig, params):
+    """Inject CLI arguments into a trainer config."""
+
+    runconfig = deepcopy(runconfig)
+    params = deepcopy(params)
+
+    # Recursively update the params with the runconfig.
+    # `checkpoint_path` shows up in fit/validate/validate_all, but
+    # if there are no input sections, legacy->trainer conversion pops
+    # them before returnng, so handle it specially.
+    if "checkpoint_path" in runconfig:
+        ckpt_path = runconfig.pop("checkpoint_path")
+
+        def add_ckpt_path(p):
+            for method, key in [
+                ("fit", "ckpt_path"),
+                ("validate", "ckpt_path"),
+                ("validate_all", "ckpt_paths"),
+            ]:
+                if method in p["trainer"]:
+                    p["trainer"][method][key] = ckpt_path
+
+    else:
+        add_ckpt_path = lambda p: None
+
+    # Add a dummy model input so we always have an "init" key, but pop it later
+    cli_args = convert_legacy_params_to_trainer_params(
+        {"runconfig": runconfig, "model": {"dummy": 1}}
+    )
+    del cli_args["trainer"]["init"]["model"]
+
+    trainers = params["trainer"]
+    if isinstance(params["trainer"], (list, tuple)):
+        params["trainer"] = []
+        for trainer in trainers:
+            merged = merge_trainer_params(trainer, cli_args)
+            add_ckpt_path(merged)
+            params["trainer"].append(merged)
+    else:
+        params = merge_trainer_params(params, cli_args)
+        add_ckpt_path(params)
+
+    return params
 
 
 def merge_trainer_params(params1: dict, params2: dict):

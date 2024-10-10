@@ -167,6 +167,8 @@ class BertPretrainModel(nn.Module):
         num_relative_attention_buckets=32,
         alibi_trainable_slopes=False,
         pos_scaling_factor=1.0,
+        pos_scaling_type="linear",
+        pos_scaling_extra_args=None,
         hidden_size=768,
         share_embedding_weights=True,
         # Encoder
@@ -236,6 +238,8 @@ class BertPretrainModel(nn.Module):
             num_relative_attention_buckets=num_relative_attention_buckets,
             alibi_trainable_slopes=alibi_trainable_slopes,
             pos_scaling_factor=pos_scaling_factor,
+            pos_scaling_type=pos_scaling_type,
+            pos_scaling_extra_args=pos_scaling_extra_args,
             # Encoder
             num_hidden_layers=num_hidden_layers,
             layer_norm_epsilon=layer_norm_epsilon,

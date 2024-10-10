@@ -1219,7 +1219,7 @@ class ConfigConverter_Bert_HF_CS21(ConfigConverter_Bert_HF_CS18):
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
+            FormatVersions("cs-2.1", "cs-2.2"),
         )
 
 
@@ -1272,7 +1272,7 @@ class Converter_BertPretrainModel_WithoutOptionalModel_HF_CS21(
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
+            FormatVersions("cs-2.1", "cs-2.2"),
         )
 
     @staticmethod

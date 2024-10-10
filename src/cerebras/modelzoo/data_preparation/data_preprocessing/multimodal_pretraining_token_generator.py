@@ -57,7 +57,7 @@ def create_features_multimodal_pretraining(
         input_mask = [0] * len(token_ids)
         attention_mask = [1] * len(token_ids)
         for i, semantic_region in enumerate(tokenized_semantic_region_list):
-            region_name = semantic_region.get("region_name")
+            region_name = semantic_region.get("region_modality")
             start_idx, end_idx = semantic_region.get("indices")
             region_loss_mask = semantic_region.get("loss_weight", 0)
             region_attention_mask = semantic_region.get("attention_mask", 1)
@@ -168,55 +168,11 @@ class MultiModalPretrainingTokenGenerator(PretrainingTokenGenerator):
             "semantic_attention_mask", {}
         )
         self.include_image_tag = False
-        self.data_ranges = []
         self.eos_token = (
-            self.tokenizer.pad_token_id
+            self.tokenizer.convert_ids_to_tokens(self.pad_id)
             if self.eos_id is None
             else self.tokenizer.convert_ids_to_tokens(self.eos_id)
         )
-
-    def get_data_ranges(
-        self, semantic_regions, formatted_data: str
-    ) -> Tuple[
-        List[Tuple[int, int]], List[Tuple[int, int]], List[Tuple[int, int]]
-    ]:
-        """
-        Get data ranges for the conversation data.
-
-        Args:
-            conversation_data (List[Dict[str, str]]): List of conversation data.
-            formatted_data (str): Formatted conversation data.
-
-        Returns:
-            Tuple[List[Tuple[int, int]], List[Tuple[int, int]], List[Tuple[int, int]]]: Ranges for system, user, and assistant data.
-        """
-        lower = self.tokenizer.init_kwargs.get('do_lower_case', False)
-        formatted_data = formatted_data.lower() if lower else formatted_data
-        string_search_idx = 0
-        for content in semantic_regions:
-            region_name = content.get("region_name")
-            region_identifier = content.get("region_identifier", "")
-            region_len = content.get("region_len")
-            loss_weight = content.get("loss_weight")
-            attention_mask = content.get("attention_mask", None)
-            region_identifier_start_idx = formatted_data.find(
-                region_identifier.lower() if lower else region_identifier,
-                string_search_idx,
-            )
-            formatted_data = formatted_data.replace(region_identifier, "")
-            start_idx = region_identifier_start_idx
-            end_idx = start_idx + region_len
-            string_search_idx = end_idx
-            self.data_ranges.append(
-                {
-                    "region_name": region_name,
-                    "indices": (start_idx, end_idx),
-                    "loss_weight": loss_weight,
-                    "attention_mask": attention_mask,
-                }
-            )
-
-        return formatted_data
 
     def chop_doc_into_msl(self, data):
 
@@ -249,7 +205,7 @@ class MultiModalPretrainingTokenGenerator(PretrainingTokenGenerator):
                 "indices"
             )  ## big doc indices
             len_region_remaining = region_end_idx - region_start_idx
-            region_name = region.get("region_name")
+            region_name = region.get("region_modality")
             loss_weight = region.get("loss_weight")
             region_attention_mask = region.get("attention_mask")
             if region_name != "image":
@@ -271,7 +227,7 @@ class MultiModalPretrainingTokenGenerator(PretrainingTokenGenerator):
                     )
                     curr_doc.append(
                         {
-                            "region_name": region_name,
+                            "region_modality": region_name,
                             "indices": indices,
                             "loss_weight": loss_weight,
                             "attention_mask": region_attention_mask,
@@ -310,7 +266,7 @@ class MultiModalPretrainingTokenGenerator(PretrainingTokenGenerator):
                     )
                     curr_doc.append(
                         {
-                            "region_name": region_name,
+                            "region_modality": region_name,
                             "indices": indices,
                             "loss_weight": loss_weight,
                             "attention_mask": region_attention_mask,
@@ -350,7 +306,7 @@ class MultiModalPretrainingTokenGenerator(PretrainingTokenGenerator):
                     image_data_positions.append((indices[0], indices[1]))
                     curr_doc.append(
                         {
-                            "region_name": region_name,
+                            "region_modality": region_name,
                             "indices": indices,
                             "loss_weight": loss_weight,
                             "attention_mask": region_attention_mask,
@@ -391,7 +347,7 @@ class MultiModalPretrainingTokenGenerator(PretrainingTokenGenerator):
                     start_doc_idx += len_region_remaining
                     curr_doc.append(
                         {
-                            "region_name": region_name,
+                            "region_modality": region_name,
                             "indices": indices,
                             "loss_weight": loss_weight,
                             "attention_mask": region_attention_mask,
@@ -422,34 +378,47 @@ class MultiModalPretrainingTokenGenerator(PretrainingTokenGenerator):
 
     def get_segment_indices(
         self,
-        formatted_data,
+        formatted_data: str,
         tokenized_data: List[Tuple[int, int]],
-        image_region_list: List,
-    ):
+        text_semantic_region_list: List[Dict[str, Any]],
+        image_region_list: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
         """
         Get segment indices for the data ranges.
 
         Args:
-            data_ranges (Tuple[List[Tuple[int, int]], List[Tuple[int, int]], List[Tuple[int, int]]]): Data ranges for system, user, and assistant.
-            offset_mapping (List[Tuple[int, int]]): Offset mapping of the tokenized data.
+            formatted_data (str): The formatted string data.
+            tokenized_data (List[Tuple[int, int]]): Tokenized data with offset mappings.
+            text_semantic_region_list (List[Dict[str, Any]]): List of text semantic regions with region details.
+            image_region_list (List[Dict[str, Any]]): List of image regions with region details.
+
+        Returns:
+            List[Dict[str, Any]]: List of tokenized semantic regions and image regions with their indices.
         """
         tokenized_semantic_region_list = []
         image_index = 0
         text_index = 0
+        starting_offset_index = 0
         tokenized_semantic_region = None
-        while text_index < len(self.data_ranges) or image_index < len(
+
+        while text_index < len(text_semantic_region_list) or image_index < len(
             image_region_list
         ):
-            if text_index < len(self.data_ranges) and image_index < len(
-                image_region_list
-            ):
+            if text_index < len(
+                text_semantic_region_list
+            ) and image_index < len(image_region_list):
                 if not tokenized_semantic_region:
-                    text_data_range = self.data_ranges[text_index]
-                    region_name = text_data_range.get("region_name")
+                    text_data_range = text_semantic_region_list[text_index]
+                    region_name = text_data_range.get("region_modality")
                     tokenized_semantic_region = find_token_range(
-                        text_data_range, tokenized_data["offset_mapping"]
+                        text_data_range,
+                        tokenized_data["offset_mapping"],
+                        starting_offset_index,
                     )
-                    tokenized_semantic_region["region_name"] = region_name
+                    tokenized_semantic_region["region_modality"] = region_name
+                    starting_offset_index = tokenized_semantic_region[
+                        "indices"
+                    ][1]
                 image_region = image_region_list[image_index]
                 if (
                     tokenized_semantic_region.get("indices")[1]
@@ -463,14 +432,19 @@ class MultiModalPretrainingTokenGenerator(PretrainingTokenGenerator):
                 else:
                     tokenized_semantic_region_list.append(image_region)
                     image_index += 1
-            elif text_index < len(self.data_ranges):
+            elif text_index < len(text_semantic_region_list):
                 if not tokenized_semantic_region:
-                    text_data_range = self.data_ranges[text_index]
-                    region_name = text_data_range.get("region_name")
+                    text_data_range = text_semantic_region_list[text_index]
+                    region_name = text_data_range.get("region_modality")
                     tokenized_semantic_region = find_token_range(
-                        text_data_range, tokenized_data["offset_mapping"]
+                        text_data_range,
+                        tokenized_data["offset_mapping"],
+                        starting_offset_index,
                     )
-                    tokenized_semantic_region["region_name"] = region_name
+                    tokenized_semantic_region["region_modality"] = region_name
+                    starting_offset_index = tokenized_semantic_region[
+                        "indices"
+                    ][1]
                 tokenized_semantic_region_list.append(tokenized_semantic_region)
                 tokenized_semantic_region = None
                 text_index += 1
@@ -485,10 +459,12 @@ class MultiModalPretrainingTokenGenerator(PretrainingTokenGenerator):
         self, semantic_data_array: List[Dict[str, Any]]
     ) -> Tuple[Tuple[List[str], List[Dict[str, str]]], Dict[str, int]]:
 
+        if not semantic_data_array:
+            return {}, {}
+
         image_paths = []
         image_regions = []
         text_semantic_regions = []
-        self.data_ranges = []
         stats = {
             "raw_chars_count": 0,
             "raw_bytes_count": 0,
@@ -497,7 +473,7 @@ class MultiModalPretrainingTokenGenerator(PretrainingTokenGenerator):
         }
 
         formatted_data = ""
-
+        formatted_data_length = 0
         for entry in semantic_data_array:
             semantic_loss_weight = entry.get("semantic_loss_weight")
             semantic_drop_mask = entry.get("semantic_drop_mask")
@@ -560,32 +536,35 @@ class MultiModalPretrainingTokenGenerator(PretrainingTokenGenerator):
                                 + cleaned_region_val
                                 + f"</{region_key}>"
                             )
-                        region_identifier = f"<{global_idx}_{region_key}>"
                         text_semantic_regions.append(
                             {
-                                "region_name": region_key,
-                                "region_identifier": region_identifier,
+                                "indices": (
+                                    formatted_data_length,
+                                    formatted_data_length
+                                    + len(cleaned_region_val),
+                                ),
+                                "region_modality": region_key,
                                 "region_len": len(cleaned_region_val),
                                 "loss_weight": loss_weight,
                                 "attention_mask": attention_mask,
                             }
                         )
-                        content = region_identifier + cleaned_region_val
-                        content_parts.append(content)
+                        formatted_data_length += len(cleaned_region_val)
+                        content_parts.append(cleaned_region_val)
 
                 else:
                     self.include_image_tag = include_tags
                     if not drop_region:
                         image_regions.append(
                             {
-                                "region_name": region_key,
+                                "region_modality": region_key,
                                 "loss_weight": loss_weight,
                                 "attention_mask": attention_mask,
                             }
                         )
                         image_paths.append(cleaned_region_val)
-                        content = self.image_token
-                        content_parts.append(content)
+                        formatted_data_length += len(self.image_token)
+                        content_parts.append(self.image_token)
                 global_idx += 1
 
             formatted_data += ''.join(content_parts)
@@ -598,7 +577,8 @@ class MultiModalPretrainingTokenGenerator(PretrainingTokenGenerator):
                     logger.warning(
                         f"Image with path - {full_path} does not exist. Hence skipping this."
                     )
-                    return None, stats
+                    stats["raw_docs_skipped"] = 1
+                    return {}, stats
                 else:
                     image_paths[i] = path.encode(encoding='utf-8')
         transformed_data = {
@@ -628,17 +608,15 @@ class MultiModalPretrainingTokenGenerator(PretrainingTokenGenerator):
         if text_data == "":
             return {}, raw_data_stats
 
-        text_data = self.get_data_ranges(text_semantic_regions, text_data)
-
         tokenized_data = self.tokenizer(
             text_data,
             return_offsets_mapping=True,
         )
 
-        if len(self.data_ranges) > 0:
+        if len(text_semantic_regions) > 0:
             append_eos_to_multiple_semantic_regions(
                 text_data,
-                self.data_ranges,
+                text_semantic_regions,
                 self.eos_token,
                 self.image_token,
                 False,
@@ -664,7 +642,7 @@ class MultiModalPretrainingTokenGenerator(PretrainingTokenGenerator):
                 ), image_regions[image_index].get("attention_mask")
                 image_indices.append(
                     {
-                        "region_name": "image",
+                        "region_modality": "image",
                         "indices": (image_start_pos, image_end_pos),
                         "loss_weight": loss_weight,
                         "attention_mask": attention_mask,
@@ -681,7 +659,7 @@ class MultiModalPretrainingTokenGenerator(PretrainingTokenGenerator):
         tokenized_data['attention_mask'] = new_attention_mask
 
         tokenized_semantic_region_list = self.get_segment_indices(
-            text_data, tokenized_data, image_indices
+            text_data, tokenized_data, text_semantic_regions, image_indices
         )
         data = {
             "tokenized_data": tokenized_data,

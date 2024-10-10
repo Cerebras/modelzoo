@@ -13,13 +13,14 @@ train_input: &train_input
   # In distributed training, batch_size specifies the per-GPU batch size;
   # thus, you should divide by the number of GPU used.
   # The effective batch size, which is evenly divided across "num_csx" systems used for the run
-  batch_size: 495
+  batch_size: 1100
   shuffle: True
   num_classes: 1000
   num_workers: 8
   split: "train"
   num_diffusion_steps: 1000
   image_channels: 3
+  use_worker_cache: True
 
 eval_input:
   # This section should only be used for loss
@@ -127,7 +128,7 @@ runconfig:
     checkpoint_steps: 50000
     max_steps: 206869 # ~80 epochs, ImageNet has 1,281,167 samples
     seed: 1
-    num_workers_per_csx: 1
+    num_workers_per_csx: 2
     save_initial_checkpoint: True
     precision_opt_level: 1
     eval_frequency: 50000

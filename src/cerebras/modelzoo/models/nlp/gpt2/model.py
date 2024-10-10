@@ -49,6 +49,7 @@ from cerebras.pytorch.metrics import AccuracyMetric, PerplexityMetric
         "santacoder",
         "starcoder",
         "jais",
+        "gemma2",
     ],
     datasetprocessor=[
         "GptHDF5DataProcessor",
@@ -196,8 +197,10 @@ class Gpt2Model(torch.nn.Module):
             attention_type=model_params.attention_type,
             attention_module=model_params.attention_module,
             attention_sliding_window_length=model_params.attention_sliding_window_length,
+            sliding_window_every_other_decoder_layer=model_params.sliding_window_every_other_decoder_layer,
             extra_attention_params=model_params.extra_attention_params,
             extra_ffn_params=model_params.extra_ffn_params,
+            attention_inner_dim=model_params.attention_inner_dim,
             use_projection_bias_in_attention=model_params.use_projection_bias_in_attention,
             use_ffn_bias_in_attention=model_params.use_ffn_bias_in_attention,
             attention_dropout_rate=(
@@ -205,6 +208,7 @@ class Gpt2Model(torch.nn.Module):
             ),
             attention_softmax_fp32=model_params.attention_softmax_fp32,
             attention_kernel=model_params.attention_kernel,
+            attention_logit_softcapping=model_params.attention_logit_softcapping,
             # Encoder - FFN
             filter_size=model_params.filter_size,
             nonlinearity=model_params.nonlinearity,
@@ -230,6 +234,8 @@ class Gpt2Model(torch.nn.Module):
             ),
             initializer_range=model_params.initializer_range,
             pos_scaling_factor=model_params.pos_scaling_factor,
+            pos_scaling_type=model_params.pos_scaling_type,
+            pos_scaling_extra_args=model_params.pos_scaling_extra_args,
             scale_qk_dot_by_layer_idx=model_params.scale_qk_dot_by_layer_idx,
             ffn_initializer=(
                 asdict(model_params.ffn_initializer)

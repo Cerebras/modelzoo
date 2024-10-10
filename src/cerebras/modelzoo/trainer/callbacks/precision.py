@@ -221,20 +221,17 @@ class MixedPrecision(Precision):
             self.scaler.unscale_(optimizer)
 
     def clip_gradients(self, optimizer):
-        if self.scaler:
-            params = (
-                p
-                for param_group in optimizer.param_groups
-                for p in param_group["params"]
+        params = (
+            p
+            for param_group in optimizer.param_groups
+            for p in param_group["params"]
+        )
+        if self.max_gradient_norm is not None:
+            torch.nn.utils.clip_grad_norm_(list(params), self.max_gradient_norm)
+        elif self.max_gradient_value is not None:
+            torch.nn.utils.clip_grad_value_(
+                list(params), self.max_gradient_value
             )
-            if self.max_gradient_norm is not None:
-                torch.nn.utils.clip_grad_norm_(
-                    list(params), self.max_gradient_norm
-                )
-            elif self.max_gradient_value is not None:
-                torch.nn.utils.clip_grad_value_(
-                    list(params), self.max_gradient_value
-                )
 
     def optimizer_step(self, optimizer):
         if self.scaler:

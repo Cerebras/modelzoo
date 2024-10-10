@@ -273,10 +273,20 @@ def index():
             for f in os.listdir(args.output_dir)
             if f.endswith('.h5')
         ]
-    elif os.path.isfile(args.files) and args.files.endswith('.h5'):
+        if not files:
+            return (
+                "There are no HDF5 files present in the directory. Please check the directory.",
+                404,
+            )
+
+    elif os.path.isfile(args.output_dir) and args.output_dir.endswith('.h5'):
         files = [args.output_dir]
-    if not files:
-        return "File not Found or error", 404
+        if not files:
+            return (
+                "The passed file is not a valid HDF5 file. Please check the file.",
+                404,
+            )
+
     data_processors = {file: None for file in files}
     initial_data = get_data_or_error(files[0])
     if not isinstance(initial_data, TokenFlowDataProcessor):

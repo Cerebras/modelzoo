@@ -109,6 +109,7 @@ class DisentangledAttention(MultiheadAttention):
         output_layer_initializer=None,
         attention_type="scaled_dot_product",
         scale_qk_dot_by_d=False,
+        logit_softcapping=None,
         attention_logits_alpha=1.0,
         q_projection_scale=1.0,
         k_projection_scale=1.0,
