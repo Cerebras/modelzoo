@@ -20,6 +20,7 @@ import numpy as np
 
 from cerebras.modelzoo.data_preparation.data_preprocessing.utils import (
     append_eos_to_multiple_semantic_regions,
+    find_region_in_formatted_string,
 )
 
 from cerebras.modelzoo.data_preparation.data_preprocessing.finetuning_token_generator import (  # noqa
@@ -102,7 +103,6 @@ class MultiModalFinetuningTokenGenerator(FinetuningTokenGenerator):
         )
         dataset_params = params["dataset"]
         processing_params = params["processing"]
-        dataset_params = params["dataset"]
 
         self.sample_features = [
             "input_ids",
@@ -162,7 +162,7 @@ class MultiModalFinetuningTokenGenerator(FinetuningTokenGenerator):
             "raw_docs_skipped": 0,
         }
         global_idx = 0
-
+        instruction_length = 0
         for turn in data:
             role = turn["type"]
             semantic_loss_weight = turn.get("semantic_loss_weight")
@@ -238,23 +238,38 @@ class MultiModalFinetuningTokenGenerator(FinetuningTokenGenerator):
                                 + cleaned_region_val
                                 + f"</{region_key}>"
                             )
-                        region_identifier = f"<{global_idx}_{region_key}_>"
-                        text_semantic_regions.append(
-                            {
-                                "region_name": region_key,
+                        if not is_chat_data:
+                            current_semantic_region = {
+                                "indices": (
+                                    instruction_length,
+                                    instruction_length
+                                    + len(cleaned_region_val),
+                                ),
+                                "region_modality": region_key,
+                                "region_len": len(cleaned_region_val),
+                                "loss_weight": loss_weight,
+                                "attention_mask": attention_mask,
+                            }
+                            instruction_length += len(cleaned_region_val)
+                            content = cleaned_region_val
+                        else:
+                            region_identifier = f"<{global_idx}_{region_key}>"
+                            content = region_identifier + cleaned_region_val
+                            current_semantic_region = {
+                                "region_modality": region_key,
                                 "region_identifier": region_identifier,
                                 "region_len": len(cleaned_region_val),
                                 "loss_weight": loss_weight,
                                 "attention_mask": attention_mask,
                             }
-                        )
-                        content = region_identifier + cleaned_region_val
+
+                        text_semantic_regions.append(current_semantic_region)
                         content_parts.append(content)
                 else:
                     if not drop_region:
                         image_regions.append(
                             {
-                                "region_name": region_key,
+                                "region_modality": region_key,
                                 "loss_weight": loss_weight,
                                 "attention_mask": attention_mask,
                             }
@@ -268,25 +283,26 @@ class MultiModalFinetuningTokenGenerator(FinetuningTokenGenerator):
                             )
                         else:
                             content = self.image_token
+                        instruction_length += len(content)
                         content_parts.append(content)
                 global_idx += 1
             content = ''.join(content_parts)
-            stats["raw_chars_count"] += len(content)
-            stats["raw_bytes_count"] += len(content.encode("utf-8"))
-
-            cleaned_content = self.clean_text(content.strip())
-            stats["normalized_chars_count"] += len(cleaned_content)
-            stats["normalized_bytes_count"] += len(
-                cleaned_content.encode("utf-8")
-            )
             if is_chat_data:
                 conversation_data.append({"role": role, "content": content})
             else:
                 if role == "prompt":
-                    instruction_data = content + self.sep_token
+                    instruction_data = (
+                        content + self.sep_token if self.sep_token else ""
+                    )
+                    instruction_length += (
+                        len(self.sep_token) if self.sep_token else 0
+                    )
                 elif role == "completion":
                     instruction_data += content + (
                         self.eos_token if self.eos_token else ""
+                    )
+                    instruction_length += (
+                        len(self.eos_token) if self.eos_token else 0
                     )
 
         # Validate image paths
@@ -297,7 +313,8 @@ class MultiModalFinetuningTokenGenerator(FinetuningTokenGenerator):
                     logger.warning(
                         f"Image with path - {full_path} does not exist. Hence skipping this."
                     )
-                    return None, stats
+                    stats["raw_docs_skipped"] = 1
+                    return {}, stats
                 else:
                     image_paths[i] = path.encode(encoding='utf-8')
 
@@ -315,7 +332,6 @@ class MultiModalFinetuningTokenGenerator(FinetuningTokenGenerator):
 
     def tokenize_data(self, semantic_data_array):
 
-        self.data_ranges = []
         data, raw_data_stats = self.parse_semantic_data_array(
             semantic_data_array
         )
@@ -334,8 +350,10 @@ class MultiModalFinetuningTokenGenerator(FinetuningTokenGenerator):
             formatted_data = self.tokenizer.apply_chat_template(
                 conversation_data, tokenize=False
             )
-            formatted_data = self.get_data_ranges(
-                text_semantic_regions, formatted_data
+            formatted_data, text_semantic_regions = (
+                find_region_in_formatted_string(
+                    text_semantic_regions, formatted_data
+                )
             )
             tokenized_data = self.tokenizer(
                 formatted_data,
@@ -344,22 +362,17 @@ class MultiModalFinetuningTokenGenerator(FinetuningTokenGenerator):
             )
         else:
             formatted_data = conversation_data
-            formatted_data = self.get_data_ranges(
-                text_semantic_regions, formatted_data
-            )
             tokenized_data = self.tokenizer(
                 formatted_data,
                 return_offsets_mapping=True,
             )
-
-        self.data_ranges = append_eos_to_multiple_semantic_regions(
+        text_semantic_regions = append_eos_to_multiple_semantic_regions(
             formatted_data,
-            self.data_ranges,
+            text_semantic_regions,
             self.end_of_turn_tok if self.end_of_turn_tok else self.eos_token,
             self.image_token,
             is_chat_data,
         )
-
         new_input_ids = []
         new_offset_mapping = []
         new_attention_mask = []
@@ -402,10 +415,9 @@ class MultiModalFinetuningTokenGenerator(FinetuningTokenGenerator):
         tokenized_data['offset_mapping'] = new_offset_mapping
         tokenized_data['attention_mask'] = new_attention_mask
         tokenized_semantic_region_list = self.get_tokenized_semantic_regions(
-            formatted_data, tokenized_data
+            formatted_data, tokenized_data, text_semantic_regions
         )
         tokenized_semantic_region_list.extend(image_indices)
-
         data = {
             "tokenized_data": tokenized_data,
             "image_paths": image_paths,
@@ -433,7 +445,7 @@ class MultiModalFinetuningTokenGenerator(FinetuningTokenGenerator):
         )
 
         discarded_files = 0
-        if sample == []:
+        if sample == {}:
             discarded_files += 1
             data = {}
         else:
@@ -471,7 +483,6 @@ class MultiModalFinetuningTokenGenerator(FinetuningTokenGenerator):
         data, raw_data_stats = self._encode(semantic_data_array)
         if data == {}:
             return {}, raw_data_stats
-
         token_modality_idx = np.zeros(self.max_seq_length)
         image_data_positions = data.get("img_data_loc")
         img_data_loc = np.full(

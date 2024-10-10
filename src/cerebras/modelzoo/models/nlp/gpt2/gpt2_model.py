@@ -65,13 +65,16 @@ class GPT2LMHeadModel(nn.Module):
         attention_type="scaled_dot_product",
         attention_module="aiayn_attention",
         attention_sliding_window_length=None,
+        sliding_window_every_other_decoder_layer=False,
         extra_attention_params={},
         extra_ffn_params={},
+        attention_inner_dim=None,
         use_projection_bias_in_attention=True,
         use_ffn_bias_in_attention=True,
         attention_dropout_rate=0.1,
         attention_softmax_fp32=True,
         attention_kernel=None,
+        attention_logit_softcapping=None,
         fixed_sparse_attention=None,
         # Encoder - ffn
         filter_size=3072,
@@ -96,9 +99,13 @@ class GPT2LMHeadModel(nn.Module):
         output_logits_alpha=None,
         alibi_trainable_slopes=False,
         pos_scaling_factor=1.0,
+        pos_scaling_type="linear",
+        pos_scaling_extra_args=None,
         scale_qk_dot_by_layer_idx=False,
         # muP backwards compatibility
+        norm_first_sandwich=False,
         output_logits_scale=None,
+        final_logit_softcapping=None,
         moe=None,
         moe_params=dict(num_experts=1),
         dtype=None,
@@ -209,9 +216,16 @@ class GPT2LMHeadModel(nn.Module):
                 rotary_dim = hidden_size // num_heads
             # https://github.com/huggingface/transformers/blob/f0577df6de36e7e7f28e90fa76da0657de038a39/src/transformers/models/gpt_neox/modeling_gpt_neox.py#L84-L85
             # https://arxiv.org/pdf/2104.09864.pdf Section 3.3
+
+            inner_dim = (
+                attention_inner_dim
+                if attention_inner_dim is not None
+                else hidden_size
+            )
+
             assert (
-                rotary_dim <= hidden_size / num_heads
-            ), "Rotary dimensions should be <= hidden size divided by number of attention heads."
+                rotary_dim <= inner_dim / num_heads
+            ), "Rotary dimensions should be <= head_dim of the attention layer, where head_dim = attention_inner_dim // num_heads"
             assert (
                 rotary_dim % 2 == 0
             ), "Rotary dimension must be an even number."
@@ -231,6 +245,8 @@ class GPT2LMHeadModel(nn.Module):
             pad_rope=pad_rope,
             alibi_trainable_slopes=alibi_trainable_slopes,
             pos_scaling_factor=pos_scaling_factor,
+            pos_scaling_type=pos_scaling_type,
+            pos_scaling_extra_args=pos_scaling_extra_args,
             dtype=dtype,
         )
 
@@ -259,6 +275,7 @@ class GPT2LMHeadModel(nn.Module):
             attention_logits_alpha=attention_logits_alpha,
             scale_qk_dot_by_layer_idx=scale_qk_dot_by_layer_idx,
             attention_module=attention_module,
+            attention_inner_dim=attention_inner_dim,
             attention_dropout_rate=attention_dropout_rate,
             attention_softmax_fp32=attention_softmax_fp32,
             use_projection_bias_in_attention=use_projection_bias_in_attention,
@@ -266,9 +283,11 @@ class GPT2LMHeadModel(nn.Module):
             use_ffn_bias=use_ffn_bias,
             attention_initializer=attention_initializer,
             attention_output_layer_initializer=output_layer_initializer,
+            attention_logit_softcapping=attention_logit_softcapping,
             ffn_initializer=ffn_initializer,
             ffn_output_layer_initializer=ffn_output_layer_initializer,
             use_ff_layer1_dropout=False,
+            norm_first_sandwich=norm_first_sandwich,
             moe_params=moe_params,
         )
 
@@ -282,6 +301,21 @@ class GPT2LMHeadModel(nn.Module):
         )
 
         self.attention_sliding_window_length = attention_sliding_window_length
+        assert not (
+            sliding_window_every_other_decoder_layer and fixed_sparse_attention
+        ), (
+            "Cannot use sliding_window_every_other_decoder_layer and "
+            "fixed_sparse_attention modes simultaneously."
+        )
+        if sliding_window_every_other_decoder_layer:
+            assert attention_sliding_window_length is not None, (
+                "When sliding_window_every_other_decoder_layer is enabled, the"
+                "attention_sliding_window_length must be specified."
+            )
+
+        self.sliding_window_every_other_decoder_layer = (
+            sliding_window_every_other_decoder_layer
+        )
         if fixed_sparse_attention is not None:
             self.fixed_sparsity_mask = create_fixed_sparse_attention_mask(
                 max_sequence_length=max_position_embeddings,
@@ -294,6 +328,7 @@ class GPT2LMHeadModel(nn.Module):
         self.lm_head = nn.Linear(
             hidden_size, vocab_size, bias=use_bias_in_output
         )
+        self.final_logit_softcapping = final_logit_softcapping
 
         self.tie_weights()
 
@@ -439,6 +474,12 @@ class GPT2LMHeadModel(nn.Module):
                 dtype=lm_logits.dtype,
             )
 
+        if self.final_logit_softcapping:
+            lm_logits = (
+                torch.tanh(lm_logits / self.final_logit_softcapping)
+                * self.final_logit_softcapping
+            )
+
         if self.moe_enabled:
             return lm_logits, routing_weights, expert_masks
         else:
@@ -458,18 +499,38 @@ class GPT2LMHeadModel(nn.Module):
     ):
         # `extract_layer_idx` is used only multimodal use case
         # input_embeddings : shape (bsz, MSL, H)
+        sparse_attention_mask = None
+
         causal_attention_mask = create_broadcasted_autoregressive_mask(
             batch_size=input_embeddings.shape[0],
             num_heads=self.num_heads,
             tgt_seq_length=input_embeddings.shape[1],
             attention_span=attention_span,
-            sliding_window_length=self.attention_sliding_window_length,
+            sliding_window_length=(
+                self.attention_sliding_window_length
+                if not self.sliding_window_every_other_decoder_layer
+                else None
+            ),
             device=input_embeddings.device,
             dtype=input_embeddings.dtype,
         )
+        if self.sliding_window_every_other_decoder_layer:
+            # Models like Gemma2 apply SWA every other decoder layer. This is
+            # implemented by creating a non-SWA mask named causal_attention_mask
+            # and a SWA mask named sparse_attention_mask. The TransformerDecoder
+            # layer automatically switches between these two masks based on
+            # layer index.
+            sparse_attention_mask = create_broadcasted_autoregressive_mask(
+                batch_size=input_embeddings.shape[0],
+                num_heads=self.num_heads,
+                tgt_seq_length=input_embeddings.shape[1],
+                attention_span=attention_span,
+                sliding_window_length=self.attention_sliding_window_length,
+                device=input_embeddings.device,
+                dtype=input_embeddings.dtype,
+            )
 
         # Fixed sparse attention, used in GPT-3 model
-        sparse_attention_mask = None
         if self.fixed_sparsity_mask is not None:
             sparse_attention_mask = make_sparse_mask_broadcastable(
                 self.fixed_sparsity_mask,

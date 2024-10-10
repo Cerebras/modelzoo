@@ -18,18 +18,19 @@ processing:
         encoder_file: "/path/to/encoder"
 
     max_seq_length: 1024
-    short_seq_prob: 0.0
 
     write_in_batch: True
 
     resume_from_checkpoint: False
-    seed: 0
 
     read_hook: "cerebras.modelzoo.data_preparation.data_preprocessing.hooks:nlg_read_hook"
     read_hook_kwargs:
         data_keys:
             context_key: "context"
             completion_key: "completion"
+    
+    shuffle_seed: 0
+    shuffle: False
 
 dataset:
     use_ftfy: True

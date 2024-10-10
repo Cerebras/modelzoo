@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import numpy as np
 from torch import nn
 
 from cerebras.modelzoo.layers import (
@@ -54,6 +55,10 @@ class ViTEncoder(nn.Module):
         pooler_initializer=None,
         norm_first=True,
         use_encoder_pooler_layer=False,
+        layerscale_value=None,
+        stochastic_depth_drop_prob=0.0,
+        stochastic_depth_drop_prob_schedule="linear",
+        stochastic_depth_mode="batch",
         **extra_args,
     ):
         super(ViTEncoder, self).__init__()
@@ -95,6 +100,9 @@ class ViTEncoder(nn.Module):
             ffn_initializer=ffn_initializer,
             use_ff_layer1_dropout=False,
             use_ff_layer2_dropout=True,
+            layerscale_value=layerscale_value,
+            stochastic_depth_drop_prob=stochastic_depth_drop_prob,
+            stochastic_depth_mode=stochastic_depth_mode,
         )
 
         final_ln_f = None
@@ -104,6 +112,22 @@ class ViTEncoder(nn.Module):
         self.transformer_encoder = TransformerEncoder(
             encoder_layer, num_layers=num_hidden_layers, norm=final_ln_f
         )
+        # Update the StochasticDepth probabilty of
+        # individual layers based on scheduler.
+        if stochastic_depth_drop_prob > 0.0:
+            if stochastic_depth_drop_prob_schedule == "linear":
+                stochastic_depth_sch = np.linspace(
+                    0.0, stochastic_depth_drop_prob, num_hidden_layers
+                )
+            elif stochastic_depth_drop_prob_schedule == "constant":
+                stochastic_depth_sch = (
+                    1.0
+                    * np.ones(num_hidden_layers)
+                    * stochastic_depth_drop_prob
+                )
+
+            for i, layer in enumerate(self.transformer_encoder.layers):
+                layer.drop_path.p = stochastic_depth_sch[i]
 
         if pooler_nonlinearity is None:
             pooler_nonlinearity = nonlinearity
@@ -186,6 +210,10 @@ class ViTModel(nn.Module):
         use_conv_patchified_embedding=False,
         use_encoder_pooler_layer=False,
         prepend_cls_token=True,
+        layerscale_value=None,
+        stochastic_depth_drop_prob=0.0,
+        stochastic_depth_drop_prob_schedule="linear",
+        stochastic_depth_mode="batch",
         **extra_args,
     ):
         super(ViTModel, self).__init__()
@@ -236,6 +264,10 @@ class ViTModel(nn.Module):
             pooler_initializer=pooler_initializer,
             norm_first=norm_first,
             use_encoder_pooler_layer=use_encoder_pooler_layer,
+            layerscale_value=layerscale_value,
+            stochastic_depth_drop_prob=stochastic_depth_drop_prob,
+            stochastic_depth_drop_prob_schedule=stochastic_depth_drop_prob_schedule,
+            stochastic_depth_mode=stochastic_depth_mode,
         )
 
     def reset_parameters(self):

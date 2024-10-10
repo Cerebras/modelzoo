@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from warnings import warn
+
 import torch
 
 import cerebras.pytorch as cstorch
@@ -40,8 +42,19 @@ def sample_tokens(token_logits, temperature=None, top_k=None, top_p=None):
         if temperature:
             token_logits = token_logits / temperature
         token_prob = torch.softmax(token_logits, dim=-1)
-        # If k isn't specified, look at all vocab positions.
-        k = top_k or token_prob.shape[-1]
+
+        # If k isn't specified, set it to 100 by default as a performance optimization
+        # instead of looking at all vocab positions (i.e. token_prob.shape[-1]), unless
+        # the vocab size is less than 100.
+        if top_k is None:
+            k = min(100, token_prob.shape[-1])
+            warn(
+                f"TopK sampling is not specified. Setting K to {k} "
+                f"as a performance optimization for nongreedy sampling."
+            )
+        else:
+            k = top_k
+
         # each are [B][K]
         sorted_probs, token_ids = token_prob.topk(k=k)
         token_ids = token_ids.int()  # must be integers

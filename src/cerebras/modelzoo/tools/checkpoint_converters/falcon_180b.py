@@ -615,6 +615,14 @@ class ConfigConverter_Falcon_180B_HF_CS21(ConfigConverter_Falcon_180B_HF_CS20):
                 [EquivalentSubkey("rope_scaling", "pos_scaling_factor")],
                 action=self.convert_pi,
             ),
+            ConversionRule(
+                [EquivalentSubkey("", "pos_scaling_extra_args")],
+                action=None,
+            ),
+            ConversionRule(
+                [EquivalentSubkey("", "pos_scaling_type")],
+                action=None,
+            ),
             *self.rules,
         ]
 
@@ -643,20 +651,33 @@ class ConfigConverter_Falcon_180B_HF_CS21(ConfigConverter_Falcon_180B_HF_CS20):
                 new_state_dict[new_key] = 1.0
             else:
                 scaling_type = old_state_dict[old_key]["type"].lower()
-                if scaling_type != "linear":
-                    raise ValueError(
-                        f"Only `rope_scaling` type `linear` is currently supported, "
+                if scaling_type not in ["linear", "yarn"]:
+                    raise ConfigConversionError(
+                        f"Only `rope_scaling` type `linear` or `yarn` is currently supported, "
                         f"but got type `{scaling_type}`."
                     )
                 new_state_dict[new_key] = old_state_dict[old_key]["factor"]
+                new_state_dict["pos_scaling_type"] = scaling_type
+                if scaling_type == "yarn":
+                    new_state_dict["pos_scaling_extra_args"] = dict(
+                        {
+                            "original_max_position_embeddings": old_state_dict[
+                                old_key
+                            ]["original_max_position_embeddings"],
+                        }
+                    )
         else:
             if old_state_dict[old_key] == 1.0:
                 new_state_dict[new_key] = None
             else:
                 new_state_dict[new_key] = {
-                    "type": "linear",
+                    "type": old_state_dict.get("pos_scaling_type", "linear"),
                     "factor": old_state_dict[old_key],
                 }
+                if "pos_scaling_extra_args" in old_state_dict:
+                    new_state_dict[new_key].update(
+                        old_state_dict["pos_scaling_extra_args"]
+                    )
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:

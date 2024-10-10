@@ -18,6 +18,7 @@ Adapted from https://github.com/pytorch/pytorch/blob/master/torch/nn/modules/tra
 
 from typing import Callable, Optional, Type, Union
 
+import torch
 import torch.nn as nn
 from torch import Tensor
 from torch.nn import Dropout, LayerNorm
@@ -30,6 +31,7 @@ from cerebras.modelzoo.layers.FeedForwardNetwork import (
 from cerebras.modelzoo.layers.RotaryPositionEmbeddingHelper import (
     RotaryPositionEmbeddingHelper,
 )
+from cerebras.modelzoo.layers.StochasticDepth import StochasticDepth
 
 
 class TransformerEncoderLayer(nn.Module):
@@ -76,6 +78,9 @@ class TransformerEncoderLayer(nn.Module):
         use_ff_layer1_dropout: If ``True``, dropout will be enabled after the first feed forward layer. Default: True
         use_ff_layer2_dropout = If ``True``, dropout will be enabled after the second feed forward layer. Default: True
         ffn_dropout_rate: Controls dropout rate of FF's first layer. If None, defaults to dropout.
+        layerscale_value: initial value to use for LayerScale in vision transformers. Defaults to None.
+        stochastic_depth_drop_prob: drop probability for stochastic depth per sample (when applied in main path of residual blocks.
+        stochastic_depth_mode: should be in ["batch", "row"].
 
     Example:
         When ``batch_first`` is ``True``:
@@ -114,11 +119,15 @@ class TransformerEncoderLayer(nn.Module):
         attention_initializer="xavier_uniform",
         attention_q_initializer=None,
         attention_output_layer_initializer=None,
+        attention_logit_softcapping=None,
         ffn_initializer="xavier_uniform",
         ffn_output_layer_initializer=None,
         use_ff_layer1_dropout: bool = True,
         use_ff_layer2_dropout: bool = True,
         ffn_dropout_rate: Optional[float] = None,
+        layerscale_value: Optional[float] = None,
+        stochastic_depth_drop_prob: Optional[float] = 0.0,
+        stochastic_depth_mode: Optional[str] = "batch",
     ) -> None:
         super(TransformerEncoderLayer, self).__init__()
 
@@ -149,9 +158,29 @@ class TransformerEncoderLayer(nn.Module):
             attention_initializer=attention_initializer,
             attention_q_initializer=attention_q_initializer,
             output_layer_initializer=attention_output_layer_initializer,
+            logit_softcapping=attention_logit_softcapping,
             device=device,
             **extra_attention_params,
         )
+
+        self.layerscale_value = layerscale_value
+        if self.layerscale_value is not None:
+            self.layer_scale1 = nn.Parameter(
+                self.layerscale_value * torch.ones(d_model)
+            )
+            self.layer_scale2 = nn.Parameter(
+                self.layerscale_value * torch.ones(d_model)
+            )
+
+        self.stochastic_depth_drop_prob = stochastic_depth_drop_prob
+        self.stochastic_depth_mode = stochastic_depth_mode
+
+        if self.stochastic_depth_drop_prob > 0.0:
+            self.drop_path = StochasticDepth(
+                self.stochastic_depth_drop_prob, self.stochastic_depth_mode
+            )
+        else:
+            self.drop_path = nn.Identity()
 
         if ffn_dropout_rate is None:
             ffn_dropout_rate = dropout

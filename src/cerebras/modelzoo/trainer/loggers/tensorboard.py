@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Optional
 from warnings import warn
@@ -82,9 +83,20 @@ class TensorBoardLogger(Logger):
 
         if self.writer is None:
             if self.summary_dir is None:
-                self.summary_dir = trainer.summary_dir
+                self.summary_dir = trainer.model_dir / "events"
 
-            self.writer = SummaryWriter(log_dir=str(self.summary_dir))
+            self.writer = SummaryWriter(log_dir=str(self.summary_dir.resolve()))
+
+            # pylint: disable=protected-access
+            (trainer.summary_dir / "tf_events").symlink_to(
+                os.path.relpath(
+                    self.writer._get_file_writer().event_writer._file_name,
+                    trainer.summary_dir,
+                )
+            )
+            (trainer.summary_dir / "cs_events").symlink_to(
+                os.path.relpath(self.writer.cs_events_dir, trainer.summary_dir)
+            )
 
     def setup(self, trainer):
         if not self.legacy_event_dirs:
@@ -102,7 +114,9 @@ class TensorBoardLogger(Logger):
 
         for name, value in metrics.items():
             if isinstance(value, torch.Tensor):
-                if value.numel() == 1:
+                # If a tensor has a single element, but has more than 0
+                # dimensions, it is not a scalar tensor. We log it as a tensor.
+                if value.numel() == 1 and value.ndim == 0:
                     self.writer.add_scalar(name, value.item(), step)
                 else:
                     self.writer.add_tensor(name, value, step)

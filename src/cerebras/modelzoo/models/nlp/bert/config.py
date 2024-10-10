@@ -100,6 +100,13 @@ class BertModelConfig(ModelConfig):
     """Position interpolation scaling factor for rotary & alibi. See
     https://arxiv.org/pdf/2306.15595.pdf for details"""
 
+    pos_scaling_type: str = "linear"
+    """Can be either `linear` or `YaRN`,
+    For YaRN see https://arxiv.org/pdf/2309.00071"""
+
+    pos_scaling_extra_args: Optional[dict] = None
+    """A dict including parameters for YaRN RoPE scaling"""
+
     # Transformer:
     hidden_size: int = 768
     "The size of the transformer hidden layers."

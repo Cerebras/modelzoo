@@ -743,7 +743,7 @@ class Converter_GPTJ_Headless_HF_CS20(Converter_GPTJ_Headless_HF_CS18):
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.0", "cs-2.1", "cs-2.2", "cs-2.3"),
+            FormatVersions("cs-2.0", "cs-2.1", "cs-2.2"),
         )
 
     @staticmethod
@@ -760,7 +760,7 @@ class Converter_GPTJ_LMHeadModel_HF_CS20(Converter_GPTJ_LMHeadModel_HF_CS18):
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.0", "cs-2.1", "cs-2.2", "cs-2.3"),
+            FormatVersions("cs-2.0", "cs-2.1", "cs-2.2"),
         )
 
     @staticmethod
@@ -783,7 +783,7 @@ class ConfigConverter_GPTJModel_HF_CS20(ConfigConverter_GPTJModel_HF_CS18):
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.0", "cs-2.1", "cs-2.2", "cs-2.3"),
+            FormatVersions("cs-2.0", "cs-2.1", "cs-2.2"),
         )
 
 

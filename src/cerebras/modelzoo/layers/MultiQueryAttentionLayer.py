@@ -88,6 +88,7 @@ class MultiQueryAttention(MultiheadAttention):
         softmax_dtype_fp32=True,
         attention_kernel=None,
         scale_qk_dot_by_layer_idx=False,
+        logit_softcapping=None,
         device=None,
         # MQA specific
         num_kv_groups=1,
@@ -118,6 +119,7 @@ class MultiQueryAttention(MultiheadAttention):
             softmax_dtype_fp32=softmax_dtype_fp32,
             attention_kernel=attention_kernel,
             scale_qk_dot_by_layer_idx=scale_qk_dot_by_layer_idx,
+            logit_softcapping=logit_softcapping,
             device=device,
         )
 

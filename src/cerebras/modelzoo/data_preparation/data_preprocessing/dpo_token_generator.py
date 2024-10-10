@@ -123,6 +123,14 @@ class DPOTokenGenerator:
             self.bos_token_id = self.eos_id
 
         self.chat_template = dataset_params.pop("chat_template", None)
+        self.sample_features = [
+            "chosen_input_ids",
+            "chosen_attention_mask",
+            "chosen_labels",
+            "rejected_input_ids",
+            "rejected_attention_mask",
+            "rejected_labels",
+        ]
 
     def tokenize_text(self, text: str) -> Dict[str, List[int]]:
         """

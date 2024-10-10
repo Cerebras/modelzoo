@@ -19,7 +19,8 @@ processing:
     read_hook: "cerebras.modelzoo.data_preparation.data_preprocessing.hooks.pretraining_image_captions_hook"
     read_hook_kwargs:
         image_token: "<image>"
-    seed: 0
+    shuffle_seed: 0
+    shuffle: False
 
 dataset:
     use_ftfy: True

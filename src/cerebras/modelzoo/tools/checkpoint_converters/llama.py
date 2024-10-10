@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
 import logging
 import re
 from typing import Tuple
@@ -64,7 +65,7 @@ class Converter_LlamaAttention_HF_CS(BaseCheckpointConverter_HF_CS):
                     EquivalentSubkey("o_proj", "proj_output_dense_layer"),
                     r"\.(?:weight|bias)",
                 ],
-                action=self.convert_output_and_inv_freq,
+                action=self.replaceKey,
             ),
         ]
 
@@ -206,38 +207,6 @@ class Converter_LlamaAttention_HF_CS(BaseCheckpointConverter_HF_CS):
                 "(biases) or 2 (weights) when converting from CS to HF."
             )
         return reversed
-
-    def convert_output_and_inv_freq(
-        self,
-        old_key,
-        new_key,
-        old_state_dict,
-        new_state_dict,
-        from_index,
-        action_fn_args,
-    ):
-        # Convert output projection:
-        self.replaceKey(
-            old_key,
-            new_key,
-            old_state_dict,
-            new_state_dict,
-            from_index,
-            action_fn_args,
-        )
-
-        # HF also has inv_freq buffer saved which we need to recreate:
-        if from_index == 1 and old_key.endswith(".weight"):
-            rotary_emb_base = 10000  # hardcoded in HF's llama
-            cs_config = action_fn_args["configs"][1]
-            rotary_dim = cs_config["model"]["rotary_dim"]
-            inv_freq_key = re.sub(
-                r"\.o_proj\.weight", ".rotary_emb.inv_freq", new_key
-            )
-            new_state_dict[inv_freq_key] = 1.0 / (
-                rotary_emb_base
-                ** (torch.arange(0, rotary_dim, 2).float() / rotary_dim)
-            )
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
@@ -954,6 +923,14 @@ class ConfigConverter_LLaMa_HF_CS21(ConfigConverter_LLaMa_HF_CS20):
                 [EquivalentSubkey("rope_scaling", "pos_scaling_factor")],
                 action=self.convert_pi,
             ),
+            ConversionRule(
+                [EquivalentSubkey("", "pos_scaling_extra_args")],
+                action=None,
+            ),
+            ConversionRule(
+                [EquivalentSubkey("", "pos_scaling_type")],
+                action=None,
+            ),
             *self.rules,
         ]
 
@@ -981,21 +958,50 @@ class ConfigConverter_LLaMa_HF_CS21(ConfigConverter_LLaMa_HF_CS20):
             if old_state_dict[old_key] is None:
                 new_state_dict[new_key] = 1.0
             else:
-                scaling_type = old_state_dict[old_key]["type"].lower()
-                if scaling_type != "linear":
+                if "type" in old_state_dict[old_key]:
+                    scaling_type = old_state_dict[old_key]["type"].lower()
+                else:
+                    scaling_type = old_state_dict[old_key]["rope_type"].lower()
+                if scaling_type not in ["linear", "yarn", "llama3"]:
                     raise ConfigConversionError(
-                        f"Only `rope_scaling` type `linear` is currently supported, "
+                        f"Only `rope_scaling` type `linear`, `yarn`, and `llama3` are currently supported, "
                         f"but got type `{scaling_type}`."
                     )
                 new_state_dict[new_key] = old_state_dict[old_key]["factor"]
+                new_state_dict["pos_scaling_type"] = scaling_type
+                if scaling_type == "yarn":
+                    new_state_dict["pos_scaling_extra_args"] = dict(
+                        {
+                            "original_max_position_embeddings": old_state_dict[
+                                old_key
+                            ]["original_max_position_embeddings"],
+                        }
+                    )
+                elif scaling_type == "llama3":
+                    pos_scaling_extra_args = copy.deepcopy(
+                        old_state_dict[old_key]
+                    )
+                    pos_scaling_extra_args.pop("rope_type")
+                    pos_scaling_extra_args.pop("factor")
+                    new_state_dict["pos_scaling_extra_args"] = (
+                        pos_scaling_extra_args
+                    )
+
         else:
             if old_state_dict[old_key] == 1.0:
                 new_state_dict[new_key] = None
             else:
+                type_key = "type"
+                if old_state_dict["pos_scaling_type"] == "llama3":
+                    type_key = "rope_type"
                 new_state_dict[new_key] = {
-                    "type": "linear",
+                    type_key: old_state_dict.get("pos_scaling_type", "linear"),
                     "factor": old_state_dict[old_key],
                 }
+                if "pos_scaling_extra_args" in old_state_dict:
+                    new_state_dict[new_key].update(
+                        old_state_dict["pos_scaling_extra_args"]
+                    )
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:

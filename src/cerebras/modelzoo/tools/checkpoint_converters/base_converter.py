@@ -29,6 +29,7 @@ from typing import Callable, List, Optional, Tuple, Type, Union
 
 import torch
 import yaml
+from packaging.version import Version
 from tqdm import tqdm
 
 from cerebras.modelzoo.tools.checkpoint_converters.streaming_checkpoints import (
@@ -757,10 +758,16 @@ class BaseCheckpointConverter_CS_CS(BaseCheckpointConverter):
         configs: Tuple[dict, dict],
         converter_indices: FormatIndices,
     ):
+        from_index = converter_indices.direction
+        format_versions = self.formats()
+        src_fmt = format_versions[from_index][converter_indices.src_index]
+
         # Required for backward compatibility with checkpoints saved pre 2.0.0
         # Setting this will recompute the last_epochs for the lr_scheduler(s)
         if (
-            "global_step" in output_checkpoint
+            "cs-" in src_fmt
+            and Version(src_fmt.lstrip("cs-")) < Version("2.0")
+            and "global_step" in output_checkpoint
             and "lr_scheduler" in output_checkpoint
         ):
             last_epoch = int(output_checkpoint["lr_scheduler"]["last_epoch"])
@@ -773,11 +780,12 @@ class BaseCheckpointConverter_CS_CS(BaseCheckpointConverter):
                     for k in ("_schedulers", "_milestones")
                 ):
                     # This must be the state_dict of a SequentialLR scheduler
-                    milestones = [0] + output_checkpoint["lr_scheduler"][
-                        "_milestones"
-                    ]
+                    milestones = [0] + list(
+                        output_checkpoint["lr_scheduler"]["_milestones"]
+                    )
                     for milestone, scheduler in zip(
-                        milestones, state_dict["lr_scheduler"]["_schedulers"]
+                        milestones,
+                        input_checkpoint["lr_scheduler"]["_schedulers"],
                     ):
                         scheduler["last_epoch"] = (
                             max(global_step - milestone, 0),
@@ -1510,7 +1518,7 @@ class BaseConfigConverter(BaseDictionaryConverter, ABC):
             ):
                 raise ConfigConversionError(
                     "Can't convert config with {}={}. Only {} is supported.".format(
-                        old_key, old_state_dict[old_key], assert_val
+                        old_key, old_state_dict[old_key], assert_value
                     )
                 )
 

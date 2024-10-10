@@ -36,6 +36,7 @@ class ViTEmbeddingLayer(nn.Module):
         position_embedding_type="learned",
         use_conv_patchified_embedding=False,
         prepend_cls_token=False,
+        cls_token_initializer=None,
         init_conv_like_linear=False,
         use_post_embed_layer_norm=False,
         layer_norm_epsilon=1.0e-5,
@@ -102,12 +103,6 @@ class ViTEmbeddingLayer(nn.Module):
                 position_embeddings, requires_grad=False
             )
 
-        if self.prepend_cls_token:
-            self.cls_embedding = nn.Parameter(torch.zeros(self.hidden_size))
-            self.cls_embedding_position_index = (
-                self.num_patches[0] * self.num_patches[1]
-            )  # seq_len + 1 - 1, cls pe is the last
-
         self.default_initializer = {
             "name": "truncated_normal",
             "std": self.initializer_range,
@@ -115,6 +110,16 @@ class ViTEmbeddingLayer(nn.Module):
             "a": self.initializer_range * -2.0,
             "b": self.initializer_range * 2.0,
         }
+
+        if self.prepend_cls_token:
+            if cls_token_initializer is None:
+                cls_token_initializer = self.default_initializer
+            self.cls_token_initializer = cls_token_initializer
+            self.cls_embedding = nn.Parameter(torch.zeros(self.hidden_size))
+            self.cls_embedding_position_index = (
+                self.num_patches[0] * self.num_patches[1]
+            )  # seq_len + 1 - 1, cls pe is the last
+
         if projection_initializer is None:
             projection_initializer = self.default_initializer
         if position_embedding_initializer is None:
@@ -150,7 +155,7 @@ class ViTEmbeddingLayer(nn.Module):
             create_initializer("zeros")(self.linear_proj.bias.data)
 
         if self.prepend_cls_token:
-            create_initializer(self.default_initializer)(
+            create_initializer(self.cls_token_initializer)(
                 self.cls_embedding.data
             )
         if self.position_embedding_type == "learned":
@@ -171,11 +176,28 @@ class ViTEmbeddingLayer(nn.Module):
         # indices shape [batch_size, seq_len]
 
         if indices is None:
+            pass
+
             position_ids = torch.arange(
-                0,
                 embeddings.shape[1],
                 device=embeddings.device,
+                dtype=torch.float32,
             ).expand((embeddings.shape[0], -1))
+            if self.prepend_cls_token:
+                position_ids = torch.arange(
+                    -1,
+                    embeddings.shape[1],
+                    device=embeddings.device,
+                    dtype=torch.float32,
+                ).expand((embeddings.shape[0], -1))
+                mask = position_ids + self.cls_embedding_position_index + 1
+                position_ids = torch.where(
+                    mask != self.cls_embedding_position_index,
+                    position_ids,
+                    self.cls_embedding_position_index,
+                )
+
+            position_ids = position_ids.to(torch.int64)
         else:
             position_ids = indices
 
@@ -199,27 +221,6 @@ class ViTEmbeddingLayer(nn.Module):
             )
 
         return position_embeddings
-
-    def get_cls_token_position_embeddings(self, batch_size, dtype, device):
-        if self.position_embedding_type == "learned":
-            cls_indices = (
-                torch.ones(
-                    (batch_size, 1),
-                    dtype=torch.int32,
-                    device=device,
-                )
-                * self.cls_embedding_position_index
-            )
-            pe = self.position_embeddings(cls_indices)
-        else:
-            pe = (
-                self.position_embeddings[self.cls_embedding_position_index :, :]
-                .to(dtype)
-                .expand(batch_size, -1, -1)
-            )
-
-        # [bs, 1, hidden_size]
-        return pe
 
     def select_patches(self, patches, patch_indices=None):
         """Select from patches based on patch_indices
@@ -287,28 +288,19 @@ class ViTEmbeddingLayer(nn.Module):
             )  # [bs, seq_length, hidden_size]
 
         embeddings = image_embeddings
-        if self.position_embedding_type is not None:
-            image_pe = self.get_image_sequence_position_embeddings(
-                image_embeddings, indices=patch_indices
-            )
-            embeddings = embeddings + image_pe
 
         if self.prepend_cls_token:
             expanded_cls_embedding = self.cls_embedding.type_as(
                 image_embeddings
             ).broadcast_to((batch_size, 1, self.hidden_size))
-            expanded_cls_position_embedding = (
-                self.get_cls_token_position_embeddings(
-                    batch_size,
-                    image_embeddings.dtype,
-                    expanded_cls_embedding.device,
-                )
-            )
-            cls_embeddings = (
-                expanded_cls_embedding + expanded_cls_position_embedding
-            )
 
-            embeddings = torch.cat([cls_embeddings, embeddings], dim=1)
+            embeddings = torch.cat([expanded_cls_embedding, embeddings], dim=1)
+
+        if self.position_embedding_type is not None:
+            image_and_cls_pe = self.get_image_sequence_position_embeddings(
+                image_embeddings, indices=patch_indices
+            )
+            embeddings = embeddings + image_and_cls_pe
 
         embeddings = self.dropout_embd(embeddings)
 

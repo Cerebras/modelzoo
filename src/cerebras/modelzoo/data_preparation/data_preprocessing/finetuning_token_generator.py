@@ -21,6 +21,7 @@ import numpy as np
 
 from cerebras.modelzoo.data_preparation.data_preprocessing.utils import (
     append_eos_to_multiple_semantic_regions,
+    find_region_in_formatted_string,
     find_token_range,
     wikitext_detokenizer,
 )
@@ -153,8 +154,6 @@ class FinetuningTokenGenerator:
     def __init__(self, params, tokenizer, eos_id, pad_id):
         dataset_params = params["dataset"]
         processing_params = params["processing"]
-        dataset_params = params["dataset"]
-        processing_params = params["processing"]
         self.tokenizer = tokenizer
         self.is_multimodal = dataset_params.pop("is_multimodal", False)
         self.use_ftfy = dataset_params.pop("use_ftfy", False)
@@ -174,11 +173,9 @@ class FinetuningTokenGenerator:
         self.chat_template = processing_params.pop("chat_template", None)
         if self.chat_template:
             self.tokenizer.chat_template = self.chat_template
-        self.drop_input = processing_params.pop("drop_input", None)
-        self.loss_mask_weight = processing_params.pop("loss_mask_weight", None)
         self.eos_id = eos_id
         self.eos_token = (
-            self.tokenizer.pad_token_id
+            self.tokenizer.convert_ids_to_tokens(self.pad_id)
             if self.eos_id is None
             else self.tokenizer.convert_ids_to_tokens(self.eos_id)
         )
@@ -191,7 +188,6 @@ class FinetuningTokenGenerator:
             "semantic_drop_mask", {}
         )
         self.end_of_turn_tok = processing_params.pop("end_of_turn_token", None)
-        self.sample_features = ["input_ids", "attention_mask", "labels"]
 
     def clean_text(self, data: str) -> str:
         """
@@ -210,67 +206,29 @@ class FinetuningTokenGenerator:
 
         return data
 
-    def get_tokenized_semantic_regions(self, formatted_data, tokenized_data):
+    def get_tokenized_semantic_regions(
+        self, formatted_data, tokenized_data, text_semantic_regions
+    ):
 
         tokenized_semantic_region_list = []
-
-        for data_range in self.data_ranges:
+        starting_offset_index = 0
+        for text_semantic_region in text_semantic_regions:
             tokenized_semantic_region = find_token_range(
-                data_range, tokenized_data["offset_mapping"]
+                text_semantic_region,
+                tokenized_data["offset_mapping"],
+                starting_offset_index,
             )
-            if data_range.get("handle_turn_token", False):
-                start_token_idx, end_token_idx = tokenized_semantic_region[
-                    "indices"
-                ]
+            start_token_idx, end_token_idx = tokenized_semantic_region[
+                "indices"
+            ]
+            if text_semantic_region.get("handle_turn_token", False):
                 tokenized_semantic_region["indices"] = (
                     start_token_idx,
                     end_token_idx + 1,
                 )
+            starting_offset_index = tokenized_semantic_region.get("indices")[1]
             tokenized_semantic_region_list.append(tokenized_semantic_region)
         return tokenized_semantic_region_list
-
-    def get_data_ranges(
-        self, semantic_regions, formatted_data: str
-    ) -> Tuple[
-        List[Tuple[int, int]], List[Tuple[int, int]], List[Tuple[int, int]]
-    ]:
-        """
-        Get data ranges for the conversation data.
-
-        Args:
-            conversation_data (List[Dict[str, str]]): List of conversation data.
-            formatted_data (str): Formatted conversation data.
-
-        Returns:
-            Tuple[List[Tuple[int, int]], List[Tuple[int, int]], List[Tuple[int, int]]]: Ranges for system, user, and assistant data.
-        """
-        lower = self.tokenizer.init_kwargs.get('do_lower_case', False)
-        formatted_data = formatted_data.lower() if lower else formatted_data
-        string_search_idx = 0
-        for content in semantic_regions:
-            region_name = content.get("region_name")
-            region_identifier = content.get("region_identifier", "")
-            region_len = content.get("region_len")
-            loss_weight = content.get("loss_weight")
-            attention_mask = content.get("attention_mask", None)
-            region_identifier_start_idx = formatted_data.find(
-                region_identifier.lower() if lower else region_identifier,
-                string_search_idx,
-            )
-            formatted_data = formatted_data.replace(region_identifier, "")
-            start_idx = region_identifier_start_idx
-            end_idx = start_idx + region_len
-            string_search_idx = end_idx
-            self.data_ranges.append(
-                {
-                    "region_name": region_name,
-                    "indices": (start_idx, end_idx),
-                    "loss_weight": loss_weight,
-                    "attention_mask": attention_mask,
-                }
-            )
-
-        return formatted_data
 
     def get_data_stats(self, sample: np.ndarray) -> Dict[str, int]:
         """
@@ -303,6 +261,8 @@ class FinetuningTokenGenerator:
         self, semantic_data_array: List[Dict[str, Any]]
     ) -> Tuple[Tuple[List[str], List[Dict[str, str]]], Dict[str, int]]:
 
+        if not semantic_data_array:
+            return {}, {}
         role = semantic_data_array[0].get("type")
         is_chat_data = not (role == "prompt" or role == "completion")
         if is_chat_data:
@@ -310,8 +270,7 @@ class FinetuningTokenGenerator:
         else:
             instruction_data = ""
         text_semantic_regions = []
-        self.data_ranges = []
-
+        instruction_length = 0
         stats = {
             "raw_chars_count": 0,
             "raw_bytes_count": 0,
@@ -377,17 +336,29 @@ class FinetuningTokenGenerator:
                             + cleaned_region_val
                             + f"</{region_key}>"
                         )
-                    region_identifier = f"<{global_idx}_{region_key}>"
-                    content = region_identifier + cleaned_region_val
-
-                    text_semantic_regions.append(
-                        {
-                            "region_name": region_key,
+                    if not is_chat_data:
+                        current_semantic_region = {
+                            "indices": (
+                                instruction_length,
+                                instruction_length + len(cleaned_region_val),
+                            ),
+                            "region_modality": region_key,
+                            "region_len": len(cleaned_region_val),
+                            "loss_weight": loss_weight,
+                        }
+                        instruction_length += len(cleaned_region_val)
+                        content = cleaned_region_val
+                    else:
+                        region_identifier = f"<{global_idx}_{region_key}>"
+                        content = region_identifier + cleaned_region_val
+                        current_semantic_region = {
+                            "region_modality": region_key,
                             "region_identifier": region_identifier,
                             "region_len": len(cleaned_region_val),
                             "loss_weight": loss_weight,
                         }
-                    )
+
+                    text_semantic_regions.append(current_semantic_region)
                     content_parts.append(content)
                 global_idx += 1
 
@@ -400,10 +371,15 @@ class FinetuningTokenGenerator:
                     instruction_data = content + (
                         self.sep_token if self.sep_token else ""
                     )
-
+                    instruction_length += (
+                        len(self.sep_token) if self.sep_token else 0
+                    )
                 elif role == "completion":
                     instruction_data += content + (
                         self.eos_token if self.eos_token else ""
+                    )
+                    instruction_length += (
+                        len(self.eos_token) if self.eos_token else 0
                     )
 
         if not is_chat_data:
@@ -431,8 +407,10 @@ class FinetuningTokenGenerator:
             formatted_data = self.tokenizer.apply_chat_template(
                 conversation_data, tokenize=False
             )
-            formatted_data = self.get_data_ranges(
-                text_semantic_regions, formatted_data
+            formatted_data, text_semantic_regions = (
+                find_region_in_formatted_string(
+                    text_semantic_regions, formatted_data
+                )
             )
             tokenized_data = self.tokenizer(
                 formatted_data,
@@ -441,23 +419,21 @@ class FinetuningTokenGenerator:
             )
         else:
             formatted_data = conversation_data
-            formatted_data = self.get_data_ranges(
-                text_semantic_regions, formatted_data
-            )
             tokenized_data = self.tokenizer(
                 formatted_data,
                 return_offsets_mapping=True,
             )
-        self.data_ranges = append_eos_to_multiple_semantic_regions(
+        text_semantic_regions = append_eos_to_multiple_semantic_regions(
             formatted_data,
-            self.data_ranges,
+            text_semantic_regions,
             self.end_of_turn_tok if self.end_of_turn_tok else self.eos_token,
             None,
             is_chat_data,
         )
-
         tokenized_semantic_region_list = self.get_tokenized_semantic_regions(
-            formatted_data, tokenized_data
+            formatted_data,
+            tokenized_data,
+            text_semantic_regions,
         )
         data = {
             "tokenized_data": tokenized_data,

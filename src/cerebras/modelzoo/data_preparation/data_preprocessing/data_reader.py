@@ -31,8 +31,8 @@ import gzip
 import io
 import json
 import logging
-import math
 import numbers
+import sys
 import tarfile
 from collections import defaultdict
 from contextlib import contextmanager
@@ -97,11 +97,9 @@ def get_data_size(data: Any) -> int:
             get_data_size(key) + get_data_size(value)
             for key, value in data.items()
         )
-    elif isinstance(data, int):
-        # If you wish to support integers as well, represent them in bytes.
-        return 1 if data == 0 else math.ceil(data.bit_length() / 8)
-
-    # Handle other data types like floats or custom objects here if needed.
+    elif isinstance(data, (int, float, bool, complex)):
+        # For basic data types, rely on sys.getsizeof
+        return sys.getsizeof(data)
 
     # If the data type is not supported, you could raise a TypeError.
     raise TypeError("Unsupported data type for size calculation")

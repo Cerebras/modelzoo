@@ -56,6 +56,8 @@ class Esm2PretrainModel(BertPretrainModel):
             ),
             alibi_trainable_slopes=kwargs.get("alibi_trainable_slopes"),
             pos_scaling_factor=kwargs.get("pos_scaling_factor"),
+            pos_scaling_type=kwargs.get("pos_scaling_type"),
+            pos_scaling_extra_args=kwargs.get("pos_scaling_extra_args"),
             # Encoder
             num_hidden_layers=kwargs.get("num_hidden_layers"),
             layer_norm_epsilon=kwargs.get("layer_norm_epsilon"),

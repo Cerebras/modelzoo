@@ -36,6 +36,7 @@ class WandbLogger(Logger):
         job_type: Optional[str] = None,
         tags: Optional[List[str]] = None,
         resume: str = "auto",
+        entity: str = None,
     ):
         """
         Args:
@@ -50,6 +51,10 @@ class WandbLogger(Logger):
                 - "allow": Allow the run to resume if a previous run exists.
                 - "auto": Automatically resume the run if a previous run exists.
                 - "must": Resume the run if a previous run exists.
+            entity: An entity is a username or team name where you're sending runs.
+                This entity must exist before you can send runs there,
+                so make sure to create your account or team in the UI
+                before starting to log runs.
         """
         self.project = project
         self.group = group
@@ -58,6 +63,7 @@ class WandbLogger(Logger):
         self.job_type = job_type
         self.tags = tags
         self.resume = resume
+        self.entity = entity
 
     def pre_setup(self, trainer):  # pylint: disable=no-self-use
         try:
@@ -109,7 +115,7 @@ class WandbLogger(Logger):
 
         run_files = list((rundir / "wandb").glob("run-*"))
         if run_files:
-            previous_run_id = run_files[0].split('-')[-1]
+            previous_run_id = str(run_files[0]).split('-')[-1]
 
         if self.resume == "never":
             if (
@@ -156,6 +162,7 @@ class WandbLogger(Logger):
                 name=self.run_name,
                 id=self.run_id,
                 resume=self.resume,
+                entity=self.entity,
             )
             # define default x-axis
             if isinstance(self.run, (Run, RunDisabled)) and getattr(

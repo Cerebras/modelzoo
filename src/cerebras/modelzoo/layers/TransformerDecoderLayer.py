@@ -104,6 +104,7 @@ class TransformerDecoderLayer(nn.Module):
         batch_first: bool = True,
         norm_layer: Type[nn.Module] = LayerNorm,
         norm_first: bool = False,
+        norm_first_sandwich: bool = False,
         attention_module: Union[str, nn.Module] = "aiayn_attention",
         extra_attention_params={},
         extra_ffn_params={},
@@ -127,6 +128,7 @@ class TransformerDecoderLayer(nn.Module):
         attention_initializer="xavier_uniform",
         attention_q_initializer=None,
         attention_output_layer_initializer=None,
+        attention_logit_softcapping=None,
         ffn_initializer="xavier_uniform",
         ffn_output_layer_initializer=None,
         use_ff_layer1_dropout: bool = True,
@@ -164,11 +166,18 @@ class TransformerDecoderLayer(nn.Module):
             attention_q_initializer=attention_q_initializer,
             output_layer_initializer=attention_output_layer_initializer,
             scale_qk_dot_by_layer_idx=scale_qk_dot_by_layer_idx,
+            logit_softcapping=attention_logit_softcapping,
             device=device,
             **extra_attention_params,
         )
 
         self.norm_first = norm_first
+        if norm_first_sandwich:
+            assert self.norm_first, (
+                "When norm_first_sandwich is enabled, norm_first must be "
+                "enabled too"
+            )
+        self.norm_first_sandwich = norm_first_sandwich
         self.norm1 = norm_layer(
             d_model,
             eps=layer_norm_eps,
@@ -180,6 +189,18 @@ class TransformerDecoderLayer(nn.Module):
             eps=layer_norm_eps,
             device=device,
         )
+
+        if norm_first_sandwich:
+            self.norm1_post = norm_layer(
+                d_model,
+                eps=layer_norm_eps,
+                device=device,
+            )
+            self.norm3_post = norm_layer(
+                d_model,
+                eps=layer_norm_eps,
+                device=device,
+            )
 
         if self.add_cross_attention:
             if cross_attention_kv_dim is None:
@@ -193,6 +214,12 @@ class TransformerDecoderLayer(nn.Module):
                 dropout=attention_dropout_rate,
                 batch_first=batch_first,
                 attention_type=attention_type,
+                scale_qk_dot_by_d=scale_qk_dot_by_d,
+                attention_logits_alpha=attention_logits_alpha,
+                q_projection_scale=q_projection_scale,
+                k_projection_scale=k_projection_scale,
+                v_projection_scale=v_projection_scale,
+                output_projection_scale=output_projection_scale,
                 softmax_dtype_fp32=attention_softmax_fp32,
                 use_projection_bias=use_projection_bias_in_attention,
                 use_ffn_bias=use_ffn_bias_in_attention,
@@ -200,6 +227,7 @@ class TransformerDecoderLayer(nn.Module):
                 attention_q_initializer=attention_q_initializer,
                 output_layer_initializer=attention_output_layer_initializer,
                 scale_qk_dot_by_layer_idx=scale_qk_dot_by_layer_idx,
+                logit_softcapping=attention_logit_softcapping,
                 device=device,
                 **extra_attention_params,
             )
@@ -255,6 +283,24 @@ class TransformerDecoderLayer(nn.Module):
                 self.norm3.weight, 'data'
             ):
                 self.norm3.weight.data.fill_(1.0)
+        if self.norm_first_sandwich:
+            if hasattr(self.norm1_post, 'bias') and hasattr(
+                self.norm1_post.bias, 'data'
+            ):
+                self.norm1_post.bias.data.zero_()
+            if hasattr(self.norm1_post, 'weight') and hasattr(
+                self.norm1_post.weight, 'data'
+            ):
+                self.norm1_post.weight.data.fill_(1.0)
+            if self.norm3_post is not None:
+                if hasattr(self.norm3_post, 'bias') and hasattr(
+                    self.norm3_post.bias, 'data'
+                ):
+                    self.norm3_post.bias.data.zero_()
+                if hasattr(self.norm3_post, 'weight') and hasattr(
+                    self.norm3_post.weight, 'data'
+                ):
+                    self.norm3_post.weight.data.fill_(1.0)
         if self.add_cross_attention:
             self.multihead_attn.reset_parameters()
             if hasattr(self.norm2, 'bias') and hasattr(self.norm2.bias, 'data'):
@@ -341,8 +387,11 @@ class TransformerDecoderLayer(nn.Module):
                 layer_idx=layer_idx,
                 **extra_args,
             )
+            post_attn1 = attn1_out[0]
+            if self.norm_first_sandwich:
+                post_attn1 = self.norm1_post(post_attn1)
 
-            x = x + attn1_out[0]
+            x = x + post_attn1
 
             if self.add_cross_attention:
                 attn2_out = self._mha_block(
@@ -370,7 +419,11 @@ class TransformerDecoderLayer(nn.Module):
                     expert_mask,
                 ) = ffn_output
 
-            x = x + ffn_output
+            post_ffn_output = ffn_output
+            if self.norm_first_sandwich:
+                post_ffn_output = self.norm3_post(post_ffn_output)
+
+            x = x + post_ffn_output
         else:
             attn1_out = self._sa_block(
                 x,

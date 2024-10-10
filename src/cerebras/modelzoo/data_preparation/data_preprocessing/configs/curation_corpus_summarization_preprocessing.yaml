@@ -14,18 +14,17 @@ processing:
         encoder_file: "/path/to/encoder"
 
     max_seq_length: 2048
-    short_seq_prob: 0.0
-
     write_in_batch: True
-
     resume_from_checkpoint: False
-    seed: 0
 
     read_hook: "cerebras.modelzoo.data_preparation.data_preprocessing.hooks:prompt_completion_key"
     read_hook_kwargs:
         data_keys:
             prompt_key: "article_content"
             completion_key: "summary"
+    
+    shuffle_seed: 0
+    shuffle: False
 
 dataset:
     use_ftfy: True

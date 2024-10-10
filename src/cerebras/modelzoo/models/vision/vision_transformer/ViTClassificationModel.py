@@ -65,6 +65,11 @@ class ViTClassificationModel(nn.Module):
         use_encoder_pooler_layer=False,
         prepend_cls_token=True,
         use_bias_in_output=True,
+        layerscale_value=None,
+        use_dinov2_classifier=False,
+        stochastic_depth_drop_prob=0.0,
+        stochastic_depth_drop_prob_schedule="linear",
+        stochastic_depth_mode="batch",
     ):
         super(ViTClassificationModel, self).__init__()
         default_initializer = {
@@ -117,9 +122,20 @@ class ViTClassificationModel(nn.Module):
             use_conv_patchified_embedding=use_conv_patchified_embedding,
             prepend_cls_token=prepend_cls_token,
             use_encoder_pooler_layer=use_encoder_pooler_layer,
+            layerscale_value=layerscale_value,
+            stochastic_depth_drop_prob=stochastic_depth_drop_prob,
+            stochastic_depth_drop_prob_schedule=stochastic_depth_drop_prob_schedule,
+            stochastic_depth_mode=stochastic_depth_mode,
         )
 
         classifier_hidden_size = hidden_size
+        self.use_dinov2_classifier = use_dinov2_classifier
+        if use_dinov2_classifier:
+            if not prepend_cls_token:
+                raise ValueError(
+                    f"prepend_cls_token must be set to True for Dinov2."
+                )
+            classifier_hidden_size = 2 * hidden_size
         self.classifier = BertClassifierHead(
             hidden_size=classifier_hidden_size,
             num_classes=num_classes,

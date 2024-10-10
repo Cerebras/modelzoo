@@ -1333,7 +1333,7 @@ class ConfigConverter_T5_HF_CS21(ConfigConverter_T5_HF_CS20):
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
+            FormatVersions("cs-2.1", "cs-2.2"),
         )
 
 
@@ -1421,7 +1421,7 @@ class Converter_T5_WithoutOptionalModel_HF_CS21(Converter_T5_HF_CS17):
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
+            FormatVersions("cs-2.1", "cs-2.2"),
         )
 
     @staticmethod

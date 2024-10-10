@@ -134,6 +134,8 @@ class BertForPreTrainingModel(torch.nn.Module):
             "num_relative_attention_buckets": self._model_params.num_relative_attention_buckets,
             "alibi_trainable_slopes": self._model_params.alibi_trainable_slopes,
             "pos_scaling_factor": self._model_params.pos_scaling_factor,
+            "pos_scaling_type": self._model_params.pos_scaling_type,
+            "pos_scaling_extra_args": self._model_params.pos_scaling_extra_args,
             "hidden_size": self._model_params.hidden_size,
             "share_embedding_weights": self._model_params.share_embedding_weights,
             "num_hidden_layers": self._model_params.num_hidden_layers,

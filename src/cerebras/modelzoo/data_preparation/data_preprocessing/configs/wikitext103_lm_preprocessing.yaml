@@ -31,6 +31,9 @@ processing:
         data_keys:
             text_key: "text" 
 
+    shuffle_seed: 0
+    shuffle: False
+
 dataset:
     use_ftfy: True
     ftfy_normalizer: "NFC"

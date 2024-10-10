@@ -13,6 +13,7 @@
 # limitations under the License.
 
 """Pytorch DPO Dataloader"""
+
 from cerebras.modelzoo.common.registry import registry
 from cerebras.modelzoo.data.common.HDF5IterableDataProcessor import (
     HDF5IterableDataProcessor,
@@ -48,6 +49,14 @@ class DpoHDF5DataProcessor(HDF5IterableDataProcessor):
         # `chosen_attention_mask`, `chosen_labels`, `rejected_input_ids`,
         # `rejected_attention_mask`, and `rejected_labels`.
         self.dataset = HDF5IterableDataset(params)
+        self.dataset.features_list = [
+            "chosen_input_ids",
+            "chosen_attention_mask",
+            "chosen_labels",
+            "rejected_input_ids",
+            "rejected_attention_mask",
+            "rejected_labels",
+        ]
 
         # The super class will take care of sharding the dataset and creating the dataloader
         super().__init__(params)

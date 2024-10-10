@@ -83,6 +83,8 @@ class GPTJModel(nn.Module):
         output_logits_alpha=None,
         alibi_trainable_slopes=False,
         pos_scaling_factor=1.0,
+        pos_scaling_type="linear",
+        pos_scaling_extra_args=None,
         moe_params=dict(num_experts=1),
         dtype=None,
     ):
@@ -176,6 +178,8 @@ class GPTJModel(nn.Module):
             rope_theta=rope_theta,
             pad_rope=pad_rope,
             pos_scaling_factor=pos_scaling_factor,
+            pos_scaling_type=pos_scaling_type,
+            pos_scaling_extra_args=pos_scaling_extra_args,
             dtype=dtype,
         )
 

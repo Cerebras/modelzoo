@@ -160,23 +160,12 @@ def run_with_params(
             # runconfig was injected into params by the CLI parser
             # and we need to merge it with the trainer params
             from cerebras.modelzoo.trainer.utils import (
-                convert_legacy_params_to_trainer_params,
-                merge_trainer_params,
+                inject_cli_args_to_trainer_params,
             )
 
-            # Convert and filter out None values
-            converted = convert_legacy_params_to_trainer_params(
-                {"runconfig": params.pop("runconfig")}
+            params = inject_cli_args_to_trainer_params(
+                params.pop("runconfig"), params
             )
-
-            trainers = params["trainer"]
-            if isinstance(trainers, (list, tuple)):
-                params["trainer"] = [
-                    merge_trainer_params(trainer, converted)
-                    for trainer in trainers
-                ]
-            else:
-                params = merge_trainer_params(params, converted)
 
         # We will be getting a params_obj if we are using config classes
         return run_trainer(
