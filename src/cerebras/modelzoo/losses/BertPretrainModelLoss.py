@@ -38,11 +38,9 @@
 import torch
 import torch.nn as nn
 
-from cerebras.modelzoo.common.registry import registry
 from cerebras.modelzoo.common.utils.model.transformer_utils import smooth_loss
 
 
-@registry.register_loss("BertPretrainModelLoss")
 class BertPretrainModelLoss(nn.Module):
     def __init__(
         self,

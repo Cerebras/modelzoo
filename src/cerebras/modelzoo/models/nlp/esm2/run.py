@@ -12,30 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
+# isort: off
 import sys
+import os
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "../../../../.."))
-
-from cerebras.modelzoo.common.utils.run.cli_pytorch import get_params_from_args
-
-
-def main():
-    params = get_params_from_args()
-
-    from cerebras.modelzoo.common.run_utils import main
-    from cerebras.modelzoo.models.nlp.bert.data import (
-        eval_input_dataloader,
-        train_input_dataloader,
-    )
-
-    main(
-        params,
-        "esm2",
-        train_input_dataloader,
-        eval_input_dataloader,
-    )
-
+# isort: on
 
 if __name__ == '__main__':
-    main()
+    from cerebras.modelzoo.common.run_utils import run
+
+    run()

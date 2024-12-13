@@ -16,15 +16,17 @@ processing:
 
     read_hook: "cerebras.modelzoo.data_preparation.data_preprocessing.hooks:chat_read_hook"
     read_hook_kwargs:
-        data_keys:
-            multi_turn_key: "messages"
-            multi_turn_content_key: "content"
+        multi_turn_key: "messages"
+        multi_turn_content_key: "content"
+        multi_turn_role_key: "role" 
 
     shuffle_seed: 0
     shuffle: False
-
-dataset:
     use_ftfy: True
     ftfy_normalizer: "NFC"
     wikitext_detokenize: False
+    UNSAFE_skip_jsonl_decoding_errors: False
+dataset:
+    truncate_to_msl: null
+   
 

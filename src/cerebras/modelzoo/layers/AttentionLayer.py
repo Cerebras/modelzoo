@@ -20,6 +20,7 @@ import torch.nn.functional as F
 
 from cerebras.modelzoo.layers.create_initializer import create_initializer
 from cerebras.pytorch.utils.kernel import kernel_annotater
+from cerebras.pytorch.utils.num_kv_groups import groups_annotater
 
 
 class MultiheadAttention(nn.Module):
@@ -173,6 +174,7 @@ class MultiheadAttention(nn.Module):
         if attention_kernel:
             attention_kernel = attention_kernel.upper()
         self.using_kernel = kernel_annotater(attention_kernel)
+        self.using_groups = groups_annotater(None)
 
         self.scale_qk_dot_by_d = scale_qk_dot_by_d
         self.attention_logits_alpha = attention_logits_alpha
@@ -226,6 +228,7 @@ class MultiheadAttention(nn.Module):
         position_bias=None,
         rotary_position_embedding_helper=None,
         layer_idx=None,
+        special_token_indices=None,
         **extra_args,
     ):
         """Applies the attention mechanism to queries ``q``, keys ``k`` and values ``v``.
@@ -289,14 +292,27 @@ class MultiheadAttention(nn.Module):
 
         # construct query, key and value vector with a linear projection and split into heads
         q = self.construct_query_vector(
-            q, attn_mask=attn_mask, key_padding_mask=key_padding_mask
+            q,
+            attn_mask=attn_mask,
+            key_padding_mask=key_padding_mask,
+            special_token_indices=special_token_indices,
         )
         k = self.construct_key_vector(
-            k, attn_mask=attn_mask, key_padding_mask=key_padding_mask
+            k,
+            attn_mask=attn_mask,
+            key_padding_mask=key_padding_mask,
+            special_token_indices=special_token_indices,
         )
         v = self.construct_value_vector(
-            v, attn_mask=attn_mask, key_padding_mask=key_padding_mask
+            v,
+            attn_mask=attn_mask,
+            key_padding_mask=key_padding_mask,
+            special_token_indices=special_token_indices,
         )
+
+        # Work with KV cache before RoPE modification of keys
+        k, v = self.process_past_kv(past_kv, past_kv_self_attn, k, v)
+        present_kv = self.construct_present_kv(cache_present_kv, k, v)
 
         offset_length, real_seq_length = self.get_sequence_length(
             past_kv, real_seq_length
@@ -311,31 +327,73 @@ class MultiheadAttention(nn.Module):
             k = k * torch.tensor(1 / float(depth) ** 0.5, dtype=k.dtype)
 
         # rotary embedding helper
-        k = self.apply_rotary_position_embedding(
+        k_rotated = self.apply_rotary_position_embedding(
             k,
             rotary_position_embedding_helper,
-            real_seq_length,
             offset_length,
             constant_pos_mask=constant_pos_mask,
+            special_token_indices=special_token_indices,
         )
-        q = self.apply_rotary_position_embedding(
+        q_rotated = self.apply_rotary_position_embedding(
             q,
             rotary_position_embedding_helper,
-            real_seq_length,
             offset_length,
             constant_pos_mask=constant_pos_mask,
+            special_token_indices=special_token_indices,
         )
         # q, k now have shape [batch_size, num_heads, seq_length, head_dim]
 
-        q = self.process_q_before_logits_calc(q)
-        k = self.process_k_before_logits_calc(k)
+        if (
+            rotary_position_embedding_helper is not None
+            and not rotary_position_embedding_helper.is_rel_distance_default
+        ):
+            # We are using capped/grouped relative distances for RoPE so we need to
+            # compute a separate set of QK to get logit values outside the sliding window region
+            q_pos_id, k_pos_id = (
+                rotary_position_embedding_helper.get_distant_pos_id_vectors(
+                    device=q.device
+                )
+            )
+            k_distant = self.apply_rotary_position_embedding(
+                k,
+                rotary_position_embedding_helper,
+                offset_length,
+                constant_pos_mask=constant_pos_mask,
+                position_ids=k_pos_id,
+                rope_cache_tag="key_distant",
+            )
+            q_distant = self.apply_rotary_position_embedding(
+                q,
+                rotary_position_embedding_helper,
+                offset_length,
+                constant_pos_mask=constant_pos_mask,
+                position_ids=q_pos_id,
+                rope_cache_tag="query_distant",
+            )
+            q_distant = self.process_q_before_logits_calc(q_distant)
+            k_distant = self.process_k_before_logits_calc(k_distant)
+
+        q = self.process_q_before_logits_calc(q_rotated)
+        k = self.process_k_before_logits_calc(k_rotated)
         v = self.process_v_before_logits_calc(v)
 
-        k, v = self.process_past_kv(past_kv, past_kv_self_attn, k, v)
-
-        present_kv = self.construct_present_kv(cache_present_kv, k, v)
-
         logits = self.calculate_attention_logits(q, k, layer_idx)
+
+        if (
+            rotary_position_embedding_helper is not None
+            and not rotary_position_embedding_helper.is_rel_distance_default
+        ):
+            # Compute logits outside the sliding window region and combine with original logits
+            logits_distant = self.calculate_attention_logits(
+                q_distant, k_distant, layer_idx
+            )
+            mask_local, mask_distant = (
+                rotary_position_embedding_helper.get_attn_region_masks(
+                    shape=q_distant.shape,
+                    device=q_distant.device,
+                )
+            )
+            logits = mask_local * logits + mask_distant * logits_distant
 
         attn_mask_processed = self.process_attention_mask(attn_mask, past_kv, q)
         key_padding_mask_processed = self.process_key_padding_mask(
@@ -350,7 +408,11 @@ class MultiheadAttention(nn.Module):
         logits = self.apply_attention_bias(logits, attention_bias)
 
         attention_scores = self.calculate_attention_scores(logits)
-        attention_output = self.calculate_attention_output(attention_scores, v)
+        attention_output = self.calculate_attention_output(
+            attention_scores,
+            v,
+            special_token_indices=special_token_indices,
+        )
 
         if cache_present_kv:
             return attention_output, present_kv
@@ -404,23 +466,61 @@ class MultiheadAttention(nn.Module):
             batch_size, seq_length, num_heads * depth
         )
 
-    def construct_query_vector(self, q, attn_mask=None, key_padding_mask=None):
+    def get_query_projection(self, q, special_token_indices=None):
         # linear projection
-        q = self.proj_q_dense_layer(q) * self.q_projection_scale
+        return self.proj_q_dense_layer(q)
+
+    def get_key_projection(self, k, special_token_indices=None):
+        # linear projection
+        return self.proj_k_dense_layer(k)
+
+    def get_value_projection(self, v, special_token_indices=None):
+        # linear projection
+        return self.proj_v_dense_layer(v)
+
+    def construct_query_vector(
+        self,
+        q,
+        attn_mask=None,
+        key_padding_mask=None,
+        special_token_indices=None,
+    ):
+        q = (
+            self.get_query_projection(
+                q, special_token_indices=special_token_indices
+            )
+            * self.q_projection_scale
+        )
         # split into heads
         q = self._split_heads(q, rotary=True)
         return q
 
-    def construct_key_vector(self, k, attn_mask=None, key_padding_mask=None):
-        # linear projection
-        k = self.proj_k_dense_layer(k) * self.k_projection_scale
+    def construct_key_vector(
+        self,
+        k,
+        attn_mask=None,
+        key_padding_mask=None,
+        special_token_indices=None,
+    ):
+        k = (
+            self.get_key_projection(k, special_token_indices)
+            * self.k_projection_scale
+        )
         # split into heads
         k = self._split_heads(k, rotary=True)
         return k
 
-    def construct_value_vector(self, v, attn_mask=None, key_padding_mask=None):
-        # linear projection
-        v = self.proj_v_dense_layer(v) * self.v_projection_scale
+    def construct_value_vector(
+        self,
+        v,
+        attn_mask=None,
+        key_padding_mask=None,
+        special_token_indices=None,
+    ):
+        v = (
+            self.get_value_projection(v, special_token_indices)
+            * self.v_projection_scale
+        )
         # split into heads
         v = self._split_heads(v, rotary=False)
         return v
@@ -436,16 +536,19 @@ class MultiheadAttention(nn.Module):
         self,
         vector,
         rotary_position_embedding_helper,
-        real_seq_length,
         offset_length,
         constant_pos_mask=None,
+        special_token_indices=None,
+        position_ids=None,
+        rope_cache_tag=None,
     ):
         if rotary_position_embedding_helper:
             vector = rotary_position_embedding_helper.rotate_tensor(
                 vector,
-                real_seq_length,
                 offset=offset_length,
                 constant_pos_mask=constant_pos_mask,
+                position_ids=position_ids,
+                rope_cache_tag=rope_cache_tag,
             )
         vector = vector.transpose(1, 2)
         return vector
@@ -496,7 +599,9 @@ class MultiheadAttention(nn.Module):
             )
 
         # calculate dot product attention
-        logits = self.attention_logits_alpha * self.using_kernel(torch.matmul)(
+        logits = self.attention_logits_alpha * self.using_groups(
+            self.using_kernel(torch.matmul)
+        )(
             q, k.transpose(-1, -2)
         )  # (B, H, Lq, E) * (B, H, E, Lk) -> (B, H, Lq, Lk)
 
@@ -712,7 +817,14 @@ class MultiheadAttention(nn.Module):
         attention_scores = self.dropout_layer(attention_scores)
         return attention_scores
 
-    def calculate_attention_output(self, attention_scores, v):
+    def get_attention_output_projection(
+        self, attention_output, special_token_indices=None
+    ):
+        return self.proj_output_dense_layer(attention_output)
+
+    def calculate_attention_output(
+        self, attention_scores, v, special_token_indices=None
+    ):
         # Shape: (batch_size, num_heads, query_length, embed_dim / num_heads)
         attention_output = self.using_kernel(torch.matmul)(attention_scores, v)
 
@@ -721,8 +833,10 @@ class MultiheadAttention(nn.Module):
 
         # Run the combined outputs through another linear projection layer.
         attention_output = (
-            self.output_projection_scale
-            * self.proj_output_dense_layer(attention_output)
+            self.get_attention_output_projection(
+                attention_output, special_token_indices=special_token_indices
+            )
+            * self.output_projection_scale
         )
 
         return attention_output

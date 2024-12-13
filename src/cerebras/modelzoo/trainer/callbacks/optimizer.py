@@ -22,10 +22,10 @@ from typing import Union
 import torch
 
 import cerebras.pytorch as cstorch
-from cerebras.modelzoo.trainer.callbacks import Callback
+from cerebras.modelzoo.trainer.callbacks import Callback, CoreCallback
 
 
-class OptimizerCallback(Callback):
+class OptimizerCallback(CoreCallback):
     """Callback to setup the optimizer for the Trainer."""
 
     def __init__(

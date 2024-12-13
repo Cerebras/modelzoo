@@ -21,6 +21,7 @@ that can be used to extend the functionality of the Trainer.
 # isort: off
 from .callback import (
     Callback,
+    CoreCallback,
     GLOBAL_CALLBACK_REGISTRY,
     register_global_callback,
     ValidationCallback,
@@ -54,7 +55,12 @@ from .flags import (
     ScopedValidateFlags,
     DebugArgsPath,
 )
-from .listener import Listener
+from .listener import (
+    DumpAvailableTensorNames,
+    SummaryTensorListener,
+    NormTensorListener,
+)
+from .lora import Lora
 from .loss import CheckLoss
 from .metadata import ModelZooParamsMetadata
 from .metrics import ModelEvalMetrics
@@ -68,12 +74,15 @@ from .profiler import (
     FlopUtilization,
 )
 from .selective_grad import SelectiveGrad
+from .model_stats import CountParams
+from .notification import EmailNotification
 
 # isort: on
 
 # __all__ is required for docs to autogenerate correctly
 __all__ = [
     "Callback",
+    "CoreCallback",
     "register_global_callback",
     "ValidationCallback",
     # Core Callbacks
@@ -97,6 +106,7 @@ __all__ = [
     "SchedulersCallback",
     "SparsityCallback",
     # Add-on Callbacks
+    "Lora",
     "LogInputSummaries",
     "LogOptimizerParamGroup",
     "LogSparsity",
@@ -105,10 +115,12 @@ __all__ = [
     "ScopedTrainFlags",
     "ScopedValidateFlags",
     "DebugArgsPath",
-    "Listener",
     "CheckLoss",
     "ModelZooParamsMetadata",
     "ModelEvalMetrics",
+    "DumpAvailableTensorNames",
+    "SummaryTensorListener",
+    "NormTensorListener",
     "ComputeNorm",
     "DumpActivations",
     "Profiler",
@@ -117,4 +129,6 @@ __all__ = [
     "SavePerformanceData",
     "FlopUtilization",
     "SelectiveGrad",
+    "CountParams",
+    "EmailNotification",
 ]

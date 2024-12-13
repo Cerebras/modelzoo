@@ -13,53 +13,21 @@
 # limitations under the License.
 
 """
-Config classes of T5 data Configs
+Config classes of T5 data Configs.
 
 """
 
-from dataclasses import dataclass
-from typing import List, Optional, Union
+from typing import List, Literal, Union
 
-from cerebras.modelzoo.common.registry import registry
-from cerebras.modelzoo.config_manager.config_classes.base.base_config import (
-    required,
+from cerebras.modelzoo.data.common.HDF5IterableDataProcessor import (
+    HDF5IterableDataProcessorConfig,
 )
-from cerebras.modelzoo.config_manager.config_classes.base.data_config import (
-    DataProcessorConfig,
-)
-from cerebras.modelzoo.data.common.config import HDF5IterableDataProcessorConfig
 
 
-@registry.register_data_config("T5DynamicDataProcessor")
-@dataclass
-class T5DynamicDataProcessorConfig(DataProcessorConfig):
-    src_data_dir: str = required
-    src_vocab_file: str = required
-    src_max_sequence_length: int = required
-    tgt_max_sequence_length: int = required
-    shuffle_buffer: Optional[int] = None
-    do_lower: bool = False
-    buckets: Optional[List[int]] = None
-    dynamic_loss_weight: Optional[bool] = None
-    pack_sequences: Optional[bool] = False
-    num_documents_to_concatenate: int = 128
-    num_workers: int = 0
-    drop_last: bool = True
-    prefetch_factor: int = 10
-    persistent_workers: bool = True
-    oov_token: str = "<unk>"
-    sos_token: str = "<s>"
-    eos_token: str = "</s>"
-    pad_token: str = "<pad>"
-    extra_ids: Union[int, List[int]] = 0
-    labels_pad_id: int = 0
-    input_pad_id: int = 0
-
-
-@registry.register_data_config("T5HDF5DataProcessor")
-@dataclass
 class T5HDF5DataProcessorConfig(HDF5IterableDataProcessorConfig):
-    data_dir: Union[str, List[str]] = required
+    data_processor: Literal["T5HDF5DataProcessor"]
+
+    data_dir: Union[str, List[str]] = ...
     "The path to the HDF5 files."
     num_workers: int = 0
     drop_last: bool = True

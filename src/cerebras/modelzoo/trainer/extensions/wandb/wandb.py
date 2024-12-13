@@ -14,7 +14,7 @@
 
 """Contains the WandbLogger class for logging metrics to Weights and Biases."""
 
-from typing import List, Optional
+from typing import List, Literal, Optional
 from warnings import warn
 
 import torch
@@ -35,8 +35,8 @@ class WandbLogger(Logger):
         run_name: Optional[str] = None,
         job_type: Optional[str] = None,
         tags: Optional[List[str]] = None,
-        resume: str = "auto",
-        entity: str = None,
+        resume: Literal["never", "allow", "auto", "must"] = "auto",
+        entity: Optional[str] = None,
     ):
         """
         Args:

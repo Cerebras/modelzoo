@@ -191,20 +191,29 @@ def main():
     parser.add_argument(
         "--input_file",
         type=str,
-        help="The connected_components.pickle file from previous stage",
+        help="The connected_components.pickle file from previous stage.",
         required=True,
     )
     parser.add_argument(
-        "--input_dir", type=str, help="Input directory", required=True
+        "--input_dir",
+        type=str,
+        help="Input directory, which contains the documents on which deduplication pipeline will be run.",
+        required=True,
     )
     parser.add_argument(
-        "--output_dir", type=str, help="Output directory", required=True
+        "--output_dir",
+        type=str,
+        help="The final output directory, where the deduplicated files would be present.",
+        required=True,
     )
     parser.add_argument(
-        "--format", type=str, help="File format of the dataset", required=True
+        "--format", type=str, help="File format of the dataset.", required=True
     )
     parser.add_argument(
-        "--jsonl_key", type=str, help="JSONL key for the dataset", required=True
+        "--jsonl_key",
+        type=str,
+        help="JSONL key for the dataset.",
+        required=True,
     )
     args = parser.parse_args()
     generate_duplicates(args)

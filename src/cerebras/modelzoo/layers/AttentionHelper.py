@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Union
+from typing import Literal, Union
 
 import torch.nn as nn
 
@@ -23,6 +23,8 @@ ATTENTION_TYPE_DICT = {
     "aiayn_attention": MultiheadAttention,
     "multiquery_attention": MultiQueryAttention,
 }
+
+AttentionType = Literal[tuple(ATTENTION_TYPE_DICT)]
 
 
 def get_attention_module(attn_module: Union[str, nn.Module], extra_params):

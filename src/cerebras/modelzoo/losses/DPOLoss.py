@@ -13,15 +13,15 @@
 # limitations under the License.
 
 # Based on https://github.com/huggingface/trl/blob/main/trl/trainer/dpo_trainer.py
+from typing import Literal
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from cerebras.modelzoo.common.registry import registry
+DPOLossType = Literal["sigmoid", "hinge", "ipo", "dpop"]
 
 
-@registry.register_loss("DPOLoss")
 class DPOLoss(nn.Module):
     """
     DPO Loss
@@ -33,14 +33,17 @@ class DPOLoss(nn.Module):
 
     def __init__(
         self,
-        beta=0.1,
-        loss_type="sigmoid",
-        reference_free=False,
+        beta: float = 0.1,
+        loss_type: DPOLossType = "sigmoid",
+        reference_free: bool = False,
+        dpop_penalty_weight: float = 5.0,
     ):
         super(DPOLoss, self).__init__()
         self.beta = beta
         self.loss_type = loss_type
         self.reference_free = reference_free
+        # The following corresponds to lambda in the DPOP paper (https://arxiv.org/pdf/2402.13228)
+        self.dpop_penalty_weight = dpop_penalty_weight
 
     def forward(
         self,
@@ -64,9 +67,15 @@ class DPOLoss(nn.Module):
             losses = torch.relu(1 - self.beta * logits)
         elif self.loss_type == "ipo":
             losses = torch.pow(logits - 1 / (2 * self.beta), 2.0)
+        elif self.loss_type == "dpop":
+            dpop_penalty = torch.clamp(
+                reference_chosen_logps - policy_chosen_logps, min=0.0
+            )
+            logits = logits - self.dpop_penalty_weight * dpop_penalty
+            losses = -F.logsigmoid(self.beta * logits)
         else:
             raise ValueError(
-                f"Unknown loss type: {self.loss_type}. Should be one of ['sigmoid', 'hinge', 'ipo']"
+                f"Unknown loss type: {self.loss_type}. Should be one of {DPOLossType}"
             )
 
         return losses.mean()

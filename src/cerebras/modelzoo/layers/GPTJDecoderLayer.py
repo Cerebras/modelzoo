@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Optional, Union
+from typing import Dict, Optional, Union
 
 from torch import Tensor
 
@@ -73,6 +73,7 @@ class GPTJDecoderLayer(TransformerDecoderLayer):
         cross_attn_position_bias: Optional[Tensor] = None,
         layer_idx: Optional[int] = None,
         expert_hash_idx: Optional[Tensor] = None,
+        special_token_indices: Dict[str, Tensor] = None,
     ) -> Tensor:
         """GPTJ layer with rotary position embeddings and parallel decoder architecture
 

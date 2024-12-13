@@ -15,6 +15,7 @@
 """
 Script that normalizes text
 """
+
 import argparse
 import io
 import json

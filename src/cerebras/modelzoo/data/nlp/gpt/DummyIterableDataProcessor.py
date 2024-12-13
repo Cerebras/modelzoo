@@ -17,9 +17,9 @@
 import numpy as np
 import torch
 
-from cerebras.modelzoo.common.registry import registry
 from cerebras.modelzoo.data.common.GenericDataProcessor import (
     GenericDataProcessor,
+    GenericDataProcessorConfig,
 )
 
 
@@ -61,28 +61,10 @@ class DummyIterableDataset(torch.utils.data.IterableDataset):
             yield feature
 
 
-@registry.register_datasetprocessor("DummyIterableDataProcessor")
 class DummyIterableDataProcessor(GenericDataProcessor):
-    """
-    A Generic PyTorch Data Processor.
-    :param dict params: dict containing training
-        input parameters for creating dataset.
-    Expects the following fields:
-    - "batch_size" (int): Batch size.
-    - "shuffle" (bool): Flag to enable data shuffling.
-    - "shuffle_seed" (int): Shuffle seed.
-    - "shuffle_buffer" (int): Size of shuffle buffer in samples.
-    - "num_workers" (int):  How many subprocesses to use for data loading.
-    - "drop_last" (bool): If True and the dataset size is not divisible
-       by the batch size, the last incomplete batch will be dropped.
-    - "prefetch_factor" (int): Number of batches loaded in advance by each worker.
-    - "persistent_workers" (bool): If True, the data loader will not shutdown
-       the worker processes after a dataset has been consumed once.
-    """
 
-    def __init__(self, params):
-        self.dataset = DummyIterableDataset()
-        super().__init__(params)
+    def __init__(self, config: GenericDataProcessorConfig):
+        super().__init__(config, DummyIterableDataset())
 
 
 class DummyTinyIterableDataset(torch.utils.data.IterableDataset):
@@ -123,7 +105,6 @@ class DummyTinyIterableDataset(torch.utils.data.IterableDataset):
             yield feature
 
 
-@registry.register_datasetprocessor("DummyTinyIterableDataProcessor")
 class DummyTinyIterableDataProcessor(GenericDataProcessor):
     """
     A Generic PyTorch Data Processor.

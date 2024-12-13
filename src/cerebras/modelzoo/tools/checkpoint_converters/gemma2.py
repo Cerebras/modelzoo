@@ -26,6 +26,9 @@ from cerebras.modelzoo.tools.checkpoint_converters.base_converter import (
     EquivalentSubkey,
     FormatVersions,
 )
+from cerebras.modelzoo.tools.checkpoint_converters.helper import (
+    Build_HF_CS_Converter_WithOptionalModel,
+)
 from cerebras.modelzoo.tools.checkpoint_converters.llama import (
     Converter_LlamaAttention_HF_CS,
 )
@@ -35,7 +38,9 @@ from cerebras.modelzoo.tools.checkpoint_converters.llama import (
 #########################################################
 
 
-class Converter_Gemma2ForCausalLM_HF_CS23(BaseCheckpointConverter_HF_CS):
+class Converter_Gemma2_WithoutOptionalModel_HF_CS23(
+    BaseCheckpointConverter_HF_CS
+):
     def __init__(self):
         super().__init__()
         self.rules = [
@@ -186,7 +191,7 @@ class Converter_Gemma2ForCausalLM_HF_CS23(BaseCheckpointConverter_HF_CS):
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-2.3"))
+        return (FormatVersions("hf"), FormatVersions("cs-2.3", "cs-2.4"))
 
     @classmethod
     def converter_note(cls) -> str:
@@ -508,7 +513,7 @@ class ConfigConverter_Gemma2_HF_CS23(BaseConfigConverter_HF_CS):
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-2.3"))
+        return (FormatVersions("hf"), FormatVersions("cs-2.3", "cs-2.4"))
 
     def convert_gqa(
         self,
@@ -673,10 +678,11 @@ class ConfigConverter_Gemma2_HF_CS23(BaseConfigConverter_HF_CS):
 
     def pre_config_convert(
         self,
+        model,
         config,
         converter_indices,
     ):
-        config = super().pre_config_convert(config, converter_indices)
+        config = super().pre_config_convert(model, config, converter_indices)
 
         if converter_indices.direction == 1:
             exception = None
@@ -717,6 +723,7 @@ class ConfigConverter_Gemma2_HF_CS23(BaseConfigConverter_HF_CS):
 
     def post_config_convert(
         self,
+        model,
         original_config,
         old_config,
         new_config,
@@ -743,9 +750,22 @@ class ConfigConverter_Gemma2_HF_CS23(BaseConfigConverter_HF_CS):
             )
 
         return super().post_config_convert(
+            model,
             original_config,
             old_config,
             new_config,
             converter_indices,
             drop_unmatched_keys,
         )
+
+
+Converter_Gemma2ForCausalLM_HF_CS23 = Build_HF_CS_Converter_WithOptionalModel(
+    "Converter_Gemma2ForCausalLM_HF_CS23",
+    Converter_Gemma2_WithoutOptionalModel_HF_CS23,
+    derived_class=Converter_Gemma2_WithoutOptionalModel_HF_CS23,
+    config_converter_class=ConfigConverter_Gemma2_HF_CS23,
+    formats=(
+        FormatVersions("hf"),
+        FormatVersions("cs-2.3", "cs-2.4"),
+    ),
+)

@@ -18,15 +18,17 @@
 import json
 import os.path as osp
 import random
+from typing import Any, Literal, Optional
 
 import h5py
 import numpy as np
 import torch
+from pydantic import Field
 from torchvision import transforms
 
-from cerebras.modelzoo.common.registry import registry
 from cerebras.modelzoo.data.vision.segmentation.Hdf5BaseIterDataProcessor import (
     Hdf5BaseIterDataProcessor,
+    Hdf5BaseIterDataProcessorConfig,
 )
 from cerebras.modelzoo.data.vision.segmentation.preprocessing_utils import (
     normalize_tensor_transform,
@@ -34,7 +36,20 @@ from cerebras.modelzoo.data.vision.segmentation.preprocessing_utils import (
 from cerebras.modelzoo.data.vision.transforms import create_transform
 
 
-@registry.register_datasetprocessor("SkmDataProcessor")
+class SkmDataProcessorConfig(Hdf5BaseIterDataProcessorConfig):
+    data_processor: Literal["SkmDataProcessor"]
+
+    echo_type: Literal[
+        "echo1", "echo2", "echo1-echo2-mc", "root_sum_of_squares"
+    ] = "echo1"
+
+    aggregate_cartilage: bool = True
+
+    split: Literal["train", "val"] = "train"
+
+    overfit: Optional[Any] = Field(default=None, deprecated=True)
+
+
 class SkmDataProcessor(Hdf5BaseIterDataProcessor):
     """
     A SKM-TEA MRI DICOM Track (Stanford MRI Dataset) Data Processor class for U-Net Segmentation.
@@ -47,10 +62,11 @@ class SkmDataProcessor(Hdf5BaseIterDataProcessor):
         params (dict): YAML config file with adaptable model and data configurations
     """
 
-    def __init__(self, params):
-        super(SkmDataProcessor, self).__init__(params)
-        self.echo_type = params.get("echo_type", "echo1")
-        self.aggregate_cartilage = params.get("aggregate_cartilage", True)
+    def __init__(self, config: SkmDataProcessorConfig):
+        super(SkmDataProcessor, self).__init__(config)
+        self.echo_type = config.echo_type
+        self.split = config.split
+        self.aggregate_cartilage = config.aggregate_cartilage
 
     def _shard_files(self, is_training=False):
         split = "train" if is_training else "val"

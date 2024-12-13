@@ -13,132 +13,166 @@
 # limitations under the License.
 
 import copy
+from typing import Any, Literal, Optional
 
 import torch
+from pydantic import Field, model_validator
 
-from cerebras.modelzoo.common.registry import registry
+from cerebras.modelzoo.config import ModelConfig
+from cerebras.modelzoo.layers.activations import ActivationType
 from cerebras.modelzoo.losses.dpr_loss import DPRLoss
-from cerebras.modelzoo.models.nlp.bert.bert_model import BertModel
+from cerebras.modelzoo.models.nlp.bert.bert_model import (
+    BertModel,
+    BertModelConfig,
+)
 from cerebras.modelzoo.models.nlp.dpr.dpr_model import DPRModel
 from cerebras.pytorch.metrics import AccuracyMetric
 
 
-@registry.register_model("dpr", datasetprocessor=["DPRHDF5DataProcessor"])
+class DPREncoderConfig(BertModelConfig):
+    # Includes the same Bert model params + the following:
+    add_pooling_layer: bool = False
+
+    disable_nsp: bool = False
+    "Disables Next Sentence Prediction (NSP) objective."
+
+    num_segments: Optional[int] = None
+    """Number of segments (token types) in embedding. When not specified
+    (and NSP objective is enabled), num_segments will default to 2"""
+
+    pad_token_id: int = 0
+    "The embedding vector at pad_token_id is not updated during training."
+
+    encoder_nonlinearity: ActivationType = "gelu"
+    """The non-linear activation function used in the feed forward network
+    in each transformer block.
+    See list of non-linearity functions [here](https://pytorch.org/docs/stable/nn.html#non-linear-activations-weighted-sum-nonlinearity).
+    """
+
+    # The following fields are deprecated and unused.
+    # They will be removed in the future once all configs have been fixed
+    fp16_type: Optional[Any] = Field(default=None, deprecated=True)
+    mixed_precision: Optional[Any] = Field(default=None, deprecated=True)
+    # These are required because the checkpoint converter doesn't distinguish between bert model types
+    mlm_loss_weight: Optional[Any] = Field(default=None, deprecated=True)
+    mlm_nonlinearity: Optional[Any] = Field(default=None, deprecated=True)
+    share_embedding_weights: Optional[Any] = Field(
+        default=None, deprecated=True
+    )
+
+    def post_init(self, context):
+        super().post_init(context)
+
+        if self.num_segments is None:
+            self.num_segments = None if self.disable_nsp else 2
+
+        self.embedding_dropout_rate = self.dropout_rate
+        self.embedding_pad_token_id = self.pad_token_id
+        self.nonlinearity = self.encoder_nonlinearity
+
+
+class DPRModelConfig(ModelConfig):
+    name: Literal["dpr"]
+
+    q_encoder: Optional[DPREncoderConfig] = None
+    "Encoder for question in biencoder model (e.g., DPR)"
+    ctx_encoder: Optional[DPREncoderConfig] = None
+    "Encoder for context in biencoder model (e.g., DPR)"
+    encoder: Optional[DPREncoderConfig] = None
+    """
+    Encoder for both question and context model.
+    - If `encoder` is already provided, users should not provide
+    `q_encoder` and `ctx_encoder` in the same config file.
+    - Simply providing `encoder` doesn't automatically make the architecture a uni-encoder model;
+    instead, the users should explicitly set `use_biencoder` to be False. Otherwise, a bi-encoder
+    model will be instantiated with question & context encoders have the same config.
+    """
+    softmax_temperature: float = 1.0
+    "Divide the score matrix by temperature before softmax computation"
+    mutual_information: bool = False
+    "Whether to add context-to-question loss in addition to question-to-context loss"
+    use_biencoder: bool = True
+    "Use uniencoder or biencoder architecture"
+    pooler_type: Literal["mean", "cls", "ffn_pooler"] = "cls"
+    """Pooler method for generating sequence embedding out of output token embeddings.
+    Can be one of -
+    `mean` -  average all token embeddings as the final sequence embedding,
+    `fixed` - use the token embedding of the [CLS] token as the final sequence embedding",
+    `ffn_pooler` -  apply an additional linear layer on top of the token embedding of the [CLS] token as the final sequence embedding
+    """
+    compute_eval_metrics: bool = False
+    "Computes accuracy metrics in addition to loss"
+    selected_encoder: Optional[
+        Literal["q_encoder", "ctx_encoder", "encoder"]
+    ] = None
+    "Select which encoder to use in embedding_generation. This field is only used in embedding_generation."
+
+    # The following fields are deprecated and unused.
+    # They will be removed in the future once all configs have been fixed
+    fp16_type: Optional[Any] = Field(default=None, deprecated=True)
+    mixed_precision: Optional[Any] = Field(default=None, deprecated=True)
+
+    @model_validator(mode="after")
+    def validate_encoders(self):
+        valid_biencoder_config = (
+            self.q_encoder and self.ctx_encoder and not self.encoder
+        )
+        valid_uniencoder_config = (
+            not self.q_encoder and not self.ctx_encoder and self.encoder
+        )
+        assert (
+            valid_uniencoder_config or valid_biencoder_config
+        ), "Either provide both q_encoder and ctx_encoder, or only encoder in config"
+
+        if not self.use_biencoder:
+            assert (
+                valid_uniencoder_config
+            ), "If uniencoder is used, only provide encoder attribute in config"
+
+        return self
+
+    def post_init(self, context):
+        super().post_init(context)
+
+        add_pooling_layer = self.pooler_type == "ffn_pooler"
+        for name in ["q_encoder", "ctx_encoder", "encoder"]:
+            if (encoder := getattr(self, name)) is not None:
+                setattr(
+                    self,
+                    name,
+                    encoder.copy(
+                        update=dict(add_pooling_layer=add_pooling_layer)
+                    ),
+                )
+
+
 class DPRWrapperModel(torch.nn.Module):
-    def __init__(self, params):
+    def __init__(self, config: DPRModelConfig):
         super().__init__()
-        model_params = params.model
-        self.use_biencoder = model_params.use_biencoder
+        self.use_biencoder = config.use_biencoder
         # Adding context_to_question loss when mutual_information is ON
-        self.mutual_information = model_params.mutual_information
-        self.softmax_temperature = model_params.softmax_temperature
-        self.compute_eval_metrics = model_params.compute_eval_metrics
-        self.pooler_type = model_params.pooler_type
-        self.model = self.build_model(model_params)
+        self.mutual_information = config.mutual_information
+        self.softmax_temperature = config.softmax_temperature
+        self.compute_eval_metrics = config.compute_eval_metrics
+        self.pooler_type = config.pooler_type
+        self.model = self.build_model(config)
         self.loss_fn = DPRLoss(
             self.mutual_information, self.softmax_temperature
         )
         if self.compute_eval_metrics:
             self.accuracy_metric = AccuracyMetric(name="eval/accuracy")
 
-    def build_bert(self, model_params):
-        disable_nsp = model_params.disable_nsp
-        vocab_size = model_params.vocab_size
-        dropout_rate = model_params.dropout_rate
+    def build_bert(self, config: DPREncoderConfig):
+        return BertModel(config)
 
-        position_embedding_type = (
-            model_params.position_embedding_type
-            if model_params.position_embedding_type
-            else "learned"
-        ).lower()
-
-        encoder = BertModel(
-            vocab_size=vocab_size,
-            max_position_embeddings=model_params.max_position_embeddings,
-            position_embedding_type=position_embedding_type,
-            hidden_size=model_params.hidden_size,
-            embedding_dropout_rate=dropout_rate,
-            embedding_pad_token_id=(
-                model_params.pad_token_id if model_params.pad_token_id else 0
-            ),
-            mask_padding_in_positional_embed=(
-                model_params.mask_padding_in_positional_embed
-                if model_params.mask_padding_in_positional_embed
-                else False
-            ),
-            num_hidden_layers=model_params.num_hidden_layers,
-            layer_norm_epsilon=model_params.layer_norm_epsilon,
-            num_heads=model_params.num_heads,
-            attention_module=(
-                model_params.attention_module
-                if model_params.attention_module
-                else "aiayn_attention"
-            ),
-            extra_attention_params=(
-                model_params.extra_attention_params
-                if model_params.extra_attention_params
-                else {}
-            ),
-            attention_type=(
-                model_params.attention_type
-                if model_params.attention_type
-                else "scaled_dot_product"
-            ),
-            attention_softmax_fp32=(
-                model_params.attention_softmax_fp32
-                if model_params.attention_softmax_fp32
-                else True
-            ),
-            dropout_rate=dropout_rate,
-            nonlinearity=(
-                model_params.encoder_nonlinearity
-                if model_params.encoder_nonlinearity
-                else "gelu"
-            ),
-            pooler_nonlinearity=(
-                model_params.pooler_nonlinearity
-                if model_params.pooler_nonlinearity
-                else None
-            ),
-            attention_dropout_rate=model_params.attention_dropout_rate,
-            use_projection_bias_in_attention=(
-                model_params.use_projection_bias_in_attention
-                if model_params.use_projection_bias_in_attention
-                else True
-            ),
-            use_ffn_bias_in_attention=(
-                model_params.use_ffn_bias_in_attention
-                if model_params.use_ffn_bias_in_attention
-                else True
-            ),
-            filter_size=model_params.filter_size,
-            use_ffn_bias=(
-                model_params.use_ffn_bias if model_params.use_ffn_bias else True
-            ),
-            initializer_range=(
-                model_params.initializer_range
-                if model_params.initializer_range
-                else 0.02
-            ),
-            num_segments=(
-                model_params.num_segments
-                if model_params.num_segments
-                else None if disable_nsp else 2
-            ),
-            add_pooling_layer=self.pooler_type == "ffn_pooler",
-            freeze_ffn_bias_in_glu=model_params.freeze_ffn_bias_in_glu,
-        )
-
-        return encoder
-
-    def build_model(self, model_params):
+    def build_model(self, config: DPRModelConfig):
         if self.use_biencoder:
-            return self.build_model_biencoder(model_params)
+            return self.build_model_biencoder(config)
         else:
-            return self.build_model_uniencoder(model_params)
+            return self.build_model_uniencoder(config)
 
-    def build_model_uniencoder(self, model_params):
-        encoder_params = model_params.encoder
+    def build_model_uniencoder(self, config: DPRModelConfig):
+        encoder_params = config.encoder
 
         encoder = self.build_bert(encoder_params)
 
@@ -149,15 +183,12 @@ class DPRWrapperModel(torch.nn.Module):
             self.mutual_information,
         )
 
-    def build_model_biencoder(self, model_params):
-        if (
-            model_params.q_encoder is not None
-            and model_params.ctx_encoder is not None
-        ):
-            q_encoder_params = model_params.q_encoder
-            ctx_encoder_params = model_params.ctx_encoder
+    def build_model_biencoder(self, config: DPRModelConfig):
+        if config.q_encoder is not None and config.ctx_encoder is not None:
+            q_encoder_params = config.q_encoder
+            ctx_encoder_params = config.ctx_encoder
         else:
-            q_encoder_params = model_params.encoder
+            q_encoder_params = config.encoder
             ctx_encoder_params = copy.deepcopy(q_encoder_params)
 
         question_encoder = self.build_bert(q_encoder_params)
@@ -170,7 +201,7 @@ class DPRWrapperModel(torch.nn.Module):
             self.mutual_information,
         )
 
-    def __call__(self, data):
+    def forward(self, data):
         labels = data.pop("labels")
         context_labels = data.pop("context_labels", None)
         (

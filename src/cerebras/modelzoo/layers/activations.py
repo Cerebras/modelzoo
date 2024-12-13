@@ -32,6 +32,7 @@
 # limitations under the License.
 
 import math
+from typing import Literal
 
 import torch
 from torch import nn
@@ -145,6 +146,8 @@ ACT2FN = {
     "swiglu": swiglu,
     None: linear_act,
 }
+
+ActivationType = Literal[tuple(ACT2FN)]
 
 
 def get_activation(activation):

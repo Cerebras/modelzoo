@@ -20,7 +20,9 @@ import torch
 from torchvision.datasets import DatasetFolder
 
 import cerebras.pytorch.distributed as dist
-from cerebras.modelzoo.common.registry import registry
+from cerebras.modelzoo.data.vision.diffusion.config import (
+    DiffusionLatentImageNet1KProcessorConfig,
+)
 from cerebras.modelzoo.data.vision.diffusion.DiffusionBaseProcessor import (
     DiffusionBaseProcessor,
 )
@@ -132,29 +134,30 @@ class ImageNetLatentDataset(DatasetFolder):
         return latent, target
 
 
-@registry.register_datasetprocessor("DiffusionLatentImageNet1KProcessor")
 class DiffusionLatentImageNet1KProcessor(DiffusionBaseProcessor):
-    def __init__(self, params):
-        super().__init__(params)
+    def __init__(self, config: DiffusionLatentImageNet1KProcessorConfig):
+        if isinstance(config, dict):
+            config = DiffusionLatentImageNet1KProcessorConfig(**config)
+        super().__init__(config)
 
         if not isinstance(self.data_dir, list):
             self.data_dir = [self.data_dir]
         self.num_classes = 1000
 
-    def create_dataset(self, use_training_transforms=True, split="train"):
+    def create_dataset(self):
         if self.use_worker_cache and dist.is_streamer():
             data_dir = []
             for _dir in self.data_dir:
                 data_dir.append(create_worker_cache(_dir))
             self.data_dir = data_dir
 
-        self.check_split_valid(split)
+        self.check_split_valid(self.split)
         transform, target_transform = self.process_transform()
 
         dataset_list = []
         for _dir in self.data_dir:
-            if not os.path.isdir(os.path.join(_dir, split)):
-                raise RuntimeError(f"No directory {split} under root dir")
+            if not os.path.isdir(os.path.join(_dir, self.split)):
+                raise RuntimeError(f"No directory {self.split} under root dir")
 
             dataset_list.append(
                 ImageNetLatentDataset(
@@ -164,7 +167,7 @@ class DiffusionLatentImageNet1KProcessor(DiffusionBaseProcessor):
                         self.latent_height,
                         self.latent_width,
                     ],
-                    split=split,
+                    split=self.split,
                     transform=transform,
                     target_transform=target_transform,
                 )

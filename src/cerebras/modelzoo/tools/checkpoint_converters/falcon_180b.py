@@ -481,6 +481,7 @@ class ConfigConverter_Falcon_180B_HF_CS20(BaseConfigConverter_HF_CS):
 
     def post_config_convert(
         self,
+        model,
         original_config,
         old_config,
         new_config,
@@ -537,6 +538,7 @@ class ConfigConverter_Falcon_180B_HF_CS20(BaseConfigConverter_HF_CS):
                     new_config["num_ln_in_parallel_attn"] = None
 
         return super().post_config_convert(
+            model,
             original_config,
             old_config,
             new_config,
@@ -651,9 +653,9 @@ class ConfigConverter_Falcon_180B_HF_CS21(ConfigConverter_Falcon_180B_HF_CS20):
                 new_state_dict[new_key] = 1.0
             else:
                 scaling_type = old_state_dict[old_key]["type"].lower()
-                if scaling_type not in ["linear", "yarn"]:
+                if scaling_type not in ["linear", "yarn", "longrope"]:
                     raise ConfigConversionError(
-                        f"Only `rope_scaling` type `linear` or `yarn` is currently supported, "
+                        f"Only `rope_scaling` type `linear, `yarn` or 'longrope' is currently supported, "
                         f"but got type `{scaling_type}`."
                     )
                 new_state_dict[new_key] = old_state_dict[old_key]["factor"]
@@ -666,6 +668,17 @@ class ConfigConverter_Falcon_180B_HF_CS21(ConfigConverter_Falcon_180B_HF_CS20):
                             ]["original_max_position_embeddings"],
                         }
                     )
+                elif scaling_type == "longrope":
+                    # Create a copy of the remaining extra params of original dictionary and add to pos_scaling_extra_args
+                    # longrope uses param names which are HF compatible
+                    extra_args = {
+                        **{
+                            k: v
+                            for k, v in old_state_dict[old_key].items()
+                            if k not in ["type", "factor"]
+                        }
+                    }
+                    new_state_dict["pos_scaling_extra_args"] = extra_args
         else:
             if old_state_dict[old_key] == 1.0:
                 new_state_dict[new_key] = None
@@ -683,7 +696,7 @@ class ConfigConverter_Falcon_180B_HF_CS21(ConfigConverter_Falcon_180B_HF_CS20):
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4"),
         )
 
 
@@ -709,7 +722,7 @@ Converter_Falcon_180B_Headless_HF_CS21 = Build_HF_CS_Converter_WithOptionalModel
     config_converter_class=ConfigConverter_Falcon_180B_HF_CS21,
     formats=(
         FormatVersions("hf"),
-        FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
+        FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4"),
     ),
 )
 
@@ -737,7 +750,7 @@ class Converter_Falcon_180B_WithoutOptionalModel_HF_CS21(
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4"),
         )
 
     @staticmethod

@@ -29,21 +29,21 @@ from cerebras.modelzoo.tools.checkpoint_converters.base_converter import (
     FormatVersions,
 )
 
-MODEL_MAPPING = {
-    "bloom": "gpt2",
-    "falcon": "gptj",
-    "gpt2": "gpt2",
-    "gpt3": "gpt2",
-    "gptj": "gptj",
-    "gpt-neox": "gptj",
-    "lambda": "gpt2",
-    "llama": "gpt2",
-    "mistral": "gpt2",
-    "mpt": "gpt2",
-    "opt": "gpt2",
-    "palm": "gptj",
-    "santacoder": "gpt2",
-    "starcoder": "gpt2",
+SUPPORTED_DPO_MODELS = {
+    "bloom",
+    "falcon",
+    "gpt2",
+    "gpt3",
+    "gptj",
+    "gpt-neox",
+    "lambda",
+    "llama",
+    "mistral",
+    "mpt",
+    "opt",
+    "palm",
+    "santacoder",
+    "starcoder",
 }
 
 
@@ -147,7 +147,7 @@ class Converter_DPO_HF_CS21(BaseCheckpointConverter_HF_CS):
             f"{formats[0]} (Non-DPO) model <-> {formats[1]} DPO "
             f"model. The type of model that is trained via DPO is specified in "
             f"the config using the 'model_name' property. The following are "
-            f"supported: {list(MODEL_MAPPING.keys())}. These are the same names "
+            f"supported: {SUPPORTED_DPO_MODELS}. These are the same names "
             f"as those used in the checkpoint converter's --model argument."
         )
 
@@ -155,7 +155,9 @@ class Converter_DPO_HF_CS21(BaseCheckpointConverter_HF_CS):
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.1-dpo", "cs-2.2-dpo", "cs-2.3-dpo"),
+            FormatVersions(
+                "cs-2.1-dpo", "cs-2.2-dpo", "cs-2.3-dpo", "cs-2.4-dpo"
+            ),
         )
 
     @staticmethod
@@ -172,12 +174,15 @@ class ConfigConverter_DPO_HF_CS21(BaseConfigConverter_HF_CS):
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.1-dpo", "cs-2.2-dpo", "cs-2.3-dpo"),
+            FormatVersions(
+                "cs-2.1-dpo", "cs-2.2-dpo", "cs-2.3-dpo", "cs-2.4-dpo"
+            ),
         )
 
     @classmethod
     def convert(
         cls,
+        model,
         config,
         converter_indices: FormatIndices,
         drop_unmatched_keys: bool = False,
@@ -198,11 +203,10 @@ class ConfigConverter_DPO_HF_CS21(BaseConfigConverter_HF_CS):
             if model_name in remap_modelnames:
                 model_name = remap_modelnames[model_name]
 
-            if model_name not in MODEL_MAPPING:
+            if model_name not in SUPPORTED_DPO_MODELS:
                 raise ConfigConversionError(
                     f"DPO doesn't support model_type={config['model_type']}. "
-                    f"The following are supported: "
-                    f"{list(MODEL_MAPPING.keys())}"
+                    f"The following are supported: {SUPPORTED_DPO_MODELS}"
                 )
 
             logging.warning(
@@ -231,6 +235,7 @@ class ConfigConverter_DPO_HF_CS21(BaseConfigConverter_HF_CS):
         )
         instance = config_converter_class()
         return instance.convert_helper(
+            model,
             config,
             model_converter_indices,
             drop_unmatched_keys=drop_unmatched_keys,
@@ -327,7 +332,7 @@ class Converter_NON_DPO_TO_DPO_CS21(BaseCheckpointConverter_CS_CS):
             f"{formats[0]} (Non-DPO) model <-> {formats[1]} DPO "
             f"model. The type of model that is trained via DPO is specified in "
             f"the config using the 'model_name' property. The following are "
-            f"supported: {list(MODEL_MAPPING.keys())}. These are the same names"
+            f"supported: {SUPPORTED_DPO_MODELS}. These are the same names"
             f"as those used in the checkpoint converter's --model argument."
         )
 
@@ -361,10 +366,11 @@ class ConfigConverter_NON_DPO_TO_DPO_CS21(BaseConfigConverter_CS_CS):
 
     def pre_config_convert(
         self,
+        model,
         config,
         converter_indices,
     ):
-        config = super().pre_config_convert(config, converter_indices)
+        config = super().pre_config_convert(model, config, converter_indices)
 
         if converter_indices.direction == 0:
             if "model_name" not in config:
@@ -373,13 +379,12 @@ class ConfigConverter_NON_DPO_TO_DPO_CS21(BaseConfigConverter_CS_CS):
                     "'model_name' property. Please add 'model_name' to the "
                     "config under the model parameters before running "
                     "conversion. The following are supported: "
-                    f"{list(MODEL_MAPPING.keys())}"
+                    f"{SUPPORTED_DPO_MODELS}"
                 )
-            elif config["model_name"] not in MODEL_MAPPING:
+            elif config["model_name"] not in SUPPORTED_DPO_MODELS:
                 raise ConfigConversionError(
                     f"DPO doesn't support model_name={config['model_name']}. "
-                    f"The following are supported: "
-                    f"{list(MODEL_MAPPING.keys())}"
+                    f"The following are supported: {SUPPORTED_DPO_MODELS}"
                 )
         else:
             if "model_name" not in config:

@@ -14,7 +14,6 @@
 
 import logging
 
-import torch
 from torchvision.transforms import transforms
 
 import cerebras.pytorch as cstorch
@@ -30,10 +29,7 @@ def get_preprocess_transform(params):
         transform = create_transform(spec)
         transform_list.append(transform)
 
-    if params["mixed_precision"]:
-        mp_type = cstorch.amp.get_half_dtype()
-    else:
-        mp_type = torch.float32
+    mp_type = cstorch.amp.get_floating_point_dtype()
 
     transform_list.append(
         create_transform({"name": "to_dtype", "mp_type": mp_type})

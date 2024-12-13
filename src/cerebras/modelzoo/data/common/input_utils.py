@@ -14,7 +14,6 @@
 
 import math
 import random
-from typing import Iterator, Sized
 
 import numpy as np
 import torch
@@ -436,25 +435,3 @@ def shard_list_of_chunks_contiguous(
             )
         )
     return output_for_cur_worker
-
-
-class SubsetSequentialSampler(torch.utils.data.Sampler[int]):
-    r"""Samples elements sequentially, starting from given `start_index`,
-        always in the same order.
-    Args:
-        data_source (Dataset): dataset to sample from
-        start_index (int): index where sampling starts from
-    """
-
-    data_source: Sized
-    start_index: int
-
-    def __init__(self, data_source: Sized, start_index: int) -> None:
-        self.data_source = data_source
-        self.start_index = start_index
-
-    def __iter__(self) -> Iterator[int]:
-        return iter(range(self.start_index, len(self.data_source)))
-
-    def __len__(self) -> int:
-        return len(self.data_source)

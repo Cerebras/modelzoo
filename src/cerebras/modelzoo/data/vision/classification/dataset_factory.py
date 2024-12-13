@@ -13,15 +13,18 @@
 # limitations under the License.
 
 import logging
+from typing import Any, List, Optional, Union
 
 import numpy as np
 import torch
 import torchvision
+from pydantic import Field, PositiveInt
 from torch.utils.data import Subset
 from torch.utils.data.dataloader import default_collate
 from torchvision.datasets.vision import StandardTransform
 
 from cerebras.modelzoo.common.input_utils import get_streaming_batch_size
+from cerebras.modelzoo.config import DataConfig
 from cerebras.modelzoo.data.vision.classification.mixup import (
     RandomCutmix,
     RandomMixup,
@@ -29,55 +32,112 @@ from cerebras.modelzoo.data.vision.classification.mixup import (
 from cerebras.modelzoo.data.vision.classification.sampler import (
     RepeatedAugSampler,
 )
-from cerebras.modelzoo.data.vision.classification.utils import (
-    create_preprocessing_params_with_defaults,
-)
 from cerebras.modelzoo.data.vision.preprocessing import get_preprocess_transform
 from cerebras.modelzoo.data.vision.transforms import LambdaWithParam
 from cerebras.modelzoo.data.vision.utils import is_gpu_distributed, task_id
 
 
-class Processor:
-    def __init__(self, params):
+class VisionClassificationProcessorConfig(DataConfig):
+
+    data_dir: Union[str, List[str]] = "."
+    """ The path to the data """
+
+    image_size: List[int] = [224, 224]
+    """ The size of the images in the dataset """
+
+    num_classes: int = ...
+    """ The number of classification classes in the dataset """
+
+    batch_size: int = 128
+    """ Global batch size for the dataloader """
+
+    shuffle: bool = True
+    """ Whether or not to shuffle the dataset. """
+
+    shuffle_seed: Optional[int] = None
+    """ The seed used for deterministic shuffling. """
+
+    drop_last: bool = True
+    """
+    Similar to the PyTorch drop_last setting except that samples that when set
+    to `True`, samples that would have been dropped at the end of one epoch are
+    yielded at the start of the next epoch so that there is no data loss. This
+    is necessary for a data ordering that is independent of the distributed
+    setup being used.
+    """
+
+    num_workers: int = 0
+    """ How many subprocesses to use for data loading """
+
+    prefetch_factor: Optional[int] = 10
+    """ Number of batches loaded in advance by each worker """
+
+    persistent_workers: Optional[bool] = True
+    """ Whether or not to keep workers persistent between epochs. """
+
+    sampler: str = "random"
+    """ Type of data sampler to use"""
+
+    ra_sampler_num_repeat: PositiveInt = 3
+    """ Number of repeats for Repeated Augmentation sampler."""
+
+    mixup_alpha: float = 0.1
+    """ Alpha parameter for the mixup transform."""
+
+    cutmix_alpha: float = 0.1
+    """ Alpha parameter for the cutmix transform."""
+
+    noaugment: bool = False
+    """ 
+    Indicates to skip augmentation as part of preprocessing.
+    """
+
+    transforms: List[dict] = ...
+    """ List of transforms for preprocessing """
+
+    mixed_precision: Optional[Any] = Field(default=None, deprecated=True)
+    fp16_type: Optional[Any] = Field(default=None, deprecated=True)
+
+
+class VisionClassificationProcessor:
+    def __init__(self, config: VisionClassificationProcessorConfig):
+        if isinstance(config, dict):
+            config = VisionClassificationProcessorConfig(**config)
         # data settings
-        self.data_dir = params.get("data_dir", ".")
-        self.image_size = params.get("image_size", 224)
-        self.num_classes = params.get("num_classes")
+        self.data_dir = config.data_dir
+        self.image_size = config.image_size
+        self.num_classes = config.num_classes
         self.allowable_split = None
 
         # params for preprocessing dataset
-        self.pp_params = create_preprocessing_params_with_defaults(params)
+        self.pp_params = dict()
+        self.pp_params["noaugment"] = config.noaugment
+        self.pp_params["transforms"] = config.transforms
 
         # params for data loader
-        self.global_batch_size = params.get("batch_size", 128)
+        self.global_batch_size = config.batch_size
         self.batch_size = get_streaming_batch_size(self.global_batch_size)
 
-        self.shuffle = params.get("shuffle", True)
-        self.shuffle_seed = params.get("shuffle_seed", None)
+        self.shuffle = config.shuffle
+        self.shuffle_seed = config.shuffle_seed
         if self.shuffle_seed is not None:
             torch.manual_seed(self.shuffle_seed)
-        self.drop_last = params.get("drop_last", True)
+        self.drop_last = config.drop_last
 
         # multi-processing params.
-        self.num_workers = params.get("num_workers", 0)
-        self.prefetch_factor = params.get("prefetch_factor", 10)
-        self.persistent_workers = params.get("persistent_workers", True)
+        self.num_workers = config.num_workers
+        self.prefetch_factor = config.prefetch_factor
+        self.persistent_workers = config.persistent_workers
         self.distributed = is_gpu_distributed()
 
         # sampler
-        self.sampler = params.get("sampler", "random")
-        self.ra_sampler_num_repeat = params.get("ra_sampler_num_repeat", 3)
-        self.mixup_alpha = params.get("mixup_alpha", 0.1)
-        self.cutmix_alpha = params.get("cutmix_alpha", 0.1)
+        self.sampler = config.sampler
+        self.ra_sampler_num_repeat = config.ra_sampler_num_repeat
+        self.mixup_alpha = config.mixup_alpha
+        self.cutmix_alpha = config.cutmix_alpha
 
-    def create_dataloader(self, dataset, is_training=False):
-        assert (
-            isinstance(dataset, torchvision.datasets.VisionDataset)
-            or isinstance(dataset, VisionSubset)
-            or isinstance(dataset, torch.utils.data.Subset)
-        ), f"Got {type(dataset)} but dataset must be type VisionDataset, "
-        "VisionSubset, or torch.utils.data.Subset"
-        shuffle = self.shuffle and is_training
+    def create_dataloader(self):
+        dataset = self.create_dataset()
 
         mixup_transforms = []
         if self.mixup_alpha > 0.0:
@@ -100,7 +160,7 @@ class Processor:
             if self.sampler == "repeated-aug":
                 data_sampler = RepeatedAugSampler(
                     dataset,
-                    shuffle=shuffle,
+                    shuffle=self.shuffle,
                     seed=self.shuffle_seed,
                     num_repeats=self.ra_sampler_num_repeat,
                     batch_size=self.batch_size,
@@ -108,11 +168,11 @@ class Processor:
             else:
                 data_sampler = torch.utils.data.distributed.DistributedSampler(
                     dataset,
-                    shuffle=shuffle,
+                    shuffle=self.shuffle,
                     seed=self.shuffle_seed,
                 )
         else:
-            if shuffle:
+            if self.shuffle:
                 data_sampler = torch.utils.data.RandomSampler(
                     dataset, generator=self._generator_fn()
                 )
@@ -132,7 +192,7 @@ class Processor:
         )
         return dataloader
 
-    def create_dataset(self, use_training_transforms=True, split="train"):
+    def create_dataset(self):
         raise NotImplementedError(
             "create_dataset must be implemented in a child class!!"
         )
@@ -155,13 +215,6 @@ class Processor:
         target_transform = LambdaWithParam(self._get_target_transform)
 
         return transform, target_transform
-
-    def check_split_valid(self, split):
-        if split not in self.allowable_split:
-            raise ValueError(
-                f"Dataset split {split} is invalid. Only values in "
-                f"{self.allowable_split} are allowed."
-            )
 
     def split_dataset(self, dataset, split_percent, seed):
         num_sample = len(dataset)

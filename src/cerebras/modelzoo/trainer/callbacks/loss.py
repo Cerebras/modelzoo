@@ -19,6 +19,7 @@ from math import prod
 import torch
 
 import cerebras.pytorch as cstorch
+from cerebras.modelzoo.common.half_dtype import cb16_to_fp32
 from cerebras.modelzoo.trainer.callbacks import Callback
 
 
@@ -67,8 +68,10 @@ class CheckLoss(Callback):
 
     def on_train_batch_end(self, trainer, model, outputs, batch, batch_idx):
         if "loss" in outputs:
-            self.check_loss(outputs["loss"])
+            loss = cb16_to_fp32(outputs["loss"])
+            self.check_loss(loss)
 
     def on_validate_batch_end(self, trainer, model, outputs, batch, batch_idx):
         if "loss" in outputs:
-            self.check_loss(outputs["loss"])
+            loss = cb16_to_fp32(outputs["loss"])
+            self.check_loss(loss)

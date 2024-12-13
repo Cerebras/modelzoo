@@ -15,20 +15,24 @@
 """
 Processor for PyTorch T5 training.
 """
+
 import csv
 import os
 import random
 import sys
 from functools import partial
+from typing import Any, List, Literal, Optional
 
 import numpy as np
 import torch
+from pydantic import Field, model_validator
 
 from cerebras.modelzoo.common.input_utils import (
     bucketed_batch,
     get_streaming_batch_size,
 )
-from cerebras.modelzoo.common.registry import registry
+from cerebras.modelzoo.config import DataConfig
+from cerebras.modelzoo.config.types import AliasedPath
 from cerebras.modelzoo.data.common.input_utils import (
     get_data_for_task,
     num_tasks,
@@ -49,66 +53,176 @@ from cerebras.modelzoo.data.nlp.t5.t5_utils import (
 )
 
 
-@registry.register_datasetprocessor("T5DynamicDataProcessor")
+class T5DynamicDataProcessorConfig(DataConfig):
+    data_processor: Literal["T5DynamicDataProcessor"]
+
+    src_vocab_file: AliasedPath = ...
+    "Path to file containing tokens of vocabulary, one token per line."
+
+    src_data_dir: str = ...
+    """
+    Path to directory containing the output of preprocess.sh, with all the files
+    of tokenized data.
+    """
+
+    batch_size: int = ...
+    "Number of sequences per batch. Note that it is different between systems."
+
+    shuffle: bool = True
+    """
+    If true the data will be shuffled before passing into the model. Recommended
+    for training. Can be set to False for debugging.
+    """
+
+    shuffle_seed: Optional[int] = None
+    """
+    Sets random seed for the order of data shuffling. Allows for reproducibility
+    while still shuffling data.
+    """
+
+    shuffle_buffer: Optional[int] = None
+    "Size of buffer used to store data before shuffling"
+
+    extra_ids: int = 0
+    "Number of sentinel tokens for T5 objective"
+
+    src_max_sequence_length: int = ...
+    """
+    Largest possible sequence length for the input. If longer it will be
+    truncated. All other sequences padded to this length.
+    """
+
+    tgt_max_sequence_length: int = ...
+    """
+    Largest possible sequence length for the labels. If longer it will be
+    truncated. All other sequences padded to this length.
+    """
+
+    num_workers: int = 0
+    """
+    Number of processes that move data to the accelerator system, so that the
+    system doesn't process data faster than it receives it.
+    """
+
+    drop_last: bool = True
+    """
+    If the last batch is not the full size, i.e. the dataset could not divide
+    evenly into the batch-size, do not use the last batch.
+    """
+
+    prefetch_factor: Optional[int] = 10
+    "Number of batch loaded in advance by each worker."
+
+    persistent_workers: bool = True
+    "If set, workers will not be shutdown after going through the dataset once."
+
+    do_lower: bool = False
+    """
+    If True, will lowercase all tokens in vocabulary. T5's vocabulary is cased
+    so this is not recommended.
+    """
+
+    buckets: Optional[List[int]] = None
+    """
+    A list of boundaries for sequence lengths to bucket together in order to
+    speed up VTS/VSL.
+    """
+
+    dynamic_loss_weight: bool = False
+    """
+    If set, will divide the loss for a token by the length of the sequence that
+    the token comes from.
+    """
+
+    pack_sequences: bool = False
+    """
+    If set, will concatenate sequences so that computation is performed on real
+    data rather than padding
+    """
+
+    num_documents_to_concatenate: int = 128
+    "Specifies how many documents to pack together"
+
+    oov_token: str = "<unk>"
+    "Token for out-of-vocabulary words/sub-words"
+
+    sos_token: str = "<s>"
+    "Token for start-of-sequence"
+
+    eos_token: str = "</s>"
+    "Token for end-of-sequence"
+
+    pad_token: str = "<pad>"
+    "Token for padding"
+
+    labels_pad_id: Optional[str] = None
+    "Can set specific padding for labels"
+
+    input_pad_id: Optional[str] = None
+    "Can set specific padding for inputs"
+
+    mixed_precision: Optional[Any] = Field(None, deprecated=True)
+    fp16_type: Optional[Any] = Field(None, deprecated=True)
+    vocab_size: Optional[Any] = Field(None, deprecated=True)
+    tgt_vocab_file: Optional[Any] = Field(None, deprecated=True)
+    tgt_data_dir: Optional[Any] = Field(None, deprecated=True)
+
+    def post_init(self, context):
+        if self.shuffle_buffer is None:
+            self.shuffle_buffer = 10 * self.batch_size
+
+        if self.do_lower:
+            self.do_lower = False
+            self.oov_token = self.oov_token.lower()
+            self.sos_token = self.sos_token.lower()
+            self.eos_token = self.eos_token.lower()
+            self.pad_token = self.pad_token.lower()
+
+    @model_validator(mode="after")
+    def validate_max_sequence_length(self, info):
+        if info.context:
+            model_config = info.context.get("model", {}).get("config")
+            if model_config:
+                if (
+                    model_config.src_max_position_embeddings
+                    != self.src_max_sequence_length
+                ):
+                    raise ValueError(
+                        f"src_max_sequence_length in data config ({self.src_max_sequence_length}) "
+                        f"does not match src_max_position_embeddings in model config "
+                        f"({model_config.src_max_position_embeddings})"
+                    )
+
+                if (
+                    model_config.tgt_max_position_embeddings
+                    != self.tgt_max_sequence_length
+                ):
+                    raise ValueError(
+                        f"tgt_max_sequence_length in data config ({self.tgt_max_sequence_length}) "
+                        f"does not match tgt_max_position_embeddings in model config "
+                        f"({model_config.tgt_max_position_embeddings})"
+                    )
+
+        return self
+
+
 class T5DynamicDataProcessor(torch.utils.data.IterableDataset):
     """
     Reads text files containing the input text tokens, adds extra ids for
     language modeling task on the fly.
-    :param str src_vocab_file: Path to file containing tokens of vocabulary,
-    one token per line.
-    :param str src_data_dir: Path to directory containing the output of
-    preprocess.sh, with all the files of tokenized data.
-    :param int batch_size: Number of sequences per batch. Note that it is
-    different between systems.
-    :param bool shuffle, optional: If true the data will be shuffled before passing
-    into the model. Recommended for training. Can be set to False for
-    debugging.
-    :param int shuffle_seed, optional: Sets random seed for the order of
-    data shuffling. Allows for reproducibility while still shuffling data.
-    :param int shuffle_buffer: Size of buffer used to store data before
-    shuffling
-    :param int extra_ids, optional: Number of sentinel tokens for T5 objective
-    :param int src_max_sequence_length, optional: Largest possible sequence
-    length for the input. If longer it will be truncated. All other sequences
-    padded to this length.
-    :param int tgt_max_sequence_length, optional: Largest possible sequence
-    length for the labels. If longer it will be truncated. All other sequences
-    padded to this length.
-    :param int num_workers, optional: Number of processes that move data to the
-    accelerator system, so that the system doesn't process data faster than
-    it receives it.
-    :param bool drop_last, optional: If the last batch is not the full size,
-    i.e. the dataset could not divide evenly into the batch-size, do not
-    use the last batch.
-    :param int prefetch_factor, optional: Number of batch loaded in advance
-    by each worker.
-    :param bool persistent_workers, optional: If set, workers will not be
-    shutdown after going through the dataset once.
-    :param bool do_lower, optional: If set, will lowercase all tokens in vocabulary.
-    T5's vocabulary is cased so this is not recommended.
-    :param list buckets, optional: A list of boundaries for sequence lengths
-    to bucket together in order to speed up VTS/VSL.
-    :param bool dynamic_loss_weight, optional: If set, will divide the loss
-    for a token by the length of the sequence that the token comes from.
-    :param bool pack_sequences, optional: If set, will concatenate sequences
-    so that computation is performed on real data rather than padding
-    :param int num_documents_to_concatenate, optional: Specifies how many
-    documents to pack together
-    :param str oov_token, optional: Token for out-of-vocabulary words/sub-words
-    :param str sos_token, optional: Token for start-of-sequence
-    :param str eos_token, optional: Token for end-of-sequence
-    :param str pad_token, optional: Token for padding
-    :param int labels_pad_id, optional: Can set specific padding for labels
-    :param int input_pad_id, optional: Can set specific padding for inputs
-    :param bool mixed_precision, optional: If set, will use float16 rather
-    than float32 when possible
+
+    Args:
+        config: Configuration for the data processor
     """
 
-    def __init__(self, params):
-        super(T5DynamicDataProcessor, self).__init__()
+    def __init__(self, config: T5DynamicDataProcessorConfig):
+        if isinstance(config, dict):
+            config = T5DynamicDataProcessorConfig(**config)
+
+        super().__init__()
 
         # Input params.
-        self.meta_data = self.get_meta_data(params["src_data_dir"])
+        self.meta_data = self.get_meta_data(config.src_data_dir)
 
         self.meta_data_values = list(self.meta_data.values())
         self.meta_data_filenames = list(self.meta_data.keys())
@@ -116,7 +230,7 @@ class T5DynamicDataProcessor(torch.utils.data.IterableDataset):
         self.meta_data_values_cum_sum = np.cumsum([0] + self.meta_data_values)
 
         self.num_examples = sum(map(int, self.meta_data.values()))
-        self.batch_size = get_streaming_batch_size(params["batch_size"])
+        self.batch_size = get_streaming_batch_size(config.batch_size)
 
         self.num_batches = self.num_examples // self.batch_size
 
@@ -140,52 +254,44 @@ class T5DynamicDataProcessor(torch.utils.data.IterableDataset):
             self.meta_data_values,
             self.meta_data_filenames,
         )
-        self.shuffle = params.get("shuffle", True)
-        self.shuffle_seed = params.get("shuffle_seed", None)
+        self.shuffle = config.shuffle
+        self.shuffle_seed = config.shuffle_seed
         self.np_rng = np.random.default_rng(self.shuffle_seed)
-        self.shuffle_buffer = params.get("shuffle_buffer", 10 * self.batch_size)
-        self.do_lower = params.get("do_lower", False)
+        self.shuffle_buffer = config.shuffle_buffer
+        self.do_lower = config.do_lower
 
         # buckets must be a list of boundaries or None to disable. Supplying an
         # integer for uniform bucketing is not currently supported.
-        self.buckets = params.get("buckets", None)
-        assert self.buckets is None or (
-            self.buckets and isinstance(self.buckets, list)
-        ), f"buckets may be None or a non-empty list of boundaries. Got {self.buckets}"
+        self.buckets = config.buckets
+
         # Compute a loss weight for every batch to use in the averaging of
         # per-token loss across the batch.
-        self.dynamic_loss_weight = params.get("dynamic_loss_weight")
-        self.pack_sequences = params.get("pack_sequences", False)
-        self.num_documents_to_concatenate = params.get(
-            "num_documents_to_concatenate", 128
-        )
+        self.dynamic_loss_weight = config.dynamic_loss_weight
+        self.pack_sequences = config.pack_sequences
+        self.num_documents_to_concatenate = config.num_documents_to_concatenate
 
         # Multi-processing params.
-        self.num_workers = params.get("num_workers", 0)
-        self.drop_last = params.get("drop_last", True)
-        self.prefetch_factor = params.get("prefetch_factor", 10)
-        self.persistent_workers = params.get("persistent_workers", True)
+        self.num_workers = config.num_workers
+        self.drop_last = config.drop_last
+        self.prefetch_factor = config.prefetch_factor
+        self.persistent_workers = config.persistent_workers
 
         # Get special tokens and tokens that should not be masked.
         self.special_tokens = {
-            "oov_token": params.get("oov_token", "<unk>"),
-            "sos_token": params.get("sos_token", "<s>"),
-            "eos_token": params.get("eos_token", "</s>"),
-            "pad_token": params.get("pad_token", "<pad>"),
+            "oov_token": config.oov_token,
+            "sos_token": config.sos_token,
+            "eos_token": config.eos_token,
+            "pad_token": config.pad_token,
         }
-        if self.do_lower:
-            self.special_tokens = {
-                key: value.lower() for key, value in self.special_tokens.items()
-            }
 
         # Get vocab file and size.
-        self.src_vocab_file = params["src_vocab_file"]
+        self.src_vocab_file = config.src_vocab_file
         self.src_vocab_file, self.src_vocab_size = build_vocab(
             self.src_vocab_file, self.do_lower, self.special_tokens["oov_token"]
         )
         # Updating input and model params to account extra ids
         # for T5 Language Modeling task.
-        extra_ids = params.get("extra_ids", 0)
+        extra_ids = config.extra_ids
         self.src_vocab_size += extra_ids
 
         # Init tokenizer.
@@ -199,28 +305,19 @@ class T5DynamicDataProcessor(torch.utils.data.IterableDataset):
 
         # Padding indices.
         # See https://huggingface.co/transformers/glossary.html#labels.
-        self.labels_pad_id = params.get(
-            "labels_pad_id", self.special_tokens_indices["pad_token"]
-        )
-        self.input_pad_id = params.get(
-            "input_pad_id", self.special_tokens_indices["pad_token"]
-        )
+        self.labels_pad_id = config.labels_pad_id
+        self.input_pad_id = config.input_pad_id
+
+        if self.labels_pad_id is None:
+            self.labels_pad_id = self.special_tokens_indices["pad_token"]
+        if self.input_pad_id is None:
+            self.input_pad_id = self.special_tokens_indices["pad_token"]
+
         self.attn_mask_pad_id = 0
-        assert all(
-            pad >= 0
-            for pad in [
-                self.labels_pad_id,
-                self.input_pad_id,
-                self.attn_mask_pad_id,
-            ]
-        ), (
-            f"All padding must be non-negative, got"
-            f" `labels_pad_id` = {self.labels_pad_id}, `input_pad_id` = {self.input_pad_id},"
-            f" `attn_mask_pad_id` = {self.attn_mask_pad_id}."
-        )
+
         # Max sequence lengths size params.
-        self.src_max_sequence_length = params["src_max_sequence_length"]
-        self.tgt_max_sequence_length = params["tgt_max_sequence_length"]
+        self.src_max_sequence_length = config.src_max_sequence_length
+        self.tgt_max_sequence_length = config.tgt_max_sequence_length
 
         # Store params.
         self.data_buffer = []

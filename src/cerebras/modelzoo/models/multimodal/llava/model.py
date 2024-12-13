@@ -12,10 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
+from typing import Dict, List, Literal, Optional, Union
+
 import torch
 import torch.nn as nn
+from pydantic import Field, field_validator, model_validator
+from typing_extensions import Annotated
 
-from cerebras.modelzoo.common.registry import registry
+from cerebras.modelzoo.config import ModelConfig
+from cerebras.modelzoo.layers.FeedForwardNetwork import (
+    FeedForwardNetworkConfig,
+    MoEConfig,
+)
 from cerebras.modelzoo.losses.GPTLMHeadModelLoss import GPTLMHeadModelLoss
 from cerebras.modelzoo.losses.LoadBalancingLoss import LoadBalancingLoss
 from cerebras.modelzoo.models.multimodal.llava.modeling_llava import Llava
@@ -23,55 +32,143 @@ from cerebras.modelzoo.models.multimodal.multimodal_base_model import (
     ModalityType,
     MultimodalBaseModelWrapper,
 )
+from cerebras.modelzoo.models.nlp.llama.model import LlamaLMHeadModelConfig
+from cerebras.modelzoo.models.nlp.t5.t5_model import (
+    T5ForConditionalGenerationModelConfig,
+)
+from cerebras.modelzoo.models.vision.vision_transformer.ViTModel import (
+    ViTModelConfig,
+)
 from cerebras.modelzoo.trainer import summarize_scalar
 
+MultiModalModelType = Annotated[
+    Union[
+        ViTModelConfig,
+        LlamaLMHeadModelConfig,
+        T5ForConditionalGenerationModelConfig,
+    ],
+    Field(discriminator="name"),
+]
 
-@registry.register_model(
-    "llava", datasetprocessor=["LlavaHDF5MapDataProcessor"]
-)
+ProjectorType = Annotated[
+    Union[FeedForwardNetworkConfig,],
+    Field(discriminator="name"),
+]
+
+
+class LlavaModelConfig(ModelConfig):
+    name: Literal["llava"]
+
+    freeze: Optional[List[str]] = None
+    image_feature_select_layer_idx: Optional[int] = -1
+    image_start_idx: int = 1
+    image_feature_select_mode: Literal["patch", "cls_patch"] = "patch"
+    loss_scaling: Literal["num_tokens", "batch_size"] = "num_tokens"
+    loss_weight: float = 1.0
+    image_model: MultiModalModelType = ...
+    "The underlying image model being used"
+    text_model: MultiModalModelType = ...
+    "The underlying text model being used"
+    projector: Optional[Dict[str, ProjectorType]] = None
+    moe_params: MoEConfig = Field(default_factory=MoEConfig, alias="moe")
+    "A dict of MoE params including num_experts, top_k and load_balancing_loss_coef."
+
+    mixed_precision: Optional[bool] = Field(default=None, deprecated=True)
+    fp16_type: Optional[str] = Field(default=None, deprecated=True)
+
+    @field_validator("projector")
+    @classmethod
+    def update_projector(cls, projector: Optional[Dict[str, ProjectorType]]):
+        if projector is not None:
+            return {
+                key: (
+                    value.copy(
+                        update=dict(
+                            # Setting a=sqrt(5) in kaiming_uniform is the same as initializing with
+                            # uniform(-1/sqrt(in_features), 1/sqrt(in_features)). For details, see
+                            # https://github.com/pytorch/pytorch/issues/57109
+                            kernel_initializer={
+                                "name": "kaiming_uniform",
+                                "a": math.sqrt(5),
+                            },
+                            # Note: Using Kaiming_uniform directly on bias tensor
+                            # results in PyTorch error:`ValueError: Fan in and fan out
+                            # can not be computed for tensor with fewer than 2 dimensions`
+                            # While this mismatches the src code, since we load from
+                            # HF -> CS converted checkpoint, this is initialized in the
+                            # checkpoint correctly
+                            bias_initializer="zeros",
+                        )
+                    )
+                    if isinstance(value, FeedForwardNetworkConfig)
+                    else value
+                )
+                for key, value in projector.items()
+            }
+
+        return projector
+
+    @model_validator(mode="after")
+    def validate_projector(self):
+        if (
+            self.image_model.hidden_size != self.text_model.hidden_size
+            and self.projector is None
+        ):
+            raise ValueError(
+                f"The model should have a projector when the image model "
+                f"and text model do not have the same `hidden_size`."
+            )
+
+        return self
+
+    def post_init(self, context):
+        # convert negative index and positive index representing layer_id of
+        # encoder to positive index. All indices are zero-based.
+        image_feature_select_layer_idx = (
+            self.image_feature_select_layer_idx
+            % self.image_model.num_hidden_layers
+        )
+        if (
+            self.image_feature_select_layer_idx
+            != image_feature_select_layer_idx
+        ):
+            self.image_feature_select_layer_idx = image_feature_select_layer_idx
+
+
 class LlavaModel(MultimodalBaseModelWrapper, nn.Module):
-    def __init__(self, params):
+    def __init__(self, config: LlavaModelConfig):
         super(LlavaModel, self).__init__()
         self._modalities = [ModalityType.IMAGE, ModalityType.TEXT]
-        self._model_params = params.model
-        model_params = self._model_params
-        self.freeze = model_params.freeze
+        self._config = config
+        self.freeze = config.freeze
         self.image_feature_select_layer_idx = (
-            model_params.image_feature_select_layer_idx
+            config.image_feature_select_layer_idx
         )
-        self.image_start_idx = model_params.image_start_idx
-        self.image_feature_select_mode = model_params.image_feature_select_mode
+        self.image_start_idx = config.image_start_idx
+        self.image_feature_select_mode = config.image_feature_select_mode
 
-        text_model_params = model_params.text_model
-        if hasattr(text_model_params, 'moe'):
+        text_config = config.text_model
+        if not hasattr(text_config, 'moe_params'):
             self.moe_enabled = False
-            text_model_params.moe = dict(num_experts=1)
-        elif "num_experts" not in text_model_params.moe:
-            self.moe_enabled = False
-            text_model_params.moe = dict(num_experts=1)
         else:
-            self.moe_enabled = text_model_params.moe["num_experts"] > 1
+            total_experts = text_config.moe_params.num_experts
+            if text_config.moe_params.num_shared_experts:
+                total_experts += text_config.moe_params.num_shared_experts
+            self.moe_enabled = total_experts > 1
 
         if self.moe_enabled:
-            self.load_balancing_loss_coef = text_model_params.moe.pop(
-                "load_balancing_loss_coef", 0.01
-            )
+            self.moe_params = text_config.moe_params
             self.load_balancing_loss_fn = LoadBalancingLoss(
-                text_model_params.moe["num_experts"],
-                text_model_params.moe["top_k"],
+                text_config.moe_params.num_experts,
+                text_config.moe_params.top_k,
             )
-        text_model_params.moe_params = text_model_params.moe
 
-        self.model = self.build_model(model_params)
-        vocab_size = getattr(model_params, ModalityType.TEXT.value).vocab_size
+        self.model = self.build_model(config)
+        vocab_size = getattr(config, ModalityType.TEXT.value).vocab_size
         self.loss_fn = GPTLMHeadModelLoss(
             vocab_size,
-            model_params.loss_scaling,
-            model_params.loss_weight,
-        )
-        del (
-            model_params.loss_scaling,
-            model_params.loss_weight,
+            config.loss_scaling,
+            config.loss_weight,
         )
 
     @property
@@ -81,12 +178,12 @@ class LlavaModel(MultimodalBaseModelWrapper, nn.Module):
     def _post_device_transfer(self):
         self.model.tie_weights()
 
-    def build_model(self, model_params):
+    def build_model(self, config):
         # Build individual model towers for each modalities
-        modality_models = self.build_modality_models(model_params)
+        modality_models = self.build_modality_models(config)
 
         # Build projectors for each of the modalities
-        projectors = self.build_projectors(model_params)
+        projectors = self.build_projectors(config)
 
         # Initialize LLaVA model
         model = Llava(
@@ -182,11 +279,11 @@ class LlavaModel(MultimodalBaseModelWrapper, nn.Module):
 
         if (
             self.moe_enabled
-            and self.load_balancing_loss_coef > 0.0
+            and self.moe_params.load_balancing_loss_coef > 0.0
             and self.training
         ):
             load_balance_loss = (
-                self.load_balancing_loss_coef
+                self.moe_params.load_balancing_loss_coef
                 * self.load_balancing_loss_fn(
                     routing_weights,
                     expert_mask,

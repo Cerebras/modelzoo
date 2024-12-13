@@ -14,67 +14,38 @@
 
 import torch
 
-from cerebras.modelzoo.common.registry import registry
-from cerebras.modelzoo.models.nlp.bert.bert_finetune_models import (
+from cerebras.modelzoo.models.nlp.bert.extractive_summarization.bert_extractive_summarization import (
     BertForSummarization,
     BertForSummarizationLoss,
+    BertSummarizationModelConfig,
 )
 
 
-@registry.register_model(
-    "bert/extractive_summarization",
-    datasetprocessor=["BertSumCSVDataProcessor"],
-)
 class BertSummarizationModel(torch.nn.Module):
-    def __init__(self, params):
+    def __init__(self, config: BertSummarizationModelConfig):
         super().__init__()
 
-        self._model_params = params.model
-        model_params = self._model_params
+        self.compute_eval_metrics = config.compute_eval_metrics
 
-        num_labels = 2
-        loss_weight = model_params.loss_weight
-
-        model_kwargs = {
-            "vocab_size": model_params.vocab_size,
-            "hidden_size": model_params.hidden_size,
-            "num_hidden_layers": model_params.num_hidden_layers,
-            "num_heads": model_params.num_heads,
-            "filter_size": model_params.filter_size,
-            "nonlinearity": model_params.encoder_nonlinearity,
-            "pooler_nonlinearity": model_params.pooler_nonlinearity,
-            "embedding_dropout_rate": model_params.embedding_dropout_rate,
-            "dropout_rate": model_params.dropout_rate,
-            "attention_dropout_rate": model_params.attention_dropout_rate,
-            "attention_kernel": model_params.attention_kernel,
-            "max_position_embeddings": model_params.max_position_embeddings,
-            "layer_norm_epsilon": model_params.layer_norm_epsilon,
-        }
-
-        self.model = BertForSummarization(
-            num_labels=num_labels,
-            loss_weight=loss_weight,
-            use_cls_bias=model_params.use_cls_bias,
-            **model_kwargs,
-        )
+        self.model = BertForSummarization(config)
         self.loss_fn = BertForSummarizationLoss(
-            num_labels,
-            loss_weight,
+            config.num_labels,
+            config.loss_weight,
         )
 
-        if model_params.compute_eval_metrics:
+        if self.compute_eval_metrics:
             raise NotImplementedError(
                 "RougeScoreMetric not yet supported in weight streaming"
             )
 
             self.rouge1_score = RougeScoreMetric(
                 max_n=1,
-                vocab_file=model_params.vocab_file,
+                vocab_file=config.vocab_file,
                 name="eval/rouge1",
             )
             self.rouge2_score = RougeScoreMetric(
                 max_n=2,
-                vocab_file=model_params.vocab_file,
+                vocab_file=config.vocab_file,
                 name="eval/rouge2",
             )
 
@@ -88,7 +59,7 @@ class BertSummarizationModel(torch.nn.Module):
         loss = self.loss_fn(
             logits, data["labels"], data["cls_weights"].clone().to(logits.dtype)
         )
-        if not self.model.training and self._model_params.compute_eval_metrics:
+        if not self.model.training and self.compute_eval_metrics:
             labels = data["labels"].clone()
             predictions = logits.argmax(-1).int()
             input_ids = data["input_ids"].clone()

@@ -16,6 +16,7 @@
 Split input src/tgt file into multiple files.
 Number of examples per file is controlled by `buffer_len` param.
 """
+
 import argparse
 import os
 

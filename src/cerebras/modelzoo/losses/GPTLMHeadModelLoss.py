@@ -17,10 +17,7 @@
 import torch
 import torch.nn as nn
 
-from cerebras.modelzoo.common.registry import registry
 
-
-@registry.register_loss("GPTLMHeadModelLoss")
 class GPTLMHeadModelLoss(nn.Module):
     def __init__(
         self,

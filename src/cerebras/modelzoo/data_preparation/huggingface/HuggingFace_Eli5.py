@@ -19,17 +19,16 @@ import os
 from datasets import load_dataset
 from transformers import AutoTokenizer
 
-from cerebras.modelzoo.data_preparation.huggingface.CSDataCollatorForLanguageModeling import (
-    CSDataCollatorForLanguageModeling,
-)
-
 # Suppress warnings about using fast tokenizers
 os.environ['TRANSFORMERS_NO_ADVISORY_WARNINGS'] = 'true'
 
 
 def HuggingFace_Eli5(split="train", num_workers=8, sequence_length=128):
-    # based on https://huggingface.co/docs/transformers/tasks/language_modeling
+    from cerebras.modelzoo.data_preparation.huggingface.CSDataCollatorForLanguageModeling import (
+        CSDataCollatorForLanguageModeling,
+    )
 
+    # based on https://huggingface.co/docs/transformers/tasks/language_modeling
     eli5_dataset_path = None
     if eli5_dataset_path is None:
         raise ValueError(

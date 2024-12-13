@@ -3,6 +3,7 @@ setup:
         source: "/input/dir/here"
         type: "local"
     output_dir: "/output/dir/here"
+    image_dir: "/path/to/images"
     # adjust the below to however many cores you have available
     processes: 1 
     mode: "finetuning"
@@ -22,22 +23,21 @@ processing:
 
     read_hook: "cerebras.modelzoo.data_preparation.data_preprocessing.hooks:finetuning_llava_hook_prompt_completion"
     read_hook_kwargs:
-        data_keys: 
-            multi_turn_key: "conversations"
-            image_key: "image"
+        multi_turn_key: "conversations"
+        image_key: "image"
         image_token: "<image>"
         multi_turn_content_key: "value"
         phase: 1
 
     shuffle_seed: 0
     shuffle: False
-
-dataset:
-    is_multimodal: True
     use_ftfy: True
     ftfy_normalizer: "NFC"
     wikitext_detokenize: False
+    UNSAFE_skip_jsonl_decoding_errors: False
 
+dataset:
+    is_multimodal: True
     num_patches: 576
-    image_dir: "/path/to/images"
     sep_token: ""
+    max_num_img: 1

@@ -13,17 +13,10 @@
 # limitations under the License.
 
 from abc import ABC, abstractmethod
-from dataclasses import asdict
 from enum import Enum
 from typing import Any, Dict
 
-from cerebras.modelzoo.config_manager.config_classes.base.base_config import (
-    BaseConfig,
-)
-from cerebras.modelzoo.models.multimodal.multimodal_utils import (
-    get_model_handle_from_mapping,
-    get_projector_model_handle_from_mapping,
-)
+from cerebras.modelzoo.config import BaseConfig
 
 
 class ModalityType(Enum):
@@ -59,35 +52,18 @@ class MultimodalBaseModelWrapper(ABC):
     def _post_device_transfer(self):
         pass
 
-    def _init_component_model(self, component_params: Dict) -> object:
-        component_name = component_params.pop("name")
-        component_handle = get_model_handle_from_mapping(component_name)
-        # Remove unused params.
-        component_model = component_handle(**component_params)
-        return component_model
-
     def build_modality_models(self, model_params: Any) -> Dict[str, object]:
         modality_models = {}
         for mmode in self.modalities:
             mmode_value_present = False
-            if isinstance(model_params, Dict):
-                if mmode.value in model_params.keys():
-                    modality_models[mmode.value] = self._init_component_model(
-                        model_params[mmode.value]
-                    )
-                    mmode_value_present = True
-
-            elif isinstance(model_params, BaseConfig):
+            if isinstance(model_params, BaseConfig):
                 if hasattr(model_params, mmode.value):
-                    modality_models[mmode.value] = self._init_component_model(
-                        asdict(getattr(model_params, mmode.value))
-                    )
+                    modality_models[mmode.value] = getattr(
+                        model_params, mmode.value
+                    )()
                     mmode_value_present = True
-
             else:
-                raise ValueError(
-                    f"Unsupported type {type(model_params)}, supported are `Dict` and `BaseConfig`"
-                )
+                raise ValueError(f"Unsupported type {type(model_params)}")
 
             if not mmode_value_present:
                 # No model for this modality
@@ -102,12 +78,7 @@ class MultimodalBaseModelWrapper(ABC):
             _k = f"projector_{mmode.value}"
             if projector_params is not None:
                 if mmode.value in projector_params.keys():
-                    params = projector_params[mmode.value]
-                    proj_name = projector_params[mmode.value].pop("name")
-                    proj_mdl_handle = get_projector_model_handle_from_mapping(
-                        proj_name
-                    )
-                    projector_models[_k] = proj_mdl_handle(**params)
+                    projector_models[_k] = projector_params[mmode.value]()
             else:
                 # No projector for this modality
                 projector_models[_k] = None

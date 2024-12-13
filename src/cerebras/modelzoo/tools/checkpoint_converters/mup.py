@@ -229,6 +229,7 @@ class ConfigConverter_muP_CS22_CS23(BaseConfigConverter):
     @classmethod
     def convert(
         cls,
+        model,
         config,
         converter_indices,
         drop_unmatched_keys=False,
@@ -239,6 +240,7 @@ class ConfigConverter_muP_CS22_CS23(BaseConfigConverter):
         lr_scale = config["optimizer"].pop("adjust_learning_rate")
         instance.hidden_size_width_mult = 1 / lr_scale["decoder_kernel"]
         return instance.convert_helper(
+            model,
             config["model"],
             converter_indices,
             drop_unmatched_keys=drop_unmatched_keys,

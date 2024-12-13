@@ -19,26 +19,7 @@ import os
 sys.path.append(os.path.join(os.path.dirname(__file__), "../../../../.."))
 # isort: on
 
-from cerebras.modelzoo.common.utils.run.cli_pytorch import get_params_from_args
+if __name__ == '__main__':
+    from cerebras.modelzoo.common.run_utils import run
 
-
-def main():
-
-    from cerebras.modelzoo.common.run_utils import main
-    from cerebras.modelzoo.models.multimodal.multimodal_simple.data import (
-        eval_input_dataloader,
-        train_input_dataloader,
-    )
-
-    params = get_params_from_args()
-
-    main(
-        params,
-        "multimodal_simple",
-        train_input_dataloader,
-        eval_input_dataloader,
-    )
-
-
-if __name__ == "__main__":
-    main()
+    run()

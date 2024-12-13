@@ -20,7 +20,7 @@ from itertools import combinations
 from typing import Callable, List, Union
 
 import cerebras.pytorch as cstorch
-from cerebras.modelzoo.trainer.callbacks import Callback
+from cerebras.modelzoo.trainer.callbacks import CoreCallback
 
 SchedulerInput = Union[
     Callable[
@@ -38,7 +38,7 @@ SchedulersInput = Union[
 ]
 
 
-class SchedulersCallback(Callback):
+class SchedulersCallback(CoreCallback):
     """Callback that sets up all the schedulers for the Trainer."""
 
     def __init__(

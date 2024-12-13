@@ -13,33 +13,13 @@
 # limitations under the License.
 
 # isort: off
-import os
 import sys
+import os
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "../../../../../.."))
 # isort: on
 
+if __name__ == '__main__':
+    from cerebras.modelzoo.common.run_utils import run
 
-from cerebras.modelzoo.common.utils.run.cli_pytorch import get_params_from_args
-
-
-def main():
-
-    params = get_params_from_args()
-
-    from cerebras.modelzoo.common.run_utils import main
-    from cerebras.modelzoo.models.nlp.bert.extractive_summarization.data import (
-        eval_input_dataloader,
-        train_input_dataloader,
-    )
-
-    main(
-        params,
-        "bert/extractive_summarization",
-        train_input_dataloader,
-        eval_input_dataloader,
-    )
-
-
-if __name__ == "__main__":
-    main()
+    run()

@@ -13,22 +13,102 @@
 # limitations under the License.
 
 import enum
-from dataclasses import dataclass
-from typing import Callable, ClassVar, List, Optional, Union
+from typing import Callable, ClassVar, List, Literal, Optional, Union
+from warnings import warn
 
 import torch.nn as nn
+from annotated_types import Len
+from pydantic import field_validator, model_validator
 from torch import Tensor
 
+# Use typing once we move to Python 3.11
+from typing_extensions import Annotated
+
+from cerebras.modelzoo.config import BaseConfig, ModelConfig
 from cerebras.modelzoo.layers.activations import (
     get_activation,
     is_glu_activation,
 )
-from cerebras.modelzoo.layers.create_initializer import create_initializer
+from cerebras.modelzoo.layers.init import InitializerConfig
+
+
+class MoEConfig(BaseConfig):
+    num_experts: int = 0
+    "Number of experts used for MoE, 0 means MoE is disabled"
+    num_shared_experts: Optional[int] = None
+    "Number of shared experts used by MoE"
+    top_k: int = 1
+    "K value for the number of top experts to be selected from all experts"
+    load_balancing_loss_coef: float = 0.0
+    "Weight for the load balancing loss"
+    null_expert_bias: Optional[float] = 0.0
+    "Optional bias to add null expert prob to the routing"
+    moe_implementation: Literal["functional", "optimized"] = "optimized"
+    "Whether to use the functional or Optimized implementation of MoE"
+    router_fp32: bool = True
+    "Selects the precision of routing weights to be float"
+    routing_algorithm: Literal["hash", "learned"] = "learned"
+    "Routing algorithm to use for selection of experts"
+    router_selection_nonlinearity: Optional[
+        Literal["sigmoid", "sinkhorn", "softmax"]
+    ] = None
+    "Non linearity used for routing algorithm for expert probablity generation, to be used with 'learned' routing"
+    sinkhorn_n_iters: Optional[int] = 1
+    "Number of iterations for sinkhorn nonlinearity"
+    gate_initializer: Optional[InitializerConfig] = None
+    "Initializer used for router gating network"
+
+    def post_init(self, context):
+        super().post_init(context)
+        if self.routing_algorithm == "learned":
+            # Nonlinearity defaults to softmax for learned routing
+            if self.router_selection_nonlinearity is None:
+                self.router_selection_nonlinearity = "softmax"
+
+    @model_validator(mode="after")
+    def validate_moe(self):
+        if self.routing_algorithm == "hash":
+            if self.load_balancing_loss_coef > 0.0:
+                raise ValueError(
+                    "Load Balancing Loss not supported with hash routing"
+                )
+            if self.router_selection_nonlinearity is not None:
+                raise ValueError(
+                    "Routing non-linearity not supported with hash routing"
+                )
+        if self.router_selection_nonlinearity == "sinkhorn":
+            if self.load_balancing_loss_coef != 0.0:
+                raise ValueError(
+                    "Load Balancing Loss not supported with sinkhorn routing nonlinearity"
+                )
+            if self.sinkhorn_n_iters is None:
+                raise ValueError(
+                    "sinkhorn_n_iters cannot be None for sinkhorn nonlinearity"
+                )
+        total_experts = self.num_experts
+        if self.num_shared_experts is not None:
+            total_experts += self.num_shared_experts
+        if total_experts > 1:
+            if self.load_balancing_loss_coef < 0.0:
+                raise ValueError(
+                    f"load_balancing_loss_coef cannot be less than 0, got {self.load_balancing_loss_coef}"
+                )
+
+            if not (self.top_k >= 1 and self.top_k <= self.num_experts):
+                raise ValueError(
+                    f"{self.top_k=} should be [1, {self.num_experts=}]"
+                )
+
+            if self.routing_algorithm == "hash" and self.top_k != 1:
+                raise ValueError(
+                    f"{self.top_k=} but should be 1 for hash routing"
+                )
+        return self
 
 
 class StaticDualExpertLinear(nn.Module):
     """
-    Description of the linear op where tokens are sent to two different experts based on 'token_modality_idx'
+    Description of the linear op where tokens are sent to two different experts based on 'token_modality_idx'.
     """
 
     def __init__(
@@ -132,8 +212,7 @@ class SingleFeedForwardLayer(nn.Module):
         return outputs
 
 
-@dataclass
-class FeedForwardNetworkConfig:
+class FeedForwardNetworkConfig(ModelConfig):
     """Feed forward network config.
 
     Args:
@@ -148,87 +227,102 @@ class FeedForwardNetworkConfig:
         bias_initializer: Bias initializer. Defaults to `"zeros"`.
         output_layer_initializer: If not None, initialize the last projection
             layer with this initializer. Defaults to None.
-        num_experts (int): The number of experts in the MoE block. Defaults to 1.
-        top_k (int): The number of experts to be used on each token. Defaults to None.
-        gate_initializer: Router (gate) initializer. Defaults to `"xavier_uniform"`.
-        load_balancing_loss_coef (float): The float coefficient to scale the load balancing loss.
-            Defaults to `0.01`.
-        router_fp32 (bool): If `True`, the router operate in FP32 dtype, Defaults to `True`.
-        routing_algorithm (str): The routing algorithm used in Mixture-of-Experts
-            models. Choose from: "learned", "hash". Defaults to "learned".
         moe_implementation (str): "functional" or "optimized" implementation. Defaults to "optimized".
         device (optional): Device to create the model parameters on, can be a cuda device or CS device.
+        moe_params (optional [MoEConfig]): config params for setting up MoE
     """
 
-    input_unit: int
-    layers_units: List[int]
-    layers_activation: Optional[
-        List[Union[str, Callable[[Tensor], Tensor]]]
-    ] = None
-    layers_dropout_rates: Optional[List[float]] = None
-    use_bias: bool = False
-    kernel_initializer: str = "xavier_uniform"
-    bias_initializer: str = "zeros"
-    output_layer_initializer: Optional[str] = None
-    num_experts: int = 1
-    top_k: Optional[int] = None
-    gate_initializer: Optional[str] = "xavier_uniform"
-    load_balancing_loss_coef: Optional[float] = 0.01
-    router_fp32: bool = True
-    routing_algorithm: str = "learned"
-    moe_implementation: str = "optimized"
-    device: str = None
-    static_dual_expert: bool = False
+    name: Literal["FeedForwardNetwork", "MLP"]
 
+    input_unit: int = ...
+    layers_units: Annotated[List[int], Len(min_length=1)] = ...
+    layers_activation: Optional[
+        List[Union[str, Callable[[Tensor], Tensor], None]]
+    ] = None
+    layers_dropout_rates: Optional[List[Union[float, None]]] = None
+    use_bias: bool = False
+    kernel_initializer: InitializerConfig = "xavier_uniform"
+    bias_initializer: InitializerConfig = "zeros"
+    output_layer_initializer: Optional[InitializerConfig] = None
+    device: Optional[str] = None
+    static_dual_expert: bool = False
     # Class variables.
     MoEImpl: ClassVar[enum.Enum] = enum.Enum(
         "MoEImpl", ["functional", "optimized"]
     )
+    moe_params: Optional[MoEConfig] = None
 
-    def __post_init__(self):
-        self.num_dense_layers = len(self.layers_units)
-        self.input_units = [self.input_unit] + self.layers_units[:-1]
-        if self.output_layer_initializer is None:
-            self.output_layer_initializer = self.kernel_initializer
+    @field_validator("name", mode="after")
+    def validate_name(cls, name):
+        if name == "MLP":
+            warn(
+                "Passing 'MLP' as the model name is deprecated. "
+                "Please use 'FeedForwardNetwork' instead.",
+                category=FutureWarning,
+            )
+            return "FeedForwardNetwork"
+        return name
 
-        assert (
-            self.num_dense_layers > 0
-        ), "Number of dense layers should be at least 1."
+    @property
+    def num_dense_layers(self):
+        return len(self.layers_units)
 
-        if self.layers_activation:
-            assert len(self.layers_activation) == self.num_dense_layers, (
+    @property
+    def input_units(self):
+        return [self.input_unit] + self.layers_units[:-1]
+
+    @model_validator(mode="after")
+    def validate_layers_activation(self):
+        if (
+            self.layers_activation
+            and len(self.layers_activation) != self.num_dense_layers
+        ):
+            raise ValueError(
                 "len(layers_activation) should equal the number"
                 " of dense layers."
             )
-        else:
-            self.layers_activation = [None] * self.num_dense_layers
 
-        if self.layers_dropout_rates:
-            assert len(self.layers_dropout_rates) == self.num_dense_layers, (
-                "len(layers_dropout) should equal the number" "of dense layers."
+        return self
+
+    @model_validator(mode="after")
+    def validate_layers_dropout_rates(self):
+        if (
+            self.layers_dropout_rates
+            and len(self.layers_dropout_rates) != self.num_dense_layers
+        ):
+            raise ValueError(
+                "len(layers_dropout_rates) should equal the number "
+                "of dense layers."
             )
-        else:
-            self.layers_dropout_rates = [None] * self.num_dense_layers
 
-        if self.num_experts > 1:
-            assert (
-                self.load_balancing_loss_coef >= 0.0
-            ), f"load_balancing_loss_coef cannot be less than 0, got {self.load_balancing_loss_coef}"
-            assert (
-                self.top_k >= 1 and self.top_k <= self.num_experts
-            ), f"{self.top_k=} should be [1, {self.num_experts=}]"
-            if self.routing_algorithm == "hash":
-                assert (
-                    self.top_k == 1
-                ), f"{self.top_k=} but should be 1 for hash routing"
+        return self
 
     def moe_optimized_impl(self) -> bool:
         """Return True if optimized implementation is used."""
-        return self.MoEImpl[self.moe_implementation] == self.MoEImpl.optimized
+        return (
+            self.MoEImpl[self.moe_params.moe_implementation]
+            == self.MoEImpl.optimized
+        )
 
     def moe_functional_impl(self) -> bool:
         """Return True if functional implementation is used."""
-        return self.MoEImpl[self.moe_implementation] == self.MoEImpl.functional
+        return (
+            self.MoEImpl[self.moe_params.moe_implementation]
+            == self.MoEImpl.functional
+        )
+
+    def post_init(self, context):
+        if self.output_layer_initializer is None:
+            self.output_layer_initializer = self.kernel_initializer
+
+        if not self.layers_activation:
+            self.layers_activation = [None] * self.num_dense_layers
+        if not self.layers_dropout_rates:
+            self.layers_dropout_rates = [None] * self.num_dense_layers
+
+    @property
+    def __model_cls__(self):
+        return FeedForwardNetwork
 
 
 class FeedForwardNetwork(nn.Module):
@@ -284,13 +378,11 @@ class FeedForwardNetwork(nn.Module):
     def __reset_parameters(self):
         # Initialize weights for all Linear layers
         for layer_num, linear_layer_module in enumerate(self.ffn):
-            weight_initializer = create_initializer(
-                self.config.kernel_initializer
-            )
             if layer_num == self.config.num_dense_layers - 1:
-                weight_initializer = create_initializer(
-                    self.config.output_layer_initializer
-                )
+                weight_initializer = self.config.output_layer_initializer
+            else:
+                weight_initializer = self.config.kernel_initializer
+
             # Initialize linear layer weights associated with the
             # 'GLU' type activation function with the kernel_initializer
             for m in linear_layer_module.modules():
@@ -298,9 +390,7 @@ class FeedForwardNetwork(nn.Module):
                     weight_initializer(m.weight.data)
 
                     if m.bias is not None:
-                        create_initializer(self.config.bias_initializer)(
-                            m.bias.data
-                        )
+                        self.config.bias_initializer(m.bias.data)
 
     def forward(self, inputs, **extra_args):
         outputs = inputs

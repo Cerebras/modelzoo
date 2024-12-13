@@ -38,7 +38,7 @@ Our pre-processing pipeline consists of multiple stages such as NFC normalizatio
 document shuffling, split into train and holdout sets, deduplication of train set against holdout. 
 All these steps are presented in the diagram below. 
 Additional steps such as tokenization, sequence packing and sequence-level shuffling can be performed using our scripts located
-at [hdf5_preprocessing](../../../data_preparation/nlp/hdf5_preprocessing/) and [hdf5_shuffling](../../../data_preparation/hdf5_shuffling/). 
+at [data_preprocessing](../../../data_preparation/data_preprocessing/) and [hdf5_shuffling](../../../data_preparation/hdf5_shuffling/). 
 All steps here assume that the whole dataset cannot fit in the available RAM and distributed across multiple processes. 
 We are welcoming any additional datasets preparation steps or suggestions on how to make this even more efficient on the large scale datasets!
 <p>

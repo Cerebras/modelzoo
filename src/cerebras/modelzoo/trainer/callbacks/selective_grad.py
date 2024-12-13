@@ -14,26 +14,52 @@
 
 """Contains the SelectiveGrad callback class."""
 
+from typing import List, Union
+
+import cerebras.pytorch as cstorch
 from cerebras.modelzoo.trainer.callbacks import Callback
+from cerebras.pytorch.sparse.configure import default_sparse_param_filter
 
 
 class SelectiveGrad(Callback):
     """Callback class that selectively applies gradient computation."""
 
-    def __init__(self, selective_grads: dict):
-        """SelectiveGrad may be initialized with a configuration dictionary or
-        keyword arguments.
+    def __init__(self, selective_grads: Union[dict, List[dict]]):
+        """Constructs a `SelectiveGrad` instance.
 
         Args:
             selective_grads: Configuration for selective gradient computation.
+                It may be initialized with a configuration dict or list of
+                dicts.
         """
         if selective_grads:
-            # TODO: Move this configure_selective_gradient function to this file
-            from cerebras.modelzoo.common.utils.utils import (
-                configure_selective_gradient,
-            )
 
-            self.selective_grads = configure_selective_gradient(selective_grads)
+            def get_selective_grad_from_dict(single_config):
+                # use the sparsity filter as well as a default filter
+                param_filter = single_config.get("param_filter", None)
+                if param_filter is None:
+                    param_filter = default_sparse_param_filter
+
+                # make init_method an optional field
+                if "init_method" in single_config:
+                    return cstorch.nn.SelectiveGrad(
+                        param_filter, single_config["init_method"]
+                    )
+
+                return cstorch.nn.SelectiveGrad(param_filter)
+
+            if isinstance(selective_grads, dict):
+                self.selective_grads = [
+                    get_selective_grad_from_dict(selective_grads)
+                ]
+            elif isinstance(selective_grads, list):
+                self.selective_grads = list(
+                    map(get_selective_grad_from_dict, selective_grads)
+                )
+            else:
+                raise ValueError(
+                    "Expected `selective_grads` to be a dict or a list of dicts."
+                )
         else:
             self.selective_grads = []
 

@@ -13,13 +13,16 @@
 # limitations under the License.
 
 import os
+from typing import Any, Literal, Optional
 
 import numpy as np
 from PIL import Image
+from pydantic import Field
 from torchvision.datasets.vision import VisionDataset
 
 from cerebras.modelzoo.data.vision.classification.dataset_factory import (
-    Processor,
+    VisionClassificationProcessor,
+    VisionClassificationProcessorConfig,
 )
 
 
@@ -113,13 +116,25 @@ class Caltech101(VisionDataset):
         return len(self.index)
 
 
-class Caltech101Processor(Processor):
-    def __init__(self, params):
-        super().__init__(params)
-        self.allowable_split = ["trainval", "test"]
+class Caltech101ProcessorConfig(VisionClassificationProcessorConfig):
+    data_processor: Literal["Caltech101Processor"]
+
+    split: Literal["trainval", "test"] = "trainval"
+    "Dataset split."
+
+    num_classes: Optional[Any] = Field(None, deprecated=True)
+
+
+class Caltech101Processor(VisionClassificationProcessor):
+    def __init__(self, config: Caltech101ProcessorConfig):
+        super().__init__(config)
+        self.split = config.split
+        self.shuffle = self.shuffle and (self.split == "train")
+
         self.num_classes = 101
 
-    def create_dataset(self, use_training_transforms=True):
+    def create_dataset(self):
+        use_training_transforms = self.split == "trainval"
         transform, target_transform = self.process_transform(
             use_training_transforms
         )
@@ -130,47 +145,3 @@ class Caltech101Processor(Processor):
             split=None,
         )
         return dataset
-
-    def create_vtab_dataset(
-        self, use_1k_sample=True, train_split_percent=None, seed=42
-    ):
-        train_transform, train_target_transform = self.process_transform(
-            use_training_transforms=True
-        )
-        eval_transform, eval_target_transform = self.process_transform(
-            use_training_transforms=False
-        )
-
-        trainval_set = Caltech101(
-            root=self.data_dir,
-            transform=None,
-            split="trainval",
-            class_balance_count=30,
-        )
-        test_set = Caltech101(
-            root=self.data_dir,
-            transform=eval_transform,
-            split="test",
-            class_balance_count=30,
-        )
-
-        # By default, 90% of the official training split is used as a new
-        # training split and the rest is used for validation
-        train_percent = train_split_percent or 90
-        val_percent = 100 - train_percent
-        train_set, val_set = self.split_dataset(
-            trainval_set, [train_percent, val_percent], seed
-        )
-
-        if use_1k_sample:
-            train_set.truncate_to_idx(800)
-            val_set.truncate_to_idx(200)
-
-        train_set.set_transforms(
-            transform=train_transform, target_transform=train_target_transform
-        )
-        val_set.set_transforms(
-            transform=eval_transform, target_transform=eval_target_transform
-        )
-
-        return train_set, val_set, test_set

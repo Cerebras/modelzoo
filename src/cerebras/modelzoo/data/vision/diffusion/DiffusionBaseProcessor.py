@@ -21,7 +21,9 @@ from torch.utils.data.dataloader import default_collate
 
 import cerebras.pytorch as cstorch
 from cerebras.modelzoo.common.input_utils import get_streaming_batch_size
-from cerebras.modelzoo.common.registry import registry
+from cerebras.modelzoo.data.vision.diffusion.config import (
+    DiffusionBaseProcessorConfig,
+)
 from cerebras.modelzoo.data.vision.diffusion.dit_transforms import (
     LabelDropout,
     NoiseGenerator,
@@ -37,54 +39,50 @@ from cerebras.modelzoo.models.vision.dit.layers.vae.utils import (
 )
 
 
-@registry.register_datasetprocessor("DiffusionBaseProcessor")
 class DiffusionBaseProcessor:
-    def __init__(self, params):
 
-        self.data_dir = params.get("data_dir", ".")
-        self.use_worker_cache = params["use_worker_cache"]
-        self.mixed_precision = params["mixed_precision"]
+    def __init__(self, config: DiffusionBaseProcessorConfig):
+        if isinstance(config, dict):
+            config = DiffusionBaseProcessorConfig(**config)
+
+        self.data_dir = config.data_dir
+        self.mp_type = cstorch.amp.get_floating_point_dtype()
         self.allowable_split = ["train", "val"]
-        self.num_classes = params["num_classes"]
-
-        if self.mixed_precision:
-            self.mp_type = cstorch.amp.get_half_dtype()
-        else:
-            self.mp_type = torch.float32
 
         # Preprocessing params
-        self.pp_params = dict()
-        self.pp_params["noaugment"] = params["noaugment"]
-        self.pp_params["mixed_precision"] = params["mixed_precision"]
-        self.pp_params["fp16_type"] = params["fp16_type"]
-        self.pp_params["transforms"] = params.get("transforms", [])
+        self.pp_params = dict(
+            noaugment=config.noaugment,
+            transforms=config.transforms,
+        )
 
         # params for data loader
-        self.batch_size = get_streaming_batch_size(params["batch_size"])
-        self.shuffle = params["shuffle"]
-        self.shuffle_seed = params["shuffle_seed"]
-        self.drop_last = params["drop_last"]
+        self.batch_size = get_streaming_batch_size(config.batch_size)
+        self.shuffle = config.shuffle and config.split == "train"
+        self.shuffle_seed = config.shuffle_seed
+        self.drop_last = config.drop_last
+        self.split = config.split
+        self.use_worker_cache = config.use_worker_cache
 
         # multi-processing params.
-        self.num_workers = params["num_workers"]
-        self.prefetch_factor = params["prefetch_factor"]
-        self.persistent_workers = params["persistent_workers"]
+        self.num_workers = config.num_workers
+        self.prefetch_factor = config.prefetch_factor
+        self.persistent_workers = config.persistent_workers
         self.distributed = is_gpu_distributed()
 
         # DiT related
         # copied to train/eval params in utils.py
-        self.vae_scaling_factor = params["vae_scaling_factor"]
-        self.dropout_rate = params["label_dropout_rate"]
-        self.latent_height = params["latent_size"][0]
-        self.latent_width = params["latent_size"][1]
-        self.latent_channels = params["latent_channels"]
-        self.num_diffusion_steps = params["num_diffusion_steps"]
-        self.schedule_name = params["schedule_name"]
+        self.vae_scaling_factor = config.vae_scaling_factor
+        self.dropout_rate = config.label_dropout_rate
+        self.latent_height = config.latent_size[0]
+        self.latent_width = config.latent_size[1]
+        self.latent_channels = config.latent_channels
+        self.num_diffusion_steps = config.num_diffusion_steps
+        self.schedule_name = config.schedule_name
 
     def _passthrough(self, x):
         return x
 
-    def create_dataloader(self, dataset, is_training=False):
+    def create_dataloader(self):
         """
         Dataloader returns a dict with keys:
             "input": Tensor of shape (batch_size, latent_channels, latent_height, latent_width)
@@ -94,7 +92,8 @@ class DiffusionBaseProcessor:
             "timestep": Tensor of shape (batch_size, ) that
                 indicates the timesteps for each diffusion sample
         """
-        shuffle = self.shuffle and is_training
+        dataset = self.create_dataset()
+        shuffle = self.shuffle
         generator = torch.Generator(device="cpu")
         if self.shuffle_seed is not None:
             generator.manual_seed(self.shuffle_seed)
@@ -195,7 +194,7 @@ class DiffusionBaseProcessor:
         return transform, target_transform
 
     @abstractmethod
-    def create_dataset(self, use_training_transforms=True, split="train"):
+    def create_dataset(self):
         raise NotImplementedError(
             "create_dataset must be implemented in a child class!!"
         )

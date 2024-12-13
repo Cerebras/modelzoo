@@ -14,8 +14,8 @@
 
 """This module contains the callback class that logs all metrics attached to the model."""
 
-import cerebras.pytorch as cstorch
 from cerebras.modelzoo.trainer.callbacks import Callback
+from cerebras.pytorch.metrics.metric import Metric
 
 
 class ModelEvalMetrics(Callback):
@@ -27,8 +27,15 @@ class ModelEvalMetrics(Callback):
             metrics = {}
 
             for metric in model.modules():
-                if isinstance(metric, cstorch.metrics.Metric):
-                    metrics[metric.name] = float(metric)
-                    metric.reset()
+                if isinstance(metric, Metric):
+                    if metric.num_updates == 0:
+                        trainer.logger.warning(
+                            f"Skipping logging unused metric `{metric.name}` "
+                            f"To remove this warning, either remove it from "
+                            f"the model or step the metric every step."
+                        )
+                    else:
+                        metrics[metric.name] = float(metric)
+                        metric.reset()
 
             trainer.log_metrics(**metrics)

@@ -15,10 +15,7 @@
 import torch
 from torch import nn
 
-from cerebras.modelzoo.common.registry import registry
 
-
-@registry.register_loss("ViTMAELoss")
 class ViTMAELoss(nn.Module):
     def __init__(
         self,

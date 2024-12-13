@@ -14,18 +14,16 @@
 
 """Model Callback class."""
 
-import logging
 from typing import Callable, Union
 from warnings import warn
 
 import torch
 
 import cerebras.pytorch as cstorch
-from cerebras.modelzoo.common.utils.model.mup_utils import is_mup
-from cerebras.modelzoo.trainer.callbacks import Callback
+from cerebras.modelzoo.trainer.callbacks import CoreCallback
 
 
-class ModelCallback(Callback):
+class ModelCallback(CoreCallback):
     """Callback class that handles setting up and compiling the model."""
 
     def __init__(
@@ -53,9 +51,6 @@ class ModelCallback(Callback):
                 f"Expected model to be a torch.nn.Module or a callable that "
                 f"returns a torch.nn.Module, but got {type(self.model)}."
             )
-
-        if is_mup(trainer.model):
-            logging.info(f"This is a muP configured run")
 
         trainer.compiled_model = cstorch.compile(trainer.model, trainer.backend)
 

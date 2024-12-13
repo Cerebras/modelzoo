@@ -15,16 +15,16 @@
 import logging
 import os
 import random
+from typing import Any, Literal, Optional, Sequence
 
 import torch
 from PIL import Image
+from pydantic import Field
 from torchvision import transforms
 from torchvision.datasets import VisionDataset
 
 import cerebras.pytorch as cstorch
 import cerebras.pytorch.distributed as dist
-from cerebras.modelzoo.common.input_utils import get_streaming_batch_size
-from cerebras.modelzoo.common.registry import registry
 from cerebras.modelzoo.data.vision.classification.dataset_factory import (
     VisionSubset,
 )
@@ -32,6 +32,10 @@ from cerebras.modelzoo.data.vision.segmentation.preprocessing_utils import (
     adjust_brightness_transform,
     normalize_tensor_transform,
     rotation_90_transform,
+)
+from cerebras.modelzoo.data.vision.segmentation.UNetDataProcessor import (
+    UNetDataProcessor,
+    UNetDataProcessorConfig,
 )
 from cerebras.modelzoo.data.vision.transforms import LambdaWithParam
 from cerebras.modelzoo.data.vision.utils import (
@@ -104,62 +108,62 @@ class InriaAerialDataset(VisionDataset):
         return len(self.file_list)
 
 
-@registry.register_datasetprocessor("InriaAerialDataProcessor")
-class InriaAerialDataProcessor:
-    def __init__(self, params):
-        self.use_worker_cache = params["use_worker_cache"]
-        self.data_dir = params["data_dir"]
+class InriaAerialDataProcessorConfig(UNetDataProcessorConfig):
+    data_processor: Literal["InriaAerialDataProcessor"]
 
-        self.num_classes = params["num_classes"]
-        self.image_shape = params["image_shape"]  # of format (H, W, C)
-        self.duplicate_act_worker_data = params.get(
-            "duplicate_act_worker_data", False
-        )
+    use_worker_cache: bool = False
 
-        self.loss_type = params["loss"]
-        self.normalize_data_method = params.get("normalize_data_method")
+    overfit: bool = False
 
-        self.shuffle_seed = params.get("shuffle_seed", None)
-        if self.shuffle_seed is not None:
-            torch.manual_seed(self.shuffle_seed)
+    overfit_num_batches: Optional[int] = None
 
-        self.augment_data = params.get("augment_data", True)
-        self.batch_size = get_streaming_batch_size(params["batch_size"])
-        self.shuffle = params.get("shuffle", True)
+    overfit_indices: Optional[Sequence] = None
 
-        # Multi-processing params.
-        self.num_workers = params.get("num_workers", 0)
-        self.drop_last = params.get("drop_last", True)
-        self.prefetch_factor = params.get("prefetch_factor", 10)
-        self.persistent_workers = params.get("persistent_workers", True)
+    split: Literal["train", "val", "test"] = "train"
+    "Dataset split."
 
-        self.mixed_precision = params.get("mixed_precision")
-        if self.mixed_precision:
-            self.mp_type = cstorch.amp.get_half_dtype()
-        else:
-            self.mp_type = torch.float32
+    use_fast_dataloader: bool = False
+
+    disable_sharding: bool = False
+
+    train_test_split: Optional[Any] = Field(default=None, deprecated=True)
+    class_id: Optional[Any] = Field(default=None, deprecated=True)
+
+    def post_init(self, context):
+        super().post_init(context)
+        if self.overfit_num_batches is None:
+            self.overfit_num_batches = num_tasks() * self.num_workers
+
+
+class InriaAerialDataProcessor(UNetDataProcessor):
+    def __init__(self, config: InriaAerialDataProcessorConfig):
+        super().__init__(config)
+        self.split = config.split
+        self.use_worker_cache = config.use_worker_cache
+        self.shuffle = self.shuffle and self.split == "train"
+
+        self.image_shape = config.image_shape  # of format (H, W, C)
 
         # Debug params:
-        self.overfit = params.get("overfit", False)
+        self.overfit = config.overfit
         # default is that each activation worker sends `num_workers`
         # batches so total batch_size * num_act_workers * num_pytorch_workers samples
-        self.overfit_num_batches = params.get(
-            "overfit_num_batches", num_tasks() * self.num_workers
-        )
-        self.random_indices = params.get("overfit_indices", None)
+        self.overfit_num_batches = config.overfit_num_batches
+        self.random_indices = config.overfit_indices
         if self.overfit:
             logging.info(f"---- Overfitting {self.overfit_num_batches}! ----")
 
         # Using Faster Dataloader for mapstyle dataset.
-        self.use_fast_dataloader = params.get("use_fast_dataloader", False)
+        self.use_fast_dataloader = config.use_fast_dataloader
 
-    def create_dataset(self, is_training):
+        self.disable_sharding = config.disable_sharding
 
-        split = "train" if is_training else "val"
+    def create_dataset(self):
+
         dataset = InriaAerialDataset(
             root=self.data_dir,
-            split=split,
-            transforms=self.transform_image_and_mask,
+            split=self.split,
+            transform=self.preprocess_image,
             use_worker_cache=self.use_worker_cache,
         )
 
@@ -178,14 +182,14 @@ class InriaAerialDataProcessor:
 
         return dataset
 
-    def create_dataloader(self, is_training=False):
-        dataset = self.create_dataset(is_training)
-        shuffle = self.shuffle and is_training
+    def create_dataloader(self):
+        dataset = self.create_dataset()
+
         generator_fn = torch.Generator(device="cpu")
         if self.shuffle_seed is not None:
             generator_fn.manual_seed(self.shuffle_seed)
 
-        if shuffle:
+        if self.shuffle:
             if self.duplicate_act_worker_data:
                 # Multiples activation workers, each sending same data in different
                 # order since the dataset is extremely small
@@ -199,7 +203,7 @@ class InriaAerialDataProcessor:
                 )
             else:
                 data_sampler = ShardedSampler(
-                    dataset, shuffle, self.shuffle_seed, self.drop_last
+                    dataset, self.shuffle, self.shuffle_seed, self.drop_last
                 )
         else:
             data_sampler = torch.utils.data.SequentialSampler(dataset)
@@ -310,7 +314,7 @@ class InriaAerialDataProcessor:
 
         if self.loss_type == "bce":
             mask = mask.to(self.mp_type)
-        if self.mixed_precision:
+        if cstorch.amp.mixed_precision():
             image = image.to(self.mp_type)
 
         return image, mask

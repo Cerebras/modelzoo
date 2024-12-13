@@ -16,10 +16,6 @@ import logging
 import re
 from typing import Any, Dict, List
 
-from cerebras.modelzoo.data_preparation.data_preprocessing.utils import (
-    SYSTEM_PROMPT_REGISTRY,
-)
-
 logger = logging.getLogger(__name__)
 
 
@@ -41,88 +37,94 @@ def finetuning_llava_hook(
         ValueError: If image_token is not provided, or if there are multiple image tokens in the user's role, or if image tokens are found in the assistant's response.
     """
 
-    data_keys = read_hook_kwargs.get("data_keys")
-    assert (
-        data_keys != None
-    ), "data_keys should be provided in the read_hook_kwargs section"
-    multi_turn_key = data_keys.get("multi_turn_key")
-    image_key = data_keys.get("image_key")
+    multi_turn_key = read_hook_kwargs.get("multi_turn_key")
+    image_key = read_hook_kwargs.get("image_key")
+    image_token = read_hook_kwargs.get("image_token")
+    phase = read_hook_kwargs.get("phase")
 
-    system_prompt = read_hook_kwargs.get("system_prompt")
-    image_token = read_hook_kwargs.get("image_token", None)
+    if multi_turn_key is None:
+        raise ValueError(
+            "multi_turn_key must be provided in read_hook_kwargs for LLaVA "
+        )
+    if image_key is None:
+        raise ValueError(
+            "image_key must be provided in read_hook_kwargs for LLaVA "
+        )
+    if phase is None:
+        raise ValueError(
+            "phase must be provided in read_hook_kwargs for LLaVA "
+        )
+    if image_token is None:
+        raise ValueError(
+            "image_token must be provided in read_hook_kwargs for LLaVA"
+        )
+
+    multi_turn_role_key = read_hook_kwargs.get("multi_turn_role_key", "from")
     multi_turn_content_key = read_hook_kwargs.get(
         "multi_turn_content_key", "value"
     )
-    phase = read_hook_kwargs.get("phase")
-    assert (
-        phase != None
-    ), "phase should be provided in the read_hook_kwargs section for llava"
-    assert (
-        image_token != None
-    ), "image_token should be provided in the read_hook_kwargs section for llava"
 
+    # Get conversation data and image path
     conversation_data = example.get(multi_turn_key, [])
     if conversation_data is None:
         conversation_data = []
-    image_path = example.get(image_key, None)
+    image_path = example.get(image_key)
     transformed_data = []
-
-    if system_prompt:
-        system_prompt_text = SYSTEM_PROMPT_REGISTRY.get(system_prompt, "")
-        system_data = {
-            "type": "system",
-            "content": [{"text": system_prompt_text.strip()}],
-        }
-        transformed_data.append(system_data)
-
-    if image_path and not image_token:
-        raise ValueError(
-            "Image token has not been provided inside read_hook_kwargs within the processing section in the config file for llava finetuning datasets."
-        )
-
+    # Process conversation turns
     for i, turn in enumerate(conversation_data):
-
-        semantic_drop_mask = []
-        role = "user" if i % 2 == 0 else "assistant"
+        if turn.get(multi_turn_role_key) in ["human", "user"]:
+            role = "user"
+        elif turn.get(multi_turn_role_key) in ["gpt", "assistant"]:
+            role = "assistant"
+        elif turn.get(multi_turn_role_key) == "system":
+            role = "system"
+        else:
+            raise ValueError("Invalid multi_turn_role_key.")
         content_parts = []
-        if role == "user":
-            # Check for multiple image tokens in the user's role
-            if turn[multi_turn_content_key].count(image_token) > 1:
+        semantic_drop_mask = []
+
+        if role == "system":
+            system_content = turn.get(multi_turn_content_key, "").strip()
+            if system_content:
+                content_parts.append({"text": system_content})
+                semantic_drop_mask.append(False)
+        elif role == "user":
+            content = turn[multi_turn_content_key]
+            parts = re.split(re.escape(image_token), content)
+
+            if len(parts) > 2:
                 raise ValueError(
                     "Multiple image tokens found in user's role. Only one image token is allowed."
                 )
-            # Assume there's only one image token in the user's role
-            parts = re.split(
-                re.escape(image_token), turn[multi_turn_content_key]
-            )
+
+            # Add image part before the text if image token exists
             if len(parts) == 2:
-                # Add the image part before the text
                 content_parts.append({"image": image_path})
-                parts = [part.strip() for part in parts]
-                if parts[0] != '' and parts[1] != '':
-                    content_parts.append({"text": parts[0] + parts[1]})
+                text = parts[0].strip() + parts[1].strip()
+                if text != "":
+                    content_parts.append({"text": text})
                     if phase == 1:
                         semantic_drop_mask.extend([False, True])
                     else:
                         semantic_drop_mask.extend([False, False])
                 else:
-                    semantic_drop_mask.extend([False])
+                    semantic_drop_mask.append(False)
             else:
-                # No image token found, add the text as is
-                content_parts.append({"text": turn[multi_turn_content_key]})
-                if phase == 1:
-                    semantic_drop_mask.extend([True])
-                else:
-                    semantic_drop_mask.extend([False])
-        elif role == "assistant":
-            # Check that no image tokens are present in the assistant's response
-            if image_token and image_token in turn[multi_turn_content_key]:
-                raise ValueError(
-                    "Image tokens are not allowed in the assistant's response."
-                )
-            content_parts.append({"text": turn[multi_turn_content_key]})
-            semantic_drop_mask.extend([False])
+                # No image token, just add the text
+                content_parts.append({"text": content.strip()})
+                semantic_drop_mask.append(False)
 
+        # Handle assistant's response (no image allowed)
+        elif role == "assistant":
+            content = turn[multi_turn_content_key]
+            if image_token in content:
+                raise ValueError(
+                    "Image token found in assistant's response, which is not allowed."
+                )
+            content_parts.append({"text": content.strip()})
+            semantic_drop_mask.append(False)
+
+        # Append the transformed data for each turn
         transformed_data.append(
             {
                 "type": role,
@@ -130,6 +132,7 @@ def finetuning_llava_hook(
                 "semantic_drop_mask": semantic_drop_mask,
             }
         )
+
     return transformed_data
 
 
@@ -150,12 +153,8 @@ def pretraining_image_captions_hook(
         AssertionError: If required keys are not provided in read_hook_kwargs.
     """
 
-    data_keys = read_hook_kwargs.get("data_keys")
-    assert (
-        data_keys != None
-    ), "data_keys should be provided in the read_hook_kwargs section"
-    image_key = data_keys.get('image_key', None)
-    caption_key = data_keys.get('caption_key', None)
+    image_key = read_hook_kwargs.get('image_key', None)
+    caption_key = read_hook_kwargs.get('caption_key', None)
     assert (
         image_key != None
     ), "pretraining_image_captions_hook requires a image_key"
@@ -198,16 +197,17 @@ def text_read_hook(
         AssertionError: If required keys are not provided in read_hook_kwargs.
     """
 
-    data_keys = read_hook_kwargs.get("data_keys")
-    assert (
-        data_keys != None
-    ), "data_keys should be provided in the read_hook_kwargs section"
-    text_key = data_keys.get('text_key', None)
-    assert text_key != None, "text_read_hook requires a text_key"
+    text_key = read_hook_kwargs.get('text_key', None)
+    assert text_key is not None, "text_read_hook requires a text_key"
+
+    text_value = example.get(
+        text_key, ""
+    ).strip()  # Remove leading and trailing spaces
+
     return [
         {
             "content": [
-                {"text": example.get(text_key, "")},
+                {"text": text_value},
             ],
         }
     ]
@@ -230,13 +230,8 @@ def nlg_read_hook(
         AssertionError: If required keys are not provided in read_hook_kwargs.
     """
 
-    data_keys = read_hook_kwargs.get("data_keys")
-    assert (
-        data_keys != None
-    ), "data_keys should be provided in the read_hook_kwargs section"
-
-    context_key = data_keys.get('context_key', None)
-    completion_key = data_keys.get('completion_key', None)
+    context_key = read_hook_kwargs.get('context_key', None)
+    completion_key = read_hook_kwargs.get('completion_key', None)
 
     assert (
         context_key is not None and completion_key is not None
@@ -272,12 +267,8 @@ def prompt_completion_text_read_hook(
         List[Dict[str, Any]]: A list of dictionaries in semantic_data_array format.
     """
 
-    data_keys = read_hook_kwargs.get("data_keys")
-    assert (
-        data_keys != None
-    ), "data_keys should be provided in the read_hook_kwargs section"
-    prompt_key = data_keys.get('prompt_key', None)
-    completion_key = data_keys.get('completion_key', None)
+    prompt_key = read_hook_kwargs.get('prompt_key', None)
+    completion_key = read_hook_kwargs.get('completion_key', None)
     assert (
         prompt_key is not None and completion_key is not None
     ), "prompt_completion_read_hook requires a prompt_key and a completion_key"
@@ -314,36 +305,81 @@ def chat_read_hook(
         AssertionError: If required keys are not provided in read_hook_kwargs.
     """
 
-    ## This api assumes dataset is in ChatML format
-    data_keys = read_hook_kwargs.get("data_keys")
-    assert (
-        data_keys != None
-    ), "data_keys should be provided in the read_hook_kwargs section"
-    multi_turn_key = data_keys.get('multi_turn_key')
+    # This API assumes dataset is in ChatML format
+    multi_turn_key = read_hook_kwargs.get('multi_turn_key', None)
+    multi_turn_role_key = read_hook_kwargs.get('multi_turn_role_key', None)
+    multi_turn_content_key = read_hook_kwargs.get(
+        'multi_turn_content_key', None
+    )
+
     assert (
         multi_turn_key is not None
     ), "multi_turn_chat_read_hook requires a multi_turn_key"
+
+    assert (
+        multi_turn_role_key is not None
+    ), "multi_turn_chat_read_hook requires a multi_turn_role_key"
+
+    assert (
+        multi_turn_content_key is not None
+    ), "multi_turn_chat_read_hook requires a multi_turn_content_key"
+
     conversation_data = example.get(multi_turn_key, [])
-    content_key = read_hook_kwargs.get('multi_turn_content_key', "content")
-    has_system_prompt = read_hook_kwargs.get('has_system_prompt', False)
-
+    if not conversation_data:
+        return []
     semantic_data_array = []
-    if has_system_prompt:
-        system_prompt = conversation_data.pop(0)
-        semantic_data_array.append(
-            {"type": "system", "content": [{"text": system_prompt}]}
-        )
+    first_role = conversation_data[0].get(multi_turn_role_key)
+    if first_role == "system":
+        system_prompt = conversation_data[0].get(multi_turn_content_key)
+        if system_prompt:
+            semantic_data_array.append(
+                {"type": "system", "content": [{"text": system_prompt}]}
+            )
+        conversation_data = conversation_data[1:]  # Remove system prompt
 
-    for i, turn in enumerate(conversation_data):
-        role = "user" if i % 2 == 0 else "assistant"
-        content = turn.get(content_key)
-        if content:
-            ## Some tokenizer's like LLaMa 3 when applying chat template strip the user and assistant.
-            ## The semantic region content should be in sync with the string obtained after applying chat template.
-            content = content.strip()
-        semantic_data_array.append(
-            {"type": role, "content": [{"text": content}]}
+    # Checks to ensure there are equal pairs.
+    if len(conversation_data) % 2 != 0:
+        logger.warning(
+            "Every user should have a corresponding assistant, skipping..."
         )
+        return []
+    else:
+        # Checks to ensure that we don't have two consecutive messages by the same user.
+
+        for index in range(0, len(conversation_data), 2):
+            user_turn = conversation_data[index]
+            assistant_turn = conversation_data[index + 1]
+
+            user_role = user_turn.get(multi_turn_role_key)
+            assistant_role = assistant_turn.get(multi_turn_role_key)
+
+            if user_role == assistant_role:
+                logger.warning(
+                    "Two consecutive messages by the same participant is not allowed, skipping..."
+                )
+                return []
+
+            user_content = user_turn.get(multi_turn_content_key)
+            assistant_content = assistant_turn.get(multi_turn_content_key)
+
+            if user_content:
+                user_content = user_content.strip()
+
+            if assistant_content:
+                assistant_content = assistant_content.strip()
+
+            semantic_data_array.append(
+                {
+                    "type": user_turn.get(multi_turn_role_key),
+                    "content": [{"text": user_content}],
+                }
+            )
+            semantic_data_array.append(
+                {
+                    "type": assistant_turn.get(multi_turn_role_key),
+                    "content": [{"text": assistant_content}],
+                }
+            )
 
     return semantic_data_array
 
@@ -353,6 +389,7 @@ def dpo_read_hook(
     **read_hook_kwargs: Any,
 ) -> List[Dict[str, Any]]:
     """
+
     Transforms data for the Direct Preference Optimization (DPO) task into a semantic data array format.
 
     Args:
@@ -366,13 +403,9 @@ def dpo_read_hook(
         AssertionError: If required keys are not provided in read_hook_kwargs.
     """
 
-    data_keys = read_hook_kwargs.get("data_keys")
-    assert (
-        data_keys != None
-    ), "data_keys should be provided in the read_hook_kwargs section"
-    prompt_key = data_keys.get("prompt_key", None)
-    chosen_key = data_keys.get("chosen_key", None)
-    rejected_key = data_keys.get("rejected_key", None)
+    prompt_key = read_hook_kwargs.get("prompt_key", None)
+    chosen_key = read_hook_kwargs.get("chosen_key", None)
+    rejected_key = read_hook_kwargs.get("rejected_key", None)
     assistant_role = read_hook_kwargs.get("assistant_role", "assistant:")
     input = []
     if isinstance(example, dict) and all(
@@ -464,12 +497,8 @@ def prompt_completion_chat_read_hook(
         List[Dict[str, Any]]: A list of dictionaries in semantic_data_array format.
     """
 
-    data_keys = read_hook_kwargs.get("data_keys")
-    assert (
-        data_keys != None
-    ), "data_keys should be provided in the read_hook_kwargs section"
-    prompt_key = data_keys.get('prompt_key', None)
-    completion_key = data_keys.get('completion_key', None)
+    prompt_key = read_hook_kwargs.get('prompt_key', None)
+    completion_key = read_hook_kwargs.get('completion_key', None)
     assert (
         prompt_key is not None and completion_key is not None
     ), "prompt_completion_chat_read_hook requires a prompt_key and a completion_key"
@@ -516,12 +545,8 @@ def finetuning_image_captions_hook(
         List[Dict[str, Any]]: A list of dictionaries in semantic_data_array format.
     """
 
-    data_keys = read_hook_kwargs.get("data_keys")
-    assert (
-        data_keys != None
-    ), "data_keys should be provided in the read_hook_kwargs section"
-    image_key = data_keys.get('image_key', None)
-    caption_key = data_keys.get('caption_key', None)
+    image_key = read_hook_kwargs.get('image_key', None)
+    caption_key = read_hook_kwargs.get('caption_key', None)
     assert (
         image_key != None
     ), "pretraining_image_captions_hook requires a image_key"
@@ -563,99 +588,110 @@ def finetuning_llava_hook_prompt_completion(
     example: Dict[str, Any], **read_hook_kwargs: Any
 ) -> List[Dict[str, Any]]:
     """
-    Transforms conversation data for finetuning LLaVA.
+    Transforms conversation data for finetuning LLaVA into SDA format.
 
     Args:
         example (Dict[str, Any]): The input data containing conversation and image paths.
-        **read_hook_kwargs (Any): Additional keyword arguments containing data_keys, system_prompt, image_token, multi_turn_content_key, and phase.
+        **read_hook_kwargs (Any): Additional keyword arguments including:
+            - data_keys (Dict[str, str]): Dictionary specifying keys for multi-turn and image data.
+            - image_token (str): The token used for images.
+            - multi_turn_content_key (str, optional): Key to extract conversation content.
+            - phase (int): The current phase of processing (1 or 2).
 
     Returns:
-        List[Dict[str, Any]]: Transformed data suitable for finetuning LLaVA.
+        List[Dict[str, Any]]: Transformed data in the SDA format.
 
     Raises:
-        AssertionError: If required keys are not provided in read_hook_kwargs.
-        ValueError: If image_token is not provided, or if there are multiple image tokens in the user's role, or if image tokens are found in the assistant's response.
+        ValueError: If required data is missing or in an incorrect format.
     """
 
-    data_keys = read_hook_kwargs.get("data_keys")
-    assert (
-        data_keys != None
-    ), "data_keys should be provided in the read_hook_kwargs section"
-    multi_turn_key = data_keys.get("multi_turn_key")
-    image_key = data_keys.get("image_key")
+    # Get required keys from read_hook_kwargs
 
-    system_prompt = read_hook_kwargs.get("system_prompt")
-    image_token = read_hook_kwargs.get("image_token", None)
+    multi_turn_key = read_hook_kwargs.get("multi_turn_key")
+    image_key = read_hook_kwargs.get("image_key")
+    image_token = read_hook_kwargs.get("image_token")
+    multi_turn_role_key = read_hook_kwargs.get("multi_turn_role_key", "from")
     multi_turn_content_key = read_hook_kwargs.get(
         "multi_turn_content_key", "value"
     )
-    phase = read_hook_kwargs.get("phase", 1)
-    assert (
-        image_token != None
-    ), "image_token should be provided in the read_hook_kwargs section for llava"
+    phase = read_hook_kwargs.get("phase")
+    if multi_turn_key is None:
+        raise ValueError(
+            "multi_turn_key must be provided in read_hook_kwargs for LLaVA "
+        )
+    if image_key is None:
+        raise ValueError(
+            "image_key must be provided in read_hook_kwargs for LLaVA "
+        )
+    if phase is None:
+        raise ValueError(
+            "phase must be provided in read_hook_kwargs for LLaVA "
+        )
+    if image_token is None:
+        raise ValueError(
+            "image_token must be provided in read_hook_kwargs for LLaVA"
+        )
 
+    # Get conversation data and image path
     conversation_data = example.get(multi_turn_key, [])
     if conversation_data is None:
         conversation_data = []
-    image_path = example.get(image_key, None)
+    image_path = example.get(image_key)
     transformed_data = []
 
-    if system_prompt:
-        system_prompt_text = SYSTEM_PROMPT_REGISTRY.get(system_prompt, "")
-        system_data = {
-            "type": "system",
-            "content": [{"text": system_prompt_text.strip()}],
-        }
-        transformed_data.append(system_data)
+    # Ensure image path is provided if image_token is present
+    if not image_path:
+        raise ValueError("Image path must be provided when image_token is used")
 
-    if image_path and not image_token:
-        raise ValueError(
-            "Image token has not been provided inside read_hook_kwargs within the processing section in the config file for llava finetuning datasets."
-        )
+    # Process conversation turns
+    for turn in conversation_data:
+        if turn.get(multi_turn_role_key) in ["human", "user"]:
+            role = "prompt"
+        elif turn.get(multi_turn_role_key) in ["gpt", "assistant"]:
+            role = "completion"
+        else:
+            raise ValueError(
+                f"Invalid multi_turn_role_key: {turn.get(multi_turn_role_key)}"
+            )
 
-    for i, turn in enumerate(conversation_data):
-
-        semantic_drop_mask = []
-        role = "prompt" if i % 2 == 0 else "completion"
         content_parts = []
+        semantic_drop_mask = []
+
         if role == "prompt":
-            # Check for multiple image tokens in the user's role
-            if turn[multi_turn_content_key].count(image_token) > 1:
+            content = turn[multi_turn_content_key]
+            parts = re.split(re.escape(image_token), content)
+
+            if len(parts) > 2:
                 raise ValueError(
                     "Multiple image tokens found in user's role. Only one image token is allowed."
                 )
-            # Assume there's only one image token in the user's role
-            parts = re.split(
-                re.escape(image_token), turn[multi_turn_content_key]
-            )
+
+            # Add image part before the text if image token exists
             if len(parts) == 2:
-                # Add the image part before the text
                 content_parts.append({"image": image_path})
-                parts = [part.strip() for part in parts]
-                if parts[0] != '' and parts[1] != '':
-                    content_parts.append({"text": parts[0] + parts[1]})
+                text = parts[0].strip() + parts[1].strip()
+                if text != "":
+                    content_parts.append({"text": text})
                     if phase == 1:
                         semantic_drop_mask.extend([False, True])
                     else:
                         semantic_drop_mask.extend([False, False])
                 else:
-                    semantic_drop_mask.extend([False])
+                    semantic_drop_mask.append(False)
             else:
-                # No image token found, add the text as is
-                content_parts.append({"text": turn[multi_turn_content_key]})
-                if phase == 1:
-                    semantic_drop_mask.extend([True])
-                else:
-                    semantic_drop_mask.extend([False])
+                # No image token, just add the text
+                content_parts.append({"text": content})
+        # Handle assistant's response (no image allowed)
         elif role == "completion":
-            # Check that no image tokens are present in the assistant's response
-            if image_token and image_token in turn[multi_turn_content_key]:
+            content = turn[multi_turn_content_key]
+            if image_token in content:
                 raise ValueError(
-                    "Image tokens are not allowed in the completion's response."
+                    "Image token found in assistant's response, which is not allowed."
                 )
-            content_parts.append({"text": turn[multi_turn_content_key]})
-            semantic_drop_mask.extend([False])
+            content_parts.append({"text": content})
+            semantic_drop_mask.append(False)
 
+        # Append the transformed data for each turn
         transformed_data.append(
             {
                 "type": role,

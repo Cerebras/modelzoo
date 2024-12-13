@@ -21,7 +21,7 @@ and optimizing the representation of tokenized data by merging shorter sequences
 within a specified maximum sequence length.
 """
 
-import logging
+import os
 from collections import defaultdict
 from typing import Any, Dict, List, Tuple
 
@@ -30,105 +30,10 @@ import numpy as np
 from cerebras.modelzoo.data_preparation.data_preprocessing.finetuning_token_generator import (
     FinetuningTokenGenerator,
 )
-
-logger = logging.getLogger("utils")
-logger.setLevel(logging.INFO)
-
-
-def create_features_finetuning_vsl(
-    bin,
-    max_sequence_length,
-    pad_id=0,
-    inverted_mask=False,
-    input_ids_dtype="int32",
-    input_mask_dtype="int32",
-    labels_dtype="int32",
-    attention_span_dtype="int32",
-    position_ids_dtype="int32",
-):
-    """Given a list of VSL sequences, generate input features and labels.
-
-    Args:
-        bin (list(sequence)): list of VSL sequences.
-        max_sequence_length (int): Maximum sequence length for data writes.
-        pad_id (int): Id for pad token. Defaults to `0`.
-        sep_id (int): Id for separator token. Defaults to `None`.
-        inverted_mask (bool): Invert mask if specified for runtime execution.
-            Defaults to `False`.
-        input_ids_dtype (str): Dtype as string for input ids.
-            Defaults to `int32`.
-        input_mask_dtype (str): Dtype as string for input mask.
-            Defaults to `int32`.
-        labels_dtype (str): Dtype as string for labels. Defaults to `int32`.
-        attention_span_dtype (str): Dtype as string for keys attention span in VSL.
-            Defaults to `int32`.
-        position_ids_dtype (str): Dtype as string for position ids in VSL.
-            Defaults to `int32`.
-
-    Returns:
-        Tuple containing features and labels
-    """
-    input_ids, input_mask, labels, attention_span, position_ids = (
-        [],
-        [],
-        [],
-        [],
-        [],
-    )
-    num_bins = len(bin)
-    for i, data in enumerate(bin):
-        token_ids, token_mask = data.get("token_ids"), data.get("input_mask")
-        input_ids.extend(token_ids)
-        labels.extend(token_ids)
-        input_mask.extend(token_mask)
-        if i != num_bins - 1:
-            sample_len = len(token_ids)
-            attention_span.extend(list(range(sample_len - 1, -1, -1)))
-            position_ids.extend(list(range(sample_len)))
-        else:
-            ## We will be chopping of the last token id in the last bin
-            sample_len = len(token_ids) - 1
-            attention_span.extend(list(range(sample_len - 1, -1, -1)))
-            position_ids.extend(list(range(sample_len)))
-
-    input_ids = input_ids[:-1]
-    labels = labels[1:]
-    input_mask = input_mask[1:]
-    # padding
-    num_pad = max_sequence_length - len(input_ids)
-    padding = [pad_id] * num_pad
-    input_ids.extend(padding)
-    labels.extend(padding)
-
-    padding = [0] * num_pad
-    input_mask.extend(padding)
-    attention_span.extend(padding)
-    position_ids.extend(padding)
-
-    # assertions to ensure correct output shapes
-    assert (
-        len(input_ids) == max_sequence_length
-        and len(labels) == max_sequence_length
-        and len(input_mask) == max_sequence_length
-        and len(attention_span) == max_sequence_length
-        and len(position_ids) == max_sequence_length
-    ), "Wrong sequence length"
-
-    input_ids = getattr(np, input_ids_dtype)(input_ids)
-    input_mask = getattr(np, input_mask_dtype)(input_mask)
-
-    if inverted_mask:
-        input_mask = np.equal(input_mask, 0).astype(input_mask.dtype)
-
-    labels = getattr(np, labels_dtype)(labels)
-    attention_span = getattr(np, attention_span_dtype)(attention_span)
-    position_ids = getattr(np, position_ids_dtype)(position_ids)
-    result = {
-        "data": np.stack(
-            [input_ids, input_mask, labels, attention_span, position_ids]
-        )
-    }
-    return result
+from cerebras.modelzoo.data_preparation.data_preprocessing.utils import (
+    get_data_stats,
+    setup_warning_logging,
+)
 
 
 class VSLFinetuningTokenGenerator(FinetuningTokenGenerator):
@@ -136,8 +41,6 @@ class VSLFinetuningTokenGenerator(FinetuningTokenGenerator):
     Token generator for variable-length sequence summarization (VSLS).
     Extends FinetuningTokenGenerator with additional functionality for VSLS.
     """
-
-    use_vsl = True
 
     def __init__(self, params, tokenizer, eos_id, pad_id):
         """
@@ -147,16 +50,99 @@ class VSLFinetuningTokenGenerator(FinetuningTokenGenerator):
         super(VSLFinetuningTokenGenerator, self).__init__(
             params, tokenizer, eos_id, pad_id
         )
+        setup_params = params["setup"]
+        warning_log_dir = (
+            os.path.join(setup_params.get("output_dir"), "logs")
+            if setup_params.get("output_dir")
+            else "./data_preprocessing_logs"
+        )
+        self.logger = setup_warning_logging(warning_log_dir, __name__)
         self.position_ids_dtype = params["dataset"].pop(
             "position_ids_dtype", "int32"
         )
-        self.sample_features = [
+        self.features = [
             "input_ids",
             "attention_mask",
             "labels",
             "attention_span",
             "position_ids",
         ]
+
+    def create_features_finetuning_vsl(
+        self,
+        bin,
+    ):
+        """Given a list of VSL sequences, generate input features and labels.
+
+        Args:
+            bin (list(sequence)): list of VSL sequences.
+
+        Returns:
+            Tuple containing features and labels
+        """
+        input_ids, input_mask, labels, attention_span, position_ids = (
+            [],
+            [],
+            [],
+            [],
+            [],
+        )
+        num_bins = len(bin)
+        for i, data in enumerate(bin):
+            token_ids, token_mask = data.get("token_ids"), data.get(
+                "input_mask"
+            )
+            input_ids.extend(token_ids)
+            labels.extend(token_ids)
+            input_mask.extend(token_mask)
+            if i != num_bins - 1:
+                sample_len = len(token_ids)
+                attention_span.extend(list(range(sample_len - 1, -1, -1)))
+                position_ids.extend(list(range(sample_len)))
+            else:
+                ## We will be chopping of the last token id in the last bin
+                sample_len = len(token_ids) - 1
+                attention_span.extend(list(range(sample_len - 1, -1, -1)))
+                position_ids.extend(list(range(sample_len)))
+
+        input_ids = input_ids[:-1]
+        labels = labels[1:]
+        input_mask = input_mask[1:]
+        # padding
+        num_pad = self.max_seq_length - len(input_ids)
+        padding = [self.pad_id] * num_pad
+        input_ids.extend(padding)
+        labels.extend(padding)
+
+        padding = [0] * num_pad
+        input_mask.extend(padding)
+        attention_span.extend(padding)
+        position_ids.extend(padding)
+
+        # assertions to ensure correct output shapes
+        assert (
+            len(input_ids) == self.max_seq_length
+            and len(labels) == self.max_seq_length
+            and len(input_mask) == self.max_seq_length
+            and len(attention_span) == self.max_seq_length
+            and len(position_ids) == self.max_seq_length
+        ), "Wrong sequence length"
+
+        input_ids = getattr(np, self.input_ids_dtype)(input_ids)
+        input_mask = getattr(np, self.input_mask_dtype)(input_mask)
+
+        if self.inverted_mask:
+            input_mask = np.equal(input_mask, 0).astype(self.input_mask.dtype)
+
+        labels = getattr(np, self.input_mask_dtype)(labels)
+        attention_span = getattr(np, self.position_ids_dtype)(attention_span)
+        position_ids = getattr(np, self.position_ids_dtype)(position_ids)
+        result = {
+            "data": np.stack(
+                [input_ids, input_mask, labels, attention_span, position_ids]
+            )
+        }
+        return result
 
     def process_chunks(
         self, tokenized_data: List[List[tuple]]
@@ -177,26 +163,110 @@ class VSLFinetuningTokenGenerator(FinetuningTokenGenerator):
         data_stats = defaultdict(int)
 
         for vsl_list in tokenized_data:
-            processed = create_features_finetuning_vsl(
-                vsl_list,
-                self.max_seq_length,
-                pad_id=self.pad_id,
-                inverted_mask=self.inverted_mask,
-                input_ids_dtype=self.input_ids_dtype,
-                input_mask_dtype=self.input_mask_dtype,
-                labels_dtype=self.input_ids_dtype,
-                attention_span_dtype=self.position_ids_dtype,
-                position_ids_dtype=self.position_ids_dtype,
-            )
+            processed = self.create_features_finetuning_vsl(vsl_list)
             if processed != []:
-                stats = self.get_data_stats(processed["data"])
+                stats = get_data_stats(
+                    processed["data"],
+                    self.pad_id,
+                    self.eos_id,
+                    self.max_seq_length,
+                )
+
                 results["data"].append(
                     np.expand_dims(processed["data"], axis=0)
                 )
                 for key in stats:
                     data_stats[key] += stats[key]
+                data_stats["num_sequences_before_packing"] += len(vsl_list)
 
         return results, data_stats
+
+    def create_features_finetuning_vsl(self, bin):
+        """Given a list of VSL sequences, generate input features and labels.
+
+        Args:
+            bin (list(sequence)): list of VSL sequences.
+            max_sequence_length (int): Maximum sequence length for data writes.
+            pad_id (int): Id for pad token. Defaults to `0`.
+            sep_id (int): Id for separator token. Defaults to `None`.
+            inverted_mask (bool): Invert mask if specified for runtime execution.
+                Defaults to `False`.
+            input_ids_dtype (str): Dtype as string for input ids.
+                Defaults to `int32`.
+            input_mask_dtype (str): Dtype as string for input mask.
+                Defaults to `int32`.
+            labels_dtype (str): Dtype as string for labels. Defaults to `int32`.
+            attention_span_dtype (str): Dtype as string for keys attention span in VSL.
+                Defaults to `int32`.
+            position_ids_dtype (str): Dtype as string for position ids in VSL.
+                Defaults to `int32`.
+
+        Returns:
+            Tuple containing features and labels
+        """
+        input_ids, input_mask, labels, attention_span, position_ids = (
+            [],
+            [],
+            [],
+            [],
+            [],
+        )
+        num_bins = len(bin)
+        for i, data in enumerate(bin):
+            token_ids, token_mask = data.get("token_ids"), data.get(
+                "input_mask"
+            )
+            input_ids.extend(token_ids)
+            labels.extend(token_ids)
+            input_mask.extend(token_mask)
+            if i != num_bins - 1:
+                sample_len = len(token_ids)
+                attention_span.extend(list(range(sample_len - 1, -1, -1)))
+                position_ids.extend(list(range(sample_len)))
+            else:
+                ## We will be chopping of the last token id in the last bin
+                sample_len = len(token_ids) - 1
+                attention_span.extend(list(range(sample_len - 1, -1, -1)))
+                position_ids.extend(list(range(sample_len)))
+
+        input_ids = input_ids[:-1]
+        labels = labels[1:]
+        input_mask = input_mask[1:]
+        # padding
+        num_pad = self.max_seq_length - len(input_ids)
+        padding = [self.pad_id] * num_pad
+        input_ids.extend(padding)
+        labels.extend(padding)
+
+        padding = [0] * num_pad
+        input_mask.extend(padding)
+        attention_span.extend(padding)
+        position_ids.extend(padding)
+
+        # assertions to ensure correct output shapes
+        assert (
+            len(input_ids) == self.max_seq_length
+            and len(labels) == self.max_seq_length
+            and len(input_mask) == self.max_seq_length
+            and len(attention_span) == self.max_seq_length
+            and len(position_ids) == self.max_seq_length
+        ), "Wrong sequence length"
+
+        input_ids = getattr(np, self.input_ids_dtype)(input_ids)
+        input_mask = getattr(np, self.input_mask_dtype)(input_mask)
+
+        if self.inverted_mask:
+            input_mask = np.equal(input_mask, 0).astype(input_mask.dtype)
+
+        labels = getattr(np, self.input_ids_dtype)(labels)
+        attention_span = getattr(np, self.position_ids_dtype)(attention_span)
+        position_ids = getattr(np, self.position_ids_dtype)(position_ids)
+        result = {
+            "data": np.stack(
+                [input_ids, input_mask, labels, attention_span, position_ids]
+            )
+        }
+        return result
 
     def encode(
         self, semantic_data_array: List[Dict[str, Any]]
@@ -218,13 +288,13 @@ class VSLFinetuningTokenGenerator(FinetuningTokenGenerator):
         total_len = len(data.get("data").get("token_ids", []))
         discarded_files = 0
         if total_len > self.max_seq_length:
-            logger.warning(
+            self.logger.warning(
                 "prompt_ids + completion_ids > max_sequence_length, skipping this example..."
             )
             discarded_files += 1
             data = {}
         elif total_len < self.min_sequence_len:
-            logger.warning(
+            self.logger.warning(
                 "prompt_ids + completion_ids < min_sequence_len, skipping this example..."
             )
             discarded_files += 1

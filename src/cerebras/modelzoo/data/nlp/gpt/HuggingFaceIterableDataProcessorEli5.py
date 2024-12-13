@@ -12,49 +12,48 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Pytorch HuggingFace Eli5 Iterable Dataloader"""
+"""Pytorch HuggingFace Eli5 Iterable Dataloader."""
 
-from cerebras.modelzoo.common.registry import registry
+from typing import Literal
+
 from cerebras.modelzoo.data.common.input_utils import num_tasks
 from cerebras.modelzoo.data_preparation.huggingface.HuggingFace_Eli5 import (
     HuggingFace_Eli5,
 )
 from cerebras.modelzoo.data_preparation.huggingface.HuggingFaceDataProcessor import (
     HuggingFaceDataProcessor,
+    HuggingFaceDataProcessorConfig,
 )
 
 
-@registry.register_datasetprocessor("HuggingFaceIterableDataProcessorEli5")
+class HuggingFaceIterableDataProcessorEli5Config(
+    HuggingFaceDataProcessorConfig
+):
+    data_processor: Literal["HuggingFaceIterableDataProcessorEli5"]
+
+    split: str = "train"
+
+
 class HuggingFaceIterableDataProcessorEli5(HuggingFaceDataProcessor):
     """
     A HuggingFace Eli5 Iterable Data Processor.
-    :param dict params: dict containing training
-        input parameters for creating dataset.
-    Expects the following fields:
-    - "batch_size" (int): Batch size.
-    - "shuffle" (bool): Flag to enable data shuffling.
-    - "shuffle_buffer" (int): Size of shuffle buffer in samples.
-    - "shuffle_seed" (int): Shuffle seed.
-    - "num_workers" (int):  How many subprocesses to use for data loading.
-    - "drop_last" (bool): If True and the dataset size is not divisible
-       by the batch size, the last incomplete batch will be dropped.
-    - "prefetch_factor" (int): Number of batches loaded in advance by each worker.
-    - "persistent_workers" (bool): If True, the data loader will not shutdown
-       the worker processes after a dataset has been consumed once.
+
+    Args:
+        config: The configuration object
     """
 
-    def __init__(self, params):
-        num_workers = params.get("num_workers", 0)
-        split = params["split"]
+    def __init__(self, config: HuggingFaceIterableDataProcessorEli5Config):
+        if isinstance(config, dict):
+            config = HuggingFaceIterableDataProcessorEli5Config(**config)
 
         self.dataset, self.data_collator = HuggingFace_Eli5(
-            split=split, num_workers=num_workers
+            split=config.split, num_workers=config.num_workers
         )
 
         # Convert to an IterableDataset
         self.dataset = self.dataset.to_iterable_dataset(
-            num_shards=(num_tasks() * num_workers)
+            num_shards=(num_tasks() * config.num_workers)
         )
 
         # The super class will take care of sharding the dataset and creating the dataloader
-        super().__init__(params)
+        super().__init__(config, self.dataset)

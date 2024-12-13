@@ -29,17 +29,16 @@ from warnings import warn
 
 import numpy as np
 from lm_eval import evaluator, utils
-from lm_eval.__main__ import (
-    DEFAULT_RESULTS_FILE,
-    _handle_non_serializable,
-    _int_or_none_list_arg_type,
-)
+from lm_eval.__main__ import _int_or_none_list_arg_type
 from lm_eval.api.model import LM
 from lm_eval.api.task import Task
+from lm_eval.evaluator_utils import get_task_list
 from lm_eval.tasks import TaskManager, get_task_dict
-from lm_eval.utils import make_table
+from lm_eval.utils import handle_non_serializable, make_table
 
 from cerebras.appliance.log import ClassLogger, named_class_logger
+
+DEFAULT_RESULTS_FILE = "results.json"
 
 SUPPORTED_MODELS = {
     "btlm",
@@ -83,6 +82,9 @@ class EleutherCLIArgs:
         log_samples: If True, write out all model outputs and documents for
             per-sample measurement and post-hoc analysis. Use with
             --output_path.
+        system_instruction: System instruction to be used in the prompt
+        apply_chat_template: If True, applies the chat template to the prompt
+        fewshot_as_multiturn: If True, uses the fewshot as a multi-turn conversation
         show_config: If True, shows the the full config of all tasks at the
             end of the evaluation.
         include_path: Additional path to include if there are external tasks
@@ -101,7 +103,7 @@ class EleutherCLIArgs:
         trust_remote_code: Sets trust_remote_code to True to execute code to
             create HF Datasets from the Hub
         verbosity: EEH logging level
-        max_length_generation: Maximum length of generated sequence (prompt+generation).
+        max_tokens: Maximum number of tokens to generate.
         temperature: Sampling temperature used for generation.
         top_k: Top-k parameter used for generation.
         top_p: Top-p parameter used for nucleus sampling.
@@ -116,13 +118,16 @@ class EleutherCLIArgs:
     check_integrity: bool = False
     write_out: bool = False
     log_samples: bool = False
+    system_instruction: Optional[str] = None
+    apply_chat_template: bool = False
+    fewshot_as_multiturn: bool = False
     show_config: bool = False
     include_path: Optional[str] = None
     predict_only: bool = False
-    seed: Union[int, str] = "0,1234,1234"
+    seed: Union[int, str] = "0,1234,1234,1234"
     trust_remote_code: bool = False
     verbosity: str = "INFO"
-    max_length_generation: Optional[int] = None
+    max_tokens: Optional[int] = None
     temperature: Optional[float] = None
     top_k: Optional[int] = None
     top_p: Optional[float] = None
@@ -130,7 +135,12 @@ class EleutherCLIArgs:
     def __post_init__(self):
         """Specially handle the seed."""
         # Special handling of `seed` arg
-        self.seed = _int_or_none_list_arg_type(3, str(self.seed))
+        self.seed = _int_or_none_list_arg_type(
+            min_len=3,
+            max_len=4,
+            defaults="0,1234,1234,1234",
+            value=str(self.seed),
+        )
 
 
 @named_class_logger("EvalHarnessRunner")
@@ -228,44 +238,37 @@ class EvalHarnessRunner(ClassLogger):
     def validate_and_sort_tasks(
         task_names: Union[str, List[Union[str, Dict, Task]]],
         task_manager: Optional[TaskManager] = None,
-    ) -> None:
-        """Validates user specification of eval harness tasks on CSX. In particular, for
-        a single run we do not support.
+    ) -> List[str]:
+        """Validate and sort user specification of eval harness tasks on CSX.
 
-        1) Tasks with `loglikelihood_rolling` output types
-        2) Combining non-generative and generative tasks
-        3) Running multiple generative tasks
+        We currently do not support tasks with `loglikelihood_rolling` output types.
 
         Args:
             task_names: List of task names or config dicts
             task_manager: TaskManager object that stores indexed tasks
-        """
-        task_dict = get_task_dict(task_names, task_manager)
-        gen_tasks, non_gen_tasks = [], []
-        for task_name in task_dict.keys():
-            task_obj = task_dict[task_name]
-            if isinstance(task_obj, tuple):
-                _, task_obj = task_obj
-                if task_obj is None:
-                    continue
 
-            if task_obj.get_config("output_type") == "loglikelihood_rolling":
+        Returns:
+            List of sorted task names.
+        """
+        # Get the nested hierarchy of tasks and groups
+        task_dict = get_task_dict(task_names, task_manager)
+        # Flatten the task list
+        task_list = get_task_list(task_dict)
+
+        # Separate out generative and non-generative tasks
+        gen_tasks, non_gen_tasks = [], []
+        for task_output in task_list:
+            task: Task = task_output.task
+            if task.OUTPUT_TYPE == "loglikelihood_rolling":
                 raise RuntimeError(
-                    "Tasks with `loglikelihood_rolling` output types are not yet supported."
-                    f"Please unspecify task {task_name} from the specified tasks list."
+                    f"Tasks with `loglikelihood_rolling` output types are not yet supported."
+                    f"Please unspecify task {task_output.task_name} from the specified tasks list "
+                    f"or the task group that it belongs to."
                 )
-            elif task_obj.get_config("output_type") == "generate_until":
-                if gen_tasks:
-                    raise RuntimeError(
-                        "Running multiple generative eval harness tasks in the same callback "
-                        "is not currently supported. Please specify only one generative task per "
-                        "eval harness callback. To run multiple generative tasks, create separate "
-                        "callbacks."
-                    )
-                else:
-                    gen_tasks.append(task_name)
+            elif task.OUTPUT_TYPE == "generate_until":
+                gen_tasks.append(task_output.task_name)
             else:
-                non_gen_tasks.append(task_name)
+                non_gen_tasks.append(task_output.task_name)
 
         # Put non generative task names after generative so EH will execute them first.
         # This is needed minimize the amount of appliance restarts, so train->non_generative
@@ -335,7 +338,7 @@ class EvalHarnessRunner(ClassLogger):
             "temperature": self.args.temperature,
             "top_k": self.args.top_k,
             "top_p": self.args.top_p,
-            "max_tokens": self.args.max_length_generation,
+            "max_tokens": self.args.max_tokens,
         }
         model.gen_kwargs = gen_kwargs
 
@@ -348,12 +351,16 @@ class EvalHarnessRunner(ClassLogger):
             check_integrity=self.args.check_integrity,
             write_out=self.args.write_out,
             log_samples=self.args.log_samples,
+            system_instruction=self.args.system_instruction,
+            apply_chat_template=self.args.apply_chat_template,
+            fewshot_as_multiturn=self.args.fewshot_as_multiturn,
             task_manager=self.task_manager,
             verbosity=self.args.verbosity,
             predict_only=self.args.predict_only,
             random_seed=self.args.seed[0],
             numpy_random_seed=self.args.seed[1],
             torch_random_seed=self.args.seed[2],
+            fewshot_random_seed=self.args.seed[3],
             **request_caching_args,
         )
 
@@ -363,7 +370,7 @@ class EvalHarnessRunner(ClassLogger):
             dumped = json.dumps(
                 results,
                 indent=2,
-                default=_handle_non_serializable,
+                default=handle_non_serializable,
                 ensure_ascii=False,
             )
             if self.args.show_config:
@@ -397,7 +404,7 @@ class EvalHarnessRunner(ClassLogger):
                         samples_dumped = json.dumps(
                             samples[task_name],
                             indent=2,
-                            default=_handle_non_serializable,
+                            default=handle_non_serializable,
                             ensure_ascii=False,
                         )
                         filename.write_text(samples_dumped, encoding="utf-8")
@@ -448,7 +455,7 @@ class EvalHarnessRunner(ClassLogger):
         Note, this method is adapted to construct a pandas DataFrame off the
         `original WandB specific implementation <log_table>`_ in EEH.
 
-        .. _log_table: https://github.com/EleutherAI/lm-evaluation-harness/blob/4600d6bf73ba2cf7037ae7feada03315839ef185/lm_eval/logging_utils.py#L157-L205
+        .. _log_table: https://github.com/EleutherAI/lm-evaluation-harness/blob/3fa4fd725c8a428710109f1d6c14eda37e95baea/lm_eval/loggers/wandb_logger.py#L112-L160
         """
         try:
             import pandas as pd
@@ -551,7 +558,7 @@ class EvalHarnessRunner(ClassLogger):
         samples = deepcopy(samples)
 
         def generate_dataset(*args, **kwargs) -> pd.DataFrame:
-            from lm_eval.logging_utils import WandbLogger
+            from lm_eval.loggers import WandbLogger
 
             # Its okay to pass in `None` as self as this method
             # has no self uses

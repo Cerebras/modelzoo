@@ -13,16 +13,17 @@
 # limitations under the License.
 
 import os
+from typing import Any, Literal, Optional
 
 import h5py
-import numpy as np
 from PIL import Image
+from pydantic import Field
 from torchvision.datasets.utils import verify_str_arg
 from torchvision.datasets.vision import VisionDataset
 
 from cerebras.modelzoo.data.vision.classification.dataset_factory import (
-    Processor,
-    VisionSubset,
+    VisionClassificationProcessor,
+    VisionClassificationProcessorConfig,
 )
 
 
@@ -91,58 +92,33 @@ class PatchCamelyon(VisionDataset):
         return self.length
 
 
-class PatchCamelyonProcessor(Processor):
-    def __init__(self, params):
-        super().__init__(params)
-        self.allowable_split = ["train", "val", "test"]
+class PatchCamelyonProcessorConfig(VisionClassificationProcessorConfig):
+    data_processor: Literal["PatchCamelyonProcessor"]
+
+    use_worker_cache: bool = ...
+
+    split: Literal["train", "val", "test"] = "train"
+    "Dataset split."
+
+    num_classes: Optional[Any] = Field(None, deprecated=True)
+
+
+class PatchCamelyonProcessor(VisionClassificationProcessor):
+    def __init__(self, config: PatchCamelyonProcessorConfig):
+        super().__init__(config)
+        self.split = config.split
+        self.shuffle = self.shuffle and (self.split == "train")
         self.num_classes = 2
 
-    def create_dataset(self, use_training_transforms=True, split="train"):
-        self.check_split_valid(split)
+    def create_dataset(self):
+        use_training_transforms = self.split == "train"
         transform, target_transform = self.process_transform(
             use_training_transforms
         )
         dataset = PatchCamelyon(
             root=self.data_dir,
-            split=split,
+            split=self.split,
             transform=transform,
             target_transform=target_transform,
         )
         return dataset
-
-    def create_vtab_dataset(self, use_1k_sample=True, seed=42):
-        train_transform, train_target_transform = self.process_transform(
-            use_training_transforms=True
-        )
-        eval_transform, eval_target_transform = self.process_transform(
-            use_training_transforms=False
-        )
-
-        train_set = PatchCamelyon(
-            root=self.data_dir,
-            split="train",
-            transform=train_transform,
-            target_transform=train_target_transform,
-        )
-        val_set = PatchCamelyon(
-            root=self.data_dir,
-            split="val",
-            transform=eval_transform,
-            target_transform=eval_target_transform,
-        )
-        test_set = PatchCamelyon(
-            root=self.data_dir,
-            split="test",
-            transform=eval_transform,
-            target_transform=eval_target_transform,
-        )
-
-        if use_1k_sample:
-            rng = np.random.default_rng(seed)
-            sample_idx = self.create_shuffled_idx(len(train_set), rng)
-            train_set = VisionSubset(train_set, sample_idx[:800])
-
-            sample_idx = self.create_shuffled_idx(len(val_set), rng)
-            val_set = VisionSubset(val_set, sample_idx[:200])
-
-        return train_set, val_set, test_set

@@ -14,14 +14,16 @@
 
 import json
 import os
+from typing import Any, Literal, Optional
 
-import numpy as np
 from PIL import Image
+from pydantic import Field
 from torchvision.datasets.utils import verify_str_arg
 from torchvision.datasets.vision import VisionDataset
 
 from cerebras.modelzoo.data.vision.classification.dataset_factory import (
-    Processor,
+    VisionClassificationProcessor,
+    VisionClassificationProcessorConfig,
 )
 
 
@@ -94,108 +96,32 @@ class CLEVR(VisionDataset):
         return len(self._image_files)
 
 
-def _count_objects(target):
-    """
-    Predict the number of objects in the scene. Since the number of objects
-    ranges from [3, 10], we subtract 3 to make class labels [0, 7]
-    """
-    return len(target) - 3
+class CLEVRProcessorConfig(VisionClassificationProcessorConfig):
+    data_processor: Literal["CLEVRProcessor"]
+
+    use_worker_cache: bool = ...
+
+    split: Literal["train", "val", "test"] = "train"
+    "Dataset split."
+
+    num_classes: Optional[Any] = Field(None, deprecated=True)
 
 
-def _closest_object_distance(target):
-    """
-    Predict distance to the closest object in the scene. We bin the distances
-    such that the distribution of classes is more or less balanced.
-    """
-    if len(target) == 0:
-        return -1
-    else:
-        thresholds = np.array([0.0, 8.0, 8.5, 9.0, 9.5, 10.0, 100.0])
-        # pixel_coords is a list of 3 numbers (x, y, z) of a given object in the
-        # scene. Index 2 corresponds to the z-axis value.
-        dist = np.min(
-            [target[i]["pixel_coords"][2] for i in range(len(target))]
-        )
-        return np.max(np.where(thresholds - dist < 0))
+class CLEVRProcessor(VisionClassificationProcessor):
+    def __init__(self, config: CLEVRProcessorConfig):
+        super().__init__(config)
+        self.split = config.split
+        self.shuffle = self.shuffle and (self.split == "train")
 
-
-class CLEVRProcessor(Processor):
-    _TASK_DICT = {
-        "count": {"preprocess_fn": _count_objects, "num_classes": 8},
-        "distance": {
-            "preprocess_fn": _closest_object_distance,
-            "num_classes": 6,
-        },
-    }
-
-    def __init__(self, params):
-        super().__init__(params)
-        self.allowable_split = ["train", "val", "test"]
-        self.allowable_task = self._TASK_DICT.keys()
-
-    def create_dataset(self, use_training_transforms=True, split="train"):
-        self.check_split_valid(split)
+    def create_dataset(self):
+        use_training_transforms = self.split == "train"
         transform, target_transform = self.process_transform(
             use_training_transforms
         )
         dataset = CLEVR(
             root=self.data_dir,
-            split=split,
+            split=self.split,
             transform=transform,
             target_transform=target_transform,
         )
         return dataset
-
-    def create_vtab_dataset(
-        self,
-        task="count",
-        use_1k_sample=True,
-        train_split_percent=None,
-        seed=42,
-    ):
-        if task not in self.allowable_task:
-            raise ValueError(
-                f"Task {task} is not supported, choose from "
-                f"{self.allowable_task} instead"
-            )
-
-        train_transform, train_target_transform = self.process_transform(
-            use_training_transforms=True
-        )
-        eval_transform, eval_target_transform = self.process_transform(
-            use_training_transforms=False
-        )
-
-        trainval_set = CLEVR(
-            root=self.data_dir,
-            split="train",
-            transform=None,
-            target_transform=self._TASK_DICT[task]["preprocess_fn"],
-        )
-        test_set = CLEVR(
-            root=self.data_dir,
-            split="test",
-            transform=eval_transform,
-            target_transform=self._TASK_DICT[task]["preprocess_fn"],
-        )
-
-        # By default, 90% of the official training split is used as a new
-        # training split and the rest is used for validation
-        train_percent = train_split_percent or 90
-        val_percent = 100 - train_percent
-        train_set, val_set = self.split_dataset(
-            trainval_set, [train_percent, val_percent], seed
-        )
-
-        if use_1k_sample:
-            train_set.truncate_to_idx(800)
-            val_set.truncate_to_idx(200)
-
-        train_set.set_transforms(
-            transform=train_transform, target_transform=train_target_transform
-        )
-        val_set.set_transforms(
-            transform=eval_transform, target_transform=eval_target_transform
-        )
-
-        return train_set, val_set, test_set

@@ -18,13 +18,12 @@ This module contains utility functions for configuring a Trainer object from a p
 
 import fnmatch
 import functools
-import types
 from collections import Counter
+from collections.abc import Iterable
 from copy import deepcopy
-from dataclasses import asdict, is_dataclass
 from functools import lru_cache
 from math import prod
-from typing import List, Union
+from typing import Any, Callable, Dict, List, Literal, Optional
 from warnings import warn
 
 import torch
@@ -33,30 +32,25 @@ from torch.utils._pytree import TreeSpec, tree_flatten, tree_unflatten
 
 import cerebras.pytorch as cstorch
 from cerebras.appliance.utils.classes import retrieve_all_subclasses
-from cerebras.modelzoo.common.registry import registry
-from cerebras.modelzoo.config_manager.config_classes.base.base_config import (
-    get_class_type,
-)
-from cerebras.modelzoo.config_manager.config_loader import flatten_data_params
+from cerebras.modelzoo.config import BaseConfig
+from cerebras.modelzoo.trainer.validate import validate_trainer_params
 from cerebras.pytorch.backend import get_backend_args
 
+ModeT = Literal["train", "train_and_eval", "eval", "eval_all"]
 
-def run_trainer(mode, params, model_fn, train_data_fn, eval_data_fn):
-    """
-    Runs training and/or validation using the Trainer with the given params.
+
+def run_trainer(mode: ModeT, params: Dict[str, Any]):
+    """Runs training and/or validation using the Trainer with the given params.
 
     Args:
         mode: The mode to run the Trainer in. Can be one of:
             - "train": Train the model.
             - "eval": Evaluate the model.
             - "train_and_eval": Train the model and then evaluate it.
-            - "eval_all": Evaluate the model on all available data.
+            - "eval_all": Evaluate the model on all available checkpoints and dataloaders.
         params: A dictionary/object containing the configuration for the Trainer.
             If legacy keys are detected, they will be automatically converted
             to the new format.
-        model_fn: A function that returns an instance of the model to train.
-        train_data_fn: A function that returns the training dataloader.
-        eval_data_fn: A function that returns the validation dataloader.
     """
     if isinstance(params, dict) and is_legacy_params(params):
         warn(
@@ -70,112 +64,112 @@ def run_trainer(mode, params, model_fn, train_data_fn, eval_data_fn):
             obj_filter=lambda obj: obj is None,
         )
 
-    if "trainer" not in params:
-        raise KeyError(
-            "Trainer configuration not found in params. "
-            "Please ensure that the params contain a 'trainer' key."
-        )
+    if isinstance(params, BaseConfig):
+        config = params
+        try:
+            trainer = configure_trainer_from_config(config, mode)
+        except:
+            import json
 
-    trainer_params = params["trainer"]
-    if isinstance(trainer_params, (list, tuple)):
-        for p in trainer_params:
-            run_trainer(mode, p, model_fn, train_data_fn, eval_data_fn)
-        return
+            warn(
+                f"Failed to configure trainer from config:\n"
+                f"{json.dumps(config.model_dump(), sort_keys=False, indent=4)}"
+            )
+            raise
 
-    trainer = configure_trainer_from_params(params, model_fn)
-
-    if mode == "eval":
-        validate = deepcopy(trainer_params.get("validate", None))
-        if validate is None:
-            raise KeyError(
-                "Missing 'validate' key in params needed to run validation"
+        if mode == "eval":
+            trainer.validate(
+                val_dataloader=create_dataloader_from_config(
+                    config.validate.val_dataloader
+                ),
+                ckpt_path=config.validate.ckpt_path,
             )
 
-        if "val_dataloader" not in validate:
-            raise KeyError(
-                "Missing 'val_dataloader' key in validate params "
-                "needed to run validation."
-            )
-
-        validate["val_dataloader"] = cstorch.utils.data.DataLoader(
-            eval_data_fn, {"eval_input": validate["val_dataloader"]}
-        )
-
-        trainer.validate(**validate)
-        return
-
-    if mode == "eval_all":
-        validate_all = deepcopy(trainer_params.get("validate_all", None))
-        if validate_all is None:
-            raise KeyError(
-                "Missing 'validate_all' key in params needed to run eval_all"
-            )
-
-        if "val_dataloaders" in validate_all:
-            val_dataloaders = validate_all["val_dataloaders"]
-            if not isinstance(val_dataloaders, (list, tuple)):
-                val_dataloaders = [val_dataloaders]
-
-            validate_all["val_dataloaders"] = [
-                cstorch.utils.data.DataLoader(
-                    eval_data_fn, {"eval_input": val_dataloader}
+        elif mode == "eval_all":
+            val_dataloaders = list(
+                map(
+                    create_dataloader_from_config,
+                    config.validate_all.val_dataloaders,
                 )
-                for val_dataloader in val_dataloaders
-            ]
+            )
 
-        if "ckpt_paths" not in validate_all:
-            all_ckpts = []
-            if trainer.checkpoint.autoload_last_checkpoint:
-                all_ckpts = trainer.checkpoint.get_all_checkpoints(
-                    trainer.model_dir
-                )
+            ckpt_paths = config.validate_all.ckpt_paths
+            if ckpt_paths is Ellipsis:
+                all_ckpts = []
+                if trainer.checkpoint.autoload_last_checkpoint:
+                    all_ckpts = trainer.checkpoint.get_all_checkpoints(
+                        trainer.model_dir
+                    )
+                if all_ckpts:
+                    ckpt_paths = all_ckpts
+                else:
+                    raise FileNotFoundError(
+                        f"No checkpoints were found for evaluation. "
+                        f"Please pass in at least one checkpoint via ckpt_paths or "
+                        f"set `autoload_last_checkpoint` to True and ensure that the model "
+                        f"directory \"{trainer.model_dir}\" contains at least one "
+                        f"checkpoint whose name matches the expected format of: "
+                        f"{trainer.checkpoint.checkpoint_name}"
+                    )
 
-            if all_ckpts:
-                validate_all["ckpt_paths"] = all_ckpts
+            trainer.validate_all(
+                val_dataloaders=val_dataloaders,
+                ckpt_paths=ckpt_paths,
+            )
+
+        elif mode in ("train", "train_and_eval"):
+            train_dataloader = create_dataloader_from_config(
+                config.fit.train_dataloader
+            )
+            val_dataloader = None
+
+            if mode == "train":
+                # Disable all validation during training including eval harness
+                trainer.loop.eval_frequency = None
             else:
-                raise FileNotFoundError(
-                    f"No checkpoints were found for evaluation. "
-                    f"Please pass in at least one checkpoint via ckpt_paths or "
-                    f"set `autoload_last_checkpoint` to True and ensure that the model "
-                    f"directory \"{trainer.model_dir}\" contains at least one "
-                    f"checkpoint whose name matches the expected format of: "
-                    f"{trainer.checkpoint.checkpoint_name}"
-                )
+                if config.fit.val_dataloader is not None:
+                    val_dataloader = list(
+                        map(
+                            create_dataloader_from_config,
+                            config.fit.val_dataloader,
+                        )
+                    )
 
-        trainer.validate_all(**validate_all)
-        return
+            trainer.fit(train_dataloader, val_dataloader, config.fit.ckpt_path)
 
-    fit = deepcopy(trainer_params.get("fit", None))
-    if fit is None:
-        raise KeyError("Missing 'fit' key in params needed to run training.")
+        else:
+            raise ValueError(
+                f"Invalid mode \"{mode}\". "
+                f"Expected one of: train, train_and_eval, eval, eval_all."
+            )
 
-    if "train_dataloader" not in fit:
-        raise KeyError(
-            "Missing 'train_dataloader' key in fit params "
-            "needed to run training and validation"
+    else:
+        configs = validate_trainer_params(params)
+        for config in configs:
+            run_trainer(mode, config)
+
+
+def create_dataloader_from_config(data_processor_config):
+    data_processor_cls = data_processor_config.get_orig_class()
+
+    def data_processor_fn(**kwargs):
+        data_processor = data_processor_cls(**kwargs)
+        if isinstance(data_processor, torch.utils.data.DataLoader):
+            return data_processor
+        elif hasattr(data_processor, "create_dataloader"):
+            return data_processor.create_dataloader()
+        elif isinstance(data_processor, Iterable):
+            return data_processor
+
+        raise TypeError(
+            "Expected dataprocessor to be an iterable (e.g., torch dataloader) "
+            "or have a `create_dataloader()` method that returns "
+            "an iterable for generating input data."
         )
 
-    fit["train_dataloader"] = cstorch.utils.data.DataLoader(
-        train_data_fn, {"train_input": fit["train_dataloader"]}
+    return cstorch.utils.data.DataLoader(
+        data_processor_fn, **data_processor_config.get_orig_class_args()
     )
-
-    if mode == "train_and_eval" and "val_dataloader" in fit:
-        val_dataloaders = fit["val_dataloader"]
-        if not isinstance(val_dataloaders, (list, tuple)):
-            val_dataloaders = [val_dataloaders]
-
-        fit["val_dataloader"] = [
-            cstorch.utils.data.DataLoader(
-                eval_data_fn, {"eval_input": val_dataloader}
-            )
-            for val_dataloader in val_dataloaders
-        ]
-
-    if mode == "train":
-        # Disable all validation during training including eval harness
-        trainer.loop.eval_frequency = None
-
-    trainer.fit(**fit)
 
 
 @lru_cache(maxsize=1)
@@ -221,76 +215,29 @@ def cached_cstorch_backend(backend_type, **kwargs):
     return cstorch.backend(backend_type, **kwargs)
 
 
-def configure_trainer_from_params(
-    params, model_fn_or_name: Union[str, torch.nn.Module]
+def configure_trainer_from_config(
+    trainer_config: BaseConfig, mode: Optional[ModeT] = None
 ):
-    """
-    Configure a Trainer object from a params dictionary.
-
-    If the params dictionary contains legacy keys, then it will be converted
-    to the new format before configuring the Trainer object.
+    """Configure a Trainer object from a trainer config object.
 
     Args:
-        params (dict): A dictionary containing the configuration for the Trainer.
-        model_fn_or_name: The model class or name of the model to query from the registry.
+        trainer_config: The trainer config object used to configure the Trainer.
+        mode: The mode that the trainer is being configured for. If None, no
+            mode-specific modifications are applied.
     """
     # pylint: disable=unused-import
     import cerebras.modelzoo.trainer.extensions  # noqa
     from cerebras.modelzoo.trainer import Trainer
-    from cerebras.modelzoo.trainer.callbacks import (
-        Callback,
-        CheckLoss,
-        Checkpoint,
-        ComputeNorm,
-        FlopUtilization,
-        Logging,
-        LogOptimizerParamGroup,
-        MixedPrecision,
-        ModelEvalMetrics,
-        ModelZooParamsMetadata,
-        RateProfiler,
-        SavePerformanceData,
-        TrainingLoop,
-    )
-    from cerebras.modelzoo.trainer.loggers import (
-        Logger,
-        ProgressLogger,
-        TensorBoardLogger,
-    )
+    from cerebras.modelzoo.trainer.callbacks import Callback
 
-    if "trainer" not in params:
-        raise KeyError(
-            "Trainer configuration not found in params. "
-            "Please ensure that the params contain a 'trainer' key."
-        )
-
-    trainer_params = params["trainer"]
-
-    if "init" not in trainer_params:
-        raise KeyError(
-            "Trainer configuration must contain an 'init' key. "
-            "Please ensure that the trainer params contain an 'init' key."
-        )
-    init_params = trainer_params["init"]
-
-    metadata_params = deepcopy(params)
-
-    # If we get a model that has a config class, convert it here, otherwise
-    # pass the params as is.
-    if isinstance(model_fn_or_name, str):
-        _validate_trainer_params(trainer_params, model_fn_or_name)
-        model_fn_or_name = registry.get_model_class(model_fn_or_name)
-        trainer_params["init"]["model"].cls = model_fn_or_name
-    else:
-        # set model cls in params post-conversion
-        trainer_params["init"]["model"]["cls"] = model_fn_or_name
+    init_config = trainer_config.init
 
     def backend_fn():
-        backend_params = init_params.pop("backend", {})
-        if device := init_params.pop("device", None):
+        backend_params = init_config.backend
+        if device := init_config.device:
             backend_params.setdefault("backend_type", device)
 
-        backend_type = backend_params.pop("backend_type", None)
+        backend_type = backend_params.get("backend_type", None)
         if backend_type is None:
             raise ValueError(
                 f"No device specified. Please specify a device using the 'device' key "
@@ -300,14 +247,14 @@ def configure_trainer_from_params(
         backend_type = backend_type.upper()
 
         backend_args = {
-            name: backend_params.pop(name)
+            name: backend_params.get(name)
             for name, _ in get_backend_args(backend_type).items()
-            if name != "self" and name in backend_params
+            if name not in ("self", "backend_type") and name in backend_params
         }
 
         if backend_type == "CSX":
             # Special handling for cluster config as dicts are not hashable
-            cluster_config = backend_args.pop("cluster_config", {})
+            cluster_config = backend_args.get("cluster_config", {})
             if isinstance(cluster_config, dict):
                 cluster_config = cstorch.distributed.ClusterConfig(
                     **cluster_config
@@ -316,60 +263,37 @@ def configure_trainer_from_params(
 
         return cached_cstorch_backend(backend_type, **backend_args)
 
-    def model_fn():  # pylint: disable=function-redefined
-        model_params = init_params.pop("model")
-
-        if is_dataclass(model_params):
-            lora_params = getattr(model_params, "lora_params", None)
-            model_init_params = types.SimpleNamespace(model=model_params)
-            model = model_params.cls(model_init_params)
-        else:
-            lora_params = model_params.pop("lora_params", None)
-            model_init_params = {"model": model_params}
-            model = model_params.pop("cls")(model_init_params)
-        if lora_params:
-            from cerebras.modelzoo.common.utils.model.lora import (
-                make_model_lora,
-            )
-
-            if is_dataclass(lora_params):
-                lora_params = asdict(lora_params)
-
-            model = make_model_lora(model, lora_params)
-        return model
+    def model_fn():
+        return init_config.model()
 
     def optimizer_fn(model):
-        from cerebras.modelzoo.common.optim_utils import (
-            configure_param_groups,
-            flatten_optimizer_params,
-        )
-
-        optimizer_params = init_params.pop("optimizer", None)
-        if optimizer_params is None:
+        # No need for optimizer in eval.
+        if mode in ("eval", "eval_all"):
             return None
 
-        optimizer_type = next(iter(optimizer_params))
-        optimizer_params = optimizer_params[optimizer_type]
+        optimizer_config = init_config.optimizer
+        if optimizer_config is None:
+            return None
+
+        from cerebras.modelzoo.common.optim_utils import configure_param_groups
 
         params = configure_param_groups(
             model,
-            optimizer_params,
+            optimizer_config.dict(),
         )
-        optimizer_params.pop("adjust_learning_rate", None)
 
-        return cstorch.optim.configure_optimizer(
-            optimizer_type=optimizer_type,
-            params=params,
-            **flatten_optimizer_params(optimizer_params),
-        )
+        return optimizer_config(params=params)
 
     def scheduler_fn():
-        scheduler_params = init_params.pop("schedulers", None)
-        if not scheduler_params:
+        # No need for schedulers in eval.
+        if mode in ("eval", "eval_all"):
             return None
 
-        def _create_scheduler(optimizer, params):
-            scheduler = cstorch.optim.configure_scheduler(optimizer, params)
+        if init_config.schedulers is None:
+            return None
+
+        def _create_scheduler(optimizer, scheduler_config):
+            scheduler = scheduler_config(optimizer=optimizer)
 
             # The new muP interface injects adjust_learning_rate into param groups
             # if muP is enabled. So even if the params doesn't have a ScalePerParamLR,
@@ -391,188 +315,86 @@ def configure_trainer_from_params(
 
             return scheduler
 
-        if not isinstance(scheduler_params, list):
-            scheduler_params = [scheduler_params]
-
         return [
-            functools.partial(_create_scheduler, params=p)
-            for p in scheduler_params
+            functools.partial(
+                _create_scheduler, scheduler_config=scheduler_config
+            )
+            for scheduler_config in init_config.schedulers
         ]
 
     def sparsity_fn():
-        if sparsity_params := init_params.pop("sparsity", None):
-            return cstorch.sparse.configure(sparsity_params)
-        return None
-
-    def precision_fn():
-        precision_params = init_params.pop("precision", None)
-        if not precision_params:
+        if init_config.sparsity is None:
             return None
 
-        return MixedPrecision(**precision_params)
+        return cstorch.sparse.configure(
+            [config.model_dump() for config in init_config.sparsity]
+        )
 
-    def loop_fn():
-        loop_params = init_params.pop("loop", None)
-        if not loop_params:
+    def construct_callback(c: Optional[Callable]):
+        if c is None:
             return None
-
-        return TrainingLoop(**loop_params)
-
-    def checkpoint_fn():
-        checkpoint_params = init_params.pop("checkpoint", None)
-        if not checkpoint_params:
-            return None
-
-        return Checkpoint(**checkpoint_params)
-
-    def logging_fn():
-        logging_params = init_params.pop("logging", None)
-        if not logging_params:
-            return None
-
-        return Logging(**logging_params)
+        return c()
 
     def callbacks_fn():
-        # Callbacks to enable even if not explicitly specified
-        default_callbacks = {
-            # pylint: disable=unnecessary-lambda
-            "CheckLoss": lambda: CheckLoss(),
-            "LogOptimizerParamGroup": lambda: LogOptimizerParamGroup("lr"),
-            "ComputeNorm": lambda: ComputeNorm(),
-            "ModelEvalMetrics": lambda: ModelEvalMetrics(),
-            "RateProfiler": lambda: RateProfiler(),
-            "FlopUtilization": lambda: FlopUtilization(),
-            "SavePerformanceData": lambda: SavePerformanceData(),
-            "ModelZooParamsMetadata": lambda: ModelZooParamsMetadata(
-                metadata_params
-            ),
-        }
-
-        callback_map = {
-            cls.__name__: cls for cls in retrieve_all_subclasses(Callback)
-        }
-
-        callbacks = []
-        for idx, callback_params in enumerate(init_params.pop("callbacks", [])):
-            if isinstance(callback_params, dict):
-                if len(callback_params) > 1:
-                    raise ValueError(
-                        f"Expected each callback to be a dictionary with the name "
-                        f"of the callback being the only key, but callback at "
-                        f"position {idx} has more keys: {list(callback_params.keys())}."
-                    )
-                name = next(iter(callback_params))
-
-                if name not in callback_map:
-                    raise ValueError(
-                        f"Invalid callback. Expected one of: {sorted(callback_map)}. "
-                        f"Got: {name}"
-                    )
-                callback_cls = callback_map[name]
-
-                default_callbacks.pop(name, None)
-
-                args = callback_params[name]
-                if args is None:
-                    # None as args means don't include
-                    continue
-
-                # TODO: Inspect callback_cls's constructor arguments for generality
-                if isinstance(args, dict):
-                    callbacks.append(callback_cls(**args))
-                else:
-                    raise ValueError(
-                        f"Expected each callback argument to be a dict of input arguments, "
-                        f"but \"{name}\" key has argument of type {type(args)}."
-                    )
-            else:
-                raise ValueError(
-                    f"Expected each callback to be a dict with a single key representing "
-                    f"the callback name, but callback at position {idx} is of type "
-                    f"{type(callback_params)}."
-                )
-
-        for callback_fn in default_callbacks.values():
-            callbacks.append(callback_fn())
-
-        return callbacks
+        return [callback() for callback in init_config.callbacks]
 
     def loggers_fn():
-        # Loggers to enable even if not explicitly specified
-        default_loggers = {
-            # pylint: disable=unnecessary-lambda
-            "ProgressLogger": lambda: ProgressLogger(),
-            "TensorBoardLogger": lambda: TensorBoardLogger(),
-        }
-
-        logger_map = {
-            cls.__name__: cls for cls in retrieve_all_subclasses(Logger)
-        }
-
-        loggers = []
-        for logger_params in init_params.pop("loggers", []):
-            if isinstance(logger_params, str):
-                logger_params = {logger_params: {}}
-            if isinstance(logger_params, dict):
-                if len(logger_params) > 1:
-                    raise ValueError(
-                        "Expected logger to be a dictionary with the name "
-                        "of the logger being the only key"
-                    )
-                name = next(iter(logger_params))
-
-                # TODO: Should we support automatic snake case to Pascal case conversion?
-                if name not in logger_map:
-                    raise ValueError(
-                        f"Invalid logger. Expected one of: {sorted(logger_map)}. "
-                        f"Got: {name}"
-                    )
-                logger_cls = logger_map[name]
-
-                default_loggers.pop(name, None)
-
-                args = logger_params[name]
-                if args is None:
-                    # None as args means don't include
-                    continue
-
-                # TODO: Inspect logger_cls's constructor arguments for generality
-                if isinstance(args, dict):
-                    loggers.append(logger_cls(**args))
-                else:
-                    loggers.append(logger_cls(args))
-
-        for logger_fn in default_loggers.values():
-            loggers.append(logger_fn())
-
-        return loggers
+        return [logger() for logger in init_config.loggers]
 
     class SaveTrainerParams(Callback):
         """Save the Trainer params to the artifact directory."""
 
         def pre_setup(self, trainer):
             # Save a full copy of the params to the artifact directory
-            with (trainer.artifact_dir / "trainer_params.yaml").open("w") as f:
-                yaml.dump(metadata_params, f, sort_keys=False)
-            # Save a full copy of the params to the summary directory as well
-            with (trainer.summary_dir / "trainer_params.yaml").open("w") as f:
-                yaml.dump(metadata_params, f, sort_keys=False)
+            with open(trainer.artifact_dir / "trainer_params.yaml", "w") as f:
+                yaml.dump(
+                    {"trainer": trainer_config.model_dump(exclude_unset=False)},
+                    f,
+                    sort_keys=False,
+                )
+
+            # Save the original params to the summary directory
+            with open(trainer.summary_dir / "trainer_params.yaml", "w") as f:
+                try:
+                    # We want to first try to dump a JSON serializable version
+                    # of the trainer first to mimic the params.yaml that they
+                    # provided.
+                    params = trainer_config.model_dump(
+                        mode="json", exclude_unset=True, warnings=False
+                    )
+                except Exception as e:  # pylint: disable=broad-except
+                    # If the trainer is not JSON serializable, then we just dump
+                    # the trainer as is as YAML can handle non JSON serializable types.
+                    # The only caveat being that the user may not be able to use
+                    # the saved YAML as is.
+                    msg = (
+                        f"Trainer is not JSON serializable due to:\n{e}\n"
+                        f"You may encounter issues when loading the saved yaml file:\n"
+                        f"{trainer.summary_dir / 'trainer_params.yaml'}"
+                    )
+                    trainer.logger.warning(msg)
+
+                    params = trainer_config.model_dump(
+                        exclude_unset=True, warnings=False
+                    )
+
+                yaml.dump({"trainer": params}, f, sort_keys=False)
 
     with SaveTrainerParams():
         return Trainer(
             backend=backend_fn(),
-            model_dir=init_params.pop("model_dir", "./model_dir"),
+            model_dir=init_config.model_dir,
             model=model_fn,
             optimizer=optimizer_fn,
             schedulers=scheduler_fn(),
-            precision=precision_fn(),
-            sparsity=sparsity_fn,
-            loop=loop_fn(),
-            checkpoint=checkpoint_fn(),
-            logging=logging_fn(),
+            precision=construct_callback(init_config.precision),
+            sparsity=sparsity_fn(),
+            loop=construct_callback(init_config.loop),
+            checkpoint=construct_callback(init_config.checkpoint),
+            logging=construct_callback(init_config.logging),
             callbacks=callbacks_fn(),
             loggers=loggers_fn(),
-            seed=init_params.get("seed"),
+            seed=init_config.seed,
         )
 
 
@@ -688,6 +510,11 @@ TRAINER_PARAMS_TO_LEGACY = {
                     "debug_args_path": "runconfig.debug_args_path",
                 },
             },
+            {
+                "Lora": {
+                    "lora_params": "model.lora_params.*",
+                }
+            },
             {"LogInputSummaries": "runconfig.log_input_summaries"},
             {"CheckLoss": "runconfig.check_loss_values"},
             {"ComputeNorm": "optimizer.log_summaries"},
@@ -749,6 +576,7 @@ TRAINER_PARAMS_TO_LEGACY = {
 # List of V2 keys to pop after conversion from V1 to V2
 TRAINER_POST_CONVERSION_PRUNE_LIST = [
     "init.model.compression",
+    "init.model.lora_params",
     "init.model.selective_grad",
     "init.optimizer.loss_scaling_factor",
     "init.optimizer.initial_loss_scale",
@@ -995,6 +823,13 @@ def convert_legacy_params_to_trainer_params(params, obj_filter=None):
     ):
         trainer_params.pop("fit")
 
+    # Disallow validate without val dataloader
+    if (
+        "validate" in trainer_params
+        and "val_dataloader" not in trainer_params["validate"]
+    ):
+        trainer_params.pop("validate")
+
     # Read adjust_learning_rate before convert_optimizer_params since
     # that changes the structure.
     adjust_learning_rate = None
@@ -1027,12 +862,32 @@ def convert_legacy_params_to_trainer_params(params, obj_filter=None):
             ),
         ]
 
+    # Parse through callbacks and adjust as necessary
+    callbacks = []
     for callback in trainer_params["init"].get("callbacks", []):
         class_name = next(iter(callback))
         if callback[class_name] is True:
             callback[class_name] = {}
         if callback[class_name] is False:
             callback[class_name] = None
+
+        if class_name == "Listener":
+            # Unpack listeners into individual callbacks
+            for listener_config in callback[class_name]["listeners"]:
+                if "listener_type" not in listener_config:
+                    raise ValueError(
+                        f"Expected to find a key named `listener_type` in all listeners. "
+                        f"But found a listener config that doesn't conform to this requirement: "
+                        f"\n{listener_config}"
+                    )
+                listener_type = listener_config.pop("listener_type")
+                callbacks.append({listener_type: listener_config})
+        else:
+            callbacks.append(callback)
+
+    # Assign back the new callbacks to the params
+    if callbacks:
+        trainer_params["init"]["callbacks"] = callbacks
 
     # Continue to allow mixed_precision in model params
     # TODO: Deprecate this
@@ -1095,7 +950,9 @@ def inject_cli_args_to_trainer_params(runconfig, params):
                     p["trainer"][method][key] = ckpt_path
 
     else:
-        add_ckpt_path = lambda p: None
+
+        def add_ckpt_path(p):
+            return None
 
     # Add a dummy model input so we always have an "init" key, but pop it later
     cli_args = convert_legacy_params_to_trainer_params(
@@ -1168,140 +1025,6 @@ def merge_callbacks(callbacks1: list, callbacks2: list):
             collapse(callbacks1), collapse(callbacks2)
         ).items()
     ]
-
-
-def _validate_trainer_params(trainer_params: dict, model_name: str):
-    """Runs validation on the model and inputs."""
-
-    if (config_class := registry.get_config_class(model_name)) is None:
-        raise ValueError(
-            f"Could not find a config class registered for model with name "
-            f"{model_name}. Available models are: {', '.join(registry.list_models())}"
-        )
-
-    model_cfg_cls = get_class_type(config_class, "model")
-    train_cfg_cls = get_class_type(config_class, "train_input")
-    eval_cfg_cls = get_class_type(config_class, "eval_input")
-
-    if any(x is None for x in [model_cfg_cls, train_cfg_cls, eval_cfg_cls]):
-        raise ValueError(
-            f"Expected config class {config_class} to have a field for each "
-            f"section named \"model\", \"train_input\", \"eval_input\"."
-        )
-
-    model_cfg = (model_cfg_cls(**trainer_params["init"]["model"]), None)
-    trainer_params["init"]["model"] = model_cfg[0]
-
-    # We need to special case this for backwards compatibility reasons
-    # We can get rid of it once we deprecate and remove these keys from
-    # the model config.
-    trainer_params["init"].setdefault("precision", {}).update(
-        {
-            v2_key: getattr(trainer_params["init"]["model"], v1_key)
-            for v1_key, v2_key in {
-                "mixed_precision": "enabled",
-                "fp16_type": "fp16_type",
-            }.items()
-            if hasattr(trainer_params["init"]["model"], v1_key)
-        }
-    )
-
-    train_cfg = None
-    if "fit" in trainer_params:
-        train_cfg = (
-            train_cfg_cls(**trainer_params["fit"]["train_dataloader"]),
-            functools.partial(
-                trainer_params["fit"].__setitem__, "train_dataloader"
-            ),
-        )
-
-    eval_cfgs = []
-
-    # Check "fit" method
-    if (key := "fit") in trainer_params and "val_dataloader" in trainer_params[
-        key
-    ]:
-        val_dataloaders = trainer_params[key]["val_dataloader"]
-        if not isinstance(val_dataloaders, (list, tuple)):
-            val_dataloaders = [val_dataloaders]
-
-        trainer_params[key]["val_dataloader"] = []
-        for params in val_dataloaders:
-            eval_cfgs.append(
-                (
-                    eval_cfg_cls(**params),
-                    functools.partial(
-                        trainer_params[key]["val_dataloader"].append
-                    ),
-                )
-            )
-
-    # check "validate" method
-    if (key := "validate") in trainer_params:
-        validate = trainer_params[key]
-        if "val_dataloader" in validate:
-            eval_cfgs.append(
-                (
-                    eval_cfg_cls(**validate["val_dataloader"]),
-                    functools.partial(validate.__setitem__, "val_dataloader"),
-                )
-            )
-
-    # check "validate_all" method
-    if (key := "validate_all") in trainer_params:
-        val_dataloaders = trainer_params[key].get("val_dataloaders", [])
-        if not isinstance(val_dataloaders, (list, tuple)):
-            val_dataloaders = [val_dataloaders]
-
-        trainer_params[key]["val_dataloaders"] = []
-        for val_dataloader in val_dataloaders:
-            eval_cfgs.append(
-                (
-                    eval_cfg_cls(**val_dataloader),
-                    functools.partial(
-                        trainer_params[key]["val_dataloaders"].append
-                    ),
-                )
-            )
-
-    # Add dataloader defaults for eval harness callbacks
-    callbacks = trainer_params["init"].get("callbacks", [])
-    for callback_dict in callbacks:
-        for eh in ("EleutherEvalHarness", "BigCodeEvalHarness"):
-            if eh in callback_dict:
-                eh_callback = callback_dict[eh]
-                eval_cfgs.append(
-                    (
-                        eval_cfg_cls(**eh_callback),
-                        functools.partial(eh_callback.update),
-                    )
-                )
-
-    if (fn := getattr(config_class, "set_config_defaults", None)) and callable(
-        fn
-    ):
-        # pylint: disable=not-callable
-        fn(
-            model_cfg[0],
-            train_cfg[0].params if train_cfg is not None else None,
-            [x[0].params if x is not None else None for x in eval_cfgs],
-        )
-
-    for item in [model_cfg, train_cfg, *eval_cfgs]:
-        if item is None:
-            continue
-
-        cfg, setter = item
-        if cfg is not None:
-            cfg.__validate__()
-
-    for item in [train_cfg, *eval_cfgs]:
-        if item is None:
-            continue
-
-        cfg, setter = item
-        if cfg is not None:
-            setter(flatten_data_params(asdict(cfg)))
 
 
 def convert_output_to_dict(output):

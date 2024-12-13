@@ -16,10 +16,10 @@
 This file contains the GradientAccumulationCallback class which is used to accumulate gradients.
 """
 
-from cerebras.modelzoo.trainer.callbacks import Callback
+from cerebras.modelzoo.trainer.callbacks import CoreCallback
 
 
-class GradientAccumulationCallback(Callback):
+class GradientAccumulationCallback(CoreCallback):
     """
     Callback class to accumulate gradients.
     """

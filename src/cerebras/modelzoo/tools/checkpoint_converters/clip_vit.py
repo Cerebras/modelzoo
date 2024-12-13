@@ -281,7 +281,7 @@ class Converter_CLIPViT_Projection_HF_CS21(BaseCheckpointConverter_HF_CS):
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4"),
         )
 
     @classmethod
@@ -490,6 +490,7 @@ class ConfigConverter_CLIPViT_HF_CS21(ConfigConverter_ViT_HF_CS21):
 
     def post_config_convert(
         self,
+        model,
         original_config,
         old_config,
         new_config,
@@ -497,6 +498,7 @@ class ConfigConverter_CLIPViT_HF_CS21(ConfigConverter_ViT_HF_CS21):
         drop_unmatched_keys,
     ):
         model_config = super().post_config_convert(
+            model,
             original_config,
             old_config,
             new_config,

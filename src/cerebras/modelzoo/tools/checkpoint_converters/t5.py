@@ -1013,10 +1013,11 @@ class ConfigConverter_T5_HF_CS17(BaseConfigConverter_HF_CS):
 
     def pre_config_convert(
         self,
+        model,
         config,
         converter_indices,
     ):
-        config = super().pre_config_convert(config, converter_indices)
+        config = super().pre_config_convert(model, config, converter_indices)
 
         if converter_indices.direction == 1:
             if "tgt_vocab_size" in config:
@@ -1327,7 +1328,7 @@ class ConfigConverter_T5_CS20_CS21(BaseConfigConverter_CS_CS):
 
 
 class ConfigConverter_T5_HF_CS21(ConfigConverter_T5_HF_CS20):
-    "CS 2.1 config is the same as CS 2.0"
+    "CS 2.1 config is the same as CS 2.0."
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
@@ -1440,7 +1441,7 @@ class ConfigConverter_T5_HF_CS23(ConfigConverter_T5_HF_CS21):
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.3"),
+            FormatVersions("cs-2.3", "cs-2.4"),
         )
 
 
@@ -1457,7 +1458,7 @@ class Converter_T5_WithoutOptionalModel_HF_CS23(
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.3"),
+            FormatVersions("cs-2.3", "cs-2.4"),
         )
 
     @staticmethod

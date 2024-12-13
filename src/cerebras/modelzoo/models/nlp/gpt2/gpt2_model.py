@@ -12,105 +12,647 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
+from typing import Dict, Literal, Optional, Union
+
 import torch
 import torch.nn as nn
+from annotated_types import Ge, Le
+from pydantic import Field, NonNegativeInt, PositiveInt, model_validator
+from typing_extensions import Annotated
 
 import cerebras.pytorch as cstorch
 from cerebras.modelzoo.common.utils.model.mup_utils import (
+    LRAdjustmentGroup,
+    is_mup,
     scale_initializers_by_dimension,
 )
 from cerebras.modelzoo.common.utils.model.transformer_utils import (
     create_broadcasted_autoregressive_mask,
     make_sparse_mask_broadcastable,
 )
+from cerebras.modelzoo.config import ModelConfig
 from cerebras.modelzoo.layers import (
     EmbeddingLayer,
     TransformerDecoder,
     TransformerDecoderLayer,
 )
-from cerebras.modelzoo.layers.norms import get_norm
+from cerebras.modelzoo.layers.activations import ActivationType
+from cerebras.modelzoo.layers.FeedForwardNetwork import MoEConfig
+from cerebras.modelzoo.layers.init import (
+    InitializerConfig,
+    TruncatedNormalInitializer,
+)
+from cerebras.modelzoo.layers.MemoryTokenHelpers import (
+    memory_tokens_update_params,
+    memory_tokens_validate_param_consistency,
+)
+from cerebras.modelzoo.layers.norms import NormType, get_norm
 from cerebras.modelzoo.models.nlp.gpt2.sparse_mask import (
     create_fixed_sparse_attention_mask,
 )
+
+DEFAULT_EMBEDDINGS_SCALE = 1.0
+DEFAULT_OUTPUT_LOGITS_ALPHA = None
+DEFAULT_SCALE_OUTPUT_LOGITS_BY_D = True
+DEFAULT_ATTENTION_LOGITS_ALPHA = 1.0
+
+
+class GPT2LMHeadModelConfig(ModelConfig):
+    name: Literal["GPT2LMHeadModel"]
+
+    # Embedding
+    vocab_size: Annotated[int, Ge(1), Le(512000)] = 50257
+    "The size of the vocabulary used in the model. Max supported value - 512000."
+
+    max_position_embeddings: PositiveInt = 1024
+    "The maximum sequence length that the model can handle."
+
+    embd_pdrop: Optional[Annotated[float, Ge(0), Le(1)]] = Field(
+        None, alias="embedding_dropout_rate"
+    )
+    "The dropout probability for the embeddings."
+
+    position_embedding_type: Optional[
+        Literal["learned", "fixed", "relative", "rotary", "alibi"]
+    ] = "learned"
+    """
+    The type of position embedding to use in the model.
+    Can be one of:
+    - `learned`: Learned embedding matrix
+    - `fixed`:  Sinusoidal from original [Transformer](https://arxiv.org/abs/1706.03762)
+    - `relative`:  Relative position embedding [to exploit pairwise, relative positional information](https://arxiv.org/abs/1803.02155).
+    - `rotary`: a.k.a [RoPE](https://arxiv.org/pdf/2104.09864v4.pdf)
+    - `alibi`: [Attention With Linear Biases](https://arxiv.org/pdf/2108.12409.pdf)
+    - `None`: No position embeddings
+    """
+
+    constant_pos_embedding: Optional[int] = None
+
+    position_embedding_offset: int = 0
+    "Position offset for learned embeddings."
+
+    hidden_size: NonNegativeInt = 768
+    "The size of the transformer hidden layers."
+
+    share_embedding_weights: bool = True
+    "Whether to share the embedding weights between the input and out put embedding."
+
+    embedding_layer_norm: bool = False
+    "Whether to apply layer norm to the embeddings."
+
+    num_relative_attention_buckets: NonNegativeInt = 32
+    "Number of buckets to use in relative position embedding."
+
+    rotary_dim: Optional[int] = None
+    "The number of dimensions used for the rotary position embedding."
+
+    rope_theta: float = 10000
+    """
+    Frequency (theta) used in rotary position embedding. This value is
+    typically adjusted in long MSL runs as described in
+    [codellama](https://arxiv.org/pdf/2308.12950.pdf)
+    """
+
+    fold_rope_consts: bool = True
+    """If True, folds the rotary position embedding constants compile time.
+
+    For very large models consider generating them on the fly by setting this to
+    False. It avoids working with large constant tensors.
+    """
+
+    #
+    # Encoder
+    #
+
+    num_hidden_layers: int = 12
+    "Number of hidden layers in the Transformer decoder."
+
+    dropout_rate: Annotated[float, Ge(0), Le(1)] = 0.1
+    "The dropout probability for all fully connected layers."
+
+    norm_type: NormType = "layernorm"
+    "Determines the type of normalization. See modelzoo/layers/norms.py"
+
+    layer_norm_epsilon: float = 1e-5
+    "The epsilon value used in layer normalization layers."
+
+    #
+    # Encoder - Attention
+    #
+
+    num_heads: PositiveInt = 12
+    "The number of attention heads in the model."
+
+    attention_type: Literal["dot_product", "scaled_dot_product"] = (
+        "scaled_dot_product"
+    )
+    """
+    Determines whether the QK dot product should be scaled.
+    - dot_product -> QK^T
+    - scaled_dot_product -> QK^T / sqrt(d)
+
+    Note that setting either scale_qk_dot_by_d or scale_qk_dot_by_layer_idx will
+    result in different behavior.
+    """
+
+    attention_module: Literal["aiayn_attention", "multiquery_attention"] = (
+        "aiayn_attention"
+    )
+    """
+    Determines whether to use multiheaded attention (from
+    the Attention is All You Need paper) or multi-query/grouped-query
+    attention. When using the latter, you must specify
+    extra_attention_params (see below).
+    """
+
+    attention_sliding_window_length: Optional[int] = None
+    "If specified, sliding window attention is used (as seen in Mistral)."
+
+    sliding_window_every_other_decoder_layer: bool = False
+    """
+    When enabled, sliding window attention is only applied every other
+    decoder layer. Note that attention_sliding_window_length must be specified
+    when using this feature. Cannot be used in conjunction with
+    fixed_sparse_attention.
+    """
+
+    attention_sink_tokens: Optional[int] = None
+    "Number of sink tokens to use in the attention module."
+
+    attention_vertical_column_spacing: Optional[int] = None
+    "The spacing between vertical columns in the attention module."
+
+    attention_vertical_column_width: Optional[int] = None
+    "The width of the vertical columns in the attention module."
+
+    attention_chunk_size: Optional[int] = None
+    "Chunk size for locally banded attention (as seen in GPT-3)."
+
+    extra_attention_params: dict = {}
+    """
+    When enabling multi-query/grouped-query
+    attention, you must specify the the number of key-value groups.
+    Within the extra attention params dict, you can set `num_kv_groups:
+    1` to enable MQA or `num_kv_groups: <groups>` for GQA. The number of
+    groups should be divisible by `num_heads`.
+    """
+
+    extra_ffn_params: dict = {}
+    "When setting ffn-specific variants such as sparsity+spec decoding or multimodality."
+
+    attention_inner_dim: Optional[int] = None
+    """
+    The dimensionality after QKV projection within the attention module.
+    When set to None, hidden_size will be used.
+    """
+
+    use_projection_bias_in_attention: bool = True
+    "Whether to include bias in the attention layer for Q/K/V projections."
+
+    use_ffn_bias_in_attention: bool = True
+    """
+    Whether to include bias in the attention layer for output projection
+    after values have been combined (W_O in original Transformer paper).
+    """
+
+    attention_dropout_rate: Optional[Annotated[float, Ge(0), Le(1)]] = 0.1
+    "Dropout rate for attention layer. When None, defaults to same as `dropout_rate`."
+
+    attention_softmax_fp32: bool = True
+    "Whether to use fp32 precision for attention softmax."
+
+    attention_kernel: Optional[str] = None
+    """
+    The specific attention kernel implementation to use.
+    All implementations are functionally the same but may be compiled differently.
+    """
+
+    attention_logit_softcapping: Optional[float] = None
+    "Scaling factor when applying tanh softcapping on the attention scores (as seen in Gemma2)"
+
+    fixed_sparse_attention: Optional[dict] = None
+    "Applies a fixed sparse attention mask in attention. See GPT-3 configs for examples."
+
+    num_memory_tokens_per_chunk: Optional[int] = None
+    attn_memory_chunk_size: Optional[int] = None
+    """Memory token parameters: insert 'num_memory_tokens_per_chunk' memory tokens
+    after every 'attn_memory_chunk_size' regular tokens in the input"""
+
+    #
+    # Encoder - ffn
+    #
+
+    filter_size: PositiveInt = 3072
+    "Dimensionality of the feed-forward layer in the Transformer block."
+
+    nonlinearity: ActivationType = "gelu"
+    """
+    The non-linear activation function used in the feed forward network
+    in each transformer block.
+    See list of non-linearity functions [here](https://pytorch.org/docs/stable/nn.html#non-linear-activations-weighted-sum-nonlinearity).
+    """
+
+    use_ffn_bias: bool = True
+    """
+    Whether to use bias in the feedforward network (FFN).
+    """
+
+    #
+    # Task-specific
+    #
+
+    use_bias_in_output: bool = False
+    "Whether to use bias in the final output layer."
+
+    initializer_range: float = 0.02
+    "The standard deviation of the truncated_normal_initializer as the default initializer."
+
+    embedding_initializer: Optional[InitializerConfig] = None
+    "Initializer to use for embeddings."
+
+    initializer: Optional[InitializerConfig] = None
+    "The initializer to be used for all the initializers used in the model."
+
+    output_layer_initializer: Optional[InitializerConfig] = None
+    "The name of the initializer for the weights of the output layer."
+
+    ffn_initializer: Optional[InitializerConfig] = None
+    "The name of the initializer for the weights of the ffn kernel."
+
+    ffn_output_layer_initializer: Optional[InitializerConfig] = None
+    "The name of the initializer for the weights of the ffn output layer."
+
+    #
+    # muP (maximal update parameterization)  parameters
+    #
+
+    lr_adjustment_groups: Optional[Dict[str, LRAdjustmentGroup]] = None
+    "A dictionary of groups to adjust the learning rate for."
+
+    mup_base_hidden_size: Optional[float] = None
+    """
+    The hidden size of the base model in muP transfer used to calculate the
+    necessary multipliers. Required in muP training when scaling the decoder
+    attention module
+    """
+
+    mup_base_filter_size: Optional[float] = None
+    """
+    The filter size of the base model in muP transfer used to calculate the
+    necessary multipliers. Required in muP training when scaling the decoder ffn
+    """
+
+    embeddings_scale: Optional[float] = 1.0
+    """
+    Scales the embedding hidden states (i.e. the tensor after embeddings &
+    embedding layer norm are applied). Required in muP training
+    """
+
+    scale_qk_dot_by_d: Optional[bool] = None
+    """
+    Scales attention QK dot product by d instead of sqrt(d). Must be enabled
+    for muP training. Note that this flag only has effect if
+    attention_type=scaled_dot_product
+    """
+
+    attention_logits_alpha: Optional[float] = 1.0
+    """
+    Additionally scales the attention QK dot product by the specified value.
+    Recommended to tune for stabilizing attention logits in muP training.
+    """
+
+    scale_output_logits_by_d: Optional[bool] = True
+    """
+    Scales the output logits in muP by mup_base_hidden_size/hidden_size if
+    True and sqrt(mup_base_hidden_size/hidden_size) if False. Only applies to
+    muP training when scaling the hidden_size.
+    """
+
+    output_logits_alpha: Optional[float] = None
+    """
+    Constant applied to the output logits scalar in muP training. The output
+    logits are scaled by output_logits_alpha * mup_base_hidden_size/hidden_size.
+    """
+
+    alibi_trainable_slopes: bool = False
+    "Replaces alibi's fixed slopes with trainable slopes."
+
+    pos_scaling_factor: float = 1.0
+    """
+    Position interpolation scaling factor for rotary & alibi.
+    See https://arxiv.org/pdf/2306.15595.pdf for details.
+    """
+
+    pos_scaling_type: Literal[
+        "linear", "YaRN", "yarn", "llama3", "longrope"
+    ] = "linear"
+    """Can be either `linear` or `YaRN` or 'longrope' or 'llama3',
+    For YaRN see https://arxiv.org/pdf/2309.00071
+    For LongRope see https://arxiv.org/pdf/2402.13753"""
+
+    pos_scaling_extra_args: Optional[dict] = None
+    "A dict including parameters for YaRN RoPE scaling"
+
+    rel_distance_mode: Literal["default", "capped", "grouped"] = "default"
+    """Mode of relative distance computation in RoPE
+    rel_distance_mode=`default` corresponds to vanilla RoPE;
+    rel_distance_mode=`capped` corresponds to capped relative distances
+    (see LM-Infinite paper https://arxiv.org/abs/2308.16137);
+    rel_distance_mode=`grouped` corresponds to grouped relative distances
+    (see Self-Extend paper https://arxiv.org/abs/2401.01325);
+    """
+
+    rel_distance_extra_args: Optional[dict] = None
+    """A dict including parameters for relative distance calculation,
+    must contain `rope_local_window_size` if rel_distance_mode=`capped`;
+    `rope_local_window_size` and `rope_group_size`
+    if rel_distance_mode=`grouped`
+    """
+
+    scale_qk_dot_by_layer_idx: bool = False
+    """
+    Scales the attention QK dot product by the layer index (as seen in Santacoder)
+    Note that using this flag in conjunction with attention_type=scaled_dot_product
+    will result in scaling by both: QK^T / (sqrt(d) * (layer idx + 1))
+    """
+
+    # muP backwards compatibility
+    norm_first_sandwich: bool = False
+    """
+    Normally pre-LN (norm_first=True) performs the following computation:
+    y = f(norm(x)) + x (where f could be either the attention block or the
+    the FFN). Notice how the norm is applied in parallel to the residual branch,
+    and before the input to f. Architectures like Gemma2 "sandwich" f with
+    layernorms rather than only applying them before f. In other words, the
+    computation is: y = norm(f(norm(x))) + x. Notice how both normalization's
+    are still parallel to the residual, and so we're still applying pre-LN
+    (norm_first=True). The difference is that we're applying LN before and after
+    f.
+    """
+
+    output_logits_scale: Optional[float] = None
+    """
+    Scales the embedding hidden states (i.e. the tensor after embeddings &
+    embedding layer norm are applied). Required in muP training
+    """
+
+    final_logit_softcapping: Optional[float] = None
+    "Scaling factor when applying tanh softcapping on the LM head's logits."
+
+    moe_params: MoEConfig = Field(default_factory=MoEConfig, alias="moe")
+    "A dict of MoE params including num_experts, top_k and load_balancing_loss_coef."
+
+    dtype: Union[torch.dtype, str, None] = None
+    "The embedding dtype"
+
+    @model_validator(mode="after")
+    def validate_rotary_dim(self):
+        if (
+            self.position_embedding_type == "rotary"
+            and self.rotary_dim is not None
+        ):
+            # https://github.com/huggingface/transformers/blob/f0577df6de36e7e7f28e90fa76da0657de038a39/src/transformers/models/gpt_neox/modeling_gpt_neox.py#L84-L85
+            # https://arxiv.org/pdf/2104.09864.pdf Section 3.3
+            inner_dim = (
+                self.attention_inner_dim
+                if self.attention_inner_dim is not None
+                else self.hidden_size
+            )
+            if self.rotary_dim > inner_dim / self.num_heads:
+                raise ValueError(
+                    "Rotary dimensions should be <= head_dim of the attention layer, "
+                    "where head_dim = attention_inner_dim // num_heads."
+                )
+            if self.rotary_dim % 2 != 0:
+                raise ValueError("Rotary dimension must be an even number.")
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_mup(self):
+        supported_mup_dimensions = [
+            'mup_base_hidden_size',
+            'mup_base_filter_size',
+        ]
+
+        detected_mup_dimensions = [
+            dimension
+            for dimension in supported_mup_dimensions
+            if getattr(self, dimension)
+        ]
+
+        if detected_mup_dimensions:
+            if detected_mup_dimensions != supported_mup_dimensions:
+                raise RuntimeError(
+                    f"Our muP formulation requires that you specify all "
+                    f"of the following base dimensions: {supported_mup_dimensions} "
+                    f"but only the following dimensions were found: "
+                    f"{detected_mup_dimensions}"
+                )
+            if self.output_logits_scale:
+                raise RuntimeError(
+                    f"Detected mup base dimensions {detected_mup_dimensions}, but "
+                    f"the deprecated muP param 'output_logits_scale' was also "
+                    f"found. Please convert the config from 2.2 to 2.3 using our "
+                    f"config converter"
+                )
+        else:
+            if self.output_logits_scale:
+                logging.warning(
+                    "The detected configuration of muP has been deprecated and will "
+                    "be removed in future versions. Please convert the config from "
+                    "2.2 to 2.3 using our config converter."
+                )
+                mup_tunable_params = [
+                    ("output_logits_alpha", DEFAULT_OUTPUT_LOGITS_ALPHA),
+                    (
+                        "scale_output_logits_by_d",
+                        DEFAULT_SCALE_OUTPUT_LOGITS_BY_D,
+                    ),
+                    ("attention_logits_alpha", DEFAULT_ATTENTION_LOGITS_ALPHA),
+                ]
+            else:
+                mup_tunable_params = [
+                    ("embeddings_scale", DEFAULT_EMBEDDINGS_SCALE),
+                    ("output_logits_alpha", DEFAULT_OUTPUT_LOGITS_ALPHA),
+                    (
+                        "scale_output_logits_by_d",
+                        DEFAULT_SCALE_OUTPUT_LOGITS_BY_D,
+                    ),
+                    ("attention_logits_alpha", DEFAULT_ATTENTION_LOGITS_ALPHA),
+                ]
+            detected_mup_tunable_params = [
+                param
+                for param, default in mup_tunable_params
+                if getattr(self, param) != default
+            ]
+            if detected_mup_tunable_params:
+                logging.warning(
+                    f"The following muP parameters were changed from their default "
+                    f"value outside of a muP run: {detected_mup_tunable_params}. "
+                    f"As a result, they may have an undesired effect. Please "
+                    f"specify the muP base dimensions {supported_mup_dimensions} "
+                    f"to trigger a muP run."
+                )
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_sliding_window_every_other_decoder_layer(self):
+        if (
+            self.sliding_window_every_other_decoder_layer
+            and self.fixed_sparse_attention
+        ):
+            raise ValueError(
+                "Cannot use sliding_window_every_other_decoder_layer and "
+                "fixed_sparse_attention modes simultaneously."
+            )
+
+        if (
+            self.sliding_window_every_other_decoder_layer
+            and self.attention_sliding_window_length is None
+        ):
+            raise ValueError(
+                "When sliding_window_every_other_decoder_layer is enabled, the"
+                "attention_sliding_window_length must be specified."
+            )
+
+        return self
+
+    def post_init(self, context):
+        if self.embd_pdrop is None:
+            self.embd_pdrop = self.dropout_rate
+
+        if self.attention_dropout_rate is None:
+            self.attention_dropout_rate = self.dropout_rate
+
+        if self.position_embedding_type == "rotary" and self.rotary_dim is None:
+            self.rotary_dim = int(self.hidden_size // self.num_heads * 0.25)
+
+        if is_mup(self) and self.lr_adjustment_groups is None:
+            self.lr_adjustment_groups = (
+                self.create_default_lr_adjustment_groups()
+            )
+
+    def create_default_lr_adjustment_groups(self):
+        return {
+            "embedding": LRAdjustmentGroup("*embedding*weight"),
+            # decoder_kernel for muP backward compatibility
+            "decoder_kernel": LRAdjustmentGroup(
+                [
+                    "*decoder*dense*weight",
+                    "*decoder*linear*weight",
+                    "*decoder*linear*expert_weights",  # moe
+                ]
+            ),
+            "decoder_attention": LRAdjustmentGroup(
+                "*decoder*attn*dense*weight"
+            ),
+            "decoder_input_ffn": LRAdjustmentGroup(
+                [
+                    "*decoder*ffn.ffn.[!1]*weight",
+                    "*decoder*ffn.ffn.[!1]*expert_weights",  # moe
+                ]
+            ),
+            "decoder_output_ffn": LRAdjustmentGroup(
+                [
+                    "*decoder*ffn.ffn.[1]*weight",
+                    "*decoder*ffn.ffn.[1]*expert_weights",  # moe
+                ]
+            ),
+        }
 
 
 class GPT2LMHeadModel(nn.Module):
     """
     GPT-2 model with LM head.
+
+    Args:
+        config: The configuration object for the model.
     """
 
-    def __init__(
-        self,
-        # Embedding
-        vocab_size=50257,
-        max_position_embeddings=1024,
-        embd_pdrop=0.1,
-        position_embedding_type="learned",
-        constant_pos_embedding=None,
-        position_embedding_offset=0,
-        hidden_size=768,
-        share_embedding_weights=True,
-        embedding_layer_norm=False,
-        num_relative_attention_buckets=32,
-        rotary_dim=None,
-        rope_theta=10000,
-        pad_rope=False,
-        # Encoder
-        num_hidden_layers=12,
-        dropout_rate=0.1,
-        norm_type="layernorm",
-        layer_norm_epsilon=1.0e-5,
-        # Encoder - Attention
-        num_heads=12,
-        attention_type="scaled_dot_product",
-        attention_module="aiayn_attention",
-        attention_sliding_window_length=None,
-        sliding_window_every_other_decoder_layer=False,
-        extra_attention_params={},
-        extra_ffn_params={},
-        attention_inner_dim=None,
-        use_projection_bias_in_attention=True,
-        use_ffn_bias_in_attention=True,
-        attention_dropout_rate=0.1,
-        attention_softmax_fp32=True,
-        attention_kernel=None,
-        attention_logit_softcapping=None,
-        fixed_sparse_attention=None,
-        # Encoder - ffn
-        filter_size=3072,
-        nonlinearity="gelu",
-        use_ffn_bias=True,
-        # Task-specific
-        use_bias_in_output=False,
-        initializer_range=0.02,
-        embedding_initializer=None,
-        initializer=None,
-        output_layer_initializer=None,
-        ffn_initializer=None,
-        ffn_output_layer_initializer=None,
-        # muP (maximal update parameterization)  parameters
-        lr_adjustment_groups=None,
-        mup_base_hidden_size=None,
-        mup_base_filter_size=None,
-        embeddings_scale=1.0,
-        scale_qk_dot_by_d=False,
-        attention_logits_alpha=1.0,
-        scale_output_logits_by_d=True,
-        output_logits_alpha=None,
-        alibi_trainable_slopes=False,
-        pos_scaling_factor=1.0,
-        pos_scaling_type="linear",
-        pos_scaling_extra_args=None,
-        scale_qk_dot_by_layer_idx=False,
-        # muP backwards compatibility
-        norm_first_sandwich=False,
-        output_logits_scale=None,
-        final_logit_softcapping=None,
-        moe=None,
-        moe_params=dict(num_experts=1),
-        dtype=None,
-    ):
-        super(GPT2LMHeadModel, self).__init__()
+    def __init__(self, config: GPT2LMHeadModelConfig):
+        if isinstance(config, dict):
+            config = GPT2LMHeadModelConfig(**config)
+
+        super().__init__()
+
+        # Unpack all the fields in the config
+        vocab_size = config.vocab_size
+        max_position_embeddings = config.max_position_embeddings
+        embd_pdrop = config.embd_pdrop
+        position_embedding_type = config.position_embedding_type
+        constant_pos_embedding = config.constant_pos_embedding
+        position_embedding_offset = config.position_embedding_offset
+        hidden_size = config.hidden_size
+        share_embedding_weights = config.share_embedding_weights
+        embedding_layer_norm = config.embedding_layer_norm
+        num_relative_attention_buckets = config.num_relative_attention_buckets
+        rotary_dim = config.rotary_dim
+        rope_theta = config.rope_theta
+        fold_rope_consts = config.fold_rope_consts
+        num_hidden_layers = config.num_hidden_layers
+        dropout_rate = config.dropout_rate
+        norm_type = config.norm_type
+        layer_norm_epsilon = config.layer_norm_epsilon
+        num_heads = config.num_heads
+        attention_type = config.attention_type
+        attention_module = config.attention_module
+        attention_sliding_window_length = config.attention_sliding_window_length
+        sliding_window_every_other_decoder_layer = (
+            config.sliding_window_every_other_decoder_layer
+        )
+        attention_sink_tokens = config.attention_sink_tokens
+        attention_vertical_column_spacing = (
+            config.attention_vertical_column_spacing
+        )
+        attention_vertical_column_width = config.attention_vertical_column_width
+        attention_chunk_size = config.attention_chunk_size
+        extra_attention_params = config.extra_attention_params
+        extra_ffn_params = config.extra_ffn_params
+        attention_inner_dim = config.attention_inner_dim
+        use_projection_bias_in_attention = (
+            config.use_projection_bias_in_attention
+        )
+        use_ffn_bias_in_attention = config.use_ffn_bias_in_attention
+        attention_dropout_rate = config.attention_dropout_rate
+        attention_softmax_fp32 = config.attention_softmax_fp32
+        attention_kernel = config.attention_kernel
+        attention_logit_softcapping = config.attention_logit_softcapping
+        fixed_sparse_attention = config.fixed_sparse_attention
+        num_memory_tokens_per_chunk = config.num_memory_tokens_per_chunk
+        attn_memory_chunk_size = config.attn_memory_chunk_size
+        filter_size = config.filter_size
+        nonlinearity = config.nonlinearity
+        use_ffn_bias = config.use_ffn_bias
+        use_bias_in_output = config.use_bias_in_output
+        initializer_range = config.initializer_range
+        embedding_initializer = config.embedding_initializer
+        initializer = config.initializer
+        output_layer_initializer = config.output_layer_initializer
+        ffn_initializer = config.ffn_initializer
+        ffn_output_layer_initializer = config.ffn_output_layer_initializer
+        lr_adjustment_groups = config.lr_adjustment_groups
+        mup_base_hidden_size = config.mup_base_hidden_size
+        mup_base_filter_size = config.mup_base_filter_size
+        embeddings_scale = config.embeddings_scale
+        scale_qk_dot_by_d = config.scale_qk_dot_by_d
+        attention_logits_alpha = config.attention_logits_alpha
+        scale_output_logits_by_d = config.scale_output_logits_by_d
+        output_logits_alpha = config.output_logits_alpha
+        alibi_trainable_slopes = config.alibi_trainable_slopes
+        pos_scaling_factor = config.pos_scaling_factor
+        pos_scaling_type = config.pos_scaling_type
+        pos_scaling_extra_args = config.pos_scaling_extra_args
+        rel_distance_mode = config.rel_distance_mode
+        rel_distance_extra_args = config.rel_distance_extra_args
+        scale_qk_dot_by_layer_idx = config.scale_qk_dot_by_layer_idx
+        norm_first_sandwich = config.norm_first_sandwich
+        output_logits_scale = config.output_logits_scale
+        final_logit_softcapping = config.final_logit_softcapping
+        moe_params = config.moe_params
+        dtype = config.dtype
 
         # std deviation for weight initialization
         self.initializer_range = initializer_range
@@ -122,32 +664,35 @@ class GPT2LMHeadModel(nn.Module):
         self.constant_pos_embedding = constant_pos_embedding
 
         self.num_heads = num_heads
-        self.moe_enabled = moe_params["num_experts"] > 1
-        self.moe_num_experts = moe_params["num_experts"]
-        self.moe_routing_algorithm = moe_params.get(
-            "routing_algorithm", "learned"
+        total_experts = moe_params.num_experts
+        if moe_params.num_shared_experts:
+            total_experts += moe_params.num_shared_experts
+        self.moe_enabled = total_experts > 1
+        self.moe_num_experts = moe_params.num_experts
+        self.moe_routing_algorithm = moe_params.routing_algorithm
+
+        default_initializer = TruncatedNormalInitializer(
+            mean=0.0,
+            std=self.initializer_range,
         )
-
-        default_initializer = {
-            "name": "truncated_normal",
-            "mean": 0.0,
-            "std": self.initializer_range,
-        }
         if initializer is None:
-            attention_initializer = default_initializer.copy()
+            attention_initializer = default_initializer
             if ffn_initializer is None:
-                ffn_initializer = default_initializer.copy()
-            if moe_params.get("gate_initializer") is None:
-                gate_initializer = default_initializer.copy()
+                ffn_initializer = default_initializer
+            if moe_params.gate_initializer is None:
+                gate_initializer = default_initializer
             else:
-                gate_initializer = moe_params.get("gate_initializer")
+                gate_initializer = moe_params.gate_initializer
         else:
-            attention_initializer = initializer.copy()
+            attention_initializer = initializer
             if ffn_initializer is None:
-                ffn_initializer = initializer.copy()
-            gate_initializer = initializer.copy()
+                ffn_initializer = initializer
+            gate_initializer = initializer
 
-        moe_params["gate_initializer"] = gate_initializer
+        # Update the config with initializer selected
+        moe_params = moe_params.copy(
+            update=dict(gate_initializer=gate_initializer)
+        )
 
         if embedding_initializer is None:
             embedding_initializer = default_initializer
@@ -157,13 +702,16 @@ class GPT2LMHeadModel(nn.Module):
         self.output_logits_scale = output_logits_scale
         if mup_base_hidden_size:
             hidden_size_width_mult = hidden_size / mup_base_hidden_size
-            scale_initializers_by_dimension(
-                [attention_initializer, ffn_initializer],
-                width_scale=hidden_size_width_mult**-0.5,
+            attention_initializer, ffn_initializer = (
+                scale_initializers_by_dimension(
+                    [attention_initializer, ffn_initializer],
+                    width_scale=hidden_size_width_mult**-0.5,
+                )
             )
             if output_layer_initializer is None:
-                output_layer_initializer = default_initializer.copy()
-            scale_initializers_by_dimension(
+                output_layer_initializer = default_initializer
+
+            (output_layer_initializer,) = scale_initializers_by_dimension(
                 output_layer_initializer,
                 width_scale=hidden_size_width_mult**-0.5,
                 depth_scale=(2 * num_hidden_layers) ** -0.5,
@@ -189,8 +737,9 @@ class GPT2LMHeadModel(nn.Module):
         if mup_base_filter_size:
             filter_size_width_mult = filter_size / mup_base_filter_size
             if ffn_output_layer_initializer is None:
-                ffn_output_layer_initializer = default_initializer.copy()
-            scale_initializers_by_dimension(
+                ffn_output_layer_initializer = default_initializer
+
+            (ffn_output_layer_initializer,) = scale_initializers_by_dimension(
                 ffn_output_layer_initializer,
                 width_scale=filter_size_width_mult**-0.5,
                 depth_scale=(2 * num_hidden_layers) ** -0.5,
@@ -199,10 +748,11 @@ class GPT2LMHeadModel(nn.Module):
                 1 / filter_size_width_mult
             )
 
+        self.lr_adjustment_groups = lr_adjustment_groups
+
         if output_layer_initializer is None and initializer is None:
-            output_layer_initializer = default_initializer.copy()
-            scale_initializers_by_dimension(
-                output_layer_initializer,
+            (output_layer_initializer,) = scale_initializers_by_dimension(
+                default_initializer,
                 depth_scale=(2 * num_hidden_layers) ** -0.5,
             )
 
@@ -229,6 +779,41 @@ class GPT2LMHeadModel(nn.Module):
             assert (
                 rotary_dim % 2 == 0
             ), "Rotary dimension must be an even number."
+
+        self.num_memory_tokens_per_chunk = num_memory_tokens_per_chunk
+        self.attn_memory_chunk_size = attn_memory_chunk_size
+
+        use_memory_tokens = False
+        self.attention_chunk_size = attention_chunk_size
+        if num_memory_tokens_per_chunk is not None:
+            # Check for conflicting options if using memory tokens
+            memory_tokens_validate_param_consistency(
+                position_embedding_type=position_embedding_type,
+                moe_enabled=self.moe_enabled,
+                fixed_sparse_attention=fixed_sparse_attention,
+                attention_sliding_window_length=attention_sliding_window_length,
+                attention_vertical_column_spacing=attention_vertical_column_spacing,
+                attention_vertical_column_width=attention_vertical_column_width,
+            )
+            # Setting attention mask values that are aligned with memory tokens
+            updated_params = memory_tokens_update_params(
+                self.num_memory_tokens_per_chunk,
+                self.attn_memory_chunk_size,
+                self.max_position_embeddings,
+            )
+            self.attention_chunk_size = updated_params["attention_chunk_size"]
+            attention_vertical_column_spacing = updated_params[
+                "attention_vertical_column_spacing"
+            ]
+            attention_vertical_column_width = updated_params[
+                "attention_vertical_column_width"
+            ]
+            self.max_position_embeddings = updated_params[
+                "max_position_embeddings"
+            ]
+            max_position_embeddings = updated_params["max_position_embeddings"]
+            use_memory_tokens = True
+
         self.embedding_layer = EmbeddingLayer(
             vocab_size=vocab_size,
             embedding_size=hidden_size,
@@ -242,11 +827,14 @@ class GPT2LMHeadModel(nn.Module):
             num_relative_attention_buckets=num_relative_attention_buckets,
             rotary_dim=rotary_dim,
             rope_theta=rope_theta,
-            pad_rope=pad_rope,
+            fold_rope_consts=fold_rope_consts,
             alibi_trainable_slopes=alibi_trainable_slopes,
             pos_scaling_factor=pos_scaling_factor,
             pos_scaling_type=pos_scaling_type,
             pos_scaling_extra_args=pos_scaling_extra_args,
+            use_memory_tokens=use_memory_tokens,
+            rel_distance_mode=rel_distance_mode,
+            rel_distance_extra_args=rel_distance_extra_args,
             dtype=dtype,
         )
 
@@ -289,6 +877,7 @@ class GPT2LMHeadModel(nn.Module):
             use_ff_layer1_dropout=False,
             norm_first_sandwich=norm_first_sandwich,
             moe_params=moe_params,
+            use_memory_tokens=use_memory_tokens,
         )
 
         # Final LayerNorm
@@ -301,6 +890,11 @@ class GPT2LMHeadModel(nn.Module):
         )
 
         self.attention_sliding_window_length = attention_sliding_window_length
+        self.attention_sink_tokens = attention_sink_tokens
+        self.attention_vertical_column_spacing = (
+            attention_vertical_column_spacing
+        )
+        self.attention_vertical_column_width = attention_vertical_column_width
         assert not (
             sliding_window_every_other_decoder_layer and fixed_sparse_attention
         ), (
@@ -387,10 +981,15 @@ class GPT2LMHeadModel(nn.Module):
     def get_input_embeddings(self):
         return self.embedding_layer.get_input_embeddings()
 
-    def compute_input_embeddings(self, input_ids, position_ids=None):
+    def compute_input_embeddings(
+        self, input_ids, position_ids=None, special_token_indices=None
+    ):
         hidden_states = self.embedding_layer(
-            input_ids, position_ids=position_ids
+            input_ids,
+            position_ids=position_ids,
+            special_token_indices=special_token_indices,
         )
+
         if self.embedding_layer_norm:
             hidden_states = self.embedding_ln_f(hidden_states)
         hidden_states = hidden_states * torch.tensor(
@@ -410,6 +1009,7 @@ class GPT2LMHeadModel(nn.Module):
         inference_loop_index=None,
         token_modality_idx=None,
         constant_pos_mask=None,
+        special_token_indices=None,
     ):
         if input_ids is not None and input_embeddings is not None:
             raise ValueError(
@@ -422,9 +1022,26 @@ class GPT2LMHeadModel(nn.Module):
                 f"either one of them should be passed to model.forward"
             )
 
+        if special_token_indices is not None:
+            if input_embeddings is not None:
+                raise ValueError(
+                    "Adding memory tokens to the input is only supported if "
+                    "`input_ids` are passed to the model, but got `input_embeddings`"
+                )
+            if not isinstance(special_token_indices, dict):
+                raise ValueError(
+                    "Expected `special_token_indices` to be a dict"
+                )
+            for key in ("regular_tokens", "memory_tokens"):
+                if not isinstance(special_token_indices.get(key), torch.Tensor):
+                    raise ValueError(
+                        f"Expected `special_token_indices['{key}']` to be a tensor, "
+                        f"but got {type(special_token_indices.get(key))}"
+                    )
+
         if input_embeddings is None:
             hidden_states = self.compute_input_embeddings(
-                input_ids, position_ids
+                input_ids, position_ids, special_token_indices
             )
         else:
             hidden_states = input_embeddings
@@ -443,12 +1060,22 @@ class GPT2LMHeadModel(nn.Module):
             expert_hash_idx=expert_hash_idx,
             token_modality_idx=token_modality_idx,
             constant_pos_mask=constant_pos_mask,
+            special_token_indices=special_token_indices,
         )
 
         if self.moe_enabled:
             hidden_states, routing_weights, expert_masks = decoder_outputs
         else:
             hidden_states = decoder_outputs
+
+        if special_token_indices is not None:
+            # Logits corresponding to memory token positions can be discarded
+            embedding_size = hidden_states.shape[-1]
+            regular_indices = special_token_indices['regular_tokens']
+            regular_indices = regular_indices[..., None].broadcast_to(
+                [-1, -1, embedding_size]
+            )
+            hidden_states = torch.gather(hidden_states, 1, regular_indices)
 
         if inference_loop_index is not None:
             # When running an implicit autoregressive loop for generation, this
@@ -496,23 +1123,28 @@ class GPT2LMHeadModel(nn.Module):
         expert_hash_idx=None,
         token_modality_idx=None,
         constant_pos_mask=None,
+        special_token_indices=None,
     ):
         # `extract_layer_idx` is used only multimodal use case
         # input_embeddings : shape (bsz, MSL, H)
         sparse_attention_mask = None
+
+        sparse_mask_args = {}
+        for sparse_mask_arg_key in ("attention_sliding_window_length",):
+            sparse_mask_args[sparse_mask_arg_key] = (
+                getattr(self, sparse_mask_arg_key)
+                if not self.sliding_window_every_other_decoder_layer
+                else None
+            )
 
         causal_attention_mask = create_broadcasted_autoregressive_mask(
             batch_size=input_embeddings.shape[0],
             num_heads=self.num_heads,
             tgt_seq_length=input_embeddings.shape[1],
             attention_span=attention_span,
-            sliding_window_length=(
-                self.attention_sliding_window_length
-                if not self.sliding_window_every_other_decoder_layer
-                else None
-            ),
             device=input_embeddings.device,
             dtype=input_embeddings.dtype,
+            **sparse_mask_args,
         )
         if self.sliding_window_every_other_decoder_layer:
             # Models like Gemma2 apply SWA every other decoder layer. This is
@@ -525,7 +1157,7 @@ class GPT2LMHeadModel(nn.Module):
                 num_heads=self.num_heads,
                 tgt_seq_length=input_embeddings.shape[1],
                 attention_span=attention_span,
-                sliding_window_length=self.attention_sliding_window_length,
+                attention_sliding_window_length=self.attention_sliding_window_length,
                 device=input_embeddings.device,
                 dtype=input_embeddings.dtype,
             )
@@ -561,6 +1193,7 @@ class GPT2LMHeadModel(nn.Module):
             expert_hash_idx=expert_hash_idx,
             token_modality_idx=token_modality_idx,
             constant_pos_mask=constant_pos_mask,
+            special_token_indices=special_token_indices,
         )
 
     def extract_features(

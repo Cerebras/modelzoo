@@ -22,6 +22,7 @@ from cerebras.modelzoo.tools.checkpoint_converters.base_converter import (
     BaseCheckpointConverter_HF_CS,
     BaseConfigConverter,
     BaseConfigConverter_HF_CS,
+    ConfigConversionError,
     ConversionRule,
     EquivalentSubkey,
     FormatVersions,
@@ -883,7 +884,7 @@ class Converter_GPT_Neox_LMHeadModel_CS18_CS20(
     Converter_GPTJ_LMHeadModel_CS18_CS20
 ):
     r"""
-    NeoX uses the GPTJ backbone
+    NeoX uses the GPTJ backbone.
     """
 
     @classmethod
@@ -899,7 +900,7 @@ class ConfigConverter_GPT_Neox_Headless_CS18_CS20(
     ConfigConverter_GPTJModel_CS18_CS20
 ):
     r"""
-    NeoX uses the GPTJ backbone
+    NeoX uses the GPTJ backbone.
     """
 
 
@@ -964,7 +965,7 @@ class Converter_GPT_Neox_Headless_HF_CS21(Converter_GPT_Neox_Headless_HF_CS20):
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4"),
         )
 
     @staticmethod
@@ -979,7 +980,7 @@ class Converter_GPT_Neox_LMHeadModel_HF_CS21(
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4"),
         )
 
     @staticmethod
@@ -1031,9 +1032,9 @@ class ConfigConverter_GPT_Neox_HF_CS21(ConfigConverter_GPT_Neox_HF_CS20):
                 new_state_dict[new_key] = 1.0
             else:
                 scaling_type = old_state_dict[old_key]["type"].lower()
-                if scaling_type not in ["linear", "yarn"]:
+                if scaling_type not in ["linear", "yarn", "longrope"]:
                     raise ConfigConversionError(
-                        f"Only `rope_scaling` type `linear` or `yarn` is currently supported, "
+                        f"Only `rope_scaling` type `linear`, `yarn` or 'longrope' is currently supported, "
                         f"but got type `{scaling_type}`."
                     )
                 new_state_dict[new_key] = old_state_dict[old_key]["factor"]
@@ -1046,6 +1047,18 @@ class ConfigConverter_GPT_Neox_HF_CS21(ConfigConverter_GPT_Neox_HF_CS20):
                             ]["original_max_position_embeddings"],
                         }
                     )
+                elif scaling_type == "longrope":
+                    # Create a copy of the remaining extra params of original dictionary and add to pos_scaling_extra_args
+                    # longrope uses param names which are HF compatible
+                    extra_args = {
+                        **{
+                            k: v
+                            for k, v in old_state_dict[old_key].items()
+                            if k not in ["type", "factor"]
+                        }
+                    }
+                    new_state_dict["pos_scaling_extra_args"] = extra_args
+
         else:
             if old_state_dict[old_key] == 1.0:
                 new_state_dict[new_key] = None
@@ -1063,5 +1076,5 @@ class ConfigConverter_GPT_Neox_HF_CS21(ConfigConverter_GPT_Neox_HF_CS20):
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4"),
         )

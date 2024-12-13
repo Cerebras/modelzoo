@@ -15,11 +15,9 @@
 import torch
 import torch.nn as nn
 
-from cerebras.modelzoo.common.registry import registry
 from cerebras.modelzoo.trainer import summarize_scalar
 
 
-@registry.register_loss("LoadBalancingLoss")
 class LoadBalancingLoss(nn.Module):
     def __init__(
         self,

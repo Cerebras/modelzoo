@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
 import argparse
 import logging
 import os
@@ -40,7 +39,6 @@ def deduplication_pipeline(args):
         threshold=0,
         window_size=6,
         batch_size=100,
-        docs_per_core=1000,
         n_jobs=1,
     )
     to_hash.generate_hashes(to_hash_args)
@@ -104,25 +102,28 @@ if __name__ == "__main__":
     parser.add_argument(
         "--input_dir",
         type=str,
-        help="Input directory which contains documents",
+        help="Input directory which contains documents, on which the deduplication pipeline needs to be run.",
         required=True,
     )
     parser.add_argument(
-        "--jsonl_key", type=str, help="JSONL key for the dataset", required=True
+        "--jsonl_key",
+        type=str,
+        help="JSONL key for the dataset.",
+        required=True,
     )
     parser.add_argument(
-        "--format", type=str, help="Format of the dataset", required=True
+        "--format", type=str, help="Format of the dataset.", required=True
     )
     parser.add_argument(
         "--output_dir",
         type=str,
-        help="Output directory for deduplicated dataset",
+        help="Output directory for final, deduplicated dataset.",
         required=True,
     )
     parser.add_argument(
         "--clean_up",
         type=bool,
-        help="Delete intermediate, created files",
+        help="Delete intermediate, created files. By default, this is set to False, retaining hashes, the graph of duplicates etc.",
         default=False,
         required=False,
     )

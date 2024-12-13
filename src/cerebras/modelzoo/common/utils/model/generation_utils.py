@@ -19,13 +19,16 @@ import torch
 import cerebras.pytorch as cstorch
 
 
-def sample_tokens(token_logits, temperature=None, top_k=None, top_p=None):
+def sample_tokens(
+    token_logits, rand_uniform, temperature=None, top_k=None, top_p=None
+):
     """Function used to sample tokens, if needed. Sampling supports one
     of temperature, top_k, top_p or a mix of these. If all sampling arguments
     are None, we run greedy decoding of the logits.
 
     Args:
         token_logits (torch.Tensor): Tensor with logits for tokens
+        rand_uniform (torch.Tensor): Random uniform tensor for sampling
         temperature (float): Parameter to control the randomness of the predicted tokens
         top_k (int): Sample tokens by restricting to the `k` highest probability elements
         top_p (float): Sample tokens by restricting to top tokens summing to
@@ -55,22 +58,30 @@ def sample_tokens(token_logits, temperature=None, top_k=None, top_p=None):
         else:
             k = top_k
 
-        # each are [B][K]
-        sorted_probs, token_ids = token_prob.topk(k=k)
-        token_ids = token_ids.int()  # must be integers
-        if top_p:
-            # Only consider the probs that sum to top_p
-            with cstorch.amp.disable_casts():
-                cum_probs = sorted_probs.cumsum(dim=-1)
-            mask = (cum_probs < top_p).to(token_logits.dtype)
-            # shift mask 1 position right to include the first token that
-            # crosses the threshold as well.
-            mask = torch.nn.functional.pad(mask, [1, 0], value=1)[:, :k]
-            sorted_probs *= mask
+        if torch.is_grad_enabled():
+            # cstorch.cirh is not autograd friendly.
+            raise RuntimeError("no_grad is needed for sampling.")
+
+        if top_p is None:
+            top_p = 1.0
+
+        token_prob = token_prob.to(torch.float32)
+        idx_dtype = torch.int32
+
+        if token_prob.shape[-1] > torch.iinfo(idx_dtype).max:
+            raise RuntimeError("vocab_size over int32 max")
+
+        # [B][K] fused val and indices.
+        fused_topk = cstorch.cirh.FusedTopK(token_prob, k=k, dimension=1)
+
         # [B][K] -> [B][1]
-        chosen = sorted_probs.multinomial(num_samples=1)
-        # Lookup chosen [B][1] from the sorted token_ids
-        token_pred = token_ids.gather(dim=-1, index=chosen)
+        p_full = torch.full_like(token_prob[:, 0:1], top_p)
+        rand_uniform = rand_uniform.to(token_prob.dtype)
+        k_full = torch.full_like(token_prob[:, 0:1], k, dtype=idx_dtype)
+        token_pred = cstorch.cirh.FusedTopP(
+            fused_topk, p=p_full, u=rand_uniform, k=k_full
+        )
+        token_pred = token_pred.int()
     else:
         token_pred = torch.argmax(token_logits, dim=-1).int()
 

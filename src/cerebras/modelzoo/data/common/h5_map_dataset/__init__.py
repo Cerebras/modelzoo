@@ -14,7 +14,10 @@
 
 from .dataset import (
     HDF5Dataset,
+    HDF5DatasetConfig,
     MLMHDF5Dataset,
     MultiModalHDF5Dataset,
+    MultiModalHDF5DatasetConfig,
     MultimodalSimpleHDF5Dataset,
+    MultimodalSimpleHDF5DatasetConfig,
 )

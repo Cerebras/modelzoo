@@ -12,14 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import List, Literal
+
 import torch
 from torchvision import datasets, transforms
 
 import cerebras.pytorch as cstorch
 import cerebras.pytorch.distributed as dist
-from cerebras.modelzoo.common.registry import registry
 from cerebras.modelzoo.data.vision.segmentation.UNetDataProcessor import (
     UNetDataProcessor,
+    UNetDataProcessorConfig,
 )
 from cerebras.modelzoo.data.vision.utils import create_worker_cache
 
@@ -40,12 +42,25 @@ class Cityscapes(datasets.Cityscapes):
         self.images, self.targets = zip(*sorted(zip(self.images, self.targets)))
 
 
-@registry.register_datasetprocessor("CityscapesDataProcessor")
+class CityscapesDataProcessorConfig(UNetDataProcessorConfig):
+    data_processor: Literal["CityscapesDataProcessor"]
+
+    use_worker_cache: bool = False
+
+    max_image_shape: List[int] = [1024, 2048]
+
+    split: Literal["train", "val"] = "train"
+    "Dataset split."
+
+
 class CityscapesDataProcessor(UNetDataProcessor):
-    def __init__(self, params):
-        super(CityscapesDataProcessor, self).__init__(params)
-        self.use_worker_cache = params["use_worker_cache"]
-        self.image_shape = params["image_shape"]  # of format (H, W, C)
+    def __init__(self, config: CityscapesDataProcessorConfig):
+        super(CityscapesDataProcessor, self).__init__(config)
+        self.split = config.split
+        self.shuffle = self.shuffle and (self.split == "train")
+
+        self.use_worker_cache = config.use_worker_cache
+        self.image_shape = config.image_shape  # of format (H, W, C)
         self._tiling_image_shape = self.image_shape  # out format: (H, W, C)
 
         # Tiling param:
@@ -53,7 +68,7 @@ class CityscapesDataProcessor(UNetDataProcessor):
         # If `image_shape` > 1K x 2K in any dimension,
         #   first resize image to min(img_shape, max_image_shape)
         #   and then tile to target height and width specified in yaml
-        self.max_image_shape = params.get("max_image_shape", [1024, 2048])
+        self.max_image_shape = config.max_image_shape
 
         self.image_shape = self._update_image_shape()
         (
@@ -77,11 +92,10 @@ class CityscapesDataProcessor(UNetDataProcessor):
 
         return image_shape
 
-    def create_dataset(self, is_training):
-        split = "train" if is_training else "val"
+    def create_dataset(self):
         dataset = Cityscapes(
             root=self.data_dir,
-            split=split,
+            split=self.split,
             mode="fine",
             target_type="semantic",
             transforms=self.transform_image_and_mask,

@@ -12,14 +12,273 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Any, Literal, Optional
+
 import torch
 import torch.nn as nn
+from pydantic import Field
 
 from cerebras.modelzoo.layers import (
     FeedForwardNetwork,
     FeedForwardNetworkConfig,
 )
-from cerebras.modelzoo.models.nlp.bert.bert_model import BertModel
+from cerebras.modelzoo.layers.activations import ActivationType
+from cerebras.modelzoo.layers.init import TruncatedNormalInitializer
+from cerebras.modelzoo.models.nlp.bert.bert_model import (
+    BertModel,
+    BertModelConfig,
+)
+
+
+class BertForPreTrainingModelConfig(BertModelConfig):
+    name: Literal["bert"]
+
+    share_embedding_weights: bool = True
+    "Whether to share the embedding weights between the input and output embedding."
+
+    num_segments: Optional[int] = None
+    """Number of segments (token types) in embedding. When not specified
+    (and NSP objective is enabled), num_segments will default to 2"""
+
+    pad_token_id: int = 0
+    "The embedding vector at pad_token_id is not updated during training."
+
+    alibi_trainable_slopes: bool = False
+    "Replaces alibi's fixed slopes with trainable slopes."
+
+    encoder_nonlinearity: ActivationType = "gelu"
+    """The non-linear activation function used in the feed forward network
+    in each transformer block.
+    See list of non-linearity functions [here](https://pytorch.org/docs/stable/nn.html#non-linear-activations-weighted-sum-nonlinearity).
+    """
+
+    mlm_nonlinearity: Optional[ActivationType] = None
+    """The non-linear activation function used in the MLM head. If not
+    specified, defaults to encoder_nonlinearity."""
+
+    use_ffn_bias_in_mlm: bool = True
+    "Whether to use bias in MLM head's FFN layer."
+
+    use_output_bias_in_mlm: bool = True
+    "Whether to use bias in MLM head's output (classifier) layer."
+
+    # Loss:
+    mlm_loss_weight: float = 1.0
+    "Value that scales the Masked Language Modelling (MLM) loss."
+
+    label_smoothing: float = 0.0
+    "The label smoothing factor used during training."
+
+    # Task-specific:
+    disable_nsp: bool = False
+    "Disables Next Sentence Prediction (NSP) objective."
+
+    num_classes: int = 2
+    "Number of classes used by the classifier head (NSP)."
+
+    # Misc:
+    compute_eval_metrics: bool = True
+    "Computes perplexity & accuracy metrics in addition to loss."
+
+    # The following fields are deprecated and unused.
+    # They will be removed in the future once all configs have been fixed
+    mixed_precision: Optional[Any] = Field(default=None, deprecated=True)
+    fp16_type: Optional[Any] = Field(default=None, deprecated=True)
+
+    def post_init(self, context):
+        super().post_init(context)
+
+        if self.num_segments is None:
+            self.num_segments = None if self.disable_nsp else 2
+
+        self.nonlinearity = self.encoder_nonlinearity
+        self.embedding_dropout_rate = self.dropout_rate
+        self.embedding_pad_token_id = self.pad_token_id
+        self.add_pooling_layer = not self.disable_nsp
+
+        if self.mlm_nonlinearity is None:
+            self.mlm_nonlinearity = self.nonlinearity
+
+
+class BertPretrainModel(nn.Module):
+    """
+    Bert Model with two heads on top as done during the pretraining: a `masked language modeling` head and a `next
+    sentence prediction (classification)` head. Following the paper: https://arxiv.org/abs/1810.04805.
+    """
+
+    def __init__(self, config: BertForPreTrainingModelConfig):
+        """
+        Args:
+            config: Settings for the model.
+        """
+
+        super().__init__()
+
+        self.disable_nsp = config.disable_nsp
+        self.share_embedding_weights = config.share_embedding_weights
+
+        self.bert_encoder = self.build_encoder_model(config)
+
+        # Handle muP scaling
+        self.output_logits_scale = None
+        if config.mup_base_hidden_size:
+            hidden_size_width_mult = (
+                config.hidden_size / config.mup_base_hidden_size
+            )
+            if config.scale_output_logits_by_d:
+                self.output_logits_scale = (
+                    config.output_logits_alpha / hidden_size_width_mult
+                )
+            else:
+                self.output_logits_scale = (
+                    config.output_logits_alpha / hidden_size_width_mult**0.5
+                )
+
+        if not self.disable_nsp:
+            self.bert_cls_head = BertClassifierHead(
+                hidden_size=config.hidden_size,
+                num_classes=config.num_classes,
+                use_bias=config.use_ffn_bias,
+                kernel_initializer=TruncatedNormalInitializer(
+                    std=config.initializer_range,
+                    mean=0.0,
+                    a=config.initializer_range * -2.0,
+                    b=config.initializer_range * 2.0,
+                ),
+            )
+
+        self.bert_mlm_head = self.build_mlm_head(config)
+
+        self.tie_weights()
+
+    def get_lr_adjustment_groups(self):
+        return self.bert_encoder.get_lr_adjustment_groups()
+
+    def build_encoder_model(self, config: BertForPreTrainingModelConfig):
+        return BertModel(config)
+
+    def build_mlm_head(self, config: BertForPreTrainingModelConfig):
+        return BertMLMHead(
+            hidden_size=config.hidden_size,
+            vocab_size=config.vocab_size,
+            use_ffn_bias_in_mlm=config.use_ffn_bias_in_mlm,
+            use_output_bias_in_mlm=config.use_output_bias_in_mlm,
+            activation=config.mlm_nonlinearity,
+            layer_norm_epsilon=config.layer_norm_epsilon,
+            dropout=None,
+            kernel_initializer=TruncatedNormalInitializer(
+                std=config.initializer_range,
+                mean=0.0,
+                a=config.initializer_range * -2.0,
+                b=config.initializer_range * 2.0,
+            ),
+        )
+
+    def reset_parameters(self):
+        self.bert_encoder.reset_parameters()
+        if not self.disable_nsp:
+            self.bert_cls_head.reset_parameters()
+        self.bert_mlm_head.reset_parameters()
+
+    def tie_weights(self):
+        if not self.share_embedding_weights:
+            return
+
+        output_embedding = self.get_output_embeddings()
+        input_embedding = self.get_input_embeddings()
+        output_embedding.weight = input_embedding.weight
+
+        if getattr(output_embedding, "bias", None) is not None:
+            output_embedding.bias.data = nn.functional.pad(
+                output_embedding.bias.data,
+                (
+                    0,
+                    output_embedding.weight.shape[0]
+                    - output_embedding.bias.shape[0],
+                ),
+                "constant",
+                0,
+            )
+        if hasattr(output_embedding, "out_features") and hasattr(
+            input_embedding, "num_embeddings"
+        ):
+            output_embedding.out_features = input_embedding.num_embeddings
+
+    def get_output_embeddings(self):
+        return self.bert_mlm_head.get_output_embeddings()
+
+    def get_input_embeddings(self):
+        return self.bert_encoder.embedding_layer.get_input_embeddings()
+
+    def forward(
+        self,
+        input_ids=None,
+        attention_mask=None,
+        position_ids=None,
+        token_type_ids=None,
+        masked_lm_positions=None,
+        should_gather_mlm_labels=False,
+        attention_span=None,
+    ):
+        """
+        Args:
+            input_ids (Tensor):
+                The id of input tokens. Can be of shape ``[batch_size, seq_length]``
+            attention_mask (Tensor):
+                Can be 2D of shape ``[batch_size, seq_length]``,
+                or 3D of shape ``[batch, query_length, seq_length]``,
+                or 4D of shape ``[batch, num_heads, query_length, seq_length]``.
+            position_ids (Tensor):
+                The position id of input tokens. Can be of shape ``[batch_size, seq_length]``
+            token_type_ids (Tensor):
+                The segment id of input tokens, indicating which sequence the token belongs to.
+                Can be of shape ```[batch_size, seq_length]`
+            masked_lm_positions (Tensor):
+                Position ids of mlm tokens. Shape ``[batch_size, max_predictions_per_seq]``
+            attention_span (Tensor):
+                The attention span of input tokens for creating VSL mask. Can be of shape ```[batch_size, seq_length]```.
+        """
+        mlm_hidden_states, pooled_hidden_states = self.bert_encoder(
+            input_ids,
+            position_ids=position_ids,
+            segment_ids=token_type_ids,
+            attention_mask=attention_mask,
+            attention_span=attention_span,
+        )
+        batch_size, seq_len, hidden_size = list(mlm_hidden_states.size())
+
+        focused_mlm_hidden_states = mlm_hidden_states
+        if should_gather_mlm_labels:
+            batch_size, max_num_pred = list(masked_lm_positions.size())
+            index = torch.broadcast_to(
+                masked_lm_positions.unsqueeze(-1),
+                (batch_size, max_num_pred, hidden_size),
+            ).long()
+            focused_mlm_hidden_states = torch.gather(
+                mlm_hidden_states, dim=1, index=index
+            )
+
+        mlm_logits = self.bert_mlm_head(focused_mlm_hidden_states)
+
+        # scale mlm_logits for muP transfer
+        if self.output_logits_scale:
+            mlm_logits = mlm_logits * torch.tensor(
+                float(self.output_logits_scale),
+                dtype=mlm_logits.dtype,
+            )
+
+        # nsp_logits
+        nsp_logits = None
+        if not self.disable_nsp:
+            nsp_logits = self.bert_cls_head(pooled_hidden_states)
+            # scale nsp_logits for muP transfer
+            if self.output_logits_scale:
+                nsp_logits = nsp_logits * torch.tensor(
+                    float(self.output_logits_scale),
+                    dtype=nsp_logits.dtype,
+                )
+
+        return mlm_logits, nsp_logits, mlm_hidden_states, pooled_hidden_states
 
 
 class BertClassifierHead(nn.Module):
@@ -140,288 +399,3 @@ class BertMLMHead(nn.Module):
         mlm_embeddings = self.mlm_transform(bert_output)
         mlm_logits = self.classifier(mlm_embeddings)
         return mlm_logits
-
-
-class BertPretrainModel(nn.Module):
-    """
-    Bert Model with two heads on top as done during the pretraining: a `masked language modeling` head and a `next
-    sentence prediction (classification)` head. Following the paper: https://arxiv.org/abs/1810.04805.
-    """
-
-    def __init__(
-        self,
-        disable_nsp=False,
-        mlm_loss_weight=1.0,
-        label_smoothing=0.0,
-        num_classes=2,
-        mlm_nonlinearity=None,
-        # Embedding
-        vocab_size=50257,
-        max_position_embeddings=1024,
-        position_embedding_type="learned",
-        embedding_pad_token_id=0,
-        mask_padding_in_positional_embed=False,
-        rotary_dim=None,
-        rope_theta=10000,
-        pad_rope=False,
-        num_relative_attention_buckets=32,
-        alibi_trainable_slopes=False,
-        pos_scaling_factor=1.0,
-        pos_scaling_type="linear",
-        pos_scaling_extra_args=None,
-        hidden_size=768,
-        share_embedding_weights=True,
-        # Encoder
-        num_hidden_layers=12,
-        layer_norm_epsilon=1.0e-5,
-        # Encoder Attn
-        num_heads=12,
-        attention_module="aiayn_attention",
-        extra_attention_params={},
-        attention_type="scaled_dot_product",
-        attention_softmax_fp32=True,
-        attention_kernel=None,
-        dropout_rate=0.1,
-        nonlinearity="gelu",
-        pooler_nonlinearity=None,
-        attention_dropout_rate=0.1,
-        use_projection_bias_in_attention=True,
-        use_ffn_bias_in_attention=True,
-        # Encoder ffn
-        filter_size=3072,
-        use_ffn_bias=True,
-        use_ffn_bias_in_mlm=True,
-        use_output_bias_in_mlm=True,
-        # Task-specific
-        initializer_range=0.02,
-        num_segments=2,
-        dtype=None,
-        # muP (maximal update parameterization)  parameters
-        lr_adjustment_groups=None,
-        embeddings_scale=1.0,
-        scale_qk_dot_by_d=False,
-        attention_logits_alpha=1.0,
-        scale_output_logits_by_d=True,
-        mup_base_hidden_size=None,
-        mup_base_filter_size=None,
-        output_logits_alpha=None,
-    ):
-        """
-        Args:
-            disable_nsp (:obj:`bool` `optional`, defaults to False):
-                Whether to disable next-sentence-prediction and only use masked-language-model.
-            mlm_loss_weight (:obj:`float` `optional`, defaults to 1.0):
-                The scaling factor for masked-language-model loss.
-            label_smoothing (:obj:`float` `optional`, defaults to 0.0):
-                The label smoothing factor used during training.
-        """
-
-        super().__init__()
-
-        self.vocab_size = vocab_size
-        self.disable_nsp = disable_nsp
-        self.share_embedding_weights = share_embedding_weights
-        self.initializer_range = initializer_range
-
-        self.bert_encoder = BertModel(
-            # Embedding
-            vocab_size=vocab_size,
-            max_position_embeddings=max_position_embeddings,
-            position_embedding_type=position_embedding_type,
-            hidden_size=hidden_size,
-            embedding_dropout_rate=dropout_rate,
-            embedding_pad_token_id=embedding_pad_token_id,
-            mask_padding_in_positional_embed=mask_padding_in_positional_embed,
-            rotary_dim=rotary_dim,
-            rope_theta=rope_theta,
-            pad_rope=pad_rope,
-            num_relative_attention_buckets=num_relative_attention_buckets,
-            alibi_trainable_slopes=alibi_trainable_slopes,
-            pos_scaling_factor=pos_scaling_factor,
-            pos_scaling_type=pos_scaling_type,
-            pos_scaling_extra_args=pos_scaling_extra_args,
-            # Encoder
-            num_hidden_layers=num_hidden_layers,
-            layer_norm_epsilon=layer_norm_epsilon,
-            # Encoder Attn
-            num_heads=num_heads,
-            attention_module=attention_module,
-            extra_attention_params=extra_attention_params,
-            attention_type=attention_type,
-            attention_softmax_fp32=attention_softmax_fp32,
-            attention_kernel=attention_kernel,
-            dropout_rate=dropout_rate,
-            nonlinearity=nonlinearity,
-            pooler_nonlinearity=pooler_nonlinearity,
-            attention_dropout_rate=attention_dropout_rate,
-            use_projection_bias_in_attention=use_projection_bias_in_attention,
-            use_ffn_bias_in_attention=use_ffn_bias_in_attention,
-            # Encoder ffn
-            filter_size=filter_size,
-            use_ffn_bias=use_ffn_bias,
-            # Task-specific
-            initializer_range=initializer_range,
-            num_segments=num_segments,
-            add_pooling_layer=(not self.disable_nsp),
-            dtype=dtype,
-            # muP (maximal update parameterization)  parameters
-            lr_adjustment_groups=lr_adjustment_groups,
-            embeddings_scale=embeddings_scale,
-            scale_qk_dot_by_d=scale_qk_dot_by_d,
-            attention_logits_alpha=attention_logits_alpha,
-            mup_base_hidden_size=mup_base_hidden_size,
-            mup_base_filter_size=mup_base_filter_size,
-        )
-
-        # Handle muP scaling
-        self.output_logits_scale = None
-        if mup_base_hidden_size:
-            hidden_size_width_mult = hidden_size / mup_base_hidden_size
-            if not output_logits_alpha:
-                output_logits_alpha = 1.0
-            if scale_output_logits_by_d:
-                self.output_logits_scale = (
-                    output_logits_alpha / hidden_size_width_mult
-                )
-            else:
-                self.output_logits_scale = (
-                    output_logits_alpha / hidden_size_width_mult**0.5
-                )
-
-        kernel_initializer = {
-            "name": "truncated_normal",
-            "std": self.initializer_range,
-            "mean": 0.0,
-            "a": self.initializer_range * -2.0,
-            "b": self.initializer_range * 2.0,
-        }
-
-        if not self.disable_nsp:
-            self.bert_cls_head = BertClassifierHead(
-                hidden_size=hidden_size,
-                num_classes=num_classes,
-                use_bias=use_ffn_bias,
-                kernel_initializer=kernel_initializer,
-            )
-
-        if mlm_nonlinearity is None:
-            mlm_nonlinearity = nonlinearity
-
-        self.bert_mlm_head = BertMLMHead(
-            hidden_size=hidden_size,
-            vocab_size=vocab_size,
-            use_ffn_bias_in_mlm=use_ffn_bias_in_mlm,
-            use_output_bias_in_mlm=use_output_bias_in_mlm,
-            activation=mlm_nonlinearity,
-            layer_norm_epsilon=layer_norm_epsilon,
-            dropout=None,
-            kernel_initializer=kernel_initializer,
-        )
-
-        self.tie_weights()
-
-    def reset_parameters(self):
-        self.bert_encoder.reset_parameters()
-        if not self.disable_nsp:
-            self.bert_cls_head.reset_parameters()
-        self.bert_mlm_head.reset_parameters()
-
-    def tie_weights(self):
-        if not self.share_embedding_weights:
-            return
-
-        output_embedding = self.get_output_embeddings()
-        input_embedding = self.get_input_embeddings()
-        output_embedding.weight = input_embedding.weight
-
-        if getattr(output_embedding, "bias", None) is not None:
-            output_embedding.bias.data = nn.functional.pad(
-                output_embedding.bias.data,
-                (
-                    0,
-                    output_embedding.weight.shape[0]
-                    - output_embedding.bias.shape[0],
-                ),
-                "constant",
-                0,
-            )
-        if hasattr(output_embedding, "out_features") and hasattr(
-            input_embedding, "num_embeddings"
-        ):
-            output_embedding.out_features = input_embedding.num_embeddings
-
-    def get_output_embeddings(self):
-        return self.bert_mlm_head.get_output_embeddings()
-
-    def get_input_embeddings(self):
-        return self.bert_encoder.embedding_layer.get_input_embeddings()
-
-    def forward(
-        self,
-        input_ids=None,
-        attention_mask=None,
-        position_ids=None,
-        token_type_ids=None,
-        masked_lm_positions=None,
-        should_gather_mlm_labels=False,
-        attention_span=None,
-    ):
-        """
-        Args:
-            input_ids (Tensor):
-                The id of input tokens. Can be of shape ``[batch_size, seq_length]``
-            attention_mask (Tensor):
-                Can be 2D of shape ``[batch_size, seq_length]``,
-                or 3D of shape ``[batch, query_length, seq_length]``,
-                or 4D of shape ``[batch, num_heads, query_length, seq_length]``.
-            position_ids (Tensor):
-                The position id of input tokens. Can be of shape ``[batch_size, seq_length]``
-            token_type_ids (Tensor):
-                The segment id of input tokens, indicating which sequence the token belongs to.
-                Can be of shape ```[batch_size, seq_length]`
-            masked_lm_positions (Tensor):
-                Position ids of mlm tokens. Shape ``[batch_size, max_predictions_per_seq]``
-            attention_span (Tensor):
-                The attention span of input tokens for creating VSL mask. Can be of shape ```[batch_size, seq_length]```.
-        """
-        mlm_hidden_states, pooled_hidden_states = self.bert_encoder(
-            input_ids,
-            position_ids=position_ids,
-            segment_ids=token_type_ids,
-            attention_mask=attention_mask,
-            attention_span=attention_span,
-        )
-        batch_size, seq_len, hidden_size = list(mlm_hidden_states.size())
-
-        focused_mlm_hidden_states = mlm_hidden_states
-        if should_gather_mlm_labels:
-            batch_size, max_num_pred = list(masked_lm_positions.size())
-            index = torch.broadcast_to(
-                masked_lm_positions.unsqueeze(-1),
-                (batch_size, max_num_pred, hidden_size),
-            ).long()
-            focused_mlm_hidden_states = torch.gather(
-                mlm_hidden_states, dim=1, index=index
-            )
-
-        mlm_logits = self.bert_mlm_head(focused_mlm_hidden_states)
-
-        # scale mlm_logits for muP transfer
-        if self.output_logits_scale:
-            mlm_logits = mlm_logits * torch.tensor(
-                float(self.output_logits_scale),
-                dtype=mlm_logits.dtype,
-            )
-
-        # nsp_logits
-        nsp_logits = None
-        if not self.disable_nsp:
-            nsp_logits = self.bert_cls_head(pooled_hidden_states)
-            # scale nsp_logits for muP transfer
-            if self.output_logits_scale:
-                nsp_logits = nsp_logits * torch.tensor(
-                    float(self.output_logits_scale),
-                    dtype=nsp_logits.dtype,
-                )
-
-        return mlm_logits, nsp_logits, mlm_hidden_states, pooled_hidden_states

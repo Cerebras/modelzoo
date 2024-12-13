@@ -16,14 +16,28 @@
 
 from __future__ import annotations
 
+import logging
+import os
+import sys
+import traceback
 from contextlib import contextmanager
+from functools import partial
 from math import gcd
 from typing import Optional
 from weakref import ref
 
-from cerebras.appliance.log import ClassLogger, named_class_logger
-from cerebras.modelzoo.trainer.callbacks import Callback
+import cerebras.pytorch.distributed as dist
+from cerebras.appliance.log import (
+    ClassLogger,
+    collect_wsc_log_settings,
+    get_level_name,
+    named_class_logger,
+    wsc_logger,
+)
+from cerebras.appliance.utils.file import create_symlink
+from cerebras.modelzoo.trainer.callbacks import CoreCallback
 from cerebras.pytorch import _generating_docs
+from cerebras.pytorch.utils.call_once import call_once
 
 if _generating_docs:
 
@@ -32,7 +46,7 @@ if _generating_docs:
 
 
 @named_class_logger("Logging")
-class Logging(Callback, ClassLogger):
+class Logging(CoreCallback, ClassLogger):
     """
     Callback that handles setting up the Trainer's logger
     as well as facilitates the cadence of logging.
@@ -69,23 +83,94 @@ class Logging(Callback, ClassLogger):
         self.trainer = None
 
     def pre_setup(self, trainer):
-        # TODO: Move setup_logging into this file
-        from cerebras.modelzoo.common.pytorch_utils import setup_logging
+        self.setup_logging(trainer)
+        self.set_wsc_log_level()
+        self.trainer = ref(trainer)
 
-        # Set up logging level
-        setup_logging(
-            self.log_level,
-            streamer_logging_level=None,
-            logging_dir=trainer.artifact_dir,
-            model_dir=trainer.model_dir,
+    def setup_logging(self, trainer):
+        """Configure default logging format."""
+
+        def block_filter(record, handler_type):
+            return getattr(record, "block", None) != handler_type
+
+        handlers = []
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setFormatter(_CustomFormatter())
+        handler.addFilter(partial(block_filter, handler_type="console"))
+        handlers.append(handler)
+
+        logging_file = trainer.artifact_dir / "run.log"
+        handler = logging.FileHandler(logging_file)
+        handler.setFormatter(_CustomFormatter())
+        handler.addFilter(partial(block_filter, handler_type="file"))
+        handlers.append(handler)
+
+        # set up run log symlink in summary dir
+        create_symlink(
+            trainer.summary_dir / "run.log",
+            os.path.relpath(logging_file, trainer.summary_dir),
         )
 
-        # TODO: Move set_wsc_log_level into this file
-        from cerebras.modelzoo.common.run_utils import set_wsc_log_level
+        # set up latest run log symlink in model dir
+        create_symlink(
+            trainer.model_dir / "latest_run.log",
+            logging_file.relative_to(trainer.model_dir),
+        )
 
-        set_wsc_log_level(self.wsc_log_level)
+        if dist.is_master_ordinal():
+            level = get_level_name(self.log_level)
+        else:
+            level = get_level_name("error")
 
-        self.trainer = ref(trainer)
+        # Remove any handlers that may have been inadvertently set before
+        logging.getLogger().handlers.clear()
+        logging.basicConfig(level=level, handlers=handlers)
+
+        self.setup_logging_excepthook()
+
+        # Begin by logging the command that is running to the run log
+        logging.info(f"Current Working Directory: {os.getcwd()}")
+        logging.info(f"Running command: {' '.join(sys.argv)}")
+
+    @staticmethod
+    @call_once()
+    def setup_logging_excepthook():
+        """Setup a logging hook that runs whenever an exception is raised that
+        catches and logs the exception to ensure that the full traceback is printed
+        in the log file.
+        """
+        original_hook = sys.excepthook
+
+        def cerebras_logging_hook(exc_type, exc_value, exc_traceback):
+            """Pipe uncaught exceptions through logger."""
+            msg = "".join(
+                traceback.format_exception(exc_type, exc_value, exc_traceback)
+            )
+            # Block console logging to avoid duplicate messages since exceptions
+            # are logged by python interpreter by default anyways.
+            logging.error(
+                f"Uncaught exception:\n{msg}", extra={"block": "console"}
+            )
+
+            # Run the original except hook which prints the exception to stderr
+            original_hook(exc_type, exc_value, exc_traceback)
+
+        sys.excepthook = cerebras_logging_hook
+
+    def set_wsc_log_level(self):
+        """Assert the list of log levels is valid."""
+        if isinstance(self.wsc_log_level, dict):
+            for task, level in self.wsc_log_level.items():
+                level = int(level) if level.isdigit() else get_level_name(level)
+                if task:
+                    wsc_logger.getChild(task).setLevel(level)
+                else:
+                    wsc_logger.setLevel(level)
+        else:
+            raise ValueError("Invalid log levels. Input must be a dict.")
+
+        # validate log level setting
+        collect_wsc_log_settings()
 
     @contextmanager
     def flush_logs(self, trainer):
@@ -160,3 +245,36 @@ class Logging(Callback, ClassLogger):
                 and trainer.executor
                 and trainer.executor.user_iteration % self.log_steps == 0
             )
+
+
+class _CustomFormatter(logging.Formatter):
+    """Cerebras Preferred Log Formatting."""
+
+    def __init__(self):
+        """Set up the formatter."""
+
+        ordinal = dist.get_ordinal()
+        num_tasks = dist.num_tasks() - 1
+
+        if num_tasks > 1 and dist.is_streamer():
+            ordinal_msg = f"[{ordinal}/{num_tasks}]"
+        else:
+            ordinal_msg = ""
+
+        fmt = f"%(asctime)s %(levelname)s: {ordinal_msg}  %(message)s"
+        super().__init__(fmt=fmt)
+
+        self.info_formatter = None
+        # Only enable shorter info logging depending on environment variable
+        # This is so that we have the option to experiment with this in the future
+        if "USE_SHORT_INFO_LOGGING" in os.environ:
+            fmt = "{}%(message)s".format(
+                f"{ordinal_msg}:  " if ordinal > 0 else ""
+            )
+            self.info_formatter = logging.Formatter(fmt)
+
+    def format(self, record):
+        if self.info_formatter and record.levelno == logging.INFO:
+            return logging.Formatter.format(self.info_formatter, record)
+
+        return super().format(record)

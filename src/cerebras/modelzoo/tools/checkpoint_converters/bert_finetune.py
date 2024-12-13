@@ -228,10 +228,11 @@ class ConfigConverter_BertForSequenceClassification_HF_CS17(
 
     def pre_config_convert(
         self,
+        model,
         config,
         converter_indices,
     ):
-        config = super().pre_config_convert(config, converter_indices)
+        config = super().pre_config_convert(model, config, converter_indices)
 
         # pylint: disable=line-too-long
         # From https://github.com/huggingface/transformers/blob/23c146c38b42d1193849fbd6f2943bf754b7c428/src/transformers/models/bert/modeling_bert.py#L1579
@@ -371,10 +372,11 @@ class ConfigConverter_BertForTokenClassification_HF_CS17(
 
     def pre_config_convert(
         self,
+        model,
         config,
         converter_indices,
     ):
-        config = super().pre_config_convert(config, converter_indices)
+        config = super().pre_config_convert(model, config, converter_indices)
 
         # Additional Finetune specific defaults:
         if converter_indices.direction == 0:
@@ -393,6 +395,7 @@ class ConfigConverter_BertForTokenClassification_HF_CS17(
 
     def post_config_convert(
         self,
+        model,
         original_config,
         old_config,
         new_config,
@@ -406,6 +409,7 @@ class ConfigConverter_BertForTokenClassification_HF_CS17(
                 new_config["include_padding_in_loss"] = False
 
         return super().post_config_convert(
+            model,
             original_config,
             old_config,
             new_config,
@@ -520,10 +524,11 @@ class ConfigConverter_BertForQuestionAnswering_HF_CS17(
 
     def pre_config_convert(
         self,
+        model,
         config,
         converter_indices,
     ):
-        config = super().pre_config_convert(config, converter_indices)
+        config = super().pre_config_convert(model, config, converter_indices)
 
         # Additional Finetune specific defaults:
         if converter_indices.direction == 0:
@@ -563,13 +568,13 @@ class ConfigConverter_BertForQuestionAnswering_HF_CS18(
 class ConfigConverter_BertForSequenceClassification_HF_CS21(
     ConfigConverter_BertForSequenceClassification_HF_CS18
 ):
-    "CS 2.1 config is the same as CS 2.0"
+    "CS 2.1 config is the same as CS 2.0."
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4"),
         )
 
 
@@ -592,7 +597,7 @@ class Converter_BertForSequenceClassification_WithoutOptionalModel_HF_CS21(
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4"),
         )
 
     @staticmethod
@@ -610,13 +615,13 @@ Converter_BertForSequenceClassification_HF_CS21 = Build_HF_CS_Converter_WithOpti
 class ConfigConverter_BertForTokenClassification_HF_CS21(
     ConfigConverter_BertForTokenClassification_HF_CS18
 ):
-    "CS 2.1 config is the same as CS 2.0"
+    "CS 2.1 config is the same as CS 2.0."
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4"),
         )
 
 
@@ -639,7 +644,7 @@ class Converter_BertForTokenClassification_WithoutOptionalModel_HF_CS21(
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4"),
         )
 
     @staticmethod
@@ -657,13 +662,13 @@ Converter_BertForTokenClassification_HF_CS21 = Build_HF_CS_Converter_WithOptiona
 class ConfigConverter_BertForQuestionAnswering_HF_CS21(
     ConfigConverter_BertForQuestionAnswering_HF_CS18
 ):
-    "CS 2.1 config is the same as CS 2.0"
+    "CS 2.1 config is the same as CS 2.0."
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4"),
         )
 
 
@@ -686,7 +691,7 @@ class Converter_BertForQuestionAnswering_WithoutOptionalModel_HF_CS21(
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4"),
         )
 
     @staticmethod

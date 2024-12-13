@@ -12,157 +12,89 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""PyTorch HDF5 Dataset"""
+"""PyTorch HDF5 Dataset."""
 
 import json
 import math
 import os
 import random
 from pathlib import Path
+from typing import List, Optional, Union
 
 import h5py
 import numpy as np
 import torch
 
 from cerebras.modelzoo.common.input_utils import get_streaming_batch_size
+from cerebras.modelzoo.config import BaseConfig
 from cerebras.modelzoo.data.common.input_utils import (
     cluster_config,
     shard_list_of_chunks_contiguous,
 )
-from cerebras.pytorch.distributed import get_worker_state
 
 
-class RestartableDataLoader(torch.utils.data.DataLoader):
+class HDF5IterableDatasetConfig(BaseConfig):
+    data_dir: Union[str, List[str]] = ...
+    "Path to dataset HDF5 files"
+
+    batch_size: int = ...
+    "Batch size."
+
+    shuffle: bool = False
+    "Flag to enable data shuffling."
+
+    shuffle_seed: Optional[int] = None
+    "Shuffle seed."
+
+    num_workers: int = 0
+    "How many subprocesses to use for data loading."
+
+    drop_last: bool = True
+    """If True and the dataset size is not divisible
+    by the batch size, the last incomplete batch will be dropped."""
+
+    use_vsl: bool = False
     """
-    This custom dataloader class specifies the  'state_dict', 'aggregate_state_dict',
-    'load_state_dict' and 'deaggregate_state_dict' methods.
-    These methods dictate what worker state information  is stored
-    (local or global streaming info) and how it is to be aggregated and retrieved.
-    To deterministically restart an instance of HDF5IterableDataset, it requires the
-    number of samples already seen in the previous run. This info is stored in the
-    `samples_streamed` key inside the worker state dict. Upon restart, the
-    `load_state_dict` method sets the `samples_seen` class variable which determines
-    the number of samples to be skipped.
+    Flag to enable variable sequence length training.
+    It requires the dataset to have two extra features: the
+    `attention_span` of keys and the `position_ids` of tokens.
     """
 
-    def __init__(self, *args, **kwargs):
-        # keep track of how many samples were streamed in the previous portion
-        # of the run so that we can track cumulative samples streamed in the
-        # state_dict
-        self.previous_samples_streamed = 0
-        super().__init__(*args, **kwargs)
-
-    def state_dict(self):
-        worker_state = get_worker_state()
-        return {
-            "samples_streamed": worker_state.samples_streamed
-            + self.previous_samples_streamed,
-            "shard_index": self.dataset.shard_index,
-        }
-
-    def load_state_dict(self, state_dict):
-        if (
-            len(state_dict) != 2
-            or "samples_streamed" not in state_dict
-            or "shard_index" not in state_dict
-        ):
-            raise RuntimeError(
-                "The state dict must contain keys `samples_streamed` and `shard_index`, "
-                f"but found {state_dict.keys()}. This means that the dataloader "
-                "state in the checkpoint being loaded from is not compatible "
-                "with the dataloader currently in use. Consider re-running "
-                "without loading the dataloader state."
-            )
-        self.previous_samples_streamed = state_dict["samples_streamed"]
-        self.dataset.set_state(
-            state_dict["samples_streamed"], state_dict["shard_index"]
-        )
-
-    def aggregate_state_dict(self, worker_states):
-        worker_states.sort(key=lambda x: x["shard_index"])
-        return {"all_worker_states": worker_states}
-
-    def deaggregate_state_dict(self, aggregated_state_dict):
-        if (
-            len(aggregated_state_dict) != 1
-            or "all_worker_states" not in aggregated_state_dict
-        ):
-            raise RuntimeError(
-                "The aggregated state dict must contain a single key "
-                f"'all_worker_states', found {aggregated_state_dict.keys()}. "
-                "This means that the dataloader state in the checkpoint you are "
-                "loading from is not compatible with the dataloader currently "
-                "in use. Consider re-running without loading the dataloader "
-                "state."
-            )
-        all_worker_states = aggregated_state_dict["all_worker_states"]
-        # For deterministic restart to work, the num_tasks for the previous run should
-        # match with the restart run's num_tasks. If that condition is not met,
-        # the dataloader would start from sample `0`.
-        num_tasks_prev_run = len(all_worker_states)
-        num_tasks = self.dataset.num_tasks
-        task_id = self.dataset.task_id
-        if num_tasks != num_tasks_prev_run:
-            raise RuntimeError(
-                "Unable to deterministically restart the dataloader. The total number "
-                f"of workers for the initial run, {num_tasks_prev_run}, does not match "
-                f"number of workers in the current run, {num_tasks}. This is currently "
-                "not supported by the dataloader for the `HDF5IterableDataset`. Please "
-                "ensure that `num_csx * num_workers_per_csx` is fixed across runs, or "
-                "consider opting out of loading dataloader state via `runconfig.load_checkpoint_states`."
-            )
-
-        worker_index_offset = None
-        min_samples = None
-        for i, sd in enumerate(all_worker_states):
-            if (
-                worker_index_offset is None
-                or sd["samples_streamed"] < min_samples
-            ):
-                worker_index_offset = i
-                min_samples = sd["samples_streamed"]
-
-        return all_worker_states[(task_id + worker_index_offset) % num_tasks]
+    features_list: List[str] = ["input_ids", "attention_mask", "labels"]
+    "List of features to include in the batch"
 
 
 class HDF5IterableDataset(torch.utils.data.IterableDataset):
     """
     A HDF5 dataset processor. Loads data from HDF5 files.
-    :param dict params: dict containing training
-        input parameters for creating dataset.
-    Expects the following fields:
-    - "data_dir" (str or list of str): Path to dataset HDF5 files
-    - "batch_size" (int): Batch size.
-    - "shuffle" (bool): Flag to enable data shuffling.
-    - "shuffle_seed" (int): Shuffle seed.
-    - "num_workers" (int):  How many subprocesses to use for data loading.
-    - "drop_last" (bool): If True and the dataset size is not divisible
-       by the batch size, the last incomplete batch will be dropped.
-    - "use_vsl" (bool): Flag to enable variable sequence length training.
-       It requires the dataset to have two extra features: the
-       `attention_span` of keys and the `position_ids` of tokens.
-       Defaults to `False`.
+
+    Args:
+        config: The configuration object for the dataset
     """
 
-    def __init__(self, params):
-        super(HDF5IterableDataset, self).__init__()
+    def __init__(self, config: HDF5IterableDatasetConfig):
+        if isinstance(config, dict):
+            config = HDF5IterableDatasetConfig(**config)
 
-        self.data_dir = params["data_dir"]
-        self.batch_size = get_streaming_batch_size(params["batch_size"])
+        super().__init__()
 
-        if params["batch_size"] % self.batch_size != 0:
+        self.data_dir = config.data_dir
+        self.batch_size = get_streaming_batch_size(config.batch_size)
+
+        if config.batch_size % self.batch_size != 0:
             raise ValueError(
                 f"\"{self.__class__.__name__}\" requires the global batch size "
-                f"{params['batch_size']} to be divisible by num_csx."
+                f"{config.batch_size} to be divisible by num_csx."
             )
 
-        self.shuffle = params["shuffle"]
-        self.shuffle_seed = params.get("shuffle_seed", None)
+        self.shuffle = config.shuffle
+        self.shuffle_seed = config.shuffle_seed
 
-        self.num_workers = params.get("num_workers", 0)
-        self.drop_last = params.get("drop_last", True)
-        self.use_vsl = params.get("use_vsl", False)
+        self.num_workers = config.num_workers
+        self.drop_last = config.drop_last
+        self.use_vsl = config.use_vsl
 
+        self.features_list = config.features_list
         self.num_feature_groups = 1
         # Load feature names from data_params.json, if present and
         # has the correct format (generated by HF > HDF5 converter script)
@@ -185,16 +117,8 @@ class HDF5IterableDataset(torch.utils.data.IterableDataset):
                             )
                             i += 1
                         self.num_feature_groups = i
-                    else:
-                        self.features_list = [
-                            "input_ids",
-                            "attention_mask",
-                            "labels",
-                        ]
             except:
-                self.features_list = ["input_ids", "attention_mask", "labels"]
-        else:
-            self.features_list = ["input_ids", "attention_mask", "labels"]
+                pass
 
         if self.use_vsl:
             self.features_list = [
@@ -425,6 +349,6 @@ class HDF5IterableDataset(torch.utils.data.IterableDataset):
 
     def __len__(self):
         """
-        Returns the len of dataset on the task process
+        Returns the len of dataset on the task process.
         """
         return self.num_examples_in_this_task

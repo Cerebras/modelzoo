@@ -20,11 +20,11 @@ import yaml
 from tqdm import tqdm
 
 import cerebras.pytorch as cstorch
-from cerebras.modelzoo.common.registry import registry
 from cerebras.modelzoo.common.utils.model.lora import (
     LoRA_Embedding,
     make_model_lora,
 )
+from cerebras.modelzoo.registry import registry
 from cerebras.modelzoo.tools.checkpoint_converters.streaming_checkpoints import (
     StreamingCSWriter,
 )
@@ -34,7 +34,7 @@ def fold_lora_model_from_file(
     model, config_path, checkpoint_path, progress_bar=False
 ):
     def insert_suffix_into_file(file, suffix):
-        "Inserts suffix before a file extension"
+        "Inserts suffix before a file extension."
 
         base, ext = os.path.splitext(file)
         return base + suffix + ext
