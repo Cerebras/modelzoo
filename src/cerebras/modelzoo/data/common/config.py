@@ -13,22 +13,18 @@
 # limitations under the License.
 
 """
-Config classes of T5 data Configs
+Config classes of T5 data Configs.
 
 """
 
-from dataclasses import dataclass
-from typing import List, Optional
+from typing import Literal, Optional
 
-from cerebras.modelzoo.common.registry import registry
-from cerebras.modelzoo.config_manager.config_classes.base.data_config import (
-    DataProcessorConfig,
-)
+from cerebras.modelzoo.config import DataConfig
 
 
-@registry.register_data_config("GenericDataProcessor")
-@dataclass
-class GenericDataProcessorConfig(DataProcessorConfig):
+class GenericDataProcessorConfig(DataConfig):
+    data_processor: Literal["GenericDataProcessor"]
+
     shuffle_buffer: Optional[int] = None
     "Size of shuffle buffer in samples."
     drop_last: bool = True
@@ -41,10 +37,20 @@ class GenericDataProcessorConfig(DataProcessorConfig):
         distributed setup being used.
     """
 
+    num_workers: int = 0
+    "How many subprocesses to use for data loading."
 
-@registry.register_data_config("HDF5IterableDataProcessor")
-@dataclass
-class HDF5IterableDataProcessorConfig(DataProcessorConfig):
+    prefetch_factor: Optional[int] = 10
+    "Number of batches loaded in advance by each worker."
+
+    persistent_workers: bool = True
+    """If True, the data loader will not shutdown
+    the worker processes after a dataset has been consumed once."""
+
+
+class HuggingFaceDataProcessorConfig(DataConfig):
+    data_processor: Literal["HuggingFaceDataProcessor"]
+
     shuffle_buffer: Optional[int] = None
     "Size of shuffle buffer in samples."
     drop_last: bool = True
@@ -56,43 +62,5 @@ class HDF5IterableDataProcessorConfig(DataProcessorConfig):
         necessary for a data ordering that is independent of the
         distributed setup being used.
     """
-    prefetch_factor: int = 10
-    persistent_workers: int = True
-
-
-@registry.register_data_config("SyntheticDataProcessor")
-@dataclass
-class SyntheticDataProcessorConfig(DataProcessorConfig):
-    num_examples: Optional[int] = None
-    sampler: Optional[str] = None
-    batch_sampler: Optional[List[List[int]]] = None
-    pin_memory: bool = False
-    drop_last: bool = False
-    """
-        similar to the PyTorch drop_last setting
-        except that samples that when set to True, samples that would
-        have been dropped at the end of one epoch are yielded at the
-        start of the next epoch so that there is no data loss. This is
-        necessary for a data ordering that is independent of the
-        distributed setup being used.
-    """
-    timeout: bool = False
-    synthetic_special_tokens_index: Optional[dict] = None
-
-
-@registry.register_data_config("HuggingFaceDataProcessor")
-@dataclass
-class HuggingFaceDataProcessorConfig(DataProcessorConfig):
-    shuffle_buffer: Optional[int] = None
-    "Size of shuffle buffer in samples."
-    drop_last: bool = True
-    """
-        similar to the PyTorch drop_last setting
-        except that samples that when set to True, samples that would
-        have been dropped at the end of one epoch are yielded at the
-        start of the next epoch so that there is no data loss. This is
-        necessary for a data ordering that is independent of the
-        distributed setup being used.
-    """
-    prefetch_factor: int = 10
+    prefetch_factor: Optional[int] = 10
     persistent_workers: bool = True

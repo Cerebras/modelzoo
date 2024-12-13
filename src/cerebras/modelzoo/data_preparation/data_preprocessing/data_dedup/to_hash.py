@@ -81,26 +81,26 @@ def clean(s):
 
 
 def get_documents(input_dir, jsonl_key, format, threshold, job_id, n_jobs):
-    files = []
+    docs = []
     gc.collect()
     all_files = []
 
-    for root, dirs, files in os.walk(input_dir):
-        for file in files:
+    for root, dirs, input_files in os.walk(input_dir):
+        for file in input_files:
             all_files.append(os.path.join(root, file))
 
     for file in all_files:
         parts = file.split('.')[1:]
         file_format = '.'.join(parts)
         if format == file_format:
-            files.append(os.path.basename(file))
+            docs.append(os.path.basename(file))
 
-    no_of_files = len(files)
+    no_of_files = len(docs)
     start = job_id * n_jobs
     end = start + (no_of_files // n_jobs)
 
     for index in range(start, end):
-        input_file = files[index]
+        input_file = docs[index]
         file_path = os.path.join(input_dir, input_file)
         tokenizable_columns = {"jsonl_key": jsonl_key}
         reader = Reader(file_path, tokenizable_columns)
@@ -143,7 +143,6 @@ def output_results(output_dir, results, chunk_id, iter):
 
 
 def generate_hashes(args):
-
     progress_thread = threading.Thread(target=custom_progress_bar)
     progress_thread.daemon = True
     progress_thread.start()
@@ -210,13 +209,13 @@ if __name__ == "__main__":
     parser.add_argument(
         "--input_dir",
         type=str,
-        help="Input directory which contains documents.",
+        help="Input directory, which contains the documents on which deduplication pipeline will be run.",
         required=True,
     )
     parser.add_argument(
         "--output_dir",
         type=str,
-        help="Output directory to output MinHash files to.",
+        help="Output directory, where the output of the hashing process needs to be stored.",
         required=True,
     )
     parser.add_argument(
@@ -226,45 +225,42 @@ if __name__ == "__main__":
         "--jsonl_key",
         type=str,
         default="text",
-        help="JSONL key for the dataset",
+        help="JSONL key for the dataset. By default, this is set to 'text'.",
         required=False,
     )
     parser.add_argument(
         "--format",
         type=str,
         default="jsonl",
-        help="Format of the dataset that needs to be processed.",
+        help="File format of the dataset. By default, this is set to 'jsonl'.",
         required=False,
     )
     parser.add_argument(
         "--threshold",
         type=int,
         default=0,
-        help="Minimum size of documents that need to be present.",
+        help="Minimum size of a document that need to be considered for deduplication. By default, this is set to 0, processing all documents.",
         required=False,
     )
     parser.add_argument(
-        "--window_size", type=int, default=6, help="Window size", required=False
+        "--window_size",
+        type=int,
+        default=6,
+        help="Number of characters in each n-grams, used in extracting features from a document. By default, this is set to 6 (based on prior experiments).",
+        required=False,
     )
     parser.add_argument(
         "--batch_size",
         type=int,
         default=100,
-        help="Number of batches to output with.",
-        required=False,
-    )
-    parser.add_argument(
-        "--docs_per_core",
-        type=int,
-        default=1000,
-        help="Number of documents that will be processed by each core.",
+        help="Number of documents that are processed in a batch, after which results are dumped. By default, this is set to 100.",
         required=False,
     )
     parser.add_argument(
         "--n_jobs",
         type=int,
         default=1,
-        help="Number of jobs to be spawned for parallel execution",
+        help="Number of jobs to be spawned for parallel execution. By default, this is set to 1. (this is relevant only when running the deduplication pipeline across multiple machines).",
         required=False,
     )
 

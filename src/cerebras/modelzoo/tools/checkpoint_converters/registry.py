@@ -71,6 +71,7 @@ from cerebras.modelzoo.tools.checkpoint_converters.llava import (
 )
 from cerebras.modelzoo.tools.checkpoint_converters.mm_simple import (
     Converter_MMSimple_LLaVA_HF_CS23,
+    Converter_MMSimple_LLaVA_HF_CS24,
 )
 from cerebras.modelzoo.tools.checkpoint_converters.roberta import (
     Converter_RobertaPretrainModel_HF_CS21,
@@ -137,11 +138,10 @@ from cerebras.modelzoo.tools.checkpoint_converters.gemma2 import (  # noqa
     Converter_Gemma2ForCausalLM_HF_CS23,
 )
 
-
-from cerebras.modelzoo.tools.checkpoint_converters.mpt import (  # noqa
-    Converter_MPTForCausalLM_HF_CS21,
-    Converter_MPTModel_HF_CS21,
+from cerebras.modelzoo.tools.checkpoint_converters.dragon_plus import (  # noqa
+    Converter_DragonModel_HF_CS23,
 )
+
 
 from cerebras.modelzoo.tools.checkpoint_converters.starcoder import (  # noqa
     Converter_StarcoderForCausalLM_HF_CS21,
@@ -162,6 +162,10 @@ from cerebras.modelzoo.tools.checkpoint_converters.mistral import (  # noqa
 from cerebras.modelzoo.tools.checkpoint_converters.mixtral import (  # noqa
     Converter_MixtralModel_HF_CS23,
     Converter_MixtralForCausalLM_HF_CS23,
+)
+
+from cerebras.modelzoo.tools.checkpoint_converters.gpt_backbone import (  # noqa
+    Converter_GPT2LMHeadModel_GPTBackboneLMHeadModel_CS24,
 )
 
 converters: Dict[str, List[BaseCheckpointConverter]] = {
@@ -228,6 +232,7 @@ converters: Dict[str, List[BaseCheckpointConverter]] = {
         Converter_DPO_HF_CS21,
         Converter_NON_DPO_TO_DPO_CS21,
     ],
+    "dragon": [Converter_DragonModel_HF_CS23],
     "falcon": [
         Converter_Falcon_CS20_CS21,
         Converter_Falcon_HF_CS21,
@@ -235,6 +240,7 @@ converters: Dict[str, List[BaseCheckpointConverter]] = {
     "falcon-headless": [
         Converter_Falcon_Headless_HF_CS21,
     ],
+    "gemma2": [Converter_Gemma2ForCausalLM_HF_CS23],
     "gpt2": [
         Converter_GPT2LMHeadModel_CS18_CS20,
         Converter_GPT2LMHeadModel_CS20_CS21,
@@ -275,12 +281,9 @@ converters: Dict[str, List[BaseCheckpointConverter]] = {
         Converter_LlamaModel_HF_CS21,
     ],
     "llava": [Converter_LLaVA_HF_CS22],
-    "mmsimple-llava": [Converter_MMSimple_LLaVA_HF_CS23],
-    "mpt": [
-        Converter_MPTForCausalLM_HF_CS21,
-    ],
-    "mpt-headless": [
-        Converter_MPTModel_HF_CS21,
+    "mmsimple-llava": [
+        Converter_MMSimple_LLaVA_HF_CS23,
+        Converter_MMSimple_LLaVA_HF_CS24,
     ],
     "mistral": [Converter_MistralForCausalLM_HF_CS21],
     "mistral-headless": [Converter_MistralModel_HF_CS21],
@@ -326,3 +329,64 @@ converters["sqlcoder"] = converters["starcoder"]
 converters["sqlcoder-headless"] = converters["starcoder-headless"]
 converters["wizardlm"] = converters["llama"]
 converters["wizardlm-headless"] = converters["llama-headless"]
+
+
+# A mapping between model names in the converter to the model names in the
+# ModelZoo registry
+_model_aliases = {
+    "bert-sequence-classifier": "bert/classifier",
+    "bert-token-classifier": "bert/token_classifier",
+    "bert-summarization": "bert/extractive_summarization",
+    "bloom-headless": "bloom",
+    "clip-vit": "vision_transformer",
+    "codegen": "gptj",
+    "codegen-headless": "gptj",
+    "code-llama": "llama",
+    "code-llama-headless": "llama",
+    "dino-v2-headless": "vision_transformer",
+    "esm-2": "esm2",
+    "falcon-headless": "falcon",
+    "fid": "fido",
+    "gpt2-headless": "gpt2",
+    "gptj-headless": "gptj",
+    "gpt-neox-headless": "gpt-neox",
+    "opt-headless": "opt",
+    "octocoder": "starcoder",
+    "octocoder-headless": "starcoder",
+    "llama-headless": "llama",
+    "mistral-headless": "mistral",
+    "mmsimple-llava": "multimodal_simple",
+    "roberta": "bert",
+    "swin": "swin/classifier",
+    "swin-headless": "swin/classifier",
+    "swin-v2": "swin/classifier",
+    "swin-v2-headless": "swin/classifier",
+    "swin-mim": "swin/mim",
+    "swin-v2-mim": "swin/mim",
+    "vit": "vision_transformer",
+    "vit-headless": "vision_transformer",
+    "vit-mae": "vit_mae",
+    "wizardcoder": "gpt2",
+    "wizardcoder-headless": "gpt2",
+    "wizardlm": "llama",
+    "wizardlm-headless": "llama",
+    "xlm-headless": "xlm",
+}
+
+
+def get_cs_model_name(model, raise_error=True):
+    from cerebras.modelzoo.registry import registry
+
+    model = _model_aliases.get(model, model)
+    if model in registry.get_model_names():
+        return model
+
+    if raise_error:
+        raise ValueError(f"Model {model} not found in the ModelZoo registry")
+    return None
+
+
+def get_cs_model_wrapper_class(model):
+    from cerebras.modelzoo.registry import registry
+
+    return registry.get_model_class(get_cs_model_name(model))

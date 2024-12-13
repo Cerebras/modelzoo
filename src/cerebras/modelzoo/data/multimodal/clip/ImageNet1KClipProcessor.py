@@ -12,10 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Union
+from typing import Any, List, Literal, Optional
 
 import torch
 import torchvision
+from pydantic import Field, PositiveInt
 from transformers import CLIPTokenizerFast
 
 import cerebras.pytorch as cstorch
@@ -24,6 +25,7 @@ from cerebras.modelzoo.data.common.restartable_dataloader import (
 )
 from cerebras.modelzoo.data.vision.classification.data.imagenet import (
     ImageNet1KProcessor,
+    ImageNet1KProcessorConfig,
 )
 from cerebras.modelzoo.data.vision.classification.dataset_factory import (
     VisionSubset,
@@ -38,22 +40,41 @@ def _verify_dataset(dataset):
         isinstance(dataset, torchvision.datasets.VisionDataset)
         or isinstance(dataset, VisionSubset)
         or isinstance(dataset, torch.utils.data.Subset)
-    ), f"Got {type(dataset)} but dataset must be type VisionDataset, VisionSubset, or torch.utils.data.Subset"
+    ), (
+        f"Got {type(dataset)} but dataset must be type "
+        "VisionDataset, VisionSubset, or torch.utils.data.Subset"
+    )
+
+
+class ImageNet1KClipProcessorConfig(ImageNet1KProcessorConfig):
+    data_processor: Literal['ImageNet1KClipProcessor']
+
+    patch_size: Optional[List[int]] = None
+    "Size of patches to use when converting input image to patches, [Height, Width]."
+
+    image_channels: Optional[int] = None
+    "Number of image channels."
+
+    text_max_length: PositiveInt = 77
+    """
+    # the maximum length of tokens for label text after tokenization.
+    # ref: https://huggingface.co/openai/clip-vit-base-patch16/blob/main/config.json#L45
+    """
+
+    max_sequence_length: Optional[Any] = Field(default=None, deprecated=True)
 
 
 class ImageNet1KClipProcessor(ImageNet1KProcessor):
-    def __init__(self, params):
-        super().__init__(params)
-        self.image_size = params.get("image_size")
-        self.patch_size = params.get("patch_size")
-        self.image_channels = params.get("image_channels")
+    def __init__(self, config: ImageNet1KClipProcessorConfig):
+        super().__init__(config)
+        self.patch_size = config.patch_size
+        self.image_channels = config.image_channels
+
         self.template = "this is a photo of <>."
         self.tokenizer = CLIPTokenizerFast.from_pretrained(
             "openai/clip-vit-base-patch16"
         )
-        # the maximum length of tokens for label text after tokenization.
-        # ref: https://huggingface.co/openai/clip-vit-base-patch16/blob/main/config.json#L45
-        self.text_max_length = 77
+        self.text_max_length = config.text_max_length
 
     def clip_collate_fn(self, data):
         assert self.classes is not None, "Need class names to construct samples"
@@ -80,20 +101,14 @@ class ImageNet1KClipProcessor(ImageNet1KProcessor):
 
         return results
 
-    def create_dataloader(
-        self,
-        dataset: Union[
-            torchvision.datasets.VisionDataset,
-            VisionSubset,
-            torch.utils.data.Subset,
-        ],
-        is_training=False,
-    ):
+    def create_dataloader(self):
+
+        dataset = self.create_dataset()
         _verify_dataset(dataset)
 
         self.classes = dataset.classes
 
-        shuffle = self.shuffle and is_training
+        shuffle = self.shuffle and (self.split == "train")
 
         if self.shuffle_seed is None:
             self.shuffle_seed = 0

@@ -31,11 +31,12 @@ from cerebras.modelzoo.trainer.extensions.eleuther.eval_harness_utils import (
     SUPPORTED_MODELS,
 )
 from cerebras.modelzoo.trainer.utils import (
-    configure_trainer_from_params,
+    configure_trainer_from_config,
     convert_legacy_params_to_trainer_params,
     inject_cli_args_to_trainer_params,
     is_legacy_params,
 )
+from cerebras.modelzoo.trainer.validate import validate_trainer_params
 
 
 def eeh_parser():
@@ -114,6 +115,24 @@ def eeh_parser():
         default=None,
         help="If True, write out all model outputs and documents for per-sample measurement and post-hoc analysis. Use with --output_path.",
     )
+    parser.add_argument(
+        "--system_instruction",
+        type=str,
+        default=None,
+        help="System instruction to be used in the prompt",
+    )
+    parser.add_argument(
+        "--apply_chat_template",
+        action="store_true",
+        default=False,
+        help="If True, applies the chat template to the prompt",
+    )
+    parser.add_argument(
+        "--fewshot_as_multiturn",
+        action="store_true",
+        default=False,
+        help="If True, uses the fewshot as a multi-turn conversation",
+    )
     optional_arguments.add_argument(
         "--show_config",
         action="store_true",
@@ -138,12 +157,14 @@ def eeh_parser():
         "--seed",
         default=None,
         help=(
-            "Set seed for python's random, numpy and torch.\n"
-            "Accepts a comma-separated list of 3 values for python's random, numpy, and torch seeds, respectively, "
-            "or a single integer to set the same seed for all three.\n"
-            "The values are either an integer or 'None' to not set the seed. Default is `0,1234,1234` (for backward compatibility).\n"
-            "E.g. `--seed 0,None,8` sets `random.seed(0)` and `torch.manual_seed(8)`. Here numpy's seed is not set since the second value is `None`.\n"
-            "E.g, `--seed 42` sets all three seeds to 42."
+            "Set seed for python's random, numpy, torch, and fewshot sampling.\n"
+            "Accepts a comma-separated list of 4 values for python's random, numpy, torch, and fewshot sampling seeds, "
+            "respectively, or a single integer to set the same seed for all four.\n"
+            f"The values are either an integer or 'None' to not set the seed. Default is `0,1234,1234,1234` "
+            "(for backward compatibility).\n"
+            "E.g. `--seed 0,None,8,52` sets `random.seed(0)`, `torch.manual_seed(8)`, and fewshot sampling seed to 52. "
+            "Here numpy's seed is not set since the second value is `None`.\n"
+            "E.g, `--seed 42` sets all four seeds to 42."
         ),
     )
     optional_arguments.add_argument(
@@ -225,7 +246,9 @@ def run_eval_harness():
         arg_name = arg.dest
         # Exclude Cerebras-specific args
         if arg_name in {"keep_data_dir"}:
-            other_eeh_args[arg_name] = runconfig_params.pop(arg_name, None)
+            other_eeh_args[arg_name] = runconfig_params.pop(
+                arg_name, arg.default
+            )
         elif arg_name in runconfig_params:
             arg_val = runconfig_params.pop(arg_name, None)
             if arg_val is not None:  # Only consider specified CLI args
@@ -285,19 +308,6 @@ def run_eval_harness():
             "a single trainer instance, but found a list of trainers."
         )
 
-    if "model_name" in params["trainer"]["init"]["model"]:
-        model_name = params["trainer"]["init"]["model"].pop("model_name")
-        if model_name not in SUPPORTED_MODELS:
-            raise ValueError(
-                f"Invalid model_name specified. Please choose a "
-                f"valid model name from: {SUPPORTED_MODELS}"
-            )
-    else:
-        raise RuntimeError(
-            f"No model_name specified under config trainer.init.model. Please "
-            f"choose a valid model name from: {SUPPORTED_MODELS}"
-        )
-
     # Extract EleutherEvalHarness callbacks from the list of callbacks
     eeh_callbacks = [
         callback["EleutherEvalHarness"]
@@ -311,21 +321,28 @@ def run_eval_harness():
         eeh_callback.setdefault("eeh_args", {}).update(
             (key, value) for key, value in deepcopy(eeh_args).items()
         )
-        # Set the data_processor key of the callback
-        # for the dataloader config validation
-        eeh_callback["data_processor"] = "InferenceDataProcessor"
 
-    trainer = configure_trainer_from_params(params, model_name)
+    config = validate_trainer_params(params)[0]
 
-    if "val_dataloaders" in params["trainer"].get("validate_all") is not None:
-        logging.warning(
-            f"Found `validate_all.val_dataloaders` specified in the yaml, "
-            f"but no upstream validation will be run for the standalone "
-            f"Eleuther Eval Harness script."
+    if config.init.model.config.name not in SUPPORTED_MODELS:
+        raise ValueError(
+            f"Eleuther evaluation is not supported for model {config.init.model.config.name}. "
+            f"Please choose a valid model name from: {SUPPORTED_MODELS}"
         )
-        params["trainer"]["validate_all"]["val_dataloaders"] = None
 
-    trainer.validate_all(**params["trainer"].get("validate_all", {}))
+    trainer = configure_trainer_from_config(config, mode="eval_all")
+
+    kwargs = {}
+    if config.validate_all:
+        if config.validate_all.val_dataloaders:
+            logging.warning(
+                f"Found `validate_all.val_dataloaders` specified in the yaml, "
+                f"but no upstream validation will be run for the standalone "
+                f"Eleuther Eval Harness script."
+            )
+        kwargs = {"ckpt_paths": config.validate_all.ckpt_paths}
+
+    trainer.validate_all(**kwargs)
 
 
 if __name__ == "__main__":

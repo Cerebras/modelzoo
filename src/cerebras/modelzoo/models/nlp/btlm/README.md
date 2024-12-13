@@ -33,7 +33,7 @@ git lfs install
 git clone https://huggingface.co/datasets/cerebras/SlimPajama-627B
 ```
 
-and create preprocessed dataset files using [`create_hdf5_dataset.py`](../../../data_preparation/nlp/hdf5_preprocessing/).
+and create preprocessed dataset files using [`preprocess_data.py`](../../../data_preparation/data_preprocessing/preprocess_data.py).
 
 #### BTLM DataProcessor output
 

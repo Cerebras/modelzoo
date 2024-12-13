@@ -41,6 +41,10 @@ logger.setLevel(logging.INFO)
 def main():
     """Main function for execution."""
     params = get_params(desc="Create HDF5 dataset for language models")
+    preprocess_data(params)
+
+
+def preprocess_data(params):
     dataset_processor = DataPreprocessor(params)
     results = dataset_processor.process_dataset()
     output_dir = dataset_processor.get_output_dir()

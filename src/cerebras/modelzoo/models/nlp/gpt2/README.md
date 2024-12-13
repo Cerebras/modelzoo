@@ -57,7 +57,6 @@ In order to run any of the models in this directory, you must go through the fol
 ## Structure of the code
 
 -   `configs/`: YAML configuration files.
--   `data.py`: The entry point to the data input pipeline code. Defines `train_input_dataloader`.
 -   `model.py`: The entry point to the model. Defines `Gpt2Model` which supports GPT-2.
 -   `run.py`: Training script. Performs training and validation.
 -   `utils.py`: Miscellaneous scripts to parse the `params` dictionary from the YAML files.
@@ -68,7 +67,7 @@ In order to run any of the models in this directory, you must go through the fol
 
 ### OpenWebText dataset
 
-You need to download raw OWT data following [these instructions](../../../data_preparation/nlp/owt) and create preprocessed dataset files using [`create_hdf5_dataset.py`](../../../data_preparation/nlp/hdf5_preprocessing/).
+You need to download raw OWT data following [these instructions](../../../data_preparation/nlp/owt) and create preprocessed dataset files using [`preprocess_data.py`](../../../data_preparation/data_preprocessing/preprocess_data.py).
 
 ## GPT-2 input function
 
@@ -76,7 +75,7 @@ If you want to use your own data loader with this example code, then this sectio
 
 When you create your own custom GPT input function, you must ensure that your GPT input function produces a features dictionary as described in this section.
 
-We recommended using [GptHDF5DataProcessor](../../../data/nlp/gpt/GptHDF5DataProcessor.py) for the input function of GPT-2 model (for performance reasons). The instructions to create a HDF5 dataset can be found here: [Creating HDF5 dataset for GPT Models](../../../data_preparation/nlp/hdf5_preprocessing/README.md). We also support the following Data Processors:
+We recommended using [GptHDF5DataProcessor](../../../data/nlp/gpt/GptHDF5DataProcessor.py) for the input function of GPT-2 model (for performance reasons). The instructions to create a HDF5 dataset can be found here: [Data Preprocessing](https://docs.cerebras.net/en/latest/wsc/Model-zoo/Components/Data-preprocessing/data_preprocessing.html). We also support the following Data Processors:
 
 - [HuggingFaceDataProcessorEli5](./../../../data/nlp/gpt/HuggingFaceDataProcessorEli5.py): An example of using HuggingFace Eli5 dataset (Map-Style).
 - [HuggingFaceIterableDataProcessorEli5](./../../../data/nlp/gpt/HuggingFaceIterableDataProcessorEli5.py): An example of using HuggingFace Eli5 dataset (Iterable).

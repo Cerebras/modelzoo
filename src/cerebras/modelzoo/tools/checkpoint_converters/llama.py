@@ -706,10 +706,11 @@ class ConfigConverter_LLaMa_HF_CS19(BaseConfigConverter_HF_CS):
 
     def pre_config_convert(
         self,
+        model,
         config,
         converter_indices,
     ):
-        config = super().pre_config_convert(config, converter_indices)
+        config = super().pre_config_convert(model, config, converter_indices)
 
         if converter_indices.direction == 1 and (
             "rotary_dim" not in config or config["rotary_dim"] is None
@@ -720,6 +721,7 @@ class ConfigConverter_LLaMa_HF_CS19(BaseConfigConverter_HF_CS):
 
     def post_config_convert(
         self,
+        model,
         original_config,
         old_config,
         new_config,
@@ -732,6 +734,7 @@ class ConfigConverter_LLaMa_HF_CS19(BaseConfigConverter_HF_CS):
             )
 
         return super().post_config_convert(
+            model,
             original_config,
             old_config,
             new_config,
@@ -746,7 +749,7 @@ class ConfigConverter_LLaMa_HF_CS19(BaseConfigConverter_HF_CS):
 
 class Converter_LlamaForCausalLM_CS19_CS20(Converter_GPT2LMHeadModel_CS18_CS20):
     r"""
-    Llama uses the GPT2 backbone
+    Llama uses the GPT2 backbone.
     """
 
     @classmethod
@@ -764,7 +767,7 @@ class Converter_LlamaForCausalLM_CS19_CS20(Converter_GPT2LMHeadModel_CS18_CS20):
 
 class ConfigConverter_LlamaModel_CS19_CS20(ConfigConverter_GPT2Model_CS18_CS20):
     r"""
-    Llama uses the GPT2 backbone
+    Llama uses the GPT2 backbone.
     """
 
     @staticmethod
@@ -891,7 +894,7 @@ class Converter_LlamaModel_HF_CS21(Converter_LlamaModel_HF_CS20):
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4"),
         )
 
     @staticmethod
@@ -904,7 +907,7 @@ class Converter_LlamaForCausalLM_HF_CS21(Converter_LlamaForCausalLM_HF_CS20):
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4"),
         )
 
     @staticmethod
@@ -962,9 +965,9 @@ class ConfigConverter_LLaMa_HF_CS21(ConfigConverter_LLaMa_HF_CS20):
                     scaling_type = old_state_dict[old_key]["type"].lower()
                 else:
                     scaling_type = old_state_dict[old_key]["rope_type"].lower()
-                if scaling_type not in ["linear", "yarn", "llama3"]:
+                if scaling_type not in ["linear", "yarn", "llama3", "longrope"]:
                     raise ConfigConversionError(
-                        f"Only `rope_scaling` type `linear`, `yarn`, and `llama3` are currently supported, "
+                        f"Only `rope_scaling` type `linear`, `yarn`,`llama3` or 'longrope' are currently supported, "
                         f"but got type `{scaling_type}`."
                     )
                 new_state_dict[new_key] = old_state_dict[old_key]["factor"]
@@ -986,6 +989,17 @@ class ConfigConverter_LLaMa_HF_CS21(ConfigConverter_LLaMa_HF_CS20):
                     new_state_dict["pos_scaling_extra_args"] = (
                         pos_scaling_extra_args
                     )
+                elif scaling_type == "longrope":
+                    # Create a copy of the remaining extra params of original dictionary and add to pos_scaling_extra_args
+                    # longrope uses param names which are HF compatible
+                    extra_args = {
+                        **{
+                            k: v
+                            for k, v in old_state_dict[old_key].items()
+                            if k not in ["type", "factor"]
+                        }
+                    }
+                    new_state_dict["pos_scaling_extra_args"] = extra_args
 
         else:
             if old_state_dict[old_key] == 1.0:
@@ -1007,7 +1021,7 @@ class ConfigConverter_LLaMa_HF_CS21(ConfigConverter_LLaMa_HF_CS20):
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4"),
         )
 
     def supports_mup_conversion(self):

@@ -12,17 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Pytorch DPR Dataloader"""
+"""Pytorch DPR Dataloader."""
+
+from typing import Literal
 
 import torch
 from torch.utils.data import default_collate
 
-from cerebras.modelzoo.common.registry import registry
 from cerebras.modelzoo.data.common.HDF5IterableDataProcessor import (
     HDF5IterableDataProcessor,
-)
-from cerebras.modelzoo.data.common.HDF5IterableDataset import (
-    HDF5IterableDataset,
+    HDF5IterableDataProcessorConfig,
 )
 
 
@@ -47,7 +46,10 @@ def collate_tensor_fn(batch, dim):
     return torch.stack(batch, dim, out=out)
 
 
-@registry.register_datasetprocessor("DPRHDF5DataProcessor")
+class DPRHDF5DataProcessorConfig(HDF5IterableDataProcessorConfig):
+    data_processor: Literal["DPRHDF5DataProcessor"]
+
+
 class DPRHDF5DataProcessor(HDF5IterableDataProcessor):
     """
     A HDF5 dataset processor for DPR training.
@@ -59,27 +61,15 @@ class DPRHDF5DataProcessor(HDF5IterableDataProcessor):
     [2*batch_size, MSL]. Then we reshape in the model code; please see the
     comment in dpr_model.py for more details.
 
-    :param params: training input parameters for creating dataset.
-    :type params: dict
-    It should contain the following fields:
-    - "data_dir" (str or list of str): Path to dataset HDF5 files
-    - "batch_size" (int): Batch size.
-    - "shuffle" (bool): Flag to enable data shuffling.
-    - "shuffle_buffer" (int): Size of shuffle buffer in samples.
-    - "shuffle_seed" (int): Shuffle seed.
-    - "num_workers" (int):  How many subprocesses to use for data loading.
-    - "drop_last" (bool): If True and the dataset size is not divisible
-       by the batch size, the last incomplete batch will be dropped.
-    - "prefetch_factor" (int): Number of batches loaded in advance by each worker.
-    - "persistent_workers" (bool): If True, the data loader will not shutdown
-       the worker processes after a dataset has been consumed once.
     """
 
-    def __init__(self, params):
-        self.dataset = HDF5IterableDataset(params)
+    name: Literal["DPRHDF5DataProcessor"]
 
-        # The super class will take care of sharding the dataset and creating the dataloader
-        super().__init__(params)
+    def __init__(self, config: DPRHDF5DataProcessorConfig):
+        if isinstance(config, dict):
+            config = DPRHDF5DataProcessorConfig(**config)
+
+        super().__init__(config)
 
     def collate_fn(self, batch):
         """

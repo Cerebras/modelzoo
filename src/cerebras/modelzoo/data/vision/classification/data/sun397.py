@@ -12,21 +12,37 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Any, Literal, Optional
+
 import torchvision
+from pydantic import Field
 
 from cerebras.modelzoo.data.vision.classification.dataset_factory import (
-    Processor,
+    VisionClassificationProcessor,
+    VisionClassificationProcessorConfig,
 )
 
 
-class SUN397Processor(Processor):
-    def __init__(self, params):
-        super().__init__(params)
-        self.allowable_split = ["train"]
+class SUN397ProcessorConfig(VisionClassificationProcessorConfig):
+    data_processor: Literal["SUN397Processor"]
+
+    use_worker_cache: bool = ...
+
+    split: Literal["train"] = "train"
+    "Dataset split."
+
+    num_classes: Optional[Any] = Field(None, deprecated=True)
+
+
+class SUN397Processor(VisionClassificationProcessor):
+    def __init__(self, config: SUN397ProcessorConfig):
+        super().__init__(config)
+        self.split = config.split
+        self.shuffle = self.shuffle and (self.split == "train")
         self.num_classes = 397
 
-    def create_dataset(self, use_training_transforms=True, split="train"):
-        self.check_split_valid(split)
+    def create_dataset(self):
+        use_training_transforms = self.split == "train"
         transform, target_transform = self.process_transform(
             use_training_transforms
         )
@@ -37,40 +53,3 @@ class SUN397Processor(Processor):
             download=False,
         )
         return dataset
-
-    def create_vtab_dataset(self, use_1k_sample=True, seed=42):
-        train_transform, train_target_transform = self.process_transform(
-            use_training_transforms=True
-        )
-        eval_transform, eval_target_transform = self.process_transform(
-            use_training_transforms=False
-        )
-
-        dataset = torchvision.datasets.SUN397(
-            root=self.data_dir,
-            transform=None,
-            download=False,
-        )
-
-        # Default SUN397 dataset only has one split. Therefore, we create a
-        # custom train/val/test split of 70/10/20 (same as tfds config).
-        split_percent = [70, 10, 20]
-        train_set, val_set, test_set = self.split_dataset(
-            dataset, split_percent, seed
-        )
-
-        if use_1k_sample:
-            train_set.truncate_to_idx(800)
-            val_set.truncate_to_idx(200)
-
-        train_set.set_transforms(
-            transform=train_transform, target_transform=train_target_transform
-        )
-        val_set.set_transforms(
-            transform=eval_transform, target_transform=eval_target_transform
-        )
-        test_set.set_transforms(
-            transform=eval_transform, target_transform=eval_target_transform
-        )
-
-        return train_set, val_set, test_set

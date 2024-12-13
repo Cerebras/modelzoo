@@ -28,7 +28,6 @@ Usage:
     tokenized_data, stats = tokenizer.encode("Your sample text to process.")
 """
 
-import logging
 from collections import defaultdict
 from typing import Any, Dict, List, Tuple
 
@@ -38,11 +37,9 @@ from cerebras.modelzoo.data_preparation.data_preprocessing.pretraining_token_gen
 from cerebras.modelzoo.data_preparation.data_preprocessing.utils import (
     check_fim_special_tokens,
     fim,
+    get_data_stats,
     handle_bos_token_default,
 )
-
-logger = logging.getLogger(__file__)
-logger.setLevel(logging.INFO)
 
 
 class FIMTokenGenerator(PretrainingTokenGenerator):
@@ -58,10 +55,10 @@ class FIMTokenGenerator(PretrainingTokenGenerator):
         super(FIMTokenGenerator, self).__init__(
             params, tokenizer, eos_id, pad_id
         )
-        processing_params = params["processing"]
-
-        self.fim_rate = processing_params.pop("fim_rate", None)
-        self.spm_rate = processing_params.pop("spm_rate", None)
+        dataset_params = params.get("dataset", {})
+        processing_params = params.get("processing", {})
+        self.fim_rate = dataset_params.pop("fim_rate", None)
+        self.spm_rate = dataset_params.pop("spm_rate", None)
 
         # Ensures that FIM tokens are specified in config, and that
         # the specified tokens are actually in the tokenizer
@@ -75,13 +72,13 @@ class FIMTokenGenerator(PretrainingTokenGenerator):
         )
 
         self.suffix_tok_id = self.tokenizer.encode(
-            params['processing'].get("fim_suffix_tok")
+            dataset_params.pop("fim_suffix_tok", None)
         )[-1]
         self.prefix_tok_id = self.tokenizer.encode(
-            params['processing'].get("fim_prefix_tok")
+            dataset_params.pop("fim_prefix_tok", None)
         )[-1]
         self.middle_tok_id = self.tokenizer.encode(
-            params['processing'].get("fim_middle_tok")
+            dataset_params.pop("fim_middle_tok", None)
         )[-1]
 
     def encode(
@@ -122,7 +119,9 @@ class FIMTokenGenerator(PretrainingTokenGenerator):
                     self.eos_id,
                     self.opt_bos_tok_id,
                 )
-                sample_data_stats = self.get_data_stats(sample)
+                sample_data_stats = get_data_stats(
+                    sample, self.pad_id, self.eos_id, self.max_seq_length
+                )
                 for key in sample_data_stats:
                     tokenized_data_stats[key] += sample_data_stats[key]
                 result.append(sample)

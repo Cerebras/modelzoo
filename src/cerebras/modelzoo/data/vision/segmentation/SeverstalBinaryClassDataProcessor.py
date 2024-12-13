@@ -14,6 +14,7 @@
 
 import os
 import tempfile
+from typing import List, Literal
 
 import numpy as np
 import pandas as pd
@@ -24,9 +25,9 @@ from torchvision.datasets import VisionDataset
 
 import cerebras.pytorch as cstorch
 import cerebras.pytorch.distributed as dist
-from cerebras.modelzoo.common.registry import registry
 from cerebras.modelzoo.data.vision.segmentation.UNetDataProcessor import (
     UNetDataProcessor,
+    UNetDataProcessorConfig,
 )
 from cerebras.modelzoo.data.vision.utils import create_worker_cache
 
@@ -150,16 +151,33 @@ class SeverstalBinaryClassDataset(VisionDataset):
         return len(self.data.index)
 
 
-@registry.register_datasetprocessor("SeverstalBinaryClassDataProcessor")
+class SeverstalBinaryClassDataProcessorConfig(UNetDataProcessorConfig):
+    data_processor: Literal["SeverstalBinaryClassDataProcessor"]
+
+    use_worker_cache: bool = False
+
+    train_test_split: float = ...
+
+    class_id: int = ...
+
+    max_image_shape: List[int] = [256, 1600]
+
+    split: Literal["train", "val"] = "train"
+    "Dataset split."
+
+
 class SeverstalBinaryClassDataProcessor(UNetDataProcessor):
-    def __init__(self, params):
-        super(SeverstalBinaryClassDataProcessor, self).__init__(params)
+    def __init__(self, config: SeverstalBinaryClassDataProcessorConfig):
+        super(SeverstalBinaryClassDataProcessor, self).__init__(config)
 
-        self.use_worker_cache = params["use_worker_cache"]
-        self.train_test_split = params["train_test_split"]
-        self.class_id_to_consider = params["class_id"]
+        self.split = config.split
+        self.shuffle = self.shuffle and (self.split == "train")
 
-        self.image_shape = params["image_shape"]  # of format (H, W, C)
+        self.use_worker_cache = config.use_worker_cache
+        self.train_test_split = config.train_test_split
+        self.class_id_to_consider = config.class_id
+
+        self.image_shape = config.image_shape  # of format (H, W, C)
         self._tiling_image_shape = self.image_shape  # out format: (H, W, C)
 
         # Tiling param:
@@ -168,7 +186,7 @@ class SeverstalBinaryClassDataProcessor(UNetDataProcessor):
         #   first resize image to min(img_shape, max_image_shape)
         #   and then tile to target height and width specified in yaml
         # self.max_image_shape: (H, W)
-        self.max_image_shape = params.get("max_image_shape", [256, 1600])
+        self.max_image_shape = config.max_image_shape
         self.image_shape = self._update_image_shape()
         (
             self.tgt_image_height,
@@ -190,13 +208,12 @@ class SeverstalBinaryClassDataProcessor(UNetDataProcessor):
 
         return image_shape
 
-    def create_dataset(self, is_training):
-        split = "train" if is_training else "val"
+    def create_dataset(self):
         dataset = SeverstalBinaryClassDataset(
             root=self.data_dir,
             train_test_split=self.train_test_split,
             class_id_to_consider=self.class_id_to_consider,
-            split=split,
+            split=self.split,
             transforms=self.transform_image_and_mask,
             use_worker_cache=self.use_worker_cache,
         )

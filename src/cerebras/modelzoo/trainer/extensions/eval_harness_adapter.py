@@ -17,15 +17,11 @@
 import atexit
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from lm_eval.api.instance import Instance
 from tokenizers import Tokenizer
-from transformers import (
-    AutoTokenizer,
-    PreTrainedTokenizerBase,
-    PreTrainedTokenizerFast,
-)
+from transformers import AutoTokenizer, PreTrainedTokenizerFast
 
 import cerebras.pytorch as cstorch
 from cerebras.appliance.log import ClassLogger, named_class_logger
@@ -128,41 +124,32 @@ class CSEvalHarnessAdapter(ClassLogger):
         )
 
         def input_fn(
-            dataloader_args, samples_file_list, dataset_size, request_type
+            dataloader_args,
+            samples_file_list,
+            dataset_size,
+            request_type,
+            **dataset_kwargs,
         ):
             return InferenceDataProcessor.from_request_type(
                 request_type,
                 dataloader_args,
                 samples_file_list,
                 dataset_size,
+                **dataset_kwargs,
             ).create_dataloader()
 
         self.input_fn = input_fn
         self.data_fn = InferenceDataProcessor.gen_data_samples
 
-    def preprocess_dataset(
-        self, requests: List[Union[Instance, str]], request_type: RequestType
-    ) -> Tuple[
-        PreTrainedTokenizerBase,
-        List[str],
-        int,
-        List[Tuple[int, int]],
-    ]:
-        """Tokenize raw text requests and returns metadata associated with the
-        request type.
+        # Initialize tokenizer
+        self._create_tokenizer()
 
-        Args:
-            requests: List of EEH's Instance dataclass objects
-                holding raw text data
-            request_type: The type of request
+    def _subclass_name(self) -> str:
+        """Helper to extract the name of the subclass."""
+        return self.__class__.__name__
 
-        Returns:
-            tuple of
-            - tokenizer used to tokenize the raw text data;
-            - list of file paths where the samples are dumped;
-            - int representing the size of the dataset (total no. of samples);
-            - List of metadata tuples needed for postprocessing.
-        """
+    def _create_tokenizer(self) -> None:
+        """Helper method to create the tokenizer upon initialization using the dataloader args."""
         tokenizer_file_path = self.dataloader_args.get(
             "tokenizer_file_path", None
         )
@@ -185,7 +172,10 @@ class CSEvalHarnessAdapter(ClassLogger):
             tok = Tokenizer.from_file(tokenizer_file_path)
 
             bos_token = self.dataloader_args.pop("bos_token", None)
-            if request_type == RequestType.bigcode_eh and bos_token is None:
+            if (
+                self._subclass_name() == "BigCodeEvaluator"
+                and bos_token is None
+            ):
                 raise RuntimeError(
                     error_log.format(
                         config_desc="beginning of sentence token",
@@ -194,10 +184,11 @@ class CSEvalHarnessAdapter(ClassLogger):
                 )
             # Wrap the tokenizers.Tokenizer object into a HF transformers tokenizer to be able
             # to access shared properties and methods
-            tokenizer = PreTrainedTokenizerFast(
+            self.tokenizer = PreTrainedTokenizerFast(
                 tokenizer_file=tokenizer_file_path,
                 eos_token=tok.decode(
-                    [eos_token_id]
+                    [eos_token_id],
+                    skip_special_tokens=False,
                 ),  # TODO: Change to accept eos token instead of its id?
                 bos_token=bos_token,
             )
@@ -207,10 +198,10 @@ class CSEvalHarnessAdapter(ClassLogger):
             )
         ) is not None:
 
-            tokenizer = AutoTokenizer.from_pretrained(
+            self.tokenizer = AutoTokenizer.from_pretrained(
                 pretrained_model_name_or_path
             )
-            eos_token_id = tokenizer.eos_token_id
+            eos_token_id = self.tokenizer.eos_token_id
             self.logger.info(
                 f"No custom tokenizer file path specified under `tokenizer_file_path`. "
                 f"Using {pretrained_model_name_or_path} tokenizer with end of sentence token id "
@@ -236,32 +227,89 @@ class CSEvalHarnessAdapter(ClassLogger):
         # (Re-)add (updated) "eos_id" to dataloader args
         self.dataloader_args["eos_id"] = eos_token_id
 
+    def preprocess_dataset(
+        self,
+        requests: List[Union[Instance, str]],
+        request_type: RequestType,
+        max_tokens: Optional[int] = None,
+    ) -> Tuple[
+        List[str],
+        int,
+        List[Tuple[int, int]],
+    ]:
+        """Tokenize raw text requests and returns metadata associated with the
+        request type.
+
+        Args:
+            requests: List of EEH's Instance dataclass objects
+                holding raw text data
+            request_type: The type of request
+            max_tokens: (Generative EH preprocessing) The max number of tokens to generate
+
+        Returns:
+            tuple of
+            - list of file paths where the samples are dumped;
+            - int representing the size of the dataset (total no. of samples);
+            - List of metadata tuples needed for postprocessing.
+        """
+
         # Create data samples and dump these to file
         MAX_FILE_SIZE = 1024 * 1024 * 500  # 500 MB
+
+        if (
+            request_type == RequestType.eeh_generate_until
+            or request_type == RequestType.bigcode_eh
+        ):
+            stop_words_cache = {}
+            # NOTE: Default to 4 total number of stop tokens with
+            # each stop sequence being of max length 8 for EEH. Note that
+            # these values may be updated to correctly represent the
+            # task(s) data when we pass over all samples in the
+            # preprocess_dataset method.
+            if request_type == RequestType.eeh_generate_until:
+                stop_sequence_shape = (4, 8)
+            else:
+                # For BCEH, we increase the shape to cater to the fact
+                # that each generative task runs sequentially and so
+                # we don't fetch all tasks' stop sequences up front.
+                stop_sequence_shape = (10, 10)
+        else:
+            stop_words_cache = None
+            stop_sequence_shape = None
 
         samples_saver = SamplesSaver(
             data_dir=str(self.eh_tasks_dir),
             max_file_size=MAX_FILE_SIZE,
             filename_prefix=f"requests_{self.msl}_msl",
+            dtype=object,
         )
 
-        samples_file_list, dataset_size, requests_metadata = self.data_fn(
+        samples_file_list, dataset_size, metadata = self.data_fn(
             requests,
             self.batch_size,
             self.msl,
-            tokenizer,
-            eos_token_id,
+            self.tokenizer,
             samples_saver,
             request_type=request_type,
+            max_input_len=0,
             inf_start_token=getattr(self.trainer.model, "start_token", None),
-            max_gen_tokens=getattr(self.trainer.model, "max_tokens", None),
+            max_gen_tokens=(
+                max_tokens
+                if max_tokens is not None
+                else getattr(self.trainer.model, "max_tokens", None)
+            ),
+            stop_words_cache=stop_words_cache,
+            stop_sequence_shape=stop_sequence_shape,
         )
+
+        total_steps = dataset_size // self.batch_size
+        self.logger.info(f"Total eval steps: {total_steps}")
 
         # Register clean-up method to remove data dumps
         if not self.keep_data_dir:
             atexit.register(samples_saver.delete_data_dumps)
 
-        return tokenizer, samples_file_list, dataset_size, requests_metadata
+        return samples_file_list, dataset_size, metadata
 
 
 class EvalHarnessProgress:

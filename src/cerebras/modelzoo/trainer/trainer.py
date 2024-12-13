@@ -41,6 +41,7 @@ from cerebras.modelzoo.trainer.callbacks import (
     BackendCallback,
     Callback,
     Checkpoint,
+    CoreCallback,
     DataLoaderCallback,
     GradientAccumulationCallback,
     Logging,
@@ -62,8 +63,6 @@ from cerebras.pytorch.backend import Backend
 from cerebras.pytorch.optim import Optimizer
 from cerebras.pytorch.sparse import SparsityAlgorithm
 
-UNSPECIFIED = object()
-
 
 class Trainer:
     """The Trainer class is the main entry point for training models in ModelZoo."""
@@ -73,10 +72,8 @@ class Trainer:
         self,
         device: Optional[str] = None,
         backend: Optional[Backend] = None,
-        model_dir: str = UNSPECIFIED,
-        model: Union[
-            Callable[[], torch.nn.Module], torch.nn.Module
-        ] = UNSPECIFIED,
+        model_dir: str = ...,
+        model: Union[Callable[[], torch.nn.Module], torch.nn.Module] = ...,
         optimizer: Union[
             Optimizer,
             Callable[[torch.nn.Module], Optimizer],
@@ -165,12 +162,12 @@ class Trainer:
         """
         super().__init__()
 
-        if model_dir is UNSPECIFIED:
+        if model_dir is Ellipsis:
             raise ValueError("model_dir is a required argument")
 
         self.model_dir = Path(model_dir)
 
-        if model is UNSPECIFIED:
+        if model is Ellipsis:
             raise ValueError("model is a required argument")
         if not isinstance(model, torch.nn.Module) and isinstance(
             optimizer, cstorch.optim.Optimizer
@@ -189,7 +186,7 @@ class Trainer:
         self.dataloader: cstorch.utils.data.DataLoader
         self.optimizer: Optional[cstorch.optim.Optimizer]
         self.schedulers: Optional[List[cstorch.optim.scheduler.Scheduler]]
-        self.executor: cstorch.utils.data.DataExecutor
+        self.executor: Optional[cstorch.utils.data.DataExecutor] = None
         self.global_step: int
 
         # Other attributes that callbacks may set
@@ -241,12 +238,13 @@ class Trainer:
                 "checkpoint": checkpoint,
             }
         )
-        core_callback_types = set(
-            type(callback)
-            for callback in self.callbacks.values()
-            if callback is not None
-        ) | {Precision, LoopCallback}
-        core_callback_types = tuple(core_callback_types)
+        # This is a sanity check, all callbacks in the above list should be core
+        # callbacks and not user-defined callbacks
+        for callback in self.callbacks.values():
+            if callback is not None and not isinstance(callback, CoreCallback):
+                raise TypeError(
+                    f"Found non-core callback in core callback list: {type(callback)}"
+                )
 
         user_callbacks = callbacks or []
 
@@ -276,8 +274,8 @@ class Trainer:
                 return f"{name}_{counter[name]}"
             return name
 
-        for callback in user_callbacks + self.loggers:
-            if isinstance(callback, core_callback_types):
+        for callback in self.loggers + user_callbacks:
+            if isinstance(callback, CoreCallback):
                 raise ValueError(
                     f"Callback {type(callback).__name__} is a core callback "
                     f"and cannot be overridden"
@@ -524,7 +522,7 @@ class Trainer:
 
     @final
     def get_val_dataloader_scope(self, val_dataloader):
-        """Get the name scope for the given val dataloader"""
+        """Get the name scope for the given val dataloader."""
         if val_dataloader.id not in self._val_dataloader_id_map:
             self._val_dataloader_id_map[val_dataloader.id] = (
                 f"validate_{self._val_dataloader_id}"
@@ -678,7 +676,7 @@ class Trainer:
             List[cstorch.utils.data.DataLoader],
             None,
         ] = None,
-        ckpt_path: Optional[str] = UNSPECIFIED,
+        ckpt_path: Optional[str] = ...,
     ):
         """Complete a full training run on the given train and validation dataloaders.
 
@@ -796,7 +794,7 @@ class Trainer:
     def validate(
         self,
         val_dataloader: Optional[cstorch.utils.data.DataLoader] = None,
-        ckpt_path: Optional[str] = UNSPECIFIED,
+        ckpt_path: Optional[str] = ...,
         loop: Optional[ValidationLoop] = None,
     ):
         """Complete a full validation run on the validation dataloader.
@@ -883,7 +881,7 @@ class Trainer:
             cstorch.utils.data.DataLoader,
             None,
         ] = None,
-        ckpt_paths: Union[List[str], str, None] = UNSPECIFIED,
+        ckpt_paths: Union[List[str], str, None] = ...,
         loop: Optional[ValidationLoop] = None,
     ):
         """
@@ -935,7 +933,7 @@ class Trainer:
                     f"Got {type(val_dataloader)} for element {i}"
                 )
 
-        if ckpt_paths is UNSPECIFIED or ckpt_paths is None:
+        if ckpt_paths is Ellipsis or ckpt_paths is None:
             ckpt_paths = [ckpt_paths]
         else:
             if not isinstance(ckpt_paths, (list, tuple)):
@@ -1015,12 +1013,9 @@ class Trainer:
         # Don't load a checkpoint if compile/validate only
         if not self.backend.is_e2e_execution:
             return
-        if (
-            ckpt_path is UNSPECIFIED
-            and self.checkpoint.autoload_last_checkpoint
-        ):
+        if ckpt_path is Ellipsis and self.checkpoint.autoload_last_checkpoint:
             ckpt_path = self.checkpoint.get_latest_checkpoint(self)
-        if not ckpt_path or ckpt_path is UNSPECIFIED:
+        if not ckpt_path or ckpt_path is Ellipsis:
             self.call("on_before_load_checkpoint", None)
             return
 

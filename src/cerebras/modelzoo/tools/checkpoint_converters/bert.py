@@ -96,6 +96,12 @@ class Converter_BertModel_CS16_CS17(BaseCheckpointConverter_CS_CS):
             ),
             ConversionRule(
                 [
+                    r"embedding_layer\.position_embeddings",
+                ],
+                action=self.replaceKey,
+            ),
+            ConversionRule(
+                [
                     EquivalentSubkey(
                         "embeddings.token_type_embeddings",
                         "embedding_layer.segment_embeddings",
@@ -349,10 +355,11 @@ class Converter_BertModel_CS16_CS18(BaseCheckpointConverter_CS_CS):
 class ConfigConverter_Bert_CS16_CS18(ConfigConverter_Bert_CS16_CS17):
     def pre_config_convert(
         self,
+        model,
         config,
         converter_indices,
     ):
-        config = super().pre_config_convert(config, converter_indices)
+        config = super().pre_config_convert(model, config, converter_indices)
         if converter_indices.direction == 1:
             if (
                 "pooler_nonlinearity" in config
@@ -381,6 +388,7 @@ class ConfigConverter_Bert_CS16_CS18(ConfigConverter_Bert_CS16_CS17):
 
     def post_config_convert(
         self,
+        model,
         original_config,
         old_config,
         new_config,
@@ -394,6 +402,7 @@ class ConfigConverter_Bert_CS16_CS18(ConfigConverter_Bert_CS16_CS17):
             new_config["mlm_nonlinearity"] = "gelu"
 
         return super().post_config_convert(
+            model,
             original_config,
             old_config,
             new_config,
@@ -944,7 +953,6 @@ class ConfigConverter_Bert_HF_CS17(BaseConfigConverter_HF_CS):
         )
 
         self.post_convert_defaults[0].update({"model_type": "bert"})
-        self.post_convert_defaults[1].update({"enable_vts": False})
 
     def convert_position_embedding_type(
         self,
@@ -998,6 +1006,7 @@ class ConfigConverter_Bert_HF_CS17(BaseConfigConverter_HF_CS):
 
     def post_config_convert(
         self,
+        model,
         original_config,
         old_config,
         new_config,
@@ -1018,6 +1027,7 @@ class ConfigConverter_Bert_HF_CS17(BaseConfigConverter_HF_CS):
                 new_config["mlm_nonlinearity"] = "gelu"
 
         return super().post_config_convert(
+            model,
             original_config,
             old_config,
             new_config,
@@ -1040,10 +1050,11 @@ class ConfigConverter_Bert_HF_CS18(ConfigConverter_Bert_HF_CS17):
 
     def pre_config_convert(
         self,
+        model,
         config,
         converter_indices,
     ):
-        config = super().pre_config_convert(config, converter_indices)
+        config = super().pre_config_convert(model, config, converter_indices)
         if converter_indices.direction == 1:
             if "pooler_nonlinearity" not in config:
                 if config["encoder_nonlinearity"] != "tanh":
@@ -1056,6 +1067,7 @@ class ConfigConverter_Bert_HF_CS18(ConfigConverter_Bert_HF_CS17):
 
     def post_config_convert(
         self,
+        model,
         original_config,
         old_config,
         new_config,
@@ -1070,6 +1082,7 @@ class ConfigConverter_Bert_HF_CS18(ConfigConverter_Bert_HF_CS17):
                 ]
 
         return super().post_config_convert(
+            model,
             original_config,
             old_config,
             new_config,
@@ -1208,12 +1221,11 @@ class ConfigConverter_BertModel_CS20_CS21(BaseConfigConverter_CS_CS):
 
 
 class ConfigConverter_Bert_HF_CS21(ConfigConverter_Bert_HF_CS18):
-    "CS 2.1 config is the same as CS 2.0"
+    "CS 2.1 config is the same as CS 2.0."
 
     def __init__(self):
         super().__init__()
         self.post_convert_defaults[1].update({"freeze_ffn_bias_in_glu": False})
-        del self.post_convert_defaults[1]["enable_vts"]
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
@@ -1295,7 +1307,7 @@ class ConfigConverter_Bert_HF_CS23(ConfigConverter_Bert_HF_CS21):
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.3"),
+            FormatVersions("cs-2.3", "cs-2.4"),
         )
 
 
@@ -1309,7 +1321,7 @@ class Converter_BertModel_WithoutOptionalModel_HF_CS23(
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.3"),
+            FormatVersions("cs-2.3", "cs-2.4"),
         )
 
     @staticmethod
@@ -1327,7 +1339,7 @@ class Converter_BertPretrainModel_WithoutOptionalModel_HF_CS23(
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.3"),
+            FormatVersions("cs-2.3", "cs-2.4"),
         )
 
     @staticmethod

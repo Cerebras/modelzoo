@@ -25,7 +25,7 @@ class NLGTokenGenerator:
     def __init__(self, max_seq_length):
 
         self.max_seq_length = max_seq_length
-        self.sample_features = ["input_ids", "attention_mask", "labels"]
+        self.features = ["input_ids", "attention_mask", "labels"]
 
     def encode(self, semantic_data_array):
 

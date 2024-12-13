@@ -12,22 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import logging
+import os
 from typing import Any, Dict, List, Tuple
 
 import ftfy
 import numpy as np
 
 from cerebras.modelzoo.data_preparation.data_preprocessing.utils import (
+    setup_warning_logging,
     wikitext_detokenizer,
 )
-
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
-
-from typing import Dict, List
-
-import numpy as np
 
 
 class DPOTokenGenerator:
@@ -48,30 +42,34 @@ class DPOTokenGenerator:
         flags for text normalization, detokenization options, data types for input IDs and masks,
         special token configurations, and sequence length constraints.
         """
-        dataset_params = params["dataset"]
-        processing_params = params["processing"]
+        dataset_params = params.get("dataset", {})
+        processing_params = params.get("processing")
+        setup_params = params.get("setup")
+        warning_log_dir = (
+            os.path.join(setup_params.get("output_dir"), "logs")
+            if setup_params.get("output_dir")
+            else "./data_preprocessing_logs"
+        )
+        self.logger = setup_warning_logging(warning_log_dir, __name__)
         self.tokenizer = tokenizer
 
         # Extracting and setting parameters from the dataset_params dictionary
-        self.use_ftfy = dataset_params.pop("use_ftfy", False)
-        self.ftfy_normalizer = dataset_params.pop("ftfy_normalizer", "NFC")
-        self.wikitext_detokenize = dataset_params.pop(
-            "wikitext_detokenize", False
-        )
-        self.input_ids_dtype = dataset_params.pop("input_ids_dtype", "int32")
-        self.input_mask_dtype = dataset_params.pop("input_mask_dtype", "int32")
-        self.sep_token = dataset_params.pop("sep_token", None)
-        self.sep_id = None
-        if self.sep_token:
-            self.sep_id = self.get_token_id(
-                self.sep_token
-            )  # Assuming this method exists or is implemented elsewhere
-        self.inverted_mask = dataset_params.pop("inverted_mask", False)
-        self.min_sequence_len = dataset_params.pop("min_sequence_len", 10)
+        self.max_prompt_length = dataset_params.pop("max_prompt_length", 512)
 
         # Extracting and setting parameters from the processing_params dictionary
+        self.use_ftfy = processing_params.pop("use_ftfy", True)
+        self.ftfy_normalizer = processing_params.pop("ftfy_normalizer", "NFC")
+        self.wikitext_detokenize = processing_params.pop(
+            "wikitext_detokenize", False
+        )
+
+        self.input_ids_dtype = processing_params.pop("input_ids_dtype", "int32")
+        self.input_mask_dtype = processing_params.pop(
+            "input_mask_dtype", "int32"
+        )
+        self.inverted_mask = processing_params.pop("inverted_mask", False)
         self.max_seq_length = processing_params.pop("max_seq_length", 2048)
-        self.max_prompt_length = processing_params.pop("max_prompt_length", 512)
+
         self.eos_id = eos_id
         self.pad_id = pad_id
 
@@ -117,13 +115,13 @@ class DPOTokenGenerator:
             self.bos_token_id = self.tokenizer.bos_token_id
         else:
             # Log a warning if the tokenizer's beginning-of-sequence token ID is not set
-            logger.warning(
+            self.logger.warning(
                 f"tokenizer bos_token_id is None or does not exist. Setting it to eos_token_id."
             )
             self.bos_token_id = self.eos_id
 
         self.chat_template = dataset_params.pop("chat_template", None)
-        self.sample_features = [
+        self.features = [
             "chosen_input_ids",
             "chosen_attention_mask",
             "chosen_labels",
@@ -215,10 +213,9 @@ class DPOTokenGenerator:
         full_input_ids = np.array(full_tokenized["input_ids"])
 
         # Check if lengths match, raise an error if they do not
-        if len(full_input_ids) != len(full_concat_input_ids):
-            raise ValueError(
-                "Concatenated prompt-response and full prompt-response input ids should have the same length."
-            )
+        assert len(full_input_ids) == len(
+            full_concat_input_ids
+        ), "Concatenated prompt-response and full prompt-response input ids should have the same length."
 
         # Adjust start index for the response's token IDs based on prompt tokenization
         response_token_ids_start_idx = len(prompt_input_ids)
@@ -237,10 +234,9 @@ class DPOTokenGenerator:
         ]
 
         # Validate length consistency between prompt input IDs and attention mask
-        if len(prompt_input_ids) != len(prompt_attention_mask):
-            raise ValueError(
-                "Prompt input ids and attention mask should have the same length."
-            )
+        assert len(prompt_input_ids) == len(
+            prompt_attention_mask
+        ), "Prompt input ids and attention mask should have the same length."
 
         # Re-extract answer input IDs and attention mask after adjustment
         answer_input_ids = full_tokenized["input_ids"][
@@ -326,7 +322,7 @@ class DPOTokenGenerator:
         }
 
         if doc_field:
-            logger.warning(f"{doc_field} is empty. Skipping this doc...")
+            self.logger.warning(f"{doc_field} is empty. Skipping this doc...")
             data_stats["discarded"] = 1
             return {}, data_stats
 
@@ -388,7 +384,7 @@ class DPOTokenGenerator:
         last_assistant_index = prompt_chosen.rfind(self.response_delimiter)
         if last_assistant_index == -1:
             data_stats["discarded"] = 1
-            logger.warning(
+            self.logger.warning(
                 f"Can't determine prompt from the chosen string. No `chosen` substring found. Skipping this doc..."
             )
             return {}, data_stats
@@ -447,7 +443,9 @@ class DPOTokenGenerator:
             chosen_prompt_len_input_ids - rejected_prompt_len_input_ids
         )
         if num_diff_tokens > 1 or num_diff_len > 1:
-            logger.warning(f"Num diff tokens in prompts: {num_diff_tokens}")
+            self.logger.warning(
+                f"Num diff tokens in prompts: {num_diff_tokens}"
+            )
 
         # add BOS token to head of prompt
         if not self.add_bos_token:

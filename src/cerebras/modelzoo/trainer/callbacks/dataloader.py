@@ -18,11 +18,11 @@ This module contains the implementation of the DataLoader callback class.
 
 from contextlib import contextmanager
 
-from cerebras.modelzoo.trainer.callbacks import Callback
+from cerebras.modelzoo.trainer.callbacks import Callback, CoreCallback
 from cerebras.pytorch.utils.nest import visit_torch_tensors
 
 
-class DataLoaderCallback(Callback):
+class DataLoaderCallback(CoreCallback):
     """
     Callback class that handles saving and loading dataloader state
     to the checkpoint.
@@ -57,7 +57,10 @@ class DataLoaderCallback(Callback):
     def on_load_checkpoint(self, trainer, state_dict):
         if self.dataloader is not None and self.dataloader.is_restartable:
             if "dataloader" in state_dict:
-                self.dataloader.load_state_dict(state_dict["dataloader"])
+                self.dataloader.load_state_dict(
+                    state_dict["dataloader"],
+                    strict=not trainer.checkpoint.disable_strict_checkpoint_loading,
+                )
 
                 trainer.logger.info(
                     f"Dataloader state found in checkpoint and loaded successfully."

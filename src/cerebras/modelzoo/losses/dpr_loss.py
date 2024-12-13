@@ -14,10 +14,7 @@
 
 from torch import nn
 
-from cerebras.modelzoo.common.registry import registry
 
-
-@registry.register_loss("DPRLoss")
 class DPRLoss(nn.Module):
     def __init__(self, mutual_information, softmax_temperature):
         super(DPRLoss, self).__init__()

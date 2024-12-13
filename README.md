@@ -53,9 +53,7 @@ For advanced use cases and porting your existing code please refer to the [devel
 | LLaVA | [Code](./src/cerebras/modelzoo/models/multimodal/llava) |
 | Mistral | [Code](./src/cerebras/modelzoo/models/nlp/mistral) |
 | Mixtral of Experts | [Code](./src/cerebras/modelzoo/models/nlp/mixtral) |
-| MNIST (fully connected) | [Code](./src/cerebras/modelzoo/fc_mnist/pytorch/) |
 | Multimodal Simple | [Code](./src/cerebras/modelzoo/models/multimodal/multimodal_simple) |
-| MPT | [Code](./src/cerebras/modelzoo/models/nlp/mpt) |
 | RoBERTa | [Code](./src/cerebras/modelzoo/models/nlp/bert/) |
 | SantaCoder | [Code](./src/cerebras/modelzoo/models/nlp/santacoder) |
 | StarCoder | [Code](./src/cerebras/modelzoo/models/nlp/starcoder) |

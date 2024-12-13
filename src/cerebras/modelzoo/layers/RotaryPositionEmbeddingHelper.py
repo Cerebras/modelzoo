@@ -13,19 +13,90 @@
 # limitations under the License.
 
 import math
+from enum import Enum, auto
+from typing import Tuple
 
 import torch
 
+import cerebras.pytorch as cstorch
+from cerebras.modelzoo.common.half_dtype import maybe_to_half_dtype
+from cerebras.modelzoo.common.utils.model.transformer_utils import (
+    create_sliding_window_mask_with_complement,
+)
 
-def _duplicate_interleave(m):
+
+class RopeRelDistanceMode(Enum):
+    default = auto()
+    capped = auto()
+    grouped = auto()
+
+
+class NoRopeModification:
+    """Sentinel object signifying that unmodified
+    queries/keys have to be returned by `rotate_tensor`
     """
-    A simple version of `torch.repeat_interleave` for duplicating a matrix while interleaving the copy.
+
+
+no_rope_modification_pos_id = NoRopeModification
+
+
+def rotate_every_two(x):
+    x1 = x[:, :, :, ::2]
+    x2 = x[:, :, :, 1::2]
+    x = torch.stack((-x2, x1), dim=-1)
+    return x.flatten(-2)
+
+
+class RotaryPosEmb(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, x, sin, cos):
+        ctx.save_for_backward(x, sin, cos)
+        x_dtype = x.dtype
+        if cstorch.backends.csx.precision.optimization_level >= 1:
+            x, sin, cos = maybe_to_half_dtype((x, sin, cos))
+        return (x * cos + rotate_every_two(x) * sin).to(x_dtype)
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        x, sin, cos = ctx.saved_tensors
+        x_dtype = x.dtype
+        if cstorch.backends.csx.precision.optimization_level >= 1:
+            grad_output, sin, cos = maybe_to_half_dtype((grad_output, sin, cos))
+        grad_x = grad_output * cos - rotate_every_two(grad_output * sin)
+        return grad_x.to(x_dtype), None, None
+
+
+rotary_pos_emb = RotaryPosEmb.apply
+
+
+def _compute_default_inv_freq(
+    x_shape: torch.Size,
+    rotary_dim: int,
+    theta: float,
+    device: torch.device,
+    fold_const: bool,
+) -> torch.tensor:
+    """Returns repeated default inverse frequency tensor for RoPE.
+
+    inv_freq = theta ^ -(2i / d) for i in [0, d/2)
+    return repeat_interleave(inv_freq, 2)
     """
-    dims = m.shape[:-1]
-    m = m.view(-1, 1)  # flatten the matrix
-    m = m.repeat(1, 2)  # repeat all elements into the 2nd dimension
-    m = m.view(*dims, -1)  # reshape into a matrix, interleaving the copy
-    return m
+    theta = torch.tensor(theta, device=device, dtype=torch.float32)
+    head_dim = x_shape[-1]
+    # NOTE: Values past rotary_dim are garbage and will be overwritten later.
+    dim_range = torch.arange(
+        head_dim, device=device, dtype=torch.float32
+    ).broadcast_to(x_shape)
+    dim_pairs = dim_range / 2
+    dim_pairs = dim_pairs.to(torch.int16).to(torch.float32)
+
+    if fold_const:
+        return 1 / theta ** (2 * dim_pairs / rotary_dim)
+
+    # NOTE: This is numerically different from the above implementation.
+    neg_ln_theta_by_dim = -torch.log(theta) * 2 / rotary_dim
+    inv_freq = torch.exp(dim_pairs * neg_ln_theta_by_dim)
+    return inv_freq
 
 
 # Inverse dim formula to find dim based on number of rotations
@@ -50,12 +121,21 @@ def _yarn_find_correction_range(
     return max(low, 0), min(high, dim - 1)  # Clamp values just in case
 
 
-def _yarn_linear_ramp_mask(min, max, dim):
+def _yarn_linear_ramp_mask(x_shape, min, max, device):
     if min == max:
         max += 0.001  # Prevent singularity
 
-    linear_func = (torch.arange(dim, dtype=torch.float32) - min) / (max - min)
-    ramp_func = torch.clamp(linear_func, 0, 1)
+    # repeat interleave and broadcast. values past rotary dim are garbage and
+    # will be overwritten.
+    dim_range = torch.arange(
+        x_shape[-1], device=device, dtype=torch.float32
+    ).broadcast_to(x_shape)
+    dim_pairs = dim_range / 2
+    dim_pairs = dim_pairs.to(torch.int16).to(torch.float32)
+
+    linear_func = (dim_pairs - min) / (max - min)
+    ramp_func = torch.where(linear_func < 0, 0, linear_func)
+    ramp_func = torch.where(linear_func > 1, 1, linear_func)
     return ramp_func
 
 
@@ -72,28 +152,31 @@ def _llama_3_update_inv_freq(
     high_freq_factor=4,
     original_max_position_embeddings=8192,
 ):
-    # Ported from https://github.com/huggingface/transformers/blob/bc2adb0112b6677b0dfb4105c74570a0f92183eb/src/transformers/modeling_rope_utils.py#L298-L339
+    # Ported from https://github.com/huggingface/transformers/blob/44f6fdd74f84744b159fa919474fd3108311a906/src/transformers/modeling_rope_utils.py#L298-L339
     low_freq_wavelen = original_max_position_embeddings / low_freq_factor
     high_freq_wavelen = original_max_position_embeddings / high_freq_factor
-    new_freqs = []
-    for freq in inv_freq:
-        wavelen = 2 * math.pi / freq
-        if wavelen < high_freq_wavelen:
-            new_freqs.append(freq)
-        elif wavelen > low_freq_wavelen:
-            new_freqs.append(freq / scaling_factor)
-        else:
-            assert low_freq_wavelen != high_freq_wavelen
-            smooth = (
-                original_max_position_embeddings / wavelen - low_freq_factor
-            ) / (high_freq_factor - low_freq_factor)
-            new_freqs.append(
-                (1 - smooth) * freq / scaling_factor + smooth * freq
-            )
-    inv_freq = torch.tensor(
-        new_freqs, dtype=inv_freq.dtype, device=inv_freq.device
+    wavelen = 2 * math.pi / inv_freq
+
+    # wavelen < high_freq_wavelen: do nothing
+    lhs = wavelen - high_freq_wavelen + 1
+    lt_mask = torch.where(lhs < 1.0, 1.0, 0.0)
+    inv_freq_llama = inv_freq * lt_mask
+
+    # wavelen > low_freq_wavelen: divide by factor
+    inv_freq_scaled = inv_freq / scaling_factor
+    lhs = wavelen - low_freq_wavelen + 1
+    gt_mask = torch.where(lhs > 1.0, 1.0, 0.0)
+    inv_freq_llama += inv_freq_scaled * gt_mask
+
+    # otherwise: interpolate between the two, using a smooth factor
+    smooth = (original_max_position_embeddings / wavelen - low_freq_factor) / (
+        high_freq_factor - low_freq_factor
     )
-    return inv_freq
+    inv_freq_rest = (1 - smooth) * inv_freq_scaled + smooth * inv_freq
+    rest_mask = torch.ones_like(inv_freq) - lt_mask - gt_mask
+    inv_freq_llama += inv_freq_rest * rest_mask
+
+    return inv_freq_llama
 
 
 class RotaryPositionEmbeddingHelper:
@@ -105,29 +188,49 @@ class RotaryPositionEmbeddingHelper:
         scaling_factor=1.0,
         scaling_type="linear",
         scaling_extra_args=None,
-        pad_fixed_pos_emb=False,
+        rel_distance_mode=RopeRelDistanceMode.default,
+        rel_distance_extra_args=None,
+        fold_rope_consts=True,
         constant_pos_embedding=None,
     ):
         super(RotaryPositionEmbeddingHelper, self).__init__()
         self.max_position_embeddings = max_position_embeddings
         self.rotary_dim = rotary_dim
         self.base = base
-        self.sin_cached = None
-        self.cos_cached = None
-        self.offset = 0
         self.scaling_factor = scaling_factor
+
         self.scaling_type = scaling_type
         self.scaling_extra_args = scaling_extra_args
-        self.pad_fixed_pos_emb = pad_fixed_pos_emb
+
+        self.fold_rope_consts = fold_rope_consts
         self.constant_pos_embedding = constant_pos_embedding
-        # force pad_fixed_pos_emb to True when constant_pos_embedding is enabled.
+        # force fold_rope_consts to False when constant_pos_embedding is enabled.
         if constant_pos_embedding is not None:
-            self.pad_fixed_pos_emb = True
+            self.fold_rope_consts = False
+
+        self._rope_cache = {}
+        self.swa_mask, self.swa_complement_mask = None, None
 
         self.scaling_type = self.scaling_type.lower()
-        if scaling_type not in ["linear", "yarn", "llama3"]:
+        if scaling_type not in ["linear", "yarn", "llama3", "longrope"]:
             raise ValueError(
-                f"Position scaling type {self.scaling_type} not supported! Use 'linear', 'yarn', or 'llama3'."
+                f"Position scaling type {self.scaling_type} not supported! Use 'linear', 'yarn', or 'llama3' or 'longrope"
+            )
+
+        self.rel_distance_mode = rel_distance_mode
+        if isinstance(rel_distance_mode, str):
+            self.rel_distance_mode = RopeRelDistanceMode.__members__.get(
+                rel_distance_mode, None
+            )
+
+        self.rel_distance_extra_args = rel_distance_extra_args
+        if self.rel_distance_extra_args is None:
+            self.rel_distance_extra_args = dict()
+
+        if self.rel_distance_mode is None:
+            raise ValueError(
+                f"Relative distance mode should be one of "
+                f"{tuple(RopeRelDistanceMode.__members__.keys())}, but got {self.rel_distance_mode}"
             )
 
         # YaRN specific params
@@ -145,10 +248,9 @@ class RotaryPositionEmbeddingHelper:
             self.mscale_a = scaling_extra_args.get("mscale_a", 0.1)
             self.mscale_b = scaling_extra_args.get("mscale_b", 1.0)
 
-        if self.scaling_type != "linear" and pad_fixed_pos_emb:
-            raise ValueError(
-                f"Position scaling type {self.scaling_type} does not work with pad_fixed_pos_emb=True"
-            )
+    @property
+    def is_rel_distance_default(self):
+        return self.rel_distance_mode == RopeRelDistanceMode.default
 
     def _constant_image_pos(self, x, t, constant_pos_mask):
         constant_pos_mask = constant_pos_mask[:, :, None, None].broadcast_to(
@@ -162,7 +264,15 @@ class RotaryPositionEmbeddingHelper:
         t = t + image_pos_id  # set pos id of image portion to the constant
         return t
 
-    def _create_padded_fixed_pos_emb(self, x, offset, constant_pos_mask=None):
+    def _create_fixed_pos_emb(
+        self,
+        x,
+        offset,
+        position_ids,
+        rope_cache_tag,
+        constant_pos_mask,
+        fold_const,
+    ):
         assert (
             self.max_position_embeddings >= x.shape[1] + offset
         ), "RoPE requires max position embeddings ({}) >= sequence length ({}) + offset ({})".format(
@@ -175,19 +285,47 @@ class RotaryPositionEmbeddingHelper:
             and constant_pos_mask is not None
         ), "constant_pos_embedding is enabled, but 'constant_pos_mask' is not provided."
 
-        inv_freq_arange = (
-            torch.arange(
-                0, x.shape[3] / 2, 0.5, device=x.device, dtype=torch.float32
-            )
-            .broadcast_to(x.shape)
-            .floor()
-            * 2
-        )
-        inv_freq = 1.0 / (self.base ** (inv_freq_arange / self.rotary_dim))
+        if rope_cache_tag is None:
+            rope_cache_tag = "default"
 
-        t = torch.arange(
-            offset, x.shape[1] + offset, device=x.device, dtype=torch.float32
-        )[:, None, None].broadcast_to(x.shape)
+        # Cache values based on the tag, offset, input shape and dtype
+        cache_key = (rope_cache_tag, x.shape, x.dtype, offset)
+
+        if cache_key in self._rope_cache:
+            return self._rope_cache[cache_key]
+
+        import cerebras.pytorch as cstorch
+
+        device = "cpu" if fold_const else x.device
+
+        x_shape = x.shape
+        if fold_const:
+            # Broadcast later to keep the serialized constants small.
+            x_shape = x[0:1, :, 0:1, :].shape  # [1, seq_len, 1, head_dim]
+
+        inv_freq = _compute_default_inv_freq(
+            x_shape, self.rotary_dim, self.base, device, fold_const=fold_const
+        )
+
+        if position_ids is None:
+            t = torch.arange(
+                offset,
+                x.shape[1] + offset,
+                device=device,
+                dtype=torch.float32,
+            )
+        else:
+            if (
+                position_ids.dim() != 1
+                or len(position_ids) != self.max_position_embeddings
+            ):
+                raise ValueError(
+                    f"position_ids tensor passed to 'rotate_tensor' method of RoPE helper "
+                    f"should be 1-dimensional of length {self.max_position_embeddings} "
+                    f"but got shape {position_ids.shape}"
+                )
+            t = position_ids
+        t = t[:, None, None].broadcast_to(x_shape)
 
         if (
             constant_pos_mask is not None
@@ -195,54 +333,9 @@ class RotaryPositionEmbeddingHelper:
         ):
             t = self._constant_image_pos(x, t, constant_pos_mask)
 
+        self.mscale = None
         if self.scaling_type == "linear":
-            t = t / self.scaling_factor
-
-        sinusoid_inp = t * inv_freq
-
-        sin, cos = (
-            torch.sin(sinusoid_inp).to(x.dtype),
-            torch.cos(sinusoid_inp).to(x.dtype),
-        )
-
-        if self.rotary_dim == x.shape[3]:
-            return sin, cos
-
-        rotary_arange = (
-            torch.arange(
-                x.shape[3], device=x.device, dtype=torch.float32
-            ).broadcast_to(x.shape)
-            - self.rotary_dim
-        )
-
-        rotary_mask = torch.clamp(-rotary_arange, min=0, max=1).to(x.dtype)
-
-        sin_masked = sin * rotary_mask
-        cos_masked = cos * rotary_mask - (rotary_mask - 1)
-        return sin_masked, cos_masked
-
-    def _create_fixed_pos_emb(self, x, offset):
-        if self.sin_cached is not None and self.cos_cached is not None:
-            if self.offset == offset:
-                return self.sin_cached, self.cos_cached
-        self.offset = offset
-
-        import cerebras.pytorch as cstorch
-
-        device = "cpu" if cstorch.use_cs() else x.device
-
-        inv_freq = 1.0 / (
-            self.base
-            ** (
-                torch.arange(0, self.rotary_dim, 2, device=device)
-                / self.rotary_dim
-            )
-        )
-        t = torch.arange(self.max_position_embeddings, device=device)
-
-        self.mscale = 1.0
-
-        if self.scaling_type == "linear":
+            self.mscale = 1.0
             t = t / self.scaling_factor
         elif self.scaling_type == "yarn":
             inv_freq_extrapolation = inv_freq
@@ -255,10 +348,7 @@ class RotaryPositionEmbeddingHelper:
                 self.original_max_position_embeddings,
             )
             inv_freq_mask = (
-                1
-                - _yarn_linear_ramp_mask(low, high, self.rotary_dim // 2)
-                .float()
-                .to(device)
+                1 - _yarn_linear_ramp_mask(x_shape, low, high, device)
             ) * self.extrapolation_factor  # Get n-d rotational scaling corrected for extrapolation
             inv_freq = (
                 inv_freq_interpolation * (1 - inv_freq_mask)
@@ -268,84 +358,251 @@ class RotaryPositionEmbeddingHelper:
                 self.scaling_factor, self.mscale_a, self.mscale_b
             )
         elif self.scaling_type == "llama3":
+            self.mscale = 1.0
             inv_freq = _llama_3_update_inv_freq(
                 inv_freq,
                 scaling_factor=self.scaling_factor,
                 **self.scaling_extra_args,
             )
+        elif self.scaling_type == "longrope":
+            inv_freq, self.mscale = self._longrope_computations(
+                x_shape, self.scaling_extra_args, device
+            )
 
-        sinusoid_inp = torch.einsum(
-            "i , j -> i j",
-            t,
-            inv_freq,
-        )
+        sinusoid_inp = t * inv_freq
 
         sin, cos = (
-            (torch.sin(sinusoid_inp) * self.mscale).to(x.dtype),
-            (torch.cos(sinusoid_inp) * self.mscale).to(x.dtype),
+            torch.sin(sinusoid_inp) * self.mscale,
+            torch.cos(sinusoid_inp) * self.mscale,
         )
 
-        sin, cos = map(_duplicate_interleave, (sin, cos))
+        if x.shape[-1] != self.rotary_dim:
+            # TODO: Delete padding rewrites.
+            rotary_mask = torch.arange(
+                x.shape[3], device=device, dtype=torch.float32
+            ).broadcast_to(x_shape) - (self.rotary_dim - 1)
+            sin = torch.where(rotary_mask <= 0, sin, 0)
+            cos = torch.where(rotary_mask < 1, cos, 1)
 
-        def slice_at_offset(t):
-            return t[None, offset : x.shape[1] + offset, None, :]
-
-        assert (
-            self.max_position_embeddings >= x.shape[1] + offset
-        ), "RoPE requires max position embeddings ({}) >= sequence length ({}) + offset ({})".format(
-            self.max_position_embeddings,
-            x.shape[1],
-            offset,
-        )
-        sin, cos = map(slice_at_offset, (sin, cos))
-
-        # For cs runs, wrap the sin and cos matrices in xla_literal so that
         # constant folding is performed.
-        self.sin_cached = cstorch.make_constant(sin)
-        self.cos_cached = cstorch.make_constant(cos)
-        return self.sin_cached, self.cos_cached
+        if fold_const:
+            sin, cos = cstorch.make_constant(sin), cstorch.make_constant(cos)
+            self._rope_cache[cache_key] = sin, cos
+
+        return sin, cos
 
     def _apply_rotary_pos_emb(
-        self, x, real_seq_length, offset=0, pad=False, constant_pos_mask=None
+        self,
+        x,
+        offset=0,
+        fold_rope_consts=True,
+        constant_pos_mask=None,
+        position_ids=None,
+        rope_cache_tag=None,
     ):
-        def rotate_every_two(x):
-            x1 = x[:, :, :, ::2]
-            x2 = x[:, :, :, 1::2]
-            x = torch.stack((-x2, x1), dim=-1)
-            # in einsum notation: rearrange(x, '... d j -> ... (d j)')
-            return x.flatten(-2)
-
-        if pad:
-            sin, cos = self._create_padded_fixed_pos_emb(
-                x, offset, constant_pos_mask=constant_pos_mask
+        head_dim = x.shape[-1]
+        odd_dim = head_dim % 2
+        if not fold_rope_consts and odd_dim:
+            raise RuntimeError(
+                f"Generating RoPE constants on the fly is not supported for odd {head_dim=}."
             )
-        else:
-            sin, cos = self._create_fixed_pos_emb(x, offset)
 
-        # einsum notation for lambda t: repeat(t[offset:x.shape[1]+offset,:], "n d -> () n () (d j)", j=2)
-        return (x * cos) + (rotate_every_two(x) * sin)
+        if (
+            not fold_rope_consts
+            and cstorch.backends.csx.precision.optimization_level == 0
+        ):
+            raise RuntimeError(
+                "Generating RoPE constants on the fly is not supported for precision_opt_level=0"
+            )
 
-    def _rotate_sliced_tensor(self, x, real_seq_length, offset=0):
-        x_rotary = x[:, :, :, : self.rotary_dim]
-        x_pass = x[:, :, :, self.rotary_dim :]
-        x_rotated = self._apply_rotary_pos_emb(
-            x_rotary, real_seq_length, offset=offset, pad=False
+        x_full = x[..., :]
+        x_odd_or_null = x[..., :0]
+        if odd_dim:
+            x_full = x[..., :-1]
+            x_odd_or_null = x[..., -1:]
+
+        sin, cos = self._create_fixed_pos_emb(
+            x_full,
+            offset,
+            position_ids,
+            rope_cache_tag,
+            constant_pos_mask=constant_pos_mask,
+            fold_const=fold_rope_consts,
         )
-        x = torch.cat([x_rotated, x_pass], dim=-1)
-        return x
+        x_rotated = rotary_pos_emb(x_full, sin, cos)
+        return torch.cat([x_rotated, x_odd_or_null], dim=-1)
 
     def rotate_tensor(
-        self, x, real_seq_length, offset=0, constant_pos_mask=None
+        self,
+        x,
+        offset=0,
+        constant_pos_mask=None,
+        position_ids=None,
+        rope_cache_tag=None,
     ):
         assert (
             len(x.shape) == 4
         ), "Tensor should be of shape [batch_size, seq_length, num_heads, head_dim] !"
-        if self.pad_fixed_pos_emb:
-            return self._apply_rotary_pos_emb(
-                x,
-                real_seq_length,
-                offset=offset,
-                pad=True,
-                constant_pos_mask=constant_pos_mask,
+        if position_ids is no_rope_modification_pos_id:
+            return x
+        return self._apply_rotary_pos_emb(
+            x,
+            offset=offset,
+            fold_rope_consts=self.fold_rope_consts,
+            constant_pos_mask=constant_pos_mask,
+            position_ids=position_ids,
+            rope_cache_tag=rope_cache_tag,
+        )
+
+    def _longrope_computations(
+        self, x_shape, rope_kwargs, device
+    ) -> Tuple["torch.Tensor", float]:
+        """
+        Compute longrope based parameters calculating inv_freq
+        and attention scaling factors
+        Input args:
+            rope_kwargs : Extra longrope params picked from this dict
+        Output:
+            Tuple of tensors for frequencies and scale factors generated
+        """
+
+        base = self.base
+        dim = self.rotary_dim
+        factor = self.scaling_factor
+        head_dim = x_shape[-1]
+
+        assert (
+            "original_max_position_embeddings" in rope_kwargs
+        ), "LongRope needs original context size"
+        self.original_max_position_embeddings = rope_kwargs.get(
+            "original_max_position_embeddings"
+        )
+        max_position_embeddings = self.original_max_position_embeddings
+        expanded_max_position_embeddings = self.max_position_embeddings
+        factor = expanded_max_position_embeddings / max_position_embeddings
+
+        # Compute the inverse frequencies -- scaled based on the target sequence length
+        if expanded_max_position_embeddings > max_position_embeddings:
+            assert (
+                "long_factor" in rope_kwargs
+            ), "LongRope needs long_factor scaling params in config"
+            rescale_factors = rope_kwargs["long_factor"]
+            if "long_mscale" in rope_kwargs:
+                self.mscale = rope_kwargs["short_mscale"]
+
+        else:
+            assert (
+                "short_factor" in rope_kwargs
+            ), "LongRope needs short_factor scaling params in config"
+            rescale_factors = rope_kwargs["short_factor"]
+            if "short_mscale" in rope_kwargs:
+                self.mscale = rope_kwargs["short_mscale"]
+
+        rescale_factors = [v for v in rescale_factors for _ in (0, 1)]  # repeat
+        rescale_factors += [0] * (head_dim - dim)  # pad zeros, masked out later
+        ext_factors = torch.tensor(
+            rescale_factors, dtype=torch.float32, device=device
+        )
+
+        # Sets the attention factor as suggested in the paper
+        if self.mscale is None:
+            # Check if the config is using attention_factor param instead
+            if "attention_factor" in rope_kwargs:
+                self.mscale = rope_kwargs["attention_factor"]
+            elif factor <= 1.0:
+                self.mscale = 1.0
+            else:
+                self.mscale = math.sqrt(
+                    1 + math.log(factor) / math.log(max_position_embeddings)
+                )
+
+        dim_range = torch.arange(
+            head_dim, device=device, dtype=torch.float32
+        ).broadcast_to(x_shape)
+        dim_pairs = dim_range / 2
+        dim_pairs = dim_pairs.to(torch.int16).to(torch.float32)
+        inv_freq = 1.0 / (ext_factors * base ** (2 * dim_pairs / dim))
+
+        return inv_freq, self.mscale
+
+    def get_attn_region_masks(self, shape, device):
+        """Returns a sliding window causal mask with a complement mask
+        to combine logit values inside and outside the sliding window region
+        """
+        if "rope_local_window_size" not in self.rel_distance_extra_args:
+            raise ValueError(
+                f"Attempt to create RoPE relative distance region masks but "
+                f"'rope_local_window_size' is not specified"
             )
-        return self._rotate_sliced_tensor(x, real_seq_length, offset=offset)
+
+        if self.swa_mask is not None:
+            return self.swa_mask, self.swa_complement_mask
+
+        batch_size, num_heads, seq_len, _ = shape
+        sliding_window_length = self.rel_distance_extra_args[
+            "rope_local_window_size"
+        ]
+
+        self.swa_mask, self.swa_complement_mask = (
+            create_sliding_window_mask_with_complement(
+                batch_size=batch_size,
+                num_heads=num_heads,
+                tgt_seq_length=seq_len,
+                sliding_window_length=sliding_window_length,
+                device=device,
+            )
+        )
+        return self.swa_mask, self.swa_complement_mask
+
+    def get_distant_pos_id_vectors(self, device):
+        """Depending on whether capped relative distances (LM-Infinite style)
+        or grouped relative distances (Self-Extend style) are used returns 1D tensors
+        of position IDs for queries/keys to compute relative distances
+        outside the sliding window region
+
+        Returns: a tuple of (q_pos_id, k_pos_id) 1D tensors of shape [max_position_embeddings]
+        """
+        if self.rel_distance_mode == RopeRelDistanceMode.default:
+            raise ValueError(
+                "Invalid attempt to create position ID vectors for "
+                "out-of-sliding-window logits when rel_distance_mode='default'. "
+                "rel_distance_mode value should be 'capped' or 'grouped'."
+            )
+
+        import cerebras.pytorch as cstorch
+
+        device = "cpu" if cstorch.use_cs() else device
+
+        if self.rel_distance_mode == RopeRelDistanceMode.capped:
+            if "rope_local_window_size" not in self.rel_distance_extra_args:
+                raise ValueError(
+                    "'rope_local_window_size' has to be specified for rel_distance_mode='capped'"
+                )
+
+            q_pos_id = (
+                torch.ones(self.max_position_embeddings, device=device)
+                * self.rel_distance_extra_args["rope_local_window_size"]
+            )
+            k_pos_id = no_rope_modification_pos_id
+        elif self.rel_distance_mode == RopeRelDistanceMode.grouped:
+            if (
+                "rope_local_window_size" not in self.rel_distance_extra_args
+                or "rope_group_size" not in self.rel_distance_extra_args
+            ):
+                raise ValueError(
+                    "Both 'rope_local_window_size' and 'rope_group_size' have to be "
+                    "specified for rel_distance_mode='grouped'"
+                )
+
+            max_rel_distance = self.rel_distance_extra_args[
+                "rope_local_window_size"
+            ]
+            group_size = self.rel_distance_extra_args["rope_group_size"]
+            constant_dist = max_rel_distance - max_rel_distance // group_size
+            k_pos_id = (
+                torch.arange(self.max_position_embeddings, device=device)
+                // group_size
+            )
+            q_pos_id = k_pos_id + constant_dist
+
+        return q_pos_id, k_pos_id

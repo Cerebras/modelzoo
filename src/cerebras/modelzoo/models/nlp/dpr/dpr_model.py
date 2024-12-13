@@ -88,7 +88,7 @@ class DPRModel(nn.Module):
         pooler_type,
         mutual_information,
     ):
-        super(DPRModel, self).__init__()
+        super().__init__()
         self.question_encoder = question_encoder
         self.ctx_encoder = ctx_encoder
         self.pooler_type = pooler_type

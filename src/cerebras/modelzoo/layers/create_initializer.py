@@ -51,6 +51,11 @@ def create_initializer(spec):
     :param int seed: random seed for the initializer or None to run unseeded.
     :returns: initializer that can be passed to layers
     """
+    from cerebras.modelzoo.layers.init import Initializer
+
+    if isinstance(spec, Initializer):
+        return spec
+
     if type(spec) == str:
         spec = {"name": spec}
     if "name" not in spec:

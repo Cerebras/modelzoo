@@ -34,11 +34,12 @@ from cerebras.modelzoo.trainer.extensions.eleuther.eval_harness_utils import (
     SUPPORTED_MODELS,
 )
 from cerebras.modelzoo.trainer.utils import (
-    configure_trainer_from_params,
+    configure_trainer_from_config,
     convert_legacy_params_to_trainer_params,
     inject_cli_args_to_trainer_params,
     is_legacy_params,
 )
+from cerebras.modelzoo.trainer.validate import validate_trainer_params
 
 
 class MultiChoice:
@@ -245,7 +246,9 @@ def main():
         arg_name = arg.dest
         # Exclude Cerebras-specific args
         if arg_name in {"keep_data_dir"}:
-            other_bigcode_args[arg_name] = runconfig_params.pop(arg_name, None)
+            other_bigcode_args[arg_name] = runconfig_params.pop(
+                arg_name, arg.default
+            )
         elif arg_name in runconfig_params:
             arg_val = runconfig_params.pop(arg_name, None)
             if arg_val is not None:  # Only consider specified CLI args
@@ -305,19 +308,6 @@ def main():
             "a single trainer instance, but found a list of trainers."
         )
 
-    if "model_name" in params["trainer"]["init"]["model"]:
-        model_name = params["trainer"]["init"]["model"].pop("model_name")
-        if model_name not in SUPPORTED_MODELS:
-            raise ValueError(
-                f"Invalid model_name specified. Please choose a "
-                f"valid model name from: {SUPPORTED_MODELS}"
-            )
-    else:
-        raise RuntimeError(
-            f"No model_name specified under config trainer.init.model. Please "
-            f"choose a valid model name from: {SUPPORTED_MODELS}"
-        )
-
     # Extract BigCodeEvalHarness callbacks from the list of callbacks
     bigcode_callbacks = [
         callback["BigCodeEvalHarness"]
@@ -331,21 +321,28 @@ def main():
         bigcode_callback.setdefault("bigcode_args", {}).update(
             (key, value) for key, value in deepcopy(bigcode_args).items()
         )
-        # Set the data_processor key of the callback
-        # for the dataloader config validation
-        bigcode_callback["data_processor"] = "InferenceDataProcessor"
 
-    trainer = configure_trainer_from_params(params, model_name)
+    config = validate_trainer_params(params)[0]
 
-    if "val_dataloaders" in params["trainer"].get("validate_all") is not None:
-        logging.warning(
-            f"Found `validate_all.val_dataloaders` specified in the yaml, "
-            f"but no upstream validation will be run for the standalone "
-            f"BigCode Eval Harness script."
+    if config.init.model.config.name not in SUPPORTED_MODELS:
+        raise ValueError(
+            f"BigCode evaluation is not supported for model {config.init.model.config.name}. "
+            f"Please choose a valid model name from: {SUPPORTED_MODELS}"
         )
-        params["trainer"]["validate_all"]["val_dataloaders"] = None
 
-    trainer.validate_all(**params["trainer"].get("validate_all", {}))
+    trainer = configure_trainer_from_config(config, mode="eval_all")
+
+    kwargs = {}
+    if config.validate_all:
+        if config.validate_all.val_dataloaders:
+            logging.warning(
+                f"Found `validate_all.val_dataloaders` specified in the yaml, "
+                f"but no upstream validation will be run for the standalone "
+                f"BigCode Eval Harness script."
+            )
+        kwargs = {"ckpt_paths": config.validate_all.ckpt_paths}
+
+    trainer.validate_all(**kwargs)
 
 
 if __name__ == "__main__":

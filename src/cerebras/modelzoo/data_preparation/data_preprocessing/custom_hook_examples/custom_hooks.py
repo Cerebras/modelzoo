@@ -23,10 +23,6 @@ from urllib.parse import urlparse
 
 from PIL import Image
 
-from cerebras.modelzoo.data_preparation.data_preprocessing.utils import (
-    SYSTEM_PROMPT_REGISTRY,
-)
-
 logger = logging.getLogger(__name__)
 
 
@@ -69,92 +65,6 @@ def fetch_single_image(
     return image
 
 
-def multiple_images_llava_finetuning_hook(
-    example: Dict[str, Any], **read_hook_kwargs: Any
-) -> List[Dict[str, Any]]:
-    """
-    Transforms conversation data for finetuning LLaVA with multiple images.
-
-    Args:
-        example (Dict[str, Any]): The input data containing conversation and image paths.
-        **read_hook_kwargs (Any): Additional keyword arguments containing data_keys, system_prompt, and image_token.
-
-    Returns:
-        List[Dict[str, Any]]: Transformed data suitable for finetuning LLaVA.
-
-    Raises:
-        AssertionError: If required keys are not provided in read_hook_kwargs.
-        ValueError: If image_token is not provided or if there are inconsistencies in image paths and tokens.
-    """
-
-    data_keys = read_hook_kwargs.get("data_keys")
-    assert (
-        data_keys is not None
-    ), "data_keys should be provided in the read_hook_kwargs section"
-    multi_turn_key = data_keys.get("multi_turn_key")
-    image_key = data_keys.get("image_key")
-
-    system_prompt = read_hook_kwargs.get("system_prompt")
-    image_token = read_hook_kwargs.get("image_token", None)
-    assert (
-        image_token is not None
-    ), "image_token should be provided in the read_hook_kwargs section for llava"
-
-    conversation_data = example.get(multi_turn_key, [])
-    if conversation_data is None:
-        conversation_data = []
-    image_paths = example.get(image_key, [])
-
-    transformed_data = []
-
-    if system_prompt:
-        system_prompt_text = SYSTEM_PROMPT_REGISTRY.get(system_prompt, "")
-        system_data = {
-            "type": "system",
-            "content": [{"text": system_prompt_text.strip()}],
-        }
-        transformed_data.append(system_data)
-
-    if image_paths and not image_token:
-        raise ValueError(
-            "Image token has not been provided inside read_hook_kwargs within the processing section in the config file for llava finetuning datasets."
-        )
-
-    if isinstance(image_paths, str):
-        image_paths = [image_paths]
-
-    image_index = 0
-
-    for i, turn in enumerate(conversation_data):
-        role = "user" if i % 2 == 0 else "assistant"
-        content_parts = []
-
-        # Split the text by the image token
-        parts = re.split(re.escape(image_token), turn.get("value", ""))
-        for i, part in enumerate(parts):
-            if i > 0 and image_index < len(image_paths):
-                # Use the corresponding image path or the single image path provided
-                image_path = (
-                    image_paths[image_index]
-                    if len(image_paths) > 1
-                    else image_paths[0]
-                )
-                content_parts.append({"image": image_path})
-                image_index += 1
-            if part.strip():  # Add non-empty text parts
-                content_parts.append({"text": part})
-
-        # Remove any empty text parts
-        content_parts = [
-            part
-            for part in content_parts
-            if part.get("text") or part.get("image")
-        ]
-        transformed_data.append({"type": role, "content": content_parts})
-
-    return transformed_data
-
-
 def ultra_chat_common_words_mask_hook(
     example: Dict[str, Any], **read_hook_kwargs
 ) -> List[Dict[str, Any]]:
@@ -169,12 +79,8 @@ def ultra_chat_common_words_mask_hook(
         List[Dict[str, Any]]: A list of dictionaries in semantic_data_array format.
     """
 
-    data_keys = read_hook_kwargs.get("data_keys")
-    assert (
-        data_keys != None
-    ), "data_keys should be provided in the read_hook_kwargs section"
-    prompt_key = data_keys.get('prompt_key', None)
-    completion_key = data_keys.get('completion_key', None)
+    prompt_key = read_hook_kwargs.get('prompt_key', None)
+    completion_key = read_hook_kwargs.get('completion_key', None)
     assert (
         prompt_key is not None and completion_key is not None
     ), "prompt_completion_read_hook requires a prompt_key and a completion_key"
@@ -267,16 +173,12 @@ def obelics_hook(
         List[Dict[str, Any]]: A list of dictionaries in semantic_data_array format.
     """
 
-    data_keys = read_hook_kwargs.get("data_keys")
     image_dir = read_hook_kwargs.get("image_dir")
     assert (
-        data_keys != None
-    ), "data_keys should be provided in the read_hook_kwargs section"
-    assert (
-        data_keys != None
+        image_dir != None
     ), "image_dir should be provided in the read_hook_kwargs section for obelics dataset"
-    image_key = data_keys.get('image_key', None)
-    caption_key = data_keys.get('caption_key', None)
+    image_key = read_hook_kwargs.get('image_key', None)
+    caption_key = read_hook_kwargs.get('caption_key', None)
     assert image_key != None, "obelics_hook requires a image_key"
     image_url_list = example.get(image_key)
     text_list = example.get(caption_key)
@@ -308,3 +210,42 @@ def obelics_hook(
                 content_parts.append({"image": unique_file_name})
 
     return [{"content": content_parts}]
+
+
+def llama3_1_chat_formatted_data_hook(
+    example: Dict[str, Any], **read_hook_kwargs
+) -> List[Dict[str, Any]]:
+    """
+    Extract multi-turn conversation data from text formatted with Llama 3.1 chat template and process it into a semantic_data_array format.
+
+    Args:
+        example (Dict[str, Any]): The example data to process.
+        **read_hook_kwargs: Additional keyword arguments for processing.
+
+    Returns:
+        List[Dict[str, Any]]: A list of dictionaries in semantic_data_array format.
+    """
+
+    chat_key = read_hook_kwargs.get("chat_key")
+    assert (
+        chat_key is not None
+    ), "llama3.1_chat_formatted_data_hook requires a chat_key"
+    chat_formatted_data = example.get(chat_key)
+    # Pattern to match header and content blocks
+    pattern = (
+        r'<\|start_header_id\|>(.*?)<\|end_header_id\|>\n\n(.*?)<\|eot_id\|>'
+    )
+
+    # Find all matches in the text
+    matches = re.finditer(pattern, chat_formatted_data, re.DOTALL)
+
+    semantic_data_array = []
+
+    for match in matches:
+        role = match.group(1).strip()
+        content = match.group(2).strip()
+        semantic_data_array.append(
+            {"type": role, "content": [{"text": content}]}
+        )
+
+    return semantic_data_array

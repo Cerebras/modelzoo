@@ -54,8 +54,7 @@ In this section we describe the structure of the code for the Cerebras model and
 
 The following few scripts are relatively generic and shared between models. They provide an entry-point from the model-specific code to interface with shared training/validation code.
 
-* `run.py`: A generic training script that connects all models and dataloaders to the training pipeline. Not much is contained in this script; it imports the correct model and dataloader from `model.py` and `data.py` respectively.
-* `data.py`: A generic script that wraps code in a format to work with `run.py`. The real work for data-processing is done in the `modelzoo/data/nlp/t5/` directory, which creates classes that are imported in `data.py`.  
+* `run.py`: A generic training script.
 * `model.py`: Provides a common wrapper for all models, which interfaces with  model-specific code. In this repo the model-specific code is in `t5_model.py`. The wrapper provides a common interface for handling the function call of the model with its specific data format. It also provides a common interface to use the same format of configuration files from `configs/` to construct various models.
 * `utils.py`: Miscellaneous functions that are used to interface with the YAML files.
 

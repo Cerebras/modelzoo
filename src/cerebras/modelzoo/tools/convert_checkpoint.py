@@ -26,15 +26,12 @@ from typing import Optional, Tuple, Union
 from packaging.version import parse
 from tabulate import tabulate
 
-sys.path.append(os.path.join(os.path.dirname(__file__), "../../.."))
+sys.path.append(os.path.join(os.path.dirname(__file__), "../"))
 from cerebras.modelzoo.tools.checkpoint_converters.base_converter import (
     BaseCheckpointConverter,
     BaseConfigConverter,
     FormatIndices,
     fallback_converters,
-)
-from cerebras.modelzoo.tools.checkpoint_converters.streaming_checkpoints import (
-    StreamingShardedHFWriter,
 )
 
 
@@ -240,6 +237,7 @@ def _convert_checkpoint_helper(
     checkpoint: dict,
     checkpoint_from_index: FormatIndices,
     config_converter_class: BaseConfigConverter,
+    model: str,
     config: dict,
     config_from_index: FormatIndices,
     output_checkpoint: dict = {},
@@ -247,7 +245,12 @@ def _convert_checkpoint_helper(
     no_progress_bar: bool = True,
     debug: bool = False,
 ) -> Tuple[dict, dict]:
+    from cerebras.modelzoo.tools.checkpoint_converters.registry import (
+        get_cs_model_name,
+    )
+
     new_config = config_converter_class.convert(
+        get_cs_model_name(model),
         config,
         config_from_index,
         no_progress_bar=no_progress_bar,
@@ -385,6 +388,7 @@ def convert_checkpoint_from_file(
         checkpoint,
         checkpoint_from_index,
         config_converter_class,
+        model,
         config,
         config_from_index,
         output_checkpoint,
@@ -403,6 +407,10 @@ def convert_checkpoint_from_file(
     config_folder, config_filename = os.path.split(config_file)
     new_config_filename_without_ext = (
         _remove_file_extension(config_filename) + "_to_" + tgt_fmt
+    )
+
+    from cerebras.modelzoo.tools.checkpoint_converters.streaming_checkpoints import (
+        StreamingShardedHFWriter,
     )
 
     if isinstance(output_checkpoint, StreamingShardedHFWriter):
@@ -456,6 +464,7 @@ def convert_checkpoint(
         checkpoint,
         checkpoint_from_index,
         config_converter_class,
+        model,
         config,
         config_from_index,
         output_checkpoint,
@@ -475,6 +484,10 @@ def convert_config_from_file(
     no_progress_bar: bool = True,
     debug: bool = False,
 ) -> str:
+    from cerebras.modelzoo.tools.checkpoint_converters.registry import (
+        get_cs_model_name,
+    )
+
     (
         converter_class,
         checkpoint_from_index,
@@ -486,6 +499,7 @@ def convert_config_from_file(
 
     config = config_converter_class.load(config_file, config_from_index)
     new_config = config_converter_class.convert(
+        get_cs_model_name(model),
         config,
         config_from_index,
         drop_unmatched_keys=drop_unmatched_keys,
@@ -523,6 +537,10 @@ def convert_config(
     no_progress_bar: bool = True,
     debug: bool = False,
 ) -> dict:
+    from cerebras.modelzoo.tools.checkpoint_converters.registry import (
+        get_cs_model_name,
+    )
+
     (
         converter_class,
         checkpoint_from_index,
@@ -532,7 +550,14 @@ def convert_config(
     if converter_class is None:
         return None
 
-    new_config = config_converter_class.convert(config, config_from_index)
+    new_config = config_converter_class.convert(
+        get_cs_model_name(model),
+        config,
+        config_from_index,
+        drop_unmatched_keys=drop_unmatched_keys,
+        no_progress_bar=no_progress_bar,
+        debug=debug,
+    )
 
     return new_config
 
@@ -700,25 +725,57 @@ The following commands are supported:
    diff             Compare two checkpoints
 ''',
         )
-        parser.add_argument('command', help='Subcommand to run')
-        # parse_args defaults to [1:] for args, but you need to
-        # exclude the rest of the args too or validation will fail
-        args = parser.parse_args(sys.argv[1:2])
-        fn_name = "_{}".format(args.command.replace("-", "_"))
+        CheckpointConverterCLI.configure_parser(parser)
 
-        if not hasattr(self, fn_name):
-            print('Unrecognized command')
-            parser.print_help()
-            sys.exit(1)
+        args = parser.parse_args()
+        args.func(args)
 
-        logging.getLogger().setLevel(logging.INFO)
-        # use dispatch pattern to invoke method with same name
-        getattr(self, fn_name)()
+    @staticmethod
+    def epilog():
+        from cerebras.modelzoo.cli.utils import MZ_CLI_NAME
 
-    def _convert(self):
-        parser = argparse.ArgumentParser(
-            description='Convert a checkpoint & the corresponding config'
+        return (
+            f"Use `{MZ_CLI_NAME} checkpoint -h` to learn how to use the checkpoint converter. "
+            f"See below for some basic examples.\n\n"
+            f"List all converters for gpt2:\n"
+            f"  $ {MZ_CLI_NAME} checkpoint list gpt2\n\n"
+            f"Convert a gpt2 checkpoint from Cerebras format to HuggingFace format:\n"
+            f"  $ {MZ_CLI_NAME} checkpoint convert --model gpt2 --src-fmt "
+            f"cs-auto --tgt-fmt hf --config workdir/params_gpt_tiny.yaml "
+            f"model_dir/checkpoint.mdl\n\n"
+            f"Convert a gpt2 config from one Cerebras version to the next:\n"
+            f"  $ {MZ_CLI_NAME} checkpoint convert-config --model gpt2 --src-fmt "
+            f"cs-2.3 --tgt-fmt cs-2.4 workdir/params_gpt_tiny.yaml\n\n"
+            f"Compare two checkpoints:\n"
+            f"  $ {MZ_CLI_NAME} checkpoint diff model_dir/checkpoint.mdl checkpoints_database/checkpoint.mdl\n\n"
+            f"For more information on checkpoint conversion, see: "
+            f"https://docs.cerebras.net/en/latest/wsc/Model-zoo/Migration/porting-checkpoints.html"
         )
+
+    @staticmethod
+    def configure_parser(parser):
+        subparsers = parser.add_subparsers(dest="cmd", required=True)
+
+        convert_parser = subparsers.add_parser('convert')
+        convert_parser.set_defaults(func=CheckpointConverterCLI._convert)
+        CheckpointConverterCLI.add_convert_args(convert_parser)
+
+        convert_config_parser = subparsers.add_parser('convert-config')
+        convert_config_parser.set_defaults(
+            func=CheckpointConverterCLI._convert_config
+        )
+        CheckpointConverterCLI.add_convert_config_args(convert_config_parser)
+
+        list_parser = subparsers.add_parser('list')
+        list_parser.set_defaults(func=CheckpointConverterCLI._list)
+        CheckpointConverterCLI.add_list_args(list_parser)
+
+        diff_parser = subparsers.add_parser('diff')
+        diff_parser.set_defaults(func=CheckpointConverterCLI._diff)
+        CheckpointConverterCLI.add_diff_args(diff_parser)
+
+    @staticmethod
+    def add_convert_args(parser):
         parser.add_argument(
             'checkpoint_file',
             metavar='checkpoint-file',
@@ -806,34 +863,8 @@ The following commands are supported:
             help='Debug checkpoint key mapping',
         )
 
-        args = parser.parse_args(sys.argv[2:])
-
-        (
-            checkpoint_output_path,
-            config_output_path,
-        ) = convert_checkpoint_from_file(
-            args.model,
-            args.src_fmt,
-            args.tgt_fmt,
-            args.checkpoint_file,
-            args.config,
-            args.output_dir,
-            args.hf_shard_size,
-            args.export_safetensors,
-            args.drop_unmatched_keys,
-            args.no_progress_bar,
-            args.debug,
-        )
-
-        if checkpoint_output_path is None or config_output_path is None:
-            print("\nConversion failed.")
-            sys.exit(1)
-        else:
-            print("Checkpoint saved to {}".format(checkpoint_output_path))
-            print("Config saved to {}".format(config_output_path))
-
-    def _convert_config(self):
-        parser = argparse.ArgumentParser(description='Convert config')
+    @staticmethod
+    def add_convert_config_args(parser):
         parser.add_argument(
             'config_file',
             metavar='config-file',
@@ -873,59 +904,23 @@ The following commands are supported:
             help='Debug config key mapping',
         )
 
-        args = parser.parse_args(sys.argv[2:])
-
-        config_output_path = convert_config_from_file(
-            args.model,
-            args.src_fmt,
-            args.tgt_fmt,
-            args.config_file,
-            outputdir=args.output_dir,
-            debug=args.debug,
-            drop_unmatched_keys=True,
-        )
-
-        if config_output_path is None:
-            print("\nConversion failed.")
-            sys.exit(1)
-        else:
-            print("Config saved to {}".format(config_output_path))
-
-    def _list(self):
-        parser = argparse.ArgumentParser(
-            description='List supported checkpoint conversion formats'
-        )
+    @staticmethod
+    def add_list_args(parser):
         parser.add_argument(
             'model',
             type=str.lower,
             default="all",
             nargs='?',
-            help="Either MODEL to list supported converters for a particular model or 'all' to list all converters",
+            help="Either <model-name> to list supported converters for a particular model or 'all' to list all converters",
         )
         parser.add_argument(
             '--hide-notes',
             action='store_true',
             help='Hide notes column',
         )
-        args = parser.parse_args(sys.argv[2:])
 
-        from cerebras.modelzoo.tools.checkpoint_converters.registry import (
-            converters,
-        )
-
-        if args.model == "all":
-            _print_supported_models_converters(hide_notes=args.hide_notes)
-        elif args.model in converters:
-            _print_supported_models_converters(
-                args.model, hide_notes=args.hide_notes
-            )
-        else:
-            print("The model {} is not supported.".format(args.model))
-            _print_supported_models()
-            sys.exit(1)
-
-    def _diff(self):
-        parser = argparse.ArgumentParser(description='Compare two checkpoints')
+    @staticmethod
+    def add_diff_args(parser):
         parser.add_argument(
             'left_checkpoint',
             type=str,
@@ -942,7 +937,69 @@ The following commands are supported:
             default=TENSOR_CMP_SUPPORTED_OPS[0],
         )
 
-        args = parser.parse_args(sys.argv[2:])
+    @staticmethod
+    def _convert(args):
+        (
+            checkpoint_output_path,
+            config_output_path,
+        ) = convert_checkpoint_from_file(
+            args.model,
+            args.src_fmt,
+            args.tgt_fmt,
+            args.checkpoint_file,
+            args.config,
+            args.output_dir,
+            args.hf_shard_size,
+            args.export_safetensors,
+            args.drop_unmatched_keys,
+            args.no_progress_bar,
+            args.debug,
+        )
+
+        if checkpoint_output_path is None or config_output_path is None:
+            print("\nConversion failed.")
+            sys.exit(1)
+        else:
+            print("Checkpoint saved to {}".format(checkpoint_output_path))
+            print("Config saved to {}".format(config_output_path))
+
+    @staticmethod
+    def _convert_config(args):
+        config_output_path = convert_config_from_file(
+            args.model,
+            args.src_fmt,
+            args.tgt_fmt,
+            args.config_file,
+            outputdir=args.output_dir,
+            debug=args.debug,
+            drop_unmatched_keys=True,
+        )
+
+        if config_output_path is None:
+            print("\nConversion failed.")
+            sys.exit(1)
+        else:
+            print("Config saved to {}".format(config_output_path))
+
+    @staticmethod
+    def _list(args):
+        from cerebras.modelzoo.tools.checkpoint_converters.registry import (
+            converters,
+        )
+
+        if args.model == "all":
+            _print_supported_models_converters(hide_notes=args.hide_notes)
+        elif args.model in converters:
+            _print_supported_models_converters(
+                args.model, hide_notes=args.hide_notes
+            )
+        else:
+            print("The model {} is not supported.".format(args.model))
+            _print_supported_models()
+            sys.exit(1)
+
+    @staticmethod
+    def _diff(args):
         diff_checkpoints_from_file(
             args.left_checkpoint,
             args.right_checkpoint,

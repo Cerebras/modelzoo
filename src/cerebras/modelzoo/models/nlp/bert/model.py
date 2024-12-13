@@ -12,60 +12,59 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import logging
-
 import torch
 from torch.nn import CrossEntropyLoss
 
 import cerebras.pytorch as cstorch
-from cerebras.modelzoo.common.registry import registry
-from cerebras.modelzoo.common.utils.model.mup_utils import (
-    LRAdjustmentGroup,
-    is_mup,
-)
 from cerebras.modelzoo.common.utils.model.transformer_utils import (
     get_embedding_dtype,
 )
 from cerebras.modelzoo.losses.BertPretrainModelLoss import BertPretrainModelLoss
 from cerebras.modelzoo.models.nlp.bert.bert_pretrain_models import (
+    BertForPreTrainingModelConfig,
     BertPretrainModel,
 )
 from cerebras.pytorch.metrics import AccuracyMetric, PerplexityMetric
 
 
-@registry.register_model(
-    [
-        "bert",
-    ],
-    datasetprocessor=[
-        "BertCSVDataProcessor",
-        "BertCSVDynamicMaskDataProcessor",
-        "BertSumCSVDataProcessor",
-    ],
-)
 class BertForPreTrainingModel(torch.nn.Module):
     """
-    BERT-based models
+    BERT-based models.
     """
 
-    def __init__(self, params):
+    def __init__(self, config: BertForPreTrainingModelConfig):
         super().__init__()
 
         pol = cstorch.backends.csx.precision.optimization_level
-        if pol == 2 or (pol == 1 and params.model.fp16_type == "cbfloat16"):
-            params.model.attention_softmax_fp32 = False
+        if pol == 2 or (
+            pol == 1 and cstorch.amp.get_half_dtype_str() == "cbfloat16"
+        ):
+            attention_softmax_fp32 = False
+        else:
+            attention_softmax_fp32 = config.attention_softmax_fp32
 
-        self.lr_adjustment_groups = self.create_default_lr_adjustment_groups()
-        self._model_params = params.model
-        self.model = self.build_model()
-        self.loss_fn = BertPretrainModelLoss(
-            disable_nsp=self._model_params.disable_nsp,
-            mlm_loss_weight=self._model_params.mlm_loss_weight,
-            label_smoothing=self._model_params.label_smoothing,
+        config = config.copy(
+            update=dict(
+                attention_softmax_fp32=attention_softmax_fp32,
+                dtype=get_embedding_dtype(
+                    dtype=cstorch.amp.get_floating_point_dtype_str(),
+                ),
+            )
         )
 
-        if self._model_params.compute_eval_metrics:
-            if not self._model_params.disable_nsp:
+        self.disable_nsp = config.disable_nsp
+        self.compute_eval_metrics = config.compute_eval_metrics
+        self.vocab_size = config.vocab_size
+
+        self.model = self.build_model(config)
+        self.loss_fn = BertPretrainModelLoss(
+            disable_nsp=self.disable_nsp,
+            mlm_loss_weight=config.mlm_loss_weight,
+            label_smoothing=config.label_smoothing,
+        )
+
+        if self.compute_eval_metrics:
+            if not self.disable_nsp:
                 self.accuracy_metric_cls = AccuracyMetric(
                     name="eval/accuracy_cls"
                 )
@@ -76,107 +75,19 @@ class BertForPreTrainingModel(torch.nn.Module):
                 name="eval/mlm_perplexity"
             )
 
+    @property
+    def lr_adjustment_groups(self):
+        return getattr(self.model, "get_lr_adjustment_groups", lambda: {})()
+
     def _post_device_transfer(self):
         self.model.tie_weights()
 
-    def model_class(self):
-        return BertPretrainModel
-
-    def build_model(self):
-        cls = self.model_class()
-        args = self.build_model_args()
-        return cls(**args)
-
-    def build_model_args(self):
-        mup_config = is_mup(self._model_params)
-        if self._model_params.scale_qk_dot_by_d is None:
-            if mup_config:
-                self._model_params.scale_qk_dot_by_d = True
-                logging.warning(
-                    "Found muP params but no scale_qk_dot_by_d was provided, "
-                    "so it will be automatically set to 'True' as the muP "
-                    "default."
-                )
-            else:
-                self._model_params.scale_qk_dot_by_d = False
-
-        rotary_dim = None
-        if self._model_params.position_embedding_type == "rotary":
-            # rotary_dim defaults to 25% of head dim (hidden_size / num_heads)
-            # similar to other models that use RoPE like GPT-NeoX
-            rotary_dim = self._model_params.rotary_dim
-            if rotary_dim is None:
-                rotary_dim = int(
-                    self._model_params.hidden_size
-                    // self._model_params.num_heads
-                    * 0.25
-                )
-            # https://github.com/huggingface/transformers/blob/f0577df6de36e7e7f28e90fa76da0657de038a39/src/transformers/models/gpt_neox/modeling_gpt_neox.py#L84-L85
-            # https://arxiv.org/pdf/2104.09864.pdf Section 3.3
-            assert (
-                rotary_dim
-                <= self._model_params.hidden_size / self._model_params.num_heads
-            ), "Rotary dimensions should be <= hidden size divided by number of attention heads."
-            assert (
-                rotary_dim % 2 == 0
-            ), "Rotary dimension must be an even number."
-        return {
-            "disable_nsp": self._model_params.disable_nsp,
-            "num_classes": self._model_params.num_classes,
-            "vocab_size": self._model_params.vocab_size,
-            "max_position_embeddings": self._model_params.max_position_embeddings,
-            "position_embedding_type": self._model_params.position_embedding_type,
-            "embedding_pad_token_id": self._model_params.pad_token_id,
-            "mask_padding_in_positional_embed": self._model_params.mask_padding_in_positional_embed,
-            "rotary_dim": rotary_dim,
-            "rope_theta": self._model_params.rope_theta,
-            "pad_rope": self._model_params.pad_rope,
-            "num_relative_attention_buckets": self._model_params.num_relative_attention_buckets,
-            "alibi_trainable_slopes": self._model_params.alibi_trainable_slopes,
-            "pos_scaling_factor": self._model_params.pos_scaling_factor,
-            "pos_scaling_type": self._model_params.pos_scaling_type,
-            "pos_scaling_extra_args": self._model_params.pos_scaling_extra_args,
-            "hidden_size": self._model_params.hidden_size,
-            "share_embedding_weights": self._model_params.share_embedding_weights,
-            "num_hidden_layers": self._model_params.num_hidden_layers,
-            "layer_norm_epsilon": self._model_params.layer_norm_epsilon,
-            # Encoder Attn
-            "num_heads": self._model_params.num_heads,
-            "attention_module": self._model_params.attention_module,
-            "extra_attention_params": self._model_params.extra_attention_params,
-            "attention_type": self._model_params.attention_type,
-            "dropout_rate": self._model_params.dropout_rate,
-            "nonlinearity": self._model_params.encoder_nonlinearity,
-            "mlm_nonlinearity": self._model_params.mlm_nonlinearity,
-            "pooler_nonlinearity": self._model_params.pooler_nonlinearity,
-            "attention_dropout_rate": self._model_params.attention_dropout_rate,
-            "attention_softmax_fp32": self._model_params.attention_softmax_fp32,
-            "attention_kernel": self._model_params.attention_kernel,
-            "use_projection_bias_in_attention": self._model_params.use_projection_bias_in_attention,
-            "use_ffn_bias_in_attention": self._model_params.use_ffn_bias_in_attention,
-            "filter_size": self._model_params.filter_size,
-            "use_ffn_bias": self._model_params.use_ffn_bias,
-            "use_ffn_bias_in_mlm": self._model_params.use_ffn_bias_in_mlm,
-            "use_output_bias_in_mlm": self._model_params.use_output_bias_in_mlm,
-            "initializer_range": self._model_params.initializer_range,
-            "num_segments": self._model_params.num_segments,
-            "dtype": get_embedding_dtype(
-                self._model_params.mixed_precision, self._model_params.fp16_type
-            ),
-            # muP (maximal update parameterization)  parameters
-            "lr_adjustment_groups": self.lr_adjustment_groups,
-            "embeddings_scale": self._model_params.embeddings_scale,
-            "scale_qk_dot_by_d": self._model_params.scale_qk_dot_by_d,
-            "attention_logits_alpha": self._model_params.attention_logits_alpha,
-            "scale_output_logits_by_d": self._model_params.scale_output_logits_by_d,
-            "mup_base_hidden_size": self._model_params.mup_base_hidden_size,
-            "mup_base_filter_size": self._model_params.mup_base_filter_size,
-            "output_logits_alpha": self._model_params.output_logits_alpha,
-        }
+    def build_model(self, config: BertForPreTrainingModelConfig):
+        return BertPretrainModel(config)
 
     def mlm_xentropy_loss(self, labels, logits, weights=None):
         """
-        Calculates MLM Cross-Entropy (to be used for Perplexity calculation)
+        Calculates MLM Cross-Entropy (to be used for Perplexity calculation).
 
         Args:
             labels: Tensor of shape (batch, sequence) and type int32.
@@ -201,7 +112,6 @@ class BertForPreTrainingModel(torch.nn.Module):
 
     def forward(self, data):
         next_sentence_label = data.pop("next_sentence_label", None)
-        should_calc_loss = data.pop("should_calc_loss", True)
         mlm_loss_scale = data.pop("mlm_loss_scale", None)
         labels = data.pop("labels")
 
@@ -211,9 +121,8 @@ class BertForPreTrainingModel(torch.nn.Module):
         data["should_gather_mlm_labels"] = should_gather_mlm_labels
 
         # MLM Needs a half precision "weights" tensor; use binary mask for now.
-        if should_gather_mlm_labels:
-            masked_lm_mask = data.pop("masked_lm_mask")
-        else:
+        masked_lm_mask = data.pop("masked_lm_mask", None)
+        if not should_gather_mlm_labels:
             masked_lm_mask = torch.ones(
                 batch_size,
                 seq_len,
@@ -227,26 +136,30 @@ class BertForPreTrainingModel(torch.nn.Module):
 
         masked_lm_mask = masked_lm_mask.to(mlm_logits.dtype)
 
-        total_loss = None
-        if should_calc_loss:
-            total_loss = self.loss_fn(
-                mlm_logits,
-                self._model_params.vocab_size,
-                labels,
-                nsp_logits,
-                next_sentence_label,
-                masked_lm_mask,
-                mlm_loss_scale,
+        total_loss = self.loss_fn(
+            mlm_logits,
+            self.vocab_size,
+            labels,
+            nsp_logits,
+            next_sentence_label,
+            masked_lm_mask,
+            mlm_loss_scale,
+        )
+
+        if not self.model.training and self.compute_eval_metrics:
+            metric_dtype = (
+                torch.float32
+                if cstorch.amp.is_cbfloat16_tensor(mlm_logits)
+                else mlm_logits.dtype
             )
-        if not self.model.training and self._model_params.compute_eval_metrics:
-            if not self._model_params.disable_nsp:
+            if not self.disable_nsp:
                 nsp_label = next_sentence_label.clone()
                 nsp_pred = nsp_logits.argmax(-1).int()
                 # eval/accuracy_cls
                 self.accuracy_metric_cls(
                     labels=nsp_label,
                     predictions=nsp_pred,
-                    dtype=mlm_logits.dtype,
+                    dtype=metric_dtype,
                 )
 
             mlm_preds = mlm_logits.argmax(-1).int()
@@ -262,29 +175,14 @@ class BertForPreTrainingModel(torch.nn.Module):
                 labels=mlm_labels,
                 predictions=mlm_preds,
                 weights=mlm_weights,
-                dtype=mlm_logits.dtype,
+                dtype=metric_dtype,
             )
             # eval/mlm_perplexity
             self.perplexity_metric(
                 labels=mlm_labels,
                 loss=mlm_xentr,
                 weights=mlm_weights,
-                dtype=mlm_logits.dtype,
+                dtype=metric_dtype,
             )
 
         return total_loss
-
-    def create_default_lr_adjustment_groups(self):
-        return {
-            "embedding": LRAdjustmentGroup("*embedding*weight"),
-            "encoder_attention": LRAdjustmentGroup(
-                "*transformer_encoder*attn*dense*weight"
-            ),
-            "encoder_input_ffn": LRAdjustmentGroup(
-                "*transformer_encoder*ffn.ffn.[!1]*weight"
-            ),
-            "encoder_output_ffn": LRAdjustmentGroup(
-                "*transformer_encoder*ffn.ffn.[1]*weight"
-            ),
-            "pooler": LRAdjustmentGroup("*pooler*weight"),
-        }

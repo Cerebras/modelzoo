@@ -18,6 +18,7 @@ import torch
 import torch.nn as nn
 
 from cerebras.modelzoo.layers.create_initializer import create_initializer
+from cerebras.pytorch.utils.num_kv_groups import groups_annotater
 
 from .AttentionLayer import MultiheadAttention
 
@@ -126,6 +127,7 @@ class MultiQueryAttention(MultiheadAttention):
         self.head_dim = self.inner_dim // self.num_heads
         self.num_kv_groups = num_kv_groups
         self.per_group_num_heads = self.num_heads // self.num_kv_groups
+        self.using_groups = groups_annotater(self.num_kv_groups)
 
         assert (
             self.num_heads % self.num_kv_groups == 0
@@ -163,10 +165,17 @@ class MultiQueryAttention(MultiheadAttention):
         weight_initializer(self.proj_k_dense_layer.weight.data)
         weight_initializer(self.proj_v_dense_layer.weight.data)
 
-    def construct_key_vector(self, k, attn_mask=None, key_padding_mask=None):
+    def construct_key_vector(
+        self,
+        k,
+        attn_mask=None,
+        key_padding_mask=None,
+        special_token_indices=None,
+    ):
         # linear projection
-        k = self.proj_k_dense_layer(
-            k
+        k = self.get_key_projection(
+            k,
+            special_token_indices=special_token_indices,
         )  # [batch_size, seq_length, self.num_kv_groups * self.head_dim]
 
         if self.num_kv_groups == 1:
@@ -180,10 +189,16 @@ class MultiQueryAttention(MultiheadAttention):
 
         return k
 
-    def construct_value_vector(self, v, attn_mask=None, key_padding_mask=None):
+    def construct_value_vector(
+        self,
+        v,
+        attn_mask=None,
+        key_padding_mask=None,
+        special_token_indices=None,
+    ):
         # linear projection
-        v = self.proj_v_dense_layer(
-            v
+        v = self.get_value_projection(
+            v, special_token_indices=special_token_indices
         )  # [batch_size, seq_length, self.num_kv_groups * self.head_dim]
 
         if self.num_kv_groups == 1:
@@ -222,11 +237,15 @@ class MultiQueryAttention(MultiheadAttention):
 
         return super().calculate_attention_logits(q, k, layer_idx)
 
-    def calculate_attention_output(self, attention_scores, v):
+    def calculate_attention_output(
+        self, attention_scores, v, special_token_indices=None
+    ):
         if self.num_kv_groups > 1:
             v = self.expand_kv_over_group_dim(v)
 
-        return super().calculate_attention_output(attention_scores, v)
+        return super().calculate_attention_output(
+            attention_scores, v, special_token_indices
+        )
 
     def check_extra_params(params):
         if "num_kv_groups" not in params:

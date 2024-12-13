@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
 import math
 from typing import Callable, List, Optional, Union
 
@@ -200,10 +201,21 @@ class TopKExpertsSparseFeedForwardNetwork(nn.Module):
     def __init__(self, config: FeedForwardNetworkConfig) -> None:
         super().__init__()
         self.config = config
+        # For MoE layers, shared experts are also added as experts
+        # We dont use this in routing logic, but they process as regular experts
+        num_shared_experts = (
+            self.config.moe_params.num_shared_experts
+            if self.config.moe_params.num_shared_experts is not None
+            else 0
+        )
+        self.num_experts_all = (
+            self.config.moe_params.num_experts + num_shared_experts
+        )
+        self.top_k_all = self.config.moe_params.top_k + num_shared_experts
         self.fused_ffns = nn.ModuleList(
             [
                 TopKExpertsSparseSingleFeedForwardLayer(
-                    num_experts=self.config.num_experts,
+                    num_experts=self.num_experts_all,
                     in_features=in_features,
                     out_features=out_features,
                     activation=activation,
@@ -255,7 +267,7 @@ class TopKExpertsSparseFeedForwardNetwork(nn.Module):
         input = maybe_to_half_dtype(input)
         topk_probs = maybe_to_half_dtype(topk_probs)
 
-        output = input[:, :, None, :].expand(-1, -1, self.config.top_k, -1)
+        output = input[:, :, None, :].expand(-1, -1, self.top_k_all, -1)
         for ffn_layer in self.fused_ffns:
             output = ffn_layer(output, topk_indices)
 
@@ -280,8 +292,19 @@ class ExpertsFeedForwardNetwork(nn.Module):
     def __init__(self, config: FeedForwardNetworkConfig) -> None:
         super().__init__()
         self.config = config
+        # For MoE layers, shared experts are also added as experts
+        # We dont use this in routing logic, but they process as regular experts
+        num_shared_experts = (
+            self.config.moe_params.num_shared_experts
+            if self.config.moe_params.num_shared_experts is not None
+            else 0
+        )
+        self.num_experts_all = (
+            self.config.moe_params.num_experts + num_shared_experts
+        )
+        self.top_k_all = self.config.moe_params.top_k + num_shared_experts
         self.experts = nn.ModuleList(
-            [FeedForwardNetwork(config) for _ in range(self.config.num_experts)]
+            [FeedForwardNetwork(config) for _ in range(self.num_experts_all)]
         )
         self.reset_parameters()
 
@@ -304,11 +327,11 @@ class ExpertsFeedForwardNetwork(nn.Module):
             expert_outputs.append(expert(input))
 
         output = torch.zeros_like(input)
-        for i in range(self.config.num_experts):
+        for i in range(self.num_experts_all):
             curr_expert = torch.tensor(
                 i, device=input.device, dtype=torch.int16
             )
-            for j in range(self.config.top_k):
+            for j in range(self.top_k_all):
                 output += (
                     selected_probs[j]
                     * expert_outputs[i]
@@ -329,13 +352,28 @@ class SparseMoEBlock(nn.Module):
 
     def __init__(self, config: FeedForwardNetworkConfig):
         super(SparseMoEBlock, self).__init__()
-        self.config = config
+        # Get a copy of config as we mutate it for shared experts
+        self.config = copy.deepcopy(config)
+        total_experts = self.config.moe_params.num_experts
+
+        # Shared routing support added to our learned routing method
+        if self.config.moe_params.num_shared_experts is not None:
+            assert (
+                self.config.moe_params.routing_algorithm == "learned"
+            ), "Shared experts work with learned routing"
+            assert (
+                self.config.moe_params.num_shared_experts > 0
+            ), "Invalid value of shared experts for MoE"
+            total_experts += self.config.moe_params.num_shared_experts
+
         assert (
-            self.config.num_experts > 1
-        ), "expected num_experts > 1, but got {self.config.num_experts=}"
+            total_experts > 1
+        ), "expected num total experts > 1, but got {self.config.moe_params.num_experts} + {self.config.moe_params.num_shared_experts}="
 
         self.gate = nn.Linear(
-            self.config.input_unit, self.config.num_experts, bias=False
+            self.config.input_unit,
+            self.config.moe_params.num_experts,
+            bias=False,
         )
         if self.config.moe_optimized_impl():
             self.experts = TopKExpertsSparseFeedForwardNetwork(self.config)
@@ -345,44 +383,124 @@ class SparseMoEBlock(nn.Module):
         self.reset_parameters()
 
     def reset_parameters(self):
-        weight_initializer = create_initializer(self.config.gate_initializer)
+        weight_initializer = create_initializer(
+            self.config.moe_params.gate_initializer
+        )
         weight_initializer(self.gate.weight.data)
         self.experts.reset_parameters()
 
     def forward(self, x, **extra_args):
+        sinkhorn_error = None
+
+        def sinkhorn(r, n_iters=1):
+            r_old = r
+            error = 0
+            for _ in range(n_iters):
+                r = r - torch.logsumexp(r, dim=2, keepdim=True)
+                r = r - torch.logsumexp(r, dim=1, keepdim=True)
+                error = torch.mean(torch.abs(r_old - r))
+                r_old = r
+            return torch.exp(r), error
+
         x = maybe_to_half_dtype(x)
         maybe_half_dtype = x.dtype
 
-        if self.config.routing_algorithm == "hash":
+        if self.config.moe_params.routing_algorithm == "hash":
             assert extra_args.get("expert_hash_idx", None) is not None
             expert_hash_idx = extra_args["expert_hash_idx"]
             routing_weights = cstorch.nn.functional.one_hot(
                 expert_hash_idx.to(torch.int64),
-                num_classes=self.config.num_experts,
+                num_classes=self.config.moe_params.num_experts,
             ).to(x.dtype)
             routing_weights_fp32 = routing_weights.float()
-        elif self.config.routing_algorithm == "learned":
+        elif self.config.moe_params.routing_algorithm == "learned":
             router_logits = self.gate(x)
-            if self.config.router_fp32:
+            if self.config.moe_params.router_fp32:
                 router_logits = router_logits.float()
-            routing_weights_fp32 = nn.functional.softmax(router_logits, dim=-1)
-            routing_weights = routing_weights_fp32.to(maybe_half_dtype)
+            if (
+                self.config.moe_params.router_selection_nonlinearity
+                == "softmax"
+            ):
+                routing_weights_fp32 = nn.functional.softmax(
+                    router_logits, dim=-1
+                )
+                routing_weights = routing_weights_fp32.to(maybe_half_dtype)
+            elif (
+                self.config.moe_params.router_selection_nonlinearity
+                == "sinkhorn"
+            ):
+                with torch.no_grad():
+                    routing_weights, sinkhorn_error = sinkhorn(
+                        router_logits.detach(),
+                        self.config.moe_params.sinkhorn_n_iters,
+                    )
+                    routing_weights_fp32 = routing_weights.float()
+                routing_weights = routing_weights_fp32.to(x.dtype)
+            elif (
+                self.config.moe_params.router_selection_nonlinearity
+                == "sigmoid"
+            ):
+                routing_weights_fp32 = nn.functional.sigmoid(router_logits)
+                routing_weights = routing_weights_fp32.to(maybe_half_dtype)
+            else:
+                raise ValueError(
+                    f'Unknown MoE routing nonlinearity: {self.config.moe_params.router_selection_nonlinearity}'
+                )
         else:
             raise ValueError(
-                f'Unknown MoE routing algorithm: {self.config.routing_algorithm}'
+                f'Unknown MoE routing algorithm: {self.config.moe_params.routing_algorithm}'
             )
 
         if self.config.moe_optimized_impl():
-            topk_probs, topk_indices = routing_weights.topk(self.config.top_k)
+            topk_probs, topk_indices = routing_weights.topk(
+                self.config.moe_params.top_k
+            )
             denom = torch.sum(topk_probs, dim=-1).to(x.dtype)
+            # Add the probablity from the null expert
+            if (
+                self.config.moe_params.null_expert_bias is not None
+                and self.config.moe_params.null_expert_bias > 0
+            ):
+                null_prob = torch.full_like(
+                    topk_probs[..., 0],
+                    self.config.moe_params.null_expert_bias,
+                    dtype=x.dtype,
+                )
+                denom = denom + null_prob
             topk_probs /= denom[..., None]
-            output = self.experts(x, topk_probs, topk_indices)
 
-            expert_mask_shape = *topk_probs.shape[:-1], self.config.num_experts
+            # Expert mask is only for non shared experts
+            expert_mask_shape = (
+                *topk_probs.shape[:-1],
+                self.config.moe_params.num_experts,
+            )
+
             expert_mask = torch.zeros(
                 expert_mask_shape, device=x.device, dtype=x.dtype
             )
             expert_mask.scatter_(2, topk_indices, 1)
+
+            # If we have shared experts, add the probability and index to selected experts
+            if self.config.moe_params.num_shared_experts is not None:
+                # Let the last experts be the shared ones
+                shared_expert_index = self.config.moe_params.num_experts
+                topk_indices = topk_indices.to(torch.int32)
+                for _ in range(self.config.moe_params.num_shared_experts):
+                    topk_prob = torch.full_like(
+                        topk_probs[..., 0], 1.0, dtype=topk_probs.dtype
+                    )
+                    topk_prob = topk_prob.unsqueeze(-1)
+                    topk_probs = torch.cat((topk_probs, topk_prob), dim=-1)
+                    topk_index = torch.full_like(
+                        topk_indices[..., 0],
+                        shared_expert_index,
+                        dtype=topk_indices.dtype,
+                    )
+                    shared_expert_index += 1
+                    topk_index = topk_index.unsqueeze(-1)
+                    topk_indices = torch.cat((topk_indices, topk_index), dim=-1)
+                topk_indices = topk_indices.to(torch.int64)
+            output = self.experts(x, topk_probs, topk_indices)
 
             return output, routing_weights_fp32, expert_mask.float()
 
@@ -390,7 +508,7 @@ class SparseMoEBlock(nn.Module):
         selected_probs = []
         routing_weights_top_k = torch.clone(routing_weights)
         expert_mask = torch.zeros_like(routing_weights)
-        for k in range(self.config.top_k):
+        for k in range(self.config.moe_params.top_k):
             selected_prob, selected_expert = torch.max(
                 routing_weights_top_k, dim=-1, keepdim=True
             )
@@ -399,19 +517,43 @@ class SparseMoEBlock(nn.Module):
             # Mask the current top value to find the next top value
             expert_mask += cstorch.nn.functional.one_hot(
                 torch.argmax(routing_weights_top_k, dim=-1),
-                num_classes=self.config.num_experts,
+                num_classes=self.config.moe_params.num_experts,
             ).to(maybe_half_dtype)
             routing_weights_top_k = torch.where(
                 expert_mask == 0, routing_weights_top_k, 0
             )
 
         # Normalize Top-K weights
-        denom = selected_probs[0]
-        for k in range(1, self.config.top_k):
-            denom = denom + selected_probs[k]
+        # Add the optional null router probability for Top k=0 scenario
+        if (
+            self.config.moe_params.null_expert_bias is not None
+            and self.config.moe_params.null_expert_bias > 0
+        ):
+            denom = torch.full_like(
+                selected_probs[0], self.config.moe_params.null_expert_bias
+            )
+            for k in range(0, self.config.moe_params.top_k):
+                denom = denom + selected_probs[k]
+        else:
+            denom = selected_probs[0]
+            for k in range(1, self.config.moe_params.top_k):
+                denom = denom + selected_probs[k]
 
-        for k in range(self.config.top_k):
+        for k in range(self.config.moe_params.top_k):
             selected_probs[k] = selected_probs[k] / denom
+
+        # If we have shared experts, add the probability and index to selected experts
+        if self.config.moe_params.num_shared_experts is not None:
+            # Let the last experts be the shared ones
+            shared_expert_index = self.config.moe_params.num_experts
+            for _ in range(self.config.moe_params.num_shared_experts):
+                selected_prob = torch.full_like(selected_probs[0], 1.0)
+                selected_probs.append(selected_prob)
+                selected_expert = torch.full_like(
+                    selected_experts[0], shared_expert_index
+                )
+                shared_expert_index += 1
+                selected_experts.append(selected_expert)
 
         output = self.experts(x, selected_probs, selected_experts)
 

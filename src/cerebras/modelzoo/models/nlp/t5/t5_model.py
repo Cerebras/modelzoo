@@ -32,9 +32,14 @@
 # limitations under the License.
 
 import logging
+from typing import List, Literal, Optional, Union
+from warnings import warn
 
 import torch
 import torch.nn as nn
+from annotated_types import Ge, Le
+from pydantic import NonNegativeInt, field_validator
+from typing_extensions import Annotated
 
 import cerebras.pytorch as cstorch
 from cerebras.modelzoo.common.utils.model.mup_utils import (
@@ -44,6 +49,7 @@ from cerebras.modelzoo.common.utils.model.transformer_utils import (
     create_broadcasted_autoregressive_mask,
     make_key_padding_mask_broadcastable,
 )
+from cerebras.modelzoo.config import ModelConfig
 from cerebras.modelzoo.layers import (
     EmbeddingLayer,
     TransformerDecoder,
@@ -51,154 +57,360 @@ from cerebras.modelzoo.layers import (
     TransformerEncoder,
     TransformerEncoderLayer,
 )
-from cerebras.modelzoo.layers.norms import get_norm
+from cerebras.modelzoo.layers.norms import NormType, get_norm
+
+DEFAULT_EMBEDDINGS_ALPHA = 1.0
+DEFAULT_OUTPUT_LOGITS_ALPHA = None
+DEFAULT_SCALE_OUTPUT_LOGITS_BY_D = False
+DEFAULT_ENCODER_ATTENTION_LOGITS_ALPHA = 1.0
+DEFAULT_DECODER_ATTENTION_LOGITS_ALPHA = 1.0
+
+
+class T5ForConditionalGenerationModelConfig(ModelConfig):
+    name: Literal["t5", "T5ForConditionalGeneration"]
+
+    # Embedding:
+    src_vocab_size: Annotated[int, Ge(1), Le(512000)] = 32128
+    "The size of the source vocabulary. Max supported value - `512000`."
+
+    tgt_vocab_size: Optional[Annotated[int, Ge(1), Le(512000)]] = None
+    """The size of the target vocabulary. Max supported value - `512000`.
+    When not provided, same as src_vocab_size"""
+
+    extra_ids: int = 0
+    "Number of sentinel tokens for T5 objective"
+
+    # Transformer:
+    d_model: int = 512
+    "The number of features (hidden dimensionality) of the transformer."
+
+    d_kv: int = 64
+    """Size of the query/key/value projections per attention head. `d_kv` does
+    *not* have to be equal to `d_model//num_heads`.
+    """
+
+    d_ff: int = 2048
+    "Size of the intermediate feed forward layer in each `T5Block`."
+
+    encoder_num_hidden_layers: NonNegativeInt = 6
+    "Number of hidden layers in the encoder."
+
+    decoder_num_hidden_layers: Optional[NonNegativeInt] = None
+    """Number of hidden layers in the Transformer decoder. Will use the same
+    value as `encoder_num_hidden_layers` if not set.
+    """
+
+    # Transformer Attention:
+    num_heads: int = 8
+    "The number of attention heads in the multi-head attention layer."
+
+    relative_attention_num_buckets: int = 32
+    "The number of buckets to use for each attention layer."
+
+    norm_type: NormType = "rmsnorm"
+    "Determines the type of normalization. See modelzoo/layers/norms.py"
+
+    dropout_rate: Annotated[float, Ge(0), Le(1)] = 0.1
+    "The dropout probability for all fully connected layers."
+
+    relu_dropout_rate: Optional[Annotated[float, Ge(0), Le(1)]] = None
+    "The dropout rate for ReLU activation function."
+
+    layer_norm_epsilon: Union[float, List[float]] = 1e-5
+    "The epsilon value used in layer normalization layers."
+
+    initializer_factor: float = 1.0
+    """
+    A factor for initializing all weight matrices (should be kept to 1, used
+    internally for initialization testing).
+    """
+
+    encoder_nonlinearity: Literal[
+        "relu", "gelu", "reglu", "geglu", "swiglu"
+    ] = "relu"
+    "Type of nonlinearity to be used in encoder."
+
+    decoder_nonlinearity: Optional[
+        Literal["relu", "gelu", "reglu", "geglu", "swiglu"]
+    ] = None
+    """Type of nonlinearity to be used in decoder. If decoder_nonlinearity isn't
+    provided, it will be the same as encoder_nonlinearity"""
+
+    use_projection_bias_in_attention: bool = False
+    "Whether to include bias in the attention layer for projection."
+
+    attention_softmax_fp32: bool = True
+    "Whether to use fp32 precision for attention softmax."
+
+    attention_kernel: Optional[str] = None
+
+    use_cache: bool = False
+    """
+    Whether or not the model should return the last key/values attentions (not
+    used by all models).
+    """
+
+    decoder_start_token_id: Optional[int] = None
+
+    pad_token_id: int = 0
+
+    position_embedding_type: Optional[
+        Literal["learned_absolute", "fixed", "relative", "rotary", "alibi"]
+    ] = "relative"
+    """The type of position embedding to use in the model. Can be one of -
+    `fixed` - Sinusoidal from original [Transformer](https://arxiv.org/abs/1706.03762),
+    `relative` - Relative position embedding, [to exploit pairwise, relative positional
+                 information](https://arxiv.org/abs/1803.02155).,
+    `rotary` - a.k.a [RoPE](https://arxiv.org/pdf/2104.09864v4.pdf) ,
+    `learned_absolute` - Learned embedding matrix,
+    `None`
+    """
+
+    src_max_position_embeddings: Optional[int] = None  # 512
+    "Maximum source sequence length that the model's position embeddings can handle."
+
+    tgt_max_position_embeddings: Optional[int] = None  # 512
+    "Maximum target sequence length that the model's position embeddings can handle."
+
+    use_dropout_outside_residual_path: bool = True
+    "Whether to set dropout calculations outside of the residual path."
+
+    share_encoder_decoder_embedding: bool = True
+    "Whether to share the embedding weights between the encoder and decoder."
+
+    share_embedding_weights: bool = True
+    "Whether to share the embedding weights between the input and out put embedding."
+
+    tie_encoder_decoder: bool = False
+
+    use_pre_encoder_decoder_dropout: bool = False
+    "Whether to use dropout layer after positional embedding layer and encoder/decoder."
+
+    use_pre_encoder_decoder_layer_norm: bool = True
+    "Whether to use layer norm before passing input tensors into encoder/decoder."
+
+    use_ffn_bias: bool = False
+    "Whether to use bias in the feedforward network (FFN)."
+
+    label_smoothing: float = 0.0
+    "The label smoothing factor used during training."
+
+    use_transformer_initialization: bool = False
+    """The Transformer model tends to converge best with a scaled variant on Xavier uniform
+    initialization used for linear layers. This contrasts the initialization used for the
+    original T5 paper, which uses He normal initialization for linear layers. Setting this
+    flag to `True` switches the initialization to the Transformer specific scaled Xavier
+    initialization."""
+
+    # muP (maximal update parameterization)  parameters
+    lr_adjustment_groups: Optional[dict] = None
+
+    mup_base_d_model: Optional[int] = None
+    """The d_model of the base model in muP transfer used to calculate the
+    necessary multipliers. Required in muP training when scaling the encoder/decoder
+    attention module"""
+
+    mup_base_d_ff: Optional[int] = None
+    """The d_ff of the base model in muP transfer used to calculate the
+    necessary multipliers. Required in muP training when scaling the encoder/decoder
+    ffn"""
+
+    mup_base_d_kv: Optional[int] = None
+    """The d_kv of the base model in muP transfer used to calculate the
+    necessary multipliers. Required in muP training when varying d_kv alongside
+    d_model"""
+
+    embeddings_alpha: Optional[float] = DEFAULT_EMBEDDINGS_ALPHA
+    """Scales the embedding hidden states (i.e. the tensor after embeddings &
+    embedding layer norm are applied). The embeddings are scaled by
+    embeddings_alpha * d_model**0.5. Required in muP training"""
+
+    encoder_attention_logits_alpha: float = (
+        DEFAULT_ENCODER_ATTENTION_LOGITS_ALPHA
+    )
+    """Additionally scales the encoder attention QK dot product by the specified value.
+    Recommended to tune for stabilizing attention logits in muP training."""
+
+    decoder_attention_logits_alpha: float = (
+        DEFAULT_DECODER_ATTENTION_LOGITS_ALPHA
+    )
+    """Additionally scales the decoder attention QK dot product by the specified value.
+    Recommended to tune for stabilizing attention logits in muP training."""
+
+    scale_encoder_qk_dot_by_d: Optional[bool] = None
+    """Scales encoder attention QK dot product by d instead of sqrt(d). Must
+    be enabled for muP training. Note that this flag only has effect if
+    muP params are specified or use_transformer_initialization==`True`"""
+
+    scale_decoder_qk_dot_by_d: Optional[bool] = None
+    """Scales decoder attention QK dot product by d instead of sqrt(d). Must
+    be enabled for muP training. Note that this flag only has effect if
+    muP params are specified or use_transformer_initialization==`True`"""
+
+    scale_output_logits_by_d: bool = DEFAULT_SCALE_OUTPUT_LOGITS_BY_D
+    """Scales the output logits in muP by mup_base_d_model/d_model if
+    True and sqrt(mup_base_d_model/d_model) if False. Only applies to
+    muP training when scaling d_model"""
+
+    output_logits_alpha: Optional[float] = DEFAULT_OUTPUT_LOGITS_ALPHA
+    """Constant applied to the output logits scalar in muP training. The output
+    logits are scaled by output_logits_alpha / hidden_size_width_mult"""
+
+    attention_module: Literal["aiayn_attention", "multiquery_attention"] = (
+        "aiayn_attention"
+    )
+
+    extra_attention_params: dict = {}
+
+    dtype: Optional[torch.dtype] = None
+
+    @field_validator("name", mode="after")
+    def validate_name(cls, name):
+        if name == "T5ForConditionalGeneration":
+            warn(
+                "Passing 'T5ForConditionalGeneration' as the model name is deprecated. "
+                "Please use 't5' instead.",
+                category=FutureWarning,
+            )
+            return "t5"
+        return name
+
+    def post_init(self, context):
+        if self.tgt_vocab_size is None:
+            self.tgt_vocab_size = self.src_vocab_size
+
+        if self.decoder_num_hidden_layers is None:
+            self.decoder_num_hidden_layers = self.encoder_num_hidden_layers
+
+        if self.relu_dropout_rate is None:
+            self.relu_dropout_rate = self.dropout_rate
+
+        if self.decoder_nonlinearity is None:
+            self.decoder_nonlinearity = self.encoder_nonlinearity
+
+        supported_mup_dimensions = [
+            'mup_base_d_model',
+            'mup_base_d_ff',
+            'mup_base_d_kv',
+        ]
+        required_mup_dimensions = [
+            'mup_base_d_model',
+            'mup_base_d_ff',
+        ]
+        detected_mup_dimensions = [
+            dimension
+            for dimension in supported_mup_dimensions
+            if getattr(self, dimension)
+        ]
+        if detected_mup_dimensions:
+            if self.use_transformer_initialization:
+                raise RuntimeError(
+                    f"Detected mup base dimensions {detected_mup_dimensions}, but "
+                    f"T5 only supports muP when use_transformer_initialization=`False`"
+                )
+            required_mup_dimensions_found = all(
+                dimension in detected_mup_dimensions
+                for dimension in required_mup_dimensions
+            )
+            if not required_mup_dimensions_found:
+                raise RuntimeError(
+                    f"Our muP formulation requires that you specify both "
+                    f"a 'mup_base_d_model' and a 'mup_base_d_ff' "
+                    f"but only the following dimensions were found: "
+                    f"{detected_mup_dimensions}"
+                )
+        else:
+            if detected_mup_tunable_params := (
+                self.model_fields_set
+                & {
+                    "embeddings_scale",
+                    "output_logits_alpha",
+                    "scale_qk_dot_by_d",
+                    "scale_output_logits_by_d",
+                    "attention_logits_alpha",
+                }
+            ):
+                logging.warning(
+                    f"The following muP parameters were changed from their default "
+                    f"value outside of a muP run: {sorted(detected_mup_tunable_params)}. "
+                    f"As a result, they may have an undesired effect. Please "
+                    f"specify the muP base dimensions {supported_mup_dimensions} "
+                    f"to trigger a muP run."
+                )
+
+    @property
+    def __model_cls__(self):
+        return T5ForConditionalGeneration
 
 
 class T5ForConditionalGeneration(nn.Module):
     r"""
     T5 Model with a `language modeling` head on top.
 
-    Arguments:
-        src_vocab_size (:obj:`int`, `optional`, defaults to 32128):
-            Source vocabulary size of the T5 model. Defines the number of different tokens that can be represented by the
-            :obj:`inputs_ids` passed when calling :class:`~transformers.T5Model` or :class:`~transformers.TFT5Model`.
-        tgt_vocab_size (:obj:`int`, `optional`, defaults to 32128):
-            Target vocabulary size of the T5 model. Only useful if set for Transformer variant where source and target
-            vocabularies can be different.
-        d_model (:obj:`int`, `optional`, defaults to 512):
-            Size of the encoder layers and the pooler layer.
-        d_kv (:obj:`int`, `optional`, defaults to 64):
-            Size of the key, query, value projections per attention head. :obj:`d_kv` does *not* have tobe equal to :obj:`d_model
-            // num_heads`.
-        d_ff (:obj:`int`, `optional`, defaults to 2048):
-            Size of the intermediate feed forward layer in each :obj:`T5Block`.
-        encoder_num_hidden_layers (:obj:`int`, `optional`, defaults to 6):
-            Number of hidden layers in the Transformer encoder.
-        decoder_num_hidden_layers (:obj:`int`, `optional`):
-            Number of hidden layers in the Transformer decoder. Will use the same value as :obj:`num_layers` if not
-            set.
-        num_heads (:obj:`int`, `optional`, defaults to 8):
-            Number of attention heads for each attention layer in the Transformer encoder and decoder.
-        relative_attention_num_buckets (:obj:`int`, `optional`, defaults to 32):
-            The number of buckets to use for each attention layer.
-        norm_type (:obj:`str`, `optional`, defaults to "rmsnorm"):
-            Determines which type of layernorm to use. RMSNorm is the same
-            as T5-style layernorm (no mean subtraction and bias correction).
-        dropout_rate (:obj:`float`, `optional`, defaults to 0.1):
-            The ratio for all dropout layers.
-        layer_norm_eps (:obj:`float`, `optional`, defaults to 1e-6):
-            The epsilon used by the layer normalization layers.
-        initializer_factor (:obj:`float`, `optional`, defaults to 1):
-            A factor for initializing all weight matrices (should be kept to 1, used internally for initialization
-            testing).
-        encoder_nonlinearity (:obj:`string`, `optional`, defaults to :obj:`"relu"`):
-             Type of feed forward layer to be used in encoder. Should be one of :obj:`"relu"` or :obj:`"geglu"` or
-              :obj:`"gelu"`. T5v1.1 uses the :obj:`"geglu"` feed forward projection. Original T5 uses :obj:`"relu"`.
-        decoder_nonlinearity (:obj:`string`, `optional`, defaults to :obj:`"relu"`):
-             Type of feed forward layer to be used in decoder. Should be one of :obj:`"relu"` or :obj:`"geglu"` or
-             :obj:`"gelu"`. T5v1.1 uses the :obj:`"geglu"` feed forward projection. Original T5 uses :obj:`"relu"`.
-        use_cache (:obj:`bool`, `optional`, defaults to :obj:`True`):
-            Whether or not the model should return the last key/values attentions (not used by all models).
-        position_embedding_type (:obj: `string`, `optional`, defaults to :obj:`"relative"`):
-            The type of position embedding to use. Should be one of :obj:`"fixed"`,
-            :obj:`"learned_absolute"`, :obj:`"relative"`, or :obj:`None`. :obj:`"fixed"`
-            uses a concatenation of sin curves to express relative position as used in
-            the original Transformer paper. :obj:`"learned_absolute"` uses a learned
-            vector for each position in the sequence. :obj:`"relative"` uses learned
-            relative position embeddings as introduced in https://arxiv.org/abs/1803.02155,
-            configured as done in the original T5 publication. :obj:`None` turns off
-            position embedding altogether.
-        src_max_position_embeddings (:obj:`int`, `optional`, defaults to :obj: 512):
-            Maximum source sequence length to train using to train the model.
-        tgt_max_position_embeddings (:obj:`int`, `optional`, defaults to :obj: 512):
-            Maximum target sequence length to train using to train the model.
-        use_dropout_outside_residual_path (:obj:`bool`, `optional`, defaults to :obj: True):
-            Whether to set dropout calculations outside of the residual path.
-            Set to `True` for T5, but `False` for Transformer.
-        share_encoder_decoder_embedding (:obj:`bool`, `optional`, defaults to :obj: True):
-            Whether to share encoder/decoder embedding layer.
-            Set to `True` for both T5 and Transformer models.
-        share_embedding_weights (:obj:`bool`, `optional`, defaults to :obj: True):
-            Whether to share embedding weights between decoder and language model head.
-        relu_dropout_rate (:obj:`int`, `optional`, defaults to :obj: 0.1):
-            Dropout rate utilized in the FFN layer after applying relu activation function.
-            This parameter is set to `0` for Transformer model, and set to `dropout_rate`
-            for default T5 configuration.
-            Transformer reference: https://github.com/tensorflow/tensor2tensor/blob/5623deb79cfcd28f8f8c5463b58b5bd76a81fd0d/tensor2tensor/models/transformer.py#L1811
-            T5 reference: https://github.com/huggingface/transformers/blob/v4.15.0/src/transformers/models/t5/modeling_t5.py#L261
-        use_pre_encoder_decoder_dropout (:obj:`bool`, `optional`, defaults to :obj: False):
-            Whether to use dropout layer after positional embedding layer and encoder/decoder.
-            This is set to `False` for T5 and `True` for Transformer.
-        use_pre_encoder_decoder_layer_norm (:obj:`bool`, `optional`, defaults to :obj: True):
-            Whether to use layer norm before passing input tensors into encoder/decoder.
-            This is set to `True` for T5 and `False` for Transformer.
-        use_ffn_bias (:obj:`bool`, `optional`, defaults to :obj: False):
-            Whether to use bias in the hidden layer with relu activation.
-            This is set to `False` for T5, and `True` for Transformer.
-        lm_loss_weight (:obj:`float`, `optional`, default to :obj: 1.0):
-            Value that scales loss by the mean number
-            of predictions per sequence in the dataset.
-        use_transformer_initialization (:obj:`bool`, `optional`, defaults to :obj:`False`):
-            The Transformer model tends to converge best with a scaled variant on
-            Xavier uniform initialization used for linear layers. This contrasts
-            the initialization used for the original T5 paper, which uses He normal
-            initialization for linear layers. Setting this flag to `True` switches
-            the initialization to the Transformer specific scaled Xavier initialization.
+    Args:
+        config: T5ForConditionalGenerationModelConfig
     """
 
-    def __init__(
-        self,
-        src_vocab_size=32128,
-        tgt_vocab_size=32128,
-        d_model=512,
-        d_kv=64,
-        d_ff=2048,
-        encoder_num_hidden_layers=6,
-        decoder_num_hidden_layers=None,
-        num_heads=8,
-        relative_attention_num_buckets=32,
-        norm_type="rmsnorm",
-        dropout_rate=0.1,
-        relu_dropout_rate=None,
-        layer_norm_epsilon=1e-6,
-        initializer_factor=1.0,
-        encoder_nonlinearity="relu",
-        decoder_nonlinearity="relu",
-        use_projection_bias_in_attention=False,
-        attention_softmax_fp32=True,
-        attention_kernel=None,
-        use_cache=False,
-        decoder_start_token_id=None,
-        pad_token_id=0,
-        position_embedding_type="relative",
-        src_max_position_embeddings=512,
-        tgt_max_position_embeddings=512,
-        use_dropout_outside_residual_path=True,
-        share_encoder_decoder_embedding=True,
-        share_embedding_weights=True,
-        tie_encoder_decoder=False,
-        use_pre_encoder_decoder_dropout=False,
-        use_pre_encoder_decoder_layer_norm=True,
-        use_ffn_bias=False,
-        label_smoothing=0.0,
-        use_transformer_initialization=False,
-        # muP (maximal update parameterization)  parameters
-        lr_adjustment_groups=None,
-        mup_base_d_model=None,
-        mup_base_d_ff=None,
-        mup_base_d_kv=None,
-        embeddings_alpha=1.0,
-        encoder_attention_logits_alpha=1.0,
-        decoder_attention_logits_alpha=1.0,
-        scale_encoder_qk_dot_by_d=False,
-        scale_decoder_qk_dot_by_d=False,
-        scale_output_logits_by_d=False,
-        output_logits_alpha=None,
-        attention_module="aiayn_attention",
-        extra_attention_params={},
-        dtype=None,
-        **kwargs,
-    ):
+    def __init__(self, config: T5ForConditionalGenerationModelConfig):
+        if isinstance(config, dict):
+            config = T5ForConditionalGenerationModelConfig(**config)
+
+        # Unpack config
+        src_vocab_size = config.src_vocab_size
+        tgt_vocab_size = config.tgt_vocab_size
+        d_model = config.d_model
+        d_kv = config.d_kv
+        d_ff = config.d_ff
+        encoder_num_hidden_layers = config.encoder_num_hidden_layers
+        decoder_num_hidden_layers = config.decoder_num_hidden_layers
+        num_heads = config.num_heads
+        relative_attention_num_buckets = config.relative_attention_num_buckets
+        norm_type = config.norm_type
+        dropout_rate = config.dropout_rate
+        relu_dropout_rate = config.relu_dropout_rate
+        layer_norm_epsilon = config.layer_norm_epsilon
+        initializer_factor = config.initializer_factor
+        encoder_nonlinearity = config.encoder_nonlinearity
+        decoder_nonlinearity = config.decoder_nonlinearity
+        use_projection_bias_in_attention = (
+            config.use_projection_bias_in_attention
+        )
+        attention_softmax_fp32 = config.attention_softmax_fp32
+        attention_kernel = config.attention_kernel
+        use_cache = config.use_cache
+        decoder_start_token_id = config.decoder_start_token_id
+        pad_token_id = config.pad_token_id
+        position_embedding_type = config.position_embedding_type
+        src_max_position_embeddings = config.src_max_position_embeddings
+        tgt_max_position_embeddings = config.tgt_max_position_embeddings
+        use_dropout_outside_residual_path = (
+            config.use_dropout_outside_residual_path
+        )
+        share_encoder_decoder_embedding = config.share_encoder_decoder_embedding
+        share_embedding_weights = config.share_embedding_weights
+        tie_encoder_decoder = config.tie_encoder_decoder
+        use_pre_encoder_decoder_dropout = config.use_pre_encoder_decoder_dropout
+        use_pre_encoder_decoder_layer_norm = (
+            config.use_pre_encoder_decoder_layer_norm
+        )
+        use_ffn_bias = config.use_ffn_bias
+        label_smoothing = config.label_smoothing
+        use_transformer_initialization = config.use_transformer_initialization
+        lr_adjustment_groups = config.lr_adjustment_groups
+        mup_base_d_model = config.mup_base_d_model
+        mup_base_d_ff = config.mup_base_d_ff
+        mup_base_d_kv = config.mup_base_d_kv
+        embeddings_alpha = config.embeddings_alpha
+        encoder_attention_logits_alpha = config.encoder_attention_logits_alpha
+        decoder_attention_logits_alpha = config.decoder_attention_logits_alpha
+        scale_encoder_qk_dot_by_d = config.scale_encoder_qk_dot_by_d
+        scale_decoder_qk_dot_by_d = config.scale_decoder_qk_dot_by_d
+        scale_output_logits_by_d = config.scale_output_logits_by_d
+        output_logits_alpha = config.output_logits_alpha
+        attention_module = config.attention_module
+        extra_attention_params = config.extra_attention_params
+        dtype = config.dtype
+
         super().__init__()
 
         # Copy only the subset of params that are referenced later
@@ -676,11 +888,7 @@ class T5ForConditionalGeneration(nn.Module):
             not use_cache
         ), "cannot enable use_cache because inference is not supported yet"
 
-        if (
-            labels is not None
-            and decoder_input_ids is None
-            and decoder_inputs_embeds is None
-        ):
+        if labels is not None and decoder_input_ids is None:
             # get decoder inputs from shifting lm labels to the right
             decoder_input_ids = self._shift_right(labels)
 
@@ -790,7 +998,7 @@ class T5ForConditionalGeneration(nn.Module):
         labels (:obj:`torch.LongTensor` of shape :obj:`(batch_size,)`, `optional`):
             Labels for computing the sequence classification/regression loss. Indices should be in :obj:`[-100, 0, ...,
             config.vocab_size - 1]`. All labels set to ``-100`` are ignored (masked), the loss is only computed for
-            labels in ``[0, ..., config.vocab_size]``
+            labels in ``[0, ..., config.vocab_size]``.
 
         Returns:
 
@@ -951,7 +1159,7 @@ class T5ForConditionalGeneration(nn.Module):
             )
 
     def _tie_or_clone_weights(self, output_embeddings, input_embeddings):
-        """Tie or clone module weights depending of whether we are using TorchScript or not"""
+        """Tie or clone module weights depending of whether we are using TorchScript or not."""
         if not isinstance(output_embeddings, list):
             output_embeddings = [output_embeddings]
             input_embeddings = [input_embeddings]

@@ -1,3 +1,4 @@
+
 # Multimodal Model
 - [Multimodal Model](#multimodal-llava)
   - [Model overview](#model-overview)
@@ -12,7 +13,7 @@
 
 ## Model Overview
 
-This directory contains our multimodal library which can be used to instantiate many of the current SOTA models like LLaVA, CogVLM, MM1 among others. This implementation allows user to instantiate models that can take multiple images intermingled with text as input and generate text as output. The building blocks for this implementation are as follows:
+This directory contains our multimodal library, which can be used to instantiate many of the current state-of-the-art models such as LLaVA, CogVLM, and MM1 among others. Our implementation supports multiple images interleaved with text as input, and can generate text as output. The building blocks for this implementation are as follows:
 - **Vision Encoder**: Process images through one or more image encoders to produce embeddings.
 - **Image Embedding Projector**: Projects the embeddings from vision encoder into a shared latent space with LLM using MLPs. 
 - **Language Model**: Accepts the vision and language embeddings as input and produces text as output.
@@ -20,26 +21,25 @@ This directory contains our multimodal library which can be used to instantiate 
 ## Structure of the code
 
 -   `configs/`: YAML configuration files.
--   `data.py`: The entry point to the data input pipeline code. Defines `train_input_dataloader` ( and `eval_input_dataloader`) which initalizes the data processor mentioned in config yaml `train_input.data_processor`( and `eval_input.data_processor`)
 -   `modeling_mmsimple.py`: Defines the core multimodal model.
 -   `model.py`: The entry point to the model.
 -   `run.py`: Training script. Performs training and validation.
 
 ## Model Training Approach
 
-A common approach to build high-quality Multimodal models with limited data is to initialize the vision encoder and language models from pretrained checkpoints (for instance CLIP-VIT-L-336/14 for image and LLAMA/Mistral/Zephyr models for language). While there are many possible recipes for training the model, it seeks to accomplish two goals:
-- **Pre-training for Feature alignment**: This involves training the randomly initialized projector weights to align the image features with that of LLM embedding. Optionally, this could also involve training all the blocks -- vision encoder, llm and projector together for further alignment of modalities.
+A common approach to build high-quality multimodal models with limited data is to initialize the vision encoder and language models from pretrained checkpoints (for instance CLIP-VIT-L-336/14 for vision and LLaMA/Mistral/Zephyr models for language). While there are many possible recipes for training the model, the high-level goals are as follows:
+- **Pre-training for Feature Alignment**: This involves training the randomly-initialized projector weights to align the image features with that of the LLM embeddings. Optionally, this could also involve training all the blocks -- vision encoder, llm and projector together for further alignment of modalities.
 
-- **Instruction Finetuning**: In this stage, the model is trained on instruction finetuning data and enables the model with multimodal QA capabilities.
+- **Instruction Fine-tuning**: In this stage, the model is trained to handle multimodal question-answering and dialogue.
 
 ## Steps to train a model
 
-High-level steps for training a model are relatively consistent with other models such as LLMs
-- Dataset prep: Download datasets of interest and process them using our data pre-processing scripts to generate H5 files
-- Checkpoint prep: Download pretrained checkpoints for vision and language models to prepare the initial checkpoint
+The high-level steps for training this model are consistent with other models such as LLMs
+- Dataset preparation: Download datasets of interest and process them using our data pre-processing scripts to generate H5 files
+- Checkpoint preparation: Download pretrained checkpoints for vision and language models to prepare the initial checkpoint
 - Training: Train the model using `run.py`
 - Export to HF: Convert checkpoint to HF checkpoint format
-- Evaluation: Use the standard multimodal flow to run downstream evals (lmms or llava source)
+- Evaluation: Use standard multimodal benchmarks such lmms-eval or LLaVA source-repo
 
 ### Step 1: Dataset Prep
 Please follow instructions for data preprocessing in our documentation.
@@ -172,13 +172,13 @@ The above command generates two folders `image_model` and `text_model` under `ou
   ```
 * Folder `image_model` consists of weights for `vision_tower` in source repository
 * Folder `text_model` consists of weights to be loaded for the Language model and projectors
-
+  
 * The LLaVA source code repository expects tokenizer files to be present along with the language model weights ([code pointer](https://github.com/haotian-liu/LLaVA/blob/main/llava/model/builder.py#L116)). For this, **please copy the tokenizer files into `text_model` folder**.
-
+  
 * Also, please make sure `text_model.mm_vision_tower` points to the `image_model` path to ensure the weights from `image_model` folder are loaded into the source code `vision_tower`. This path is automatically added during checkpoint conversion.
 
 * **Rename folder `text_model` to `text_model_llava`. This is since the source code repository expects the path to include `llava` keyword in order to correctly load the checkpoints. (code pointers: [builder.py](https://github.com/haotian-liu/LLaVA/blob/main/llava/model/builder.py#L48), [mm_utils.py](https://github.com/haotian-liu/LLaVA/blob/main/llava/mm_utils.py#L207))**
-
+  
 * So, after the relevant tokenizer files are copied, the `output-dir` should look like below:
   ```
   /path/to/converted_checkpoint
@@ -220,8 +220,8 @@ We provide the following config files for LLaVA located under the [configs](conf
 
 The following modifications and assumptions are made in this implementation:
 
-1. This implementation brings in support for multiple images per sample, interleaving of image & text as well as placement of images at arbitrary position within the sample. However, currently we do not have checkpoint converter for these new features since there is no one HF model that supports these multimodal features.
-2. This implementation assumes that the H5 file is created with the new data preprocessor in this release and is not backward compatible with the H5 datasets produced with the previous release.
+1. This implementation brings in support for multiple images per sample, interleaving of image and text, as well as placement of images at arbitrary position within the sample. However, currently we do not have checkpoint converter for these new features since there is no one HF model that supports these multimodal features.
+2. This implementation assumes that the H5 files for the dataset are created with the release 2.3 data preprocessor, and is not backward compatible with the H5 datasets produced with the previous release (2.2).
 3. **We currently expect all the images under a single parent folder and the relative path of images from different datasets are written under `image_key` in the H5 files generated.**
    For example:
    ```
@@ -244,3 +244,4 @@ The following modifications and assumptions are made in this implementation:
 [4] [MM1: Methods, Analysis & Insights from Multimodal LLM Pre-training](https://arxiv.org/abs/2403.09611)
 
 [5] [CogVLM: Visual Expert for Pretrained Language Models](https://arxiv.org/abs/2311.03079)
+

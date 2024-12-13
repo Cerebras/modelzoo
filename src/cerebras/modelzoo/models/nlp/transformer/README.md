@@ -54,7 +54,7 @@ In this section we describe the structure of the code for the Cerebras model and
 
 The following few scripts are relatively generic and shared between models. They provide an entry-point from the model-specific code to interface with shared training/validation code.
 
-* `run.py`: A generic training script that connects all models and dataloaders to the training pipeline. Not much is contained in this script; it imports the correct model and dataloader from `model.py` and `data.py` respectively.
+* `run.py`: A generic training script.
 
 The following directories contain the specific implementation details for the current model.
 

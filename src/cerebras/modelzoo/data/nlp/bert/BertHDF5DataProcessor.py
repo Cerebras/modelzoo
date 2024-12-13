@@ -18,19 +18,48 @@ Processor for PyTorch BERT training.
 
 import json
 import os
+from typing import Any, Callable, Literal, Optional
 
-from cerebras.modelzoo.common.registry import registry
+from pydantic import Field
+
 from cerebras.modelzoo.data.common.h5_map_dataset import MLMHDF5Dataset
+from cerebras.modelzoo.data.common.HDF5DataProcessor import (
+    HDF5DataProcessorConfig,
+)
 from cerebras.modelzoo.data.common.restartable_dataloader import (
     RestartableDataLoader,
 )
 
 
-@registry.register_datasetprocessor("BertHDF5DataProcessor")
+class BertHDF5DataProcessorConfig(HDF5DataProcessorConfig):
+    data_processor: Literal["BertHDF5DataProcessor"]
+
+    dataset_map_fn: Optional[Callable] = None
+
+    num_workers: int = 0
+    "The number of PyTorch processes used in the dataloader."
+
+    prefetch_factor: Optional[int] = 10
+    "The number of batches to prefetch in the dataloader."
+
+    persistent_workers: bool = True
+    "Whether or not to keep workers persistent between epochs."
+
+    # The following fields are deprecated and unused.
+    # They will be removed in the future once all configs have been fixed
+    vocab_size: Optional[Any] = Field(default=None, deprecated=True)
+
+    def post_init(self, context):
+        super().post_init(context)
+
+        if not self.num_workers:
+            self.prefetch_factor = None  # the default value in DataLoader
+            self.persistent_workers = False
+
+
 class BertHDF5DataProcessor:
-    def __init__(self, params):
-        self.dataset = MLMHDF5Dataset(params)
-        use_vsl = params.get("use_vsl", False)
+    def __init__(self, config: BertHDF5DataProcessorConfig):
+        self.dataset = MLMHDF5Dataset(config)
         features_list = {
             "data": ["input_ids", "attention_mask"],
             "labels": ["labels"],
@@ -58,7 +87,7 @@ class BertHDF5DataProcessor:
                 ["masked_lm_positions", "masked_lm_mask"]
             )
 
-        if use_vsl:
+        if config.use_vsl:
             if self.dataset.by_sample:
                 features_list["data"].extend(["attention_span", "position_ids"])
             else:
@@ -68,8 +97,8 @@ class BertHDF5DataProcessor:
                     "switch to 'sample' format data to use VSL."
                 )
 
-        if "dataset_map_fn" in params:
-            self.dataset.map(params["dataset_map_fn"])
+        if config.dataset_map_fn is not None:
+            self.dataset.map(config.dataset_map_fn)
         elif self.dataset.by_sample:
             self.dataset.map(
                 lambda x: {
@@ -85,12 +114,9 @@ class BertHDF5DataProcessor:
                 "switch to 'sample' format data to use MLM."
             )
 
-        self.num_workers = params.get("num_workers", 0)
-        self.prefetch_factor = params.get("prefetch_factor", 10)
-        self.persistent_workers = params.get("persistent_workers", True)
-        if not self.num_workers:
-            self.prefetch_factor = None  # the default value in DataLoader
-            self.persistent_workers = False
+        self.num_workers = config.num_workers
+        self.prefetch_factor = config.prefetch_factor
+        self.persistent_workers = config.persistent_workers
 
     def create_dataloader(self):
         return RestartableDataLoader(

@@ -28,15 +28,14 @@ processing:
 
     read_hook: "cerebras.modelzoo.data_preparation.data_preprocessing.hooks:text_read_hook"
     read_hook_kwargs:
-        data_keys:
-            text_key: "text" 
+        text_key: "text" 
 
     shuffle_seed: 0
     shuffle: False
-
-dataset:
     use_ftfy: True
     ftfy_normalizer: "NFC"
     wikitext_detokenize: True
+    UNSAFE_skip_jsonl_decoding_errors: False
+dataset:
     
     pack_sequences: True

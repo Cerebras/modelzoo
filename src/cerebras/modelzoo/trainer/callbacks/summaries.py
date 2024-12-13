@@ -74,25 +74,26 @@ def summarize_scalar(name: str, value: torch.Tensor):
         name: The name of the metric.
         value: Scalar value of the metric to log.
     """
-    if _GLOBAL_SUMMARIES.trainer:
-        if not isinstance(value, torch.Tensor):
-            raise ValueError(
-                f"Expected a scalar tensor for metric '{name}', but got '{type(value)}'."
-            )
-        if value.numel() > 1:
-            raise ValueError(
-                f"Expected a scalar tensor for metric '{name}', "
-                f"but got tensor with shape {value.shape}.\n"
-                f"To summarize tensors, use 'summarize_tensor()' instead, e.g.\n\n"
-                f"\tfrom cerebras.modelzoo.trainer import summarize_tensor\n"
-                f"\tsummarize_tensor('{name}', tensor)\n\n"
-            )
+    if not _GLOBAL_SUMMARIES.trainer:
+        raise RuntimeError(
+            "\"summarize_scalar()\" must only be called in the context of a run using the "
+            "\"Trainer\" class."
+        )
 
-        _GLOBAL_SUMMARIES.trainer.log_metrics(**{name: value})
-    else:
-        import cerebras.pytorch.utils.tensorboard as tb
+    if not isinstance(value, torch.Tensor):
+        raise ValueError(
+            f"Expected a scalar tensor for metric '{name}', but got '{type(value)}'."
+        )
+    if value.numel() > 1:
+        raise ValueError(
+            f"Expected a scalar tensor for metric '{name}', "
+            f"but got tensor with shape {value.shape}.\n"
+            f"To summarize tensors, use 'summarize_tensor()' instead, e.g.\n\n"
+            f"\tfrom cerebras.modelzoo.trainer import summarize_tensor\n"
+            f"\tsummarize_tensor('{name}', tensor)\n\n"
+        )
 
-        tb.summarize_scalar(name, value)
+    _GLOBAL_SUMMARIES.trainer.log_metrics(**{name: value})
 
 
 def summarize_tensor(name: str, value: torch.Tensor):
@@ -102,23 +103,24 @@ def summarize_tensor(name: str, value: torch.Tensor):
         name: The name of the metric.
         value: Tensor value of the metric to log.
     """
-    if _GLOBAL_SUMMARIES.trainer:
-        if not isinstance(value, torch.Tensor):
-            raise ValueError(
-                f"Expected a tensor for metric '{name}', but got '{type(value)}'."
-            )
+    if not _GLOBAL_SUMMARIES.trainer:
+        raise RuntimeError(
+            "\"summarize_scalar()\" must only be called in the context of a run using the "
+            "\"Trainer\" class."
+        )
 
-        if value.numel() == 1 and value.ndim == 0:
-            warn(
-                f"summarize_tensor got a scalar tensor for {name}. "
-                f"The scalar tensor will be reshaped to a 1D tensor so that "
-                f"it can be logged as a tensor. If you want to log the scalar "
-                f"value as a scalar, use 'summarize_scalar()' instead."
-            )
-            value = value.reshape(-1)
+    if not isinstance(value, torch.Tensor):
+        raise ValueError(
+            f"Expected a tensor for metric '{name}', but got '{type(value)}'."
+        )
 
-        _GLOBAL_SUMMARIES.trainer.log_metrics(**{name: value})
-    else:
-        import cerebras.pytorch.utils.tensorboard as tb
+    if value.numel() == 1 and value.ndim == 0:
+        warn(
+            f"summarize_tensor got a scalar tensor for {name}. "
+            f"The scalar tensor will be reshaped to a 1D tensor so that "
+            f"it can be logged as a tensor. If you want to log the scalar "
+            f"value as a scalar, use 'summarize_scalar()' instead."
+        )
+        value = value.reshape(-1)
 
-        tb.summarize_tensor(name, value)
+    _GLOBAL_SUMMARIES.trainer.log_metrics(**{name: value})

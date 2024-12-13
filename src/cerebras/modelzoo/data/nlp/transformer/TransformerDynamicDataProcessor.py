@@ -15,77 +15,37 @@
 """
 Processor for PyTorch Transformer training.
 """
+
 import csv
 import os
+from typing import Literal
 
 import numpy as np
 
-from cerebras.modelzoo.common.registry import registry
 from cerebras.modelzoo.data.nlp.t5.t5_utils import (
     create_transformer_input_features,
     parse_text,
 )
 from cerebras.modelzoo.data.nlp.t5.T5DynamicDataProcessor import (
     T5DynamicDataProcessor,
+    T5DynamicDataProcessorConfig,
 )
 
 
-@registry.register_datasetprocessor("TransformerDynamicDataProcessor")
+class TransformerDynamicDataProcessorConfig(T5DynamicDataProcessorConfig):
+    data_processor: Literal["TransformerDynamicDataProcessor"]
+
+
 class TransformerDynamicDataProcessor(T5DynamicDataProcessor):
     """
     Reads text files containing the input text tokens.
-    :param str src_vocab_file: Path to file containing tokens of vocabulary,
-    one token per line.
-    :param str src_data_dir: Path to directory containing the output of
-    preprocess.sh, with all the files of tokenized data.
-    :param int batch_size: Number of sequences per batch. Note that it is
-    different between systems.
-    :param bool shuffle, optional: If true the data will be shuffled before passing
-    into the model. Recommended for training. Can be set to False for
-    debugging.
-    :param int shuffle_seed, optional: Sets random seed for the order of
-    data shuffling. Allows for reproducibility while still shuffling data.
-    :param int shuffle_buffer: Size of buffer used to store data before
-    shuffling
-    :param int extra_ids, optional: Number of sentinel tokens for T5 objective
-    :param int src_max_sequence_length, optional: Largest possible sequence
-    length for the input. If longer it will be truncated. All other sequences
-    padded to this length.
-    :param int tgt_max_sequence_length, optional: Largest possible sequence
-    length for the labels. If longer it will be truncated. All other sequences
-    padded to this length.
-    :param int num_workers, optional: Number of processes that move data to the
-    accelerator system, so that the system doesn't process data faster than
-    it receives it.
-    :param bool drop_last, optional: If the last batch is not the full size,
-    i.e. the dataset could not divide evenly into the batch-size, do not
-    use the last batch.
-    :param int prefetch_factor, optional: Number of batch loaded in advance
-    by each worker.
-    :param bool persistent_workers, optional: If set, workers will not be
-    shutdown after going through the dataset once.
-    :param bool do_lower, optional: If set, will lowercase all tokens in vocabulary.
-    T5's vocabulary is cased so this is not recommended.
-    :param list buckets, optional: A list of boundaries for sequence lengths
-    to bucket together in order to speed up VTS/VSL.
-    :param bool dynamic_loss_weight, optional: If set, will divide the loss
-    for a token by the length of the sequence that the token comes from.
-    :param bool pack_sequences, optional: If set, will concatenate sequences
-    so that computation is performed on real data rather than padding
-    :param int num_documents_to_concatenate, optional: Specifies how many
-    documents to pack together
-    :param str oov_token, optional: Token for out-of-vocabulary words/sub-words
-    :param str sos_token, optional: Token for start-of-sequence
-    :param str eos_token, optional: Token for end-of-sequence
-    :param str pad_token, optional: Token for padding
-    :param int labels_pad_id, optional: Can set specific padding for labels
-    :param int input_pad_id, optional: Can set specific padding for inputs
-    :param bool mixed_precision, optional: If set, will use float16 rather
-    than float32 when possible
+
+    Args:
+        config: The configuration object for the processor.
     """
 
-    def __init__(self, params):
-        super(TransformerDynamicDataProcessor, self).__init__(params)
+    def __init__(self, config: TransformerDynamicDataProcessorConfig):
+        super().__init__(config)
 
     def get_meta_data(self, data_dir):
         """

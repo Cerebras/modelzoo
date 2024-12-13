@@ -12,71 +12,45 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import numpy as np
+from typing import Any, Literal, Optional
+
 import torchvision
+from pydantic import Field
 
 from cerebras.modelzoo.data.vision.classification.dataset_factory import (
-    Processor,
-    VisionSubset,
+    VisionClassificationProcessor,
+    VisionClassificationProcessorConfig,
 )
 
 
-class DTDProcessor(Processor):
-    def __init__(self, params):
-        super().__init__(params)
-        self.allowable_split = ["train", "val", "test"]
+class DTDProcessorConfig(VisionClassificationProcessorConfig):
+    data_processor: Literal["DTDProcessor"]
+
+    use_worker_cache: bool = ...
+
+    split: Literal["train", "val", "test"] = "train"
+    "Dataset split."
+
+    num_classes: Optional[Any] = Field(None, deprecated=True)
+
+
+class DTDProcessor(VisionClassificationProcessor):
+    def __init__(self, config: DTDProcessorConfig):
+        super().__init__(config)
+        self.split = config.split
+        self.shuffle = self.shuffle and (self.split == "train")
         self.num_classes = 47
 
-    def create_dataset(self, use_training_transforms=True, split="train"):
-        self.check_split_valid(split)
+    def create_dataset(self):
+        use_training_transforms = self.split == "train"
         transform, target_transform = self.process_transform(
             use_training_transforms
         )
         dataset = torchvision.datasets.DTD(
             root=self.data_dir,
-            split=split,
+            split=self.split,
             transform=transform,
             target_transform=target_transform,
             download=False,
         )
         return dataset
-
-    def create_vtab_dataset(self, use_1k_sample=True, seed=42):
-        train_transform, train_target_transform = self.process_transform(
-            use_training_transforms=True
-        )
-        eval_transform, eval_target_transform = self.process_transform(
-            use_training_transforms=False
-        )
-
-        train_set = torchvision.datasets.DTD(
-            root=self.data_dir,
-            split="train",
-            transform=train_transform,
-            target_transform=train_target_transform,
-            download=False,
-        )
-        val_set = torchvision.datasets.DTD(
-            root=self.data_dir,
-            split="val",
-            transform=eval_transform,
-            target_transform=eval_target_transform,
-            download=False,
-        )
-        test_set = torchvision.datasets.DTD(
-            root=self.data_dir,
-            split="test",
-            transform=eval_transform,
-            target_transform=eval_target_transform,
-            download=False,
-        )
-
-        if use_1k_sample:
-            rng = np.random.default_rng(seed)
-            sample_idx = self.create_shuffled_idx(len(train_set), rng)
-            train_set = VisionSubset(train_set, sample_idx[:800])
-
-            sample_idx = self.create_shuffled_idx(len(val_set), rng)
-            val_set = VisionSubset(val_set, sample_idx[:200])
-
-        return train_set, val_set, test_set

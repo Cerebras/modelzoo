@@ -33,7 +33,7 @@ git lfs install
 git clone https://huggingface.co/datasets/cerebras/SlimPajama-627B
 ```
 
-and create preprocessed dataset files using our data-preprocessing scripts.
+and create preprocessed dataset files using [`preprocess_data.py`](../../data_preparation/data_preprocessing/preprocess_data.py).
 
 #### Jais DataProcessor output
 

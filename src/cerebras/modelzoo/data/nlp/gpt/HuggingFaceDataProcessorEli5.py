@@ -14,40 +14,41 @@
 
 """Pytorch HuggingFace Eli5 map-style Dataloader"""
 
-from cerebras.modelzoo.common.registry import registry
+from typing import Any, Literal, Optional
+
+from pydantic import Field
+
 from cerebras.modelzoo.data_preparation.huggingface.HuggingFace_Eli5 import (
     HuggingFace_Eli5,
 )
 from cerebras.modelzoo.data_preparation.huggingface.HuggingFaceDataProcessor import (
     HuggingFaceDataProcessor,
+    HuggingFaceDataProcessorConfig,
 )
 
 
-@registry.register_datasetprocessor("HuggingFaceDataProcessorEli5")
+class HuggingFaceDataProcessorEli5Config(HuggingFaceDataProcessorConfig):
+    data_processor: Literal["HuggingFaceDataProcessorEli5"]
+
+    split: str = "train"
+
+    data_dir: Optional[Any] = Field(None, deprecated=True)
+
+
 class HuggingFaceDataProcessorEli5(HuggingFaceDataProcessor):
     """
     A HuggingFace Eli5 map-style Data Processor.
-    :param dict params: dict containing training
-        input parameters for creating dataset.
-    Expects the following fields:
-    - "batch_size" (int): Batch size.
-    - "shuffle" (bool): Flag to enable data shuffling.
-    - "shuffle_seed" (int): Shuffle seed.
-    - "num_workers" (int):  How many subprocesses to use for data loading.
-    - "drop_last" (bool): If True and the dataset size is not divisible
-       by the batch size, the last incomplete batch will be dropped.
-    - "prefetch_factor" (int): Number of batches loaded in advance by each worker.
-    - "persistent_workers" (bool): If True, the data loader will not shutdown
-       the worker processes after a dataset has been consumed once.
+    Args:
+        config: The configuration object
     """
 
-    def __init__(self, params):
-        num_workers = params.get("num_workers", 0)
-        split = params["split"]
+    def __init__(self, config: HuggingFaceDataProcessorEli5Config):
+        if isinstance(config, dict):
+            config = HuggingFaceDataProcessorEli5Config(**config)
 
         self.dataset, self.data_collator = HuggingFace_Eli5(
-            split=split, num_workers=num_workers
+            split=config.split, num_workers=config.num_workers
         )
 
         # The super class will take care of sharding the dataset and creating the dataloader
-        super().__init__(params)
+        super().__init__(config, self.dataset)

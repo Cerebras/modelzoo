@@ -19,12 +19,15 @@ Data loader for SST2 and MNL (GLUE tasks).
 import abc
 import csv
 import os
+from typing import List, Literal, Optional, Union
 
 import numpy as np
 import torch
+from pydantic import PositiveInt, field_validator
 
 from cerebras.modelzoo.common.input_utils import get_streaming_batch_size
-from cerebras.modelzoo.common.registry import registry
+from cerebras.modelzoo.config import DataConfig
+from cerebras.modelzoo.config.types import AliasedPath
 from cerebras.modelzoo.data.common.input_utils import ShardedSampler
 from cerebras.modelzoo.data.nlp.bert.bert_utils import build_vocab
 from cerebras.modelzoo.data_preparation.nlp.tokenizers.Tokenization import (
@@ -34,23 +37,69 @@ from cerebras.modelzoo.data_preparation.nlp.tokenizers.Tokenization import (
 MNLI_LABEL_IDX = {"entailment": 0, "neutral": 1, "contradiction": 2}
 
 
+class ClassifierDataProcessorConfig(DataConfig):
+    is_training: bool = ...
+    "Whether the data processor is used for training or validation."
+
+    data_dir: Union[str, List[str]] = ...
+    "Path to the data files to use."
+
+    batch_size: PositiveInt = ...
+    "The batch size."
+
+    vocab_file: AliasedPath = ...
+    "Path to the vocabulary file."
+
+    do_lower: bool = False
+    "Flag to lower case the texts."
+
+    max_sequence_length: int = ...
+
+    labels_pad_id: int = 0
+
+    input_pad_id: int = 0
+
+    attn_mask_pad_id: int = 0
+
+    shuffle: bool = True
+    "Whether or not to shuffle the dataset."
+
+    shuffle_seed: Optional[int] = None
+    "The seed used for deterministic shuffling."
+
+    num_workers: int = 0
+    "The number of PyTorch processes used in the dataloader."
+
+    prefetch_factor: Optional[int] = 10
+    "The number of batches to prefetch in the dataloader."
+
+    persistent_workers: bool = True
+    "Whether or not to keep workers persistent between epochs."
+
+    drop_last: bool = True
+    "Whether to drop last batch of epoch if it's an incomplete batch."
+
+    @field_validator("vocab_file", mode="after")
+    @classmethod
+    def get_vocab_file(cls, vocab_file):
+        if not os.path.exists(vocab_file):
+            raise ValueError(f"Vocab file does not exist: {vocab_file}")
+        return os.path.abspath(vocab_file)
+
+
 class ClassifierDataset(torch.utils.data.Dataset):
     """
     Base class for dataset that load their raw data from TSV files.
     Child classes must provide read_tsv.
-
-    Args:
-        params (dict): List of training input parameters for creating dataset.
-        is_training (bool): Indicator for training or validation dataset.
     """
 
-    def __init__(self, params, is_training):
-        self.batch_size = get_streaming_batch_size(params["batch_size"])
-        self.data_dir = params["data_dir"]
-        self.is_training = is_training
+    def __init__(self, config: ClassifierDataProcessorConfig):
+        self.batch_size = get_streaming_batch_size(config.batch_size)
+        self.data_dir = config.data_dir
+        self.is_training = config.is_training
 
-        self.vocab_file = params["vocab_file"]
-        self.do_lower = params.get("do_lower", False)
+        self.vocab_file = config.vocab_file
+        self.do_lower = config.do_lower
         # Get special tokens
         self.special_tokens = {
             "oov_token": "[UNK]",
@@ -75,11 +124,11 @@ class ClassifierDataset(torch.utils.data.Dataset):
         }
 
         # Padding indices.
-        self.labels_pad_id = params.get("labels_pad_id", 0)
-        self.input_pad_id = params.get("input_pad_id", 0)
-        self.attn_mask_pad_id = params.get("attn_mask_pad_id", 0)
+        self.labels_pad_id = config.labels_pad_id
+        self.input_pad_id = config.input_pad_id
+        self.attn_mask_pad_id = config.attn_mask_pad_id
 
-        self.max_sequence_length = params["max_sequence_length"]
+        self.max_sequence_length = config.max_sequence_length
 
     def encode_sequence(self, text1, text2=None):
         """
@@ -150,14 +199,10 @@ class ClassifierDataset(torch.utils.data.Dataset):
 class SST2Dataset(ClassifierDataset):
     """
     SST2 dataset processor for sentiment analysis.
-
-    Args:
-        params (dict): List of training input parameters for creating dataset.
-        is_training (bool): Indicator for training or validation dataset.
     """
 
-    def __init__(self, params, is_training):
-        super(SST2Dataset, self).__init__(params, is_training)
+    def __init__(self, config):
+        super().__init__(config)
         self.raw_data = np.array(self.read_tsv())
         self.num_examples = len(self.raw_data)
         self.num_batches = self.num_examples // self.batch_size
@@ -193,7 +238,7 @@ class SST2Dataset(ClassifierDataset):
                     shape: (max_sequence_length, )
                 token_type_ids:  np.array[int32] segment ids
                     shape: (max_sequence_length, )
-                labels: int32 scalar indicating the sentiment
+                labels: int32 scalar indicating the sentiment.
 
         Returns:
             A dict with features.
@@ -220,14 +265,10 @@ class SST2Dataset(ClassifierDataset):
 class MNLIDataset(ClassifierDataset):
     """
     SST2 dataset processor for sentiment analysis.
-
-    Args:
-        params (dict): List of training input parameters for creating dataset.
-        is_training (bool): Indicator for training or validation dataset.
     """
 
-    def __init__(self, params, is_training):
-        super(MNLIDataset, self).__init__(params, is_training)
+    def __init__(self, config):
+        super().__init__(config)
         self.raw_data = np.array(self.read_tsv())
         self.num_examples = len(self.raw_data)
         self.num_batches = self.num_examples // self.batch_size
@@ -279,7 +320,7 @@ class MNLIDataset(ClassifierDataset):
                     shape: (max_sequence_length, )
                 token_type_ids:  np.array[int32] segment ids
                     shape: (max_sequence_length, )
-                labels: int32 scalar indicating the sentiment
+                labels: int32 scalar indicating the sentiment.
 
         Returns:
             A dict with features.
@@ -312,48 +353,28 @@ class DataProcessor(abc.ABC):
     """
     Base class for processors that load their raw data from TFDS.
     Child classes must provide map_fn, name.
-
-    Args:
-        data_params (dict): Input parameters for creating dataset.
-            Expects the following fields:
-                - "vocab_file" (str): Path to the vocab file.
-                - "data_dir" (str): Path to directory containing the TF Records.
-                - "batch_size" (int): Batch size.
-                - "max_sequence_length" (int): Maximum length of the sequence.
-                - "shuffle" (bool): Flag to enable data shuffling.
-                - "shuffle_seed" (int): Shuffle seed.
-                - "shuffle_buffer" (int): Shuffle buffer size.
-                - "do_lower" (bool): Flag to lower case the texts.
-                - "num_workers" (int):  How many subprocesses to use for data loading.
-                - "drop_last" (bool): If True and the dataset size is not divisible
-                    by the batch size, the last incomplete batch will be dropped.
-                - "prefetch_factor" (int): Number of samples loaded in advance by each worker.
-                - "persistent_workers" (bool): If True, the data loader will not shutdown
-                    the worker processes after a dataset has been consumed once.
     """
 
-    def __init__(self, data_params) -> None:
-        self.data_params = data_params
-        self.batch_size = get_streaming_batch_size(data_params["batch_size"])
-        self.shuffle = data_params.get("shuffle", True)
-        self.shuffle_seed = data_params.get("shuffle_seed", None)
-        self.num_workers = data_params.get("num_workers", 0)
-        self.drop_last = data_params.get("drop_last", True)
-        self.prefetch_factor = data_params.get("prefetch_factor", 10)
-        self.persistent_workers = data_params.get("persistent_workers", True)
-        self.dataset = None
+    def __init__(self, config: ClassifierDataProcessorConfig) -> None:
+        self.config = config
+        self.batch_size = get_streaming_batch_size(config.batch_size)
+        self.shuffle = config.shuffle
+        self.shuffle_seed = config.shuffle_seed
+        self.num_workers = config.num_workers
+        self.drop_last = config.drop_last
+        self.prefetch_factor = config.prefetch_factor
+        self.persistent_workers = config.persistent_workers
 
     @abc.abstractmethod
-    def create_dataset(self, is_training):
+    def create_dataset(self):
         raise NotImplementedError(
             "Please override this method in the base class to create the dataset."
         )
 
-    def create_dataloader(self, is_training=True):
-        self.create_dataset(is_training=is_training)
-        assert self.dataset, "Unexpected error, dataset is None."
+    def create_dataloader(self):
+        dataset = self.create_dataset()
         sharded_sampler = ShardedSampler(
-            self.dataset,
+            dataset,
             self.shuffle,
             self.shuffle_seed,
             self.drop_last,
@@ -361,7 +382,7 @@ class DataProcessor(abc.ABC):
         if self.num_workers:
             # prefetch factor only allowed with `num_workers > 0`
             return torch.utils.data.DataLoader(
-                self.dataset,
+                dataset,
                 batch_size=self.batch_size,
                 sampler=sharded_sampler,
                 num_workers=self.num_workers,
@@ -370,31 +391,37 @@ class DataProcessor(abc.ABC):
                 persistent_workers=self.persistent_workers,
             )
         return torch.utils.data.DataLoader(
-            self.dataset, batch_size=self.batch_size, drop_last=self.drop_last
+            dataset, batch_size=self.batch_size, drop_last=self.drop_last
         )
 
 
-@registry.register_datasetprocessor("SST2DataProcessor")
+class SST2DataProcessorConfig(ClassifierDataProcessorConfig):
+    data_processor: Literal["SST2DataProcessor"]
+
+
 class SST2DataProcessor(DataProcessor):
     """
     The data processor responsible for creating the SST2 dataloader instance.
     """
 
-    def __init__(self, data_params) -> None:
-        super(SST2DataProcessor, self).__init__(data_params)
+    def __init__(self, config: SST2DataProcessorConfig):
+        super().__init__(config)
 
-    def create_dataset(self, is_training=True):
-        self.dataset = SST2Dataset(self.data_params, is_training)
+    def create_dataset(self):
+        return SST2Dataset(self.config)
 
 
-@registry.register_datasetprocessor("MNLIDataProcessor")
+class MNLIDataProcessorConfig(ClassifierDataProcessorConfig):
+    data_processor: Literal["MNLIDataProcessor"]
+
+
 class MNLIDataProcessor(DataProcessor):
     """
     The data processor responsible for creating the MNLI dataloader instance.
     """
 
-    def __init__(self, data_params) -> None:
-        super(MNLIDataProcessor, self).__init__(data_params)
+    def __init__(self, config: MNLIDataProcessorConfig):
+        super().__init__(config)
 
-    def create_dataset(self, is_training=True):
-        self.dataset = MNLIDataset(self.data_params, is_training)
+    def create_dataset(self):
+        return MNLIDataset(self.config)

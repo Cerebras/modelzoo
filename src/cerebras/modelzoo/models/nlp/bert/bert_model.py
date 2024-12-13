@@ -12,16 +12,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
+import warnings
+from typing import Dict, List, Literal, Optional, Union
+from warnings import warn
+
 import torch
 import torch.nn as nn
+from annotated_types import Ge, Le
+from pydantic import field_validator, model_validator
+from typing_extensions import Annotated
 
 from cerebras.modelzoo.common.utils.model.mup_utils import (
+    LRAdjustmentGroup,
     scale_initializers_by_dimension,
 )
 from cerebras.modelzoo.common.utils.model.transformer_utils import (
     create_vsl_mask,
     make_key_padding_mask_broadcastable,
 )
+from cerebras.modelzoo.config import ModelConfig
 from cerebras.modelzoo.layers import (
     EmbeddingLayer,
     FeedForwardNetwork,
@@ -29,52 +39,337 @@ from cerebras.modelzoo.layers import (
     TransformerEncoder,
     TransformerEncoderLayer,
 )
+from cerebras.modelzoo.layers.activations import ActivationType
+from cerebras.modelzoo.layers.init import (
+    InitializerConfig,
+    TruncatedNormalInitializer,
+)
 
 
-class BertPooler(nn.Module):
-    def __init__(
-        self,
-        hidden_size,
-        pooler_norm=False,
-        layer_norm_epsilon=1.0e-5,
-        use_bias=True,
-        activation="gelu",
-        dropout=None,
-        initializer="xavier_uniform",
-    ):
-        super().__init__()
+class BertModelConfig(ModelConfig):
+    name: Literal["BertModel", "bert_model"]
 
-        self.pooler_norm = None
-        if pooler_norm:
-            self.pooler_norm = nn.LayerNorm(hidden_size, eps=layer_norm_epsilon)
+    ### Embedding
+    vocab_size: Annotated[int, Ge(1), Le(512000)] = 50257
+    "The size of the vocabulary used in the model. Max supported value is `512000`."
 
-        self.pooler = FeedForwardNetwork(
-            FeedForwardNetworkConfig(
-                input_unit=hidden_size,
-                layers_units=[hidden_size],
-                layers_activation=[activation],
-                layers_dropout_rates=[dropout],
-                use_bias=use_bias,
-                kernel_initializer=initializer,
+    max_position_embeddings: Optional[int] = None
+    "The maximum sequence length that the model can handle."
+
+    position_embedding_type: Optional[
+        Literal["learned", "fixed", "relative", "rotary", "alibi"]
+    ] = "learned"
+    """The type of position embedding to use in the model.
+    Can be one of - `learned` - Learned embedding matrix,
+    `fixed` - Sinusoidal from original [Transformer](https://arxiv.org/abs/1706.03762),
+    `relative` - Relative position embedding
+    [to exploit pairwise, relative positional information](https://arxiv.org/abs/1803.02155).,
+    `rotary` - a.k.a [RoPE](https://arxiv.org/pdf/2104.09864v4.pdf),
+    `alibi` [Attention With Linear Biases](https://arxiv.org/pdf/2108.12409.pdf),
+    or `None` for no position embeddings.
+    """
+
+    hidden_size: int = 768
+    "Dimensionality of the encoder layers and the pooler layer."
+
+    embedding_dropout_rate: Annotated[float, Ge(0.0), Le(1.0)] = 0.1
+    "The dropout ratio for the word embeddings."
+
+    embedding_pad_token_id: Optional[int] = 0
+    "The embedding vector at embedding_pad_token_id is not updated during training."
+
+    mask_padding_in_positional_embed: bool = False
+    """Whether to mask padding in positional embeddings.
+    Only supported with `position_embedding_type` set to `learned`."""
+
+    rotary_dim: Optional[int] = None
+    "The number of dimensions used for the rotary position embedding."
+
+    rope_theta: float = 10000
+    """Frequency (theta) used in rotary position embedding. This value is
+    typically adjusted in long MSL runs as described in
+    [CodeLlama](https://arxiv.org/pdf/2308.12950.pdf)"""
+
+    fold_rope_consts: bool = True
+    """If True, folds the rotary position embedding constants compile time.
+
+    For very large models consider generating them on the fly by setting this to
+    False. It avoids working with large constant tensors.
+    """
+
+    num_relative_attention_buckets: int = 32
+    "Number of buckets to use in relative position embedding"
+
+    alibi_trainable_slopes: bool = False
+    "Replaces alibi's fixed slopes with trainable slopes."
+
+    pos_scaling_factor: float = 1.0
+    """Position interpolation scaling factor for rotary & alibi. See
+    https://arxiv.org/pdf/2306.15595.pdf for details"""
+
+    pos_scaling_type: Literal["linear", "yarn"] = "linear"
+    """Can be either `linear` or `YaRN`,
+    For YaRN see https://arxiv.org/pdf/2309.00071"""
+
+    pos_scaling_extra_args: Optional[dict] = None
+    """A dict including parameters for YaRN RoPE scaling"""
+
+    ### Encoder
+    num_hidden_layers: int = 12
+    "Number of hidden layers in the Transformer decoder."
+
+    layer_norm_epsilon: Union[float, List[float]] = 1e-5
+    "The epsilon value used in layer normalization layers."
+
+    norm_first: bool = False
+
+    embedding_layer_norm: bool = True
+
+    ### Encoder Attn
+    num_heads: int = 12
+    "The number of attention heads."
+
+    attention_module: Literal["aiayn_attention", "multiquery_attention"] = (
+        "aiayn_attention"
+    )
+    """Determines whether to use multiheaded attention (from the Attention is
+    All You Need paper) or multi-query/grouped-query attention. When using the
+    latter, you must specify extra_attention_params (see below).
+    """
+
+    extra_attention_params: dict = {}
+    """When enabling multi-query/grouped-query attention, you must specify the
+    the number of key-value groups. Within the extra attention params dict, you
+    can set `num_kv_groups = 1` to enable MQA or `num_kv_groups = <groups>` for
+    GQA. The number of groups should be divisible by `num_heads`.
+    """
+
+    attention_type: Literal["dot_product", "scaled_dot_product"] = (
+        "scaled_dot_product"
+    )
+    """Determines whether the QK dot product should be scaled -
+    dot_product -> QK^T
+    scaled_dot_product -> QK^T / sqrt(d)
+    """
+
+    attention_softmax_fp32: bool = True
+    "Whether to use fp32 precision for attention softmax."
+
+    attention_kernel: Optional[str] = None
+    """The type of attention kernel"""
+
+    dropout_rate: float = 0.1
+    "The dropout probability for all fully connected layers."
+
+    nonlinearity: ActivationType = "gelu"
+    "The non-linear activation function (function or string) in the encoder and pooler."
+
+    pooler_nonlinearity: Optional[str] = None
+    """The non-linear activation function used in the pooler layer. If not
+    specified, defaults to encoder_nonlinearity."""
+
+    attention_dropout_rate: Optional[float] = None
+    "Dropout rate for attention layer. When None, defaults to same as `dropout_rate`."
+
+    use_projection_bias_in_attention: bool = True
+    "Whether to include bias in the attention layer for Q/K/V projections."
+
+    use_ffn_bias_in_attention: bool = True
+    """Whether to include bias in the attention layer for output projection
+    after values have been combined (W_O in original Transformer paper).
+    """
+
+    ### Encoder ffn
+    filter_size: int = 3072
+    "Dimensionality of the feed-forward layer in the Transformer block."
+
+    use_ffn_bias: bool = True
+    "Whether to use bias in the feedforward network (FFN)."
+
+    ### Task-specific
+    use_final_layer_norm: bool = False
+
+    initializer_range: float = 0.02
+    "The standard deviation of the truncated_normal_initializer as the default initializer"
+
+    default_initializer: Optional[InitializerConfig] = None
+
+    embeddings_initializer: Optional[InitializerConfig] = None
+    "Initializer for word embeddings."
+
+    position_embeddings_initializer: Optional[InitializerConfig] = None
+    "Initializer for position embeddings (if learned position embeddings)."
+
+    segment_embeddings_initializer: Optional[InitializerConfig] = None
+    "Initializer for segment embeddings."
+
+    num_segments: Optional[int] = None
+    """Number of segments (token types) in embedding. When not specified
+    (and NSP objective is enabled), num_segments will default to 2"""
+
+    add_pooling_layer: bool = True
+    "Whether to add the pooling layer for sequence classification."
+
+    freeze_ffn_bias_in_glu: bool = False
+    "Prevents gradients from being computed for FFN biases for GLU activation layers"
+
+    ### muP (Maximal Update Parametrization)
+    lr_adjustment_groups: Dict[str, Union[str, List[str]]] = {
+        "embedding": "*embedding*weight",
+        "encoder_attention": "*transformer_encoder*attn*dense*weight",
+        "encoder_input_ffn": "*transformer_encoder*ffn.ffn.[!1]*weight",
+        "encoder_output_ffn": "*transformer_encoder*ffn.ffn.[1]*weight",
+        "pooler": "*pooler*weight",
+    }
+    "A dictionary of groups to adjust the learning rate for."
+
+    mup_base_hidden_size: Optional[float] = None
+    """The hidden size of the base model in muP transfer used to calculate the
+    necessary multipliers. Required in muP training when scaling the encoder
+    attention module"""
+
+    mup_base_filter_size: Optional[float] = None
+    """The filter size of the base model in muP transfer used to calculate the
+    necessary multipliers. Required in muP training when scaling the encoder
+    ffn"""
+
+    embeddings_scale: float = 1.0
+    """Scales the embedding hidden states (i.e. the tensor after embeddings &
+    embedding layer norm are applied). Required in muP training"""
+
+    scale_qk_dot_by_d: Optional[bool] = None
+    """Scales attention QK dot product by d instead of sqrt(d). Must be enabled
+    for muP training."""
+
+    attention_logits_alpha: float = 1.0
+    """Additionally scales the attention QK dot product by the specified value.
+    Recommended to tune for stabilizing attention logits in muP training."""
+
+    output_logits_alpha: float = 1.0
+    """Constant applied to the output logits scalar in muP training. The msm
+    and nsp logits are scaled by output_logits_alpha * mup_base_hidden_size/hidden_size"""
+
+    scale_output_logits_by_d: bool = True
+    """Scales the output logits in muP by mup_base_hidden_size/hidden_size if
+    True and sqrt(mup_base_hidden_size/hidden_size) if False. Only applies to
+    muP training when scaling the hidden_size"""
+
+    dtype: Optional[torch.dtype] = None
+
+    @field_validator("name", mode="after")
+    def validate_name(cls, name):
+        if name == "BertModel":
+            warn(
+                "Passing 'BertModel' as the model name is deprecated. "
+                "Please use 'bert_model' instead.",
+                category=FutureWarning,
             )
-        )
+            return "bert_model"
+        return name
 
-    def reset_parameters(self):
-        if self.pooler_norm is not None:
-            self.pooler_norm.weight.data.fill_(1.0)
-            if self.pooler_norm.bias is not None:
-                self.pooler_norm.bias.data.zero_()
-        self.pooler.reset_parameters()
+    @field_validator("pos_scaling_type", mode="before")
+    @classmethod
+    def validate_pos_scaling_type(cls, value: str) -> str:
+        if isinstance(value, str):
+            return value.lower()
+        return value
 
-    def forward(self, hidden_states):
-        # We "pool" the model by simply taking the hidden state
-        # corresponding to the first token.
-        # shape [batch_size, hidden_size]
-        cls_hidden_states = hidden_states[:, 0]
-        if self.pooler_norm is not None:
-            cls_hidden_states = self.pooler_norm(cls_hidden_states)
-        pooled_output = self.pooler(cls_hidden_states)
-        return pooled_output
+    @model_validator(mode="after")
+    def validate_position_embeddings(self):
+        if (
+            self.position_embedding_type is not None
+            and self.max_position_embeddings is None
+        ):
+            raise ValueError(
+                "max_position_embeddings should be specified "
+                "if position_embedding_type is specified."
+            )
+        return self
+
+    def post_init(self, context):
+        super().post_init(context)
+
+        if self.position_embedding_type == "rotary":
+            if self.rotary_dim is None:
+                self.rotary_dim = int(self.hidden_size // self.num_heads * 0.25)
+            # https://github.com/huggingface/transformers/blob/f0577df6de36e7e7f28e90fa76da0657de038a39/src/transformers/models/gpt_neox/modeling_gpt_neox.py#L84-L85
+            # https://arxiv.org/pdf/2104.09864.pdf Section 3.3
+            if self.rotary_dim > (self.hidden_size / self.num_heads):
+                raise ValueError(
+                    f"Rotary dimension ({self.rotary_dim}) must be <= "
+                    f"hidden size ({self.hidden_size}) divided by number of "
+                    f"attention heads ({self.num_heads})."
+                )
+            if self.rotary_dim % 2 != 0:
+                raise ValueError(
+                    f"Rotary dimension ({self.rotary_dim}) must be an even number."
+                )
+
+        if self.default_initializer is None:
+            self.default_initializer = TruncatedNormalInitializer(
+                std=self.initializer_range,
+                mean=0.0,
+                a=self.initializer_range * -2.0,
+                b=self.initializer_range * 2.0,
+            )
+
+        if self.embeddings_initializer is None:
+            self.embeddings_initializer = self.default_initializer.copy()
+
+        if self.position_embeddings_initializer is None:
+            self.position_embeddings_initializer = (
+                self.default_initializer.copy()
+            )
+
+        if self.segment_embeddings_initializer is None:
+            self.segment_embeddings_initializer = (
+                self.default_initializer.copy()
+            )
+
+        supported_mup_dimensions = [
+            'mup_base_hidden_size',
+            'mup_base_filter_size',
+        ]
+
+        if detected_mup_dimensions := [
+            dimension
+            for dimension in supported_mup_dimensions
+            if getattr(self, dimension)
+        ]:
+            if detected_mup_dimensions != supported_mup_dimensions:
+                raise ValueError(
+                    f"Our muP formulation requires that you specify all "
+                    f"of the following base dimensions: {supported_mup_dimensions} "
+                    f"but only the following dimensions were found: "
+                    f"{detected_mup_dimensions}"
+                )
+
+            if self.scale_qk_dot_by_d is None:
+                self.scale_qk_dot_by_d = True
+
+        else:
+            if detected_mup_tunable_params := [
+                name
+                for name in [
+                    "embeddings_scale",
+                    "output_logits_alpha",
+                    "scale_qk_dot_by_d",
+                    "scale_output_logits_by_d",
+                    "attention_logits_alpha",
+                ]
+                if getattr(self, name)
+                != self.__class__.model_fields[name].default
+            ]:
+                warnings.warn(
+                    f"The following muP parameters were changed from their default "
+                    f"value outside of a muP run: {detected_mup_tunable_params}. "
+                    f"As a result, they may have an undesired effect. Please "
+                    f"specify the muP base dimensions {supported_mup_dimensions} "
+                    f"to trigger a muP run."
+                )
+
+            if self.scale_qk_dot_by_d is None:
+                self.scale_qk_dot_by_d = False
 
 
 class BertModel(nn.Module):
@@ -82,158 +377,34 @@ class BertModel(nn.Module):
     The model behaves as a bidirectional encoder (with only self-attention), following the architecture described in `Attention is
     all you need <https://arxiv.org/abs/1706.03762>`__ by Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit,
     Llion Jones, Aidan N. Gomez, Lukasz Kaiser and Illia Polosukhin.
-
-    Args:
-        vocab_size (:obj:`int`, `optional`, defaults to 30522):
-            Vocabulary size of the BERT model. Defines the number of different tokens that can be represented by the
-            :obj:`inputs_ids` passed when calling :class:`~transformers.BertModel` or
-            :class:`~transformers.TFBertModel`.
-        max_position_embeddings (:obj:`int`, `optional`, defaults to 512):
-            The maximum sequence length that this model might ever be used with. Typically set this to something large
-            just in case (e.g., 512 or 1024 or 2048).
-        position_embedding_type(:obj:`str`, `optional`, defaults to 'learned'):
-            The type of position embeddings, should either be 'learned' or 'fixed'.
-        hidden_size (:obj:`int`, `optional`, defaults to 768):
-            Dimensionality of the encoder layers and the pooler layer.
-        embedding_dropout_rate (:obj:`float`, `optional`, defaults to 0.1):
-            The dropout ratio for the word embeddings.
-        embedding_pad_token_id (:obj:`int`, `optional`, defaults to 0):
-            The embedding vector at embedding_pad_token_id is not updated during training.
-        num_hidden_layers (:obj:`int`, `optional`, defaults to 12):
-            Number of hidden layers in the Transformer encoder.
-        layer_norm_epsilon (:obj:`float`, `optional`, defaults to 1e-5):
-            The epsilon used by the layer normalization layers.
-        num_heads (:obj:`int`, `optional`, defaults to 12):
-            Number of attention heads for each attention layer in the Transformer encoder.
-        attention_type (:obj:`str`, `optional`, defaults to 'scaled_dot_product'):
-            The attention variant to execute. Currently
-            accepts ``dot_product`` and ``scaled_dot_product``.
-        attention_softmax_fp32 (:obj:`bool`, `optional`, defaults to :obj:`True`):
-            If  True, attention softmax uses fp32 precision else fp16/bf16 precision
-        dropout_rate (:obj:`float`, `optional`, defaults to 0.1):
-            The dropout probability for all fully connected layers in the embeddings, encoder, and pooler.
-        nonlinearity: (:obj:`string`, `optional`, defaults to :obj:`gelu`):
-            The non-linear activation function (function or string) in the encoder and pooler.
-        attention_dropout_rate (:obj:`float`, `optional`, defaults to 0.1):
-            The dropout ratio for the attention probabilities.
-        use_projection_bias_in_attention (:obj:`bool`, `optional`, defaults to :obj:`True`):
-            If True, bias is used on the projection layers in attention.
-        use_ffn_bias_in_attention (:obj:`bool`, `optional`, defaults to :obj:`True`):
-            If  True, bias is used in the dense layer in the attention.
-        filter_size (:obj:`int`, `optional`, defaults to 3072):
-            Dimensionality of the feed-forward layer in the Transformer encoder.
-        use_ffn_bias: (:obj:`bool`, `optional`, defaults to :obj:`True`):
-            If  True, bias is used in the dense layer in the encoder.
-        initializer_range (:obj:`float`, `optional`, defaults to 0.02):
-            The standard deviation of the truncated_normal_initializer as the default initializer.
-        num_segments (:obj:`int`, `optional`, defaults to 2):
-            The vocabulary size of the segments (sentence types).
-        embeddings_initializer (:obj:`dict`, `optional`, defaults to None):
-            Initializer for word embeddings
-        position_embeddings_initializer (:obj:`dict`, `optional`, defaults to None):
-            Initializer for position embeddings (if learned position embeddings)
-        segment_embeddings_initializer (:obj:`dict`, `optional`, defaults to None):
-            Initializer for segment embeddings
-        add_pooling_layer (:obj:`bool`, `optional`, defaults to True):
-            Whether to add the pooling layer for sequence classification.
-        freeze_ffn_bias_in_glu (:obj:`bool`, `optional`, defaults to False):
-            Whether to make ffn bias value '0' and disable gradients on them
     """
 
-    # TODO(SW-76063): We may need a general configuration class to avoid writing those params explicitly
-    def __init__(
-        self,
-        # Embedding
-        vocab_size=50257,
-        max_position_embeddings=1024,
-        position_embedding_type="learned",
-        hidden_size=768,
-        embedding_dropout_rate=0.1,  # need to be careful when testing
-        embedding_pad_token_id=0,
-        mask_padding_in_positional_embed=False,
-        rotary_dim=None,
-        rope_theta=10000,
-        pad_rope=False,
-        num_relative_attention_buckets=32,
-        alibi_trainable_slopes=False,
-        pos_scaling_factor=1.0,
-        pos_scaling_type="linear",
-        pos_scaling_extra_args=None,
-        # Encoder
-        num_hidden_layers=12,
-        layer_norm_epsilon=1.0e-5,
-        norm_first=False,
-        embedding_layer_norm=True,
-        # Encoder Attn
-        num_heads=12,
-        attention_module="aiayn_attention",
-        extra_attention_params={},
-        attention_type="scaled_dot_product",
-        attention_softmax_fp32=True,
-        attention_kernel=None,
-        dropout_rate=0.1,
-        nonlinearity="gelu",
-        pooler_nonlinearity=None,
-        attention_dropout_rate=0.1,
-        use_projection_bias_in_attention=True,
-        use_ffn_bias_in_attention=True,
-        # Encoder ffn
-        filter_size=3072,
-        use_ffn_bias=True,
-        # Task-specific
-        use_final_layer_norm=False,
-        initializer_range=0.02,
-        num_segments=2,
-        default_initializer=None,
-        embeddings_initializer=None,
-        position_embeddings_initializer=None,
-        segment_embeddings_initializer=None,
-        add_pooling_layer=True,
-        freeze_ffn_bias_in_glu=False,
-        dtype=None,
-        # muP (maximal update parameterization)  parameters
-        lr_adjustment_groups=None,
-        embeddings_scale=1.0,
-        scale_qk_dot_by_d=False,
-        attention_logits_alpha=1.0,
-        mup_base_hidden_size=None,
-        mup_base_filter_size=None,
-        **extra_args,
-    ):
+    def __init__(self, config: BertModelConfig):
         super().__init__()
 
-        self.num_heads = num_heads
-        self.initializer_range = initializer_range
-        self.add_pooling_layer = add_pooling_layer
-        self.freeze_ffn_bias_in_glu = freeze_ffn_bias_in_glu
+        self.num_heads = config.num_heads
+        self.add_pooling_layer = config.add_pooling_layer
+        self.freeze_ffn_bias_in_glu = config.freeze_ffn_bias_in_glu
 
-        if default_initializer is None:
-            default_initializer = {
-                "name": "truncated_normal",
-                "std": self.initializer_range,
-                "mean": 0.0,
-                "a": self.initializer_range * -2.0,
-                "b": self.initializer_range * 2.0,
-            }
+        attention_initializer = config.default_initializer.copy()
+        ffn_initializer = config.default_initializer.copy()
+        output_layer_initializer = config.default_initializer.copy()
+        ffn_output_layer_initializer = config.default_initializer.copy()
 
-        if embeddings_initializer is None:
-            embeddings_initializer = default_initializer
+        self.lr_adjustment_groups = {
+            key: LRAdjustmentGroup(value)
+            for key, value in config.lr_adjustment_groups.items()
+        }
 
-        if position_embeddings_initializer is None:
-            position_embeddings_initializer = default_initializer
-
-        if segment_embeddings_initializer is None:
-            segment_embeddings_initializer = default_initializer
-
-        attention_initializer = default_initializer.copy()
-        ffn_initializer = default_initializer.copy()
-        output_layer_initializer = default_initializer.copy()
-        ffn_output_layer_initializer = default_initializer.copy()
+        if config.mup_base_hidden_size or config.mup_base_filter_size:
+            logging.info("This is a muP configured run")
 
         # Handle muP scaling
-        self.embeddings_scale = embeddings_scale
-        if mup_base_hidden_size:
-            hidden_size_width_mult = hidden_size / mup_base_hidden_size
+        self.embeddings_scale = config.embeddings_scale
+        if config.mup_base_hidden_size:
+            hidden_size_width_mult = (
+                config.hidden_size / config.mup_base_hidden_size
+            )
             scale_initializers_by_dimension(
                 [attention_initializer, ffn_initializer],
                 width_scale=hidden_size_width_mult**-0.5,
@@ -241,108 +412,113 @@ class BertModel(nn.Module):
             scale_initializers_by_dimension(
                 output_layer_initializer,
                 width_scale=hidden_size_width_mult**-0.5,
-                depth_scale=(2 * num_hidden_layers) ** -0.5,
+                depth_scale=(2 * config.num_hidden_layers) ** -0.5,
             )
             for lr_adjustment_group in [
                 "encoder_attention",
                 "encoder_input_ffn",
                 "pooler",
             ]:
-                lr_adjustment_groups[lr_adjustment_group].set_scale(
+                self.lr_adjustment_groups[lr_adjustment_group].set_scale(
                     1 / hidden_size_width_mult
                 )
 
-        if mup_base_filter_size:
-            filter_size_width_mult = filter_size / mup_base_filter_size
+        if config.mup_base_filter_size:
+            filter_size_width_mult = (
+                config.filter_size / config.mup_base_filter_size
+            )
             scale_initializers_by_dimension(
                 ffn_output_layer_initializer,
                 width_scale=filter_size_width_mult**-0.5,
-                depth_scale=(2 * num_hidden_layers) ** -0.5,
+                depth_scale=(2 * config.num_hidden_layers) ** -0.5,
             )
-            lr_adjustment_groups["encoder_output_ffn"].set_scale(
+            self.lr_adjustment_groups["encoder_output_ffn"].set_scale(
                 1 / filter_size_width_mult
             )
 
         self.embedding_layer = EmbeddingLayer(
-            vocab_size=vocab_size,
-            embedding_size=hidden_size,
-            pad_token_id=embedding_pad_token_id,
-            embeddings_initializer=embeddings_initializer,
-            max_position_embeddings=max_position_embeddings,
-            position_embedding_type=position_embedding_type,
+            vocab_size=config.vocab_size,
+            embedding_size=config.hidden_size,
+            pad_token_id=config.embedding_pad_token_id,
+            embeddings_initializer=config.embeddings_initializer,
+            max_position_embeddings=config.max_position_embeddings,
+            position_embedding_type=config.position_embedding_type,
             position_embedding_offset=(
                 # We only need to add position embedding offset when we're using
                 # masked padding in positional embed
-                embedding_pad_token_id
-                if mask_padding_in_positional_embed
+                config.embedding_pad_token_id
+                if config.mask_padding_in_positional_embed
                 else 0
             ),
-            mask_padding_in_positional_embed=mask_padding_in_positional_embed,
-            position_embeddings_initializer=position_embeddings_initializer,
-            num_segments=num_segments,
-            segment_embeddings_initializer=segment_embeddings_initializer,
-            num_heads=num_heads,
-            num_relative_attention_buckets=num_relative_attention_buckets,
-            rotary_dim=rotary_dim,
-            rope_theta=rope_theta,
-            pad_rope=pad_rope,
-            alibi_trainable_slopes=alibi_trainable_slopes,
-            pos_scaling_factor=pos_scaling_factor,
-            pos_scaling_type=pos_scaling_type,
-            pos_scaling_extra_args=pos_scaling_extra_args,
-            dtype=dtype,
+            mask_padding_in_positional_embed=config.mask_padding_in_positional_embed,
+            position_embeddings_initializer=config.position_embeddings_initializer,
+            num_segments=config.num_segments,
+            segment_embeddings_initializer=config.segment_embeddings_initializer,
+            num_heads=self.num_heads,
+            num_relative_attention_buckets=config.num_relative_attention_buckets,
+            rotary_dim=config.rotary_dim,
+            rope_theta=config.rope_theta,
+            fold_rope_consts=config.fold_rope_consts,
+            alibi_trainable_slopes=config.alibi_trainable_slopes,
+            pos_scaling_factor=config.pos_scaling_factor,
+            pos_scaling_type=config.pos_scaling_type,
+            pos_scaling_extra_args=config.pos_scaling_extra_args,
+            dtype=config.dtype,
         )
 
-        self.dropout_embd = nn.Dropout(embedding_dropout_rate)
+        self.dropout_embd = nn.Dropout(config.embedding_dropout_rate)
 
-        extra_attention_params["attention_kernel"] = attention_kernel
+        config.extra_attention_params["attention_kernel"] = (
+            config.attention_kernel
+        )
         encoder_layer = TransformerEncoderLayer(
-            d_model=hidden_size,
-            nhead=num_heads,
-            dim_feedforward=filter_size,
-            dropout=dropout_rate,
-            activation=nonlinearity,
-            layer_norm_eps=layer_norm_epsilon,
-            scale_qk_dot_by_d=scale_qk_dot_by_d,
-            attention_logits_alpha=attention_logits_alpha,
-            attention_module=attention_module,
-            extra_attention_params=extra_attention_params,
-            attention_dropout_rate=attention_dropout_rate,
-            attention_type=attention_type,
-            attention_softmax_fp32=attention_softmax_fp32,
-            use_projection_bias_in_attention=use_projection_bias_in_attention,
-            use_ffn_bias_in_attention=use_ffn_bias_in_attention,
-            use_ffn_bias=use_ffn_bias,
+            d_model=config.hidden_size,
+            nhead=self.num_heads,
+            dim_feedforward=config.filter_size,
+            dropout=config.dropout_rate,
+            activation=config.nonlinearity,
+            layer_norm_eps=config.layer_norm_epsilon,
+            scale_qk_dot_by_d=config.scale_qk_dot_by_d,
+            attention_logits_alpha=config.attention_logits_alpha,
+            attention_module=config.attention_module,
+            extra_attention_params=config.extra_attention_params,
+            attention_dropout_rate=config.attention_dropout_rate,
+            attention_type=config.attention_type,
+            attention_softmax_fp32=config.attention_softmax_fp32,
+            use_projection_bias_in_attention=config.use_projection_bias_in_attention,
+            use_ffn_bias_in_attention=config.use_ffn_bias_in_attention,
+            use_ffn_bias=config.use_ffn_bias,
             attention_initializer=attention_initializer,
             ffn_initializer=ffn_initializer,
             attention_output_layer_initializer=output_layer_initializer,
             ffn_output_layer_initializer=ffn_output_layer_initializer,
-            norm_first=norm_first,
+            norm_first=config.norm_first,
         )
 
-        if embedding_layer_norm:
-            self.embed_ln_f = nn.LayerNorm(hidden_size, eps=layer_norm_epsilon)
+        if config.embedding_layer_norm:
+            self.embed_ln_f = nn.LayerNorm(
+                config.hidden_size, eps=config.layer_norm_epsilon
+            )
         else:
             self.embed_ln_f = None
 
         final_ln_f = None
-        if use_final_layer_norm:
-            final_ln_f = nn.LayerNorm(hidden_size, eps=layer_norm_epsilon)
+        if config.use_final_layer_norm:
+            final_ln_f = nn.LayerNorm(
+                config.hidden_size, eps=config.layer_norm_epsilon
+            )
 
         self.transformer_encoder = TransformerEncoder(
             encoder_layer,
-            num_layers=num_hidden_layers,
+            num_layers=config.num_hidden_layers,
             norm=final_ln_f,
         )
 
-        if pooler_nonlinearity is None:
-            pooler_nonlinearity = nonlinearity
-
         self.pooler = (
             BertPooler(
-                hidden_size,
-                use_bias=use_ffn_bias,
-                activation=pooler_nonlinearity,
+                config.hidden_size,
+                use_bias=config.use_ffn_bias,
+                activation=config.pooler_nonlinearity or config.nonlinearity,
                 dropout=None,
                 initializer=attention_initializer,
             )
@@ -379,6 +555,9 @@ class BertModel(nn.Module):
                 if n in freeze_layers:
                     p.data.zero_()
                     p.requires_grad = False
+
+    def get_lr_adjustment_groups(self) -> Dict[str, LRAdjustmentGroup]:
+        return self.lr_adjustment_groups
 
     def compute_input_embeddings(
         self,
@@ -474,3 +653,49 @@ class BertModel(nn.Module):
             pooled_output = self.pooler(hidden_states)
 
         return hidden_states, pooled_output
+
+
+class BertPooler(nn.Module):
+    def __init__(
+        self,
+        hidden_size,
+        pooler_norm=False,
+        layer_norm_epsilon=1.0e-5,
+        use_bias=True,
+        activation="gelu",
+        dropout=None,
+        initializer="xavier_uniform",
+    ):
+        super().__init__()
+
+        self.pooler_norm = None
+        if pooler_norm:
+            self.pooler_norm = nn.LayerNorm(hidden_size, eps=layer_norm_epsilon)
+
+        self.pooler = FeedForwardNetwork(
+            FeedForwardNetworkConfig(
+                input_unit=hidden_size,
+                layers_units=[hidden_size],
+                layers_activation=[activation],
+                layers_dropout_rates=[dropout],
+                use_bias=use_bias,
+                kernel_initializer=initializer,
+            )
+        )
+
+    def reset_parameters(self):
+        if self.pooler_norm is not None:
+            self.pooler_norm.weight.data.fill_(1.0)
+            if self.pooler_norm.bias is not None:
+                self.pooler_norm.bias.data.zero_()
+        self.pooler.reset_parameters()
+
+    def forward(self, hidden_states):
+        # We "pool" the model by simply taking the hidden state
+        # corresponding to the first token.
+        # shape [batch_size, hidden_size]
+        cls_hidden_states = hidden_states[:, 0]
+        if self.pooler_norm is not None:
+            cls_hidden_states = self.pooler_norm(cls_hidden_states)
+        pooled_output = self.pooler(cls_hidden_states)
+        return pooled_output

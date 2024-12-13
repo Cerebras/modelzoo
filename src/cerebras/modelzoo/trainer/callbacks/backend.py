@@ -18,10 +18,10 @@ for the trainer.
 """
 
 import cerebras.pytorch as cstorch
-from cerebras.modelzoo.trainer.callbacks import Callback
+from cerebras.modelzoo.trainer.callbacks import CoreCallback
 
 
-class BackendCallback(Callback):
+class BackendCallback(CoreCallback):
     """Callback to set the backend for the trainer."""
 
     def __init__(self, backend, device):
@@ -36,7 +36,7 @@ class BackendCallback(Callback):
         self.backend = backend
         self.device = device
 
-    def setup(self, trainer):
+    def pre_setup(self, trainer):
         if self.backend is None:
             if isinstance(self.device, str):
                 accepted_device_types = {"CSX", "CPU", "GPU"}

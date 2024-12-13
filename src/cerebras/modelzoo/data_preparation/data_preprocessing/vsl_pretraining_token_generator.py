@@ -21,6 +21,8 @@ data by merging shorter sequences within a specified maximum sequence length,
 and tokenizing text for auto-regressive language modeling.
 """
 
+import os
+from collections import defaultdict
 from typing import Any, Dict, List, Tuple
 
 import numpy as np
@@ -29,7 +31,9 @@ from cerebras.modelzoo.data_preparation.data_preprocessing.pretraining_token_gen
     PretrainingTokenGenerator,
 )
 from cerebras.modelzoo.data_preparation.data_preprocessing.utils import (
-    create_features_auto_lm_vsl,
+    append_eos_to_multiple_semantic_regions,
+    get_data_stats,
+    setup_warning_logging,
 )
 
 
@@ -40,7 +44,6 @@ class VSLPretrainingTokenGenerator(PretrainingTokenGenerator):
     and optimizing representation of tokenized data for language modeling tasks.
 
     Attributes:
-        use_vsl (bool): Usage of variable sequence length logic.
         fold_long_doc (bool): Whether to fold long documents.
         position_ids_dtype (str): Data type for position IDs in tokenized output.
 
@@ -51,8 +54,6 @@ class VSLPretrainingTokenGenerator(PretrainingTokenGenerator):
         pad_id (int): Padding ID.
     """
 
-    use_vsl = True
-
     def __init__(
         self, params: Dict[str, Any], tokenizer: Any, eos_id: int, pad_id: int
     ):
@@ -61,18 +62,19 @@ class VSLPretrainingTokenGenerator(PretrainingTokenGenerator):
         tokenizer, and token IDs.
         """
         super().__init__(params, tokenizer, eos_id, pad_id)
+        setup_params = params["setup"]
+        warning_log_dir = (
+            os.path.join(setup_params.get("output_dir"), "logs")
+            if setup_params.get("output_dir")
+            else "./data_preprocessing_logs"
+        )
+        self.logger = setup_warning_logging(warning_log_dir, __name__)
         self.fold_long_doc = params["dataset"].pop("fold_long_doc", True)
         self.position_ids_dtype = params["dataset"].pop(
             "position_ids_dtype", "int32"
         )
         self.pack_sequences = False
-        self.sample_features = [
-            "input_ids",
-            "attention_mask",
-            "labels",
-            "attention_span",
-            "position_ids",
-        ]
+        self.features += ["attention_span", "position_ids"]
 
     def create_features_vsl_mlm(
         self,
@@ -126,6 +128,70 @@ class VSLPretrainingTokenGenerator(PretrainingTokenGenerator):
             labels,
         )
 
+    def create_features_auto_lm_vsl(
+        self,
+        bin,
+    ):
+        """Given a list of VSL sequences, generate input features and labels.
+
+        Args:
+            bin (list(sequence)): list of VSL sequences.
+            pad_id (int): Id for pad token. Defaults to `0`.
+
+        Returns:
+            Tuple containing features and labels
+        """
+        input_ids, labels, attention_span, position_ids = [], [], [], []
+        input_mask = []
+        for i, sample in enumerate(bin):
+            input_ids.extend(sample[0])
+            input_mask.extend(sample[1])
+            labels.extend(sample[2])
+            sample_len = len(sample[0])
+            if i == len(bin) - 1:
+                attention_span.extend(list(range(sample_len - 2, -1, -1)))
+                position_ids.extend(list(range(sample_len - 1)))
+            else:
+                attention_span.extend(list(range(sample_len - 1, -1, -1)))
+                position_ids.extend(list(range(sample_len)))
+
+        input_ids = input_ids[:-1]
+        input_mask = input_mask[:-1]
+        labels = labels[1:]
+        # padding
+        num_pad = self.max_seq_length - len(input_ids)
+        padding = [self.pad_id] * num_pad
+        input_ids.extend(padding)
+        labels.extend(padding)
+
+        padding = [0] * num_pad
+        input_mask.extend(padding)
+        attention_span.extend(padding)
+        position_ids.extend(padding)
+
+        # assertions to ensure correct output shapes
+        assert (
+            len(input_ids) == self.max_seq_length
+            and len(labels) == self.max_seq_length
+            and len(input_mask) == self.max_seq_length
+            and len(attention_span) == self.max_seq_length
+            and len(position_ids) == self.max_seq_length
+        ), "Wrong sequence length"
+
+        input_ids = getattr(np, self.input_ids_dtype)(input_ids)
+        input_mask = getattr(np, self.input_mask_dtype)(input_mask)
+
+        if self.inverted_mask:
+            input_mask = np.equal(input_mask, 0).astype(input_mask.dtype)
+
+        labels = getattr(np, self.input_ids_dtype)(labels)
+        attention_span = getattr(np, self.input_ids_dtype)(attention_span)
+        position_ids = getattr(np, self.position_ids_dtype)(position_ids)
+
+        return np.stack(
+            [input_ids, input_mask, labels, attention_span, position_ids]
+        )
+
     def process_chunks(
         self, tokenized_data: List[List[Any]]
     ) -> Tuple[List[Any], dict]:
@@ -151,27 +217,7 @@ class VSLPretrainingTokenGenerator(PretrainingTokenGenerator):
             "data": [],
             "labels": [],
         }  # List to store the processed results
-        stats = {
-            "loss_valid_tokens": 0,
-            "num_tokens": 0,
-            "num_pad_tokens": 0,
-            "non_pad_tokens": 0,
-            "num_masked_tokens": 0,
-            "processed": 0,
-            "discarded": 0,
-            "successful": 0,
-        }
-
-        input_id_list = []
-        input_mask_list = []
-        attention_span_list = []
-        position_id_list = []
-
-        labels_list = []
-        masked_lm_positions_list = []
-        masked_lm_mask_list = []
-
-        results = {"data": [], "labels": []}
+        stats = defaultdict(int)
 
         for tokenized_text_chunks in tokenized_data:
             (
@@ -210,13 +256,10 @@ class VSLPretrainingTokenGenerator(PretrainingTokenGenerator):
             stats["num_pad_tokens"] += num_pad
             stats["non_pad_tokens"] += self.max_seq_length - num_pad
             stats["num_tokens"] += self.max_seq_length
-            stats["processed"] += 1
 
         if results["data"] == []:
-            stats["discarded"] += 1
             data = {}
         else:
-            stats["successful"] += 1
             data = results
 
         return data, stats
@@ -235,42 +278,26 @@ class VSLPretrainingTokenGenerator(PretrainingTokenGenerator):
             Tuple[Dict[str, Any], Dict[str, int]]: Processed results and statistics.
         """
         results = {"data": []}  # List to store the processed results
-        stats = {
-            "loss_valid_tokens": 0,
-            "num_tokens": 0,
-            "num_pad_tokens": 0,
-            "non_pad_tokens": 0,
-            "num_masked_tokens": 0,
-        }
+        stats = defaultdict(int)
 
         for tokenized_text_chunks in tokenized_data:
             eos_len = 1 if self.eos_id is not None else 0
             tokenized_text_chunks_len = sum(
                 (len(one_d_list) - eos_len)
-                for one_d_list in tokenized_text_chunks
+                for one_d_list in tokenized_text_chunks[0]
             )
-            num_pad = self.max_seq_length - tokenized_text_chunks_len
-            processed = create_features_auto_lm_vsl(
+            processed = self.create_features_auto_lm_vsl(
                 tokenized_text_chunks,
-                self.max_seq_length,
-                num_pad,
-                pad_id=self.pad_id,
-                inverted_mask=self.inverted_mask,
-                input_ids_dtype=self.input_ids_dtype,
-                input_mask_dtype=self.input_mask_dtype,
-                labels_dtype=self.input_ids_dtype,
-                attention_span_dtype=self.position_ids_dtype,
-                position_ids_dtype=self.position_ids_dtype,
             )
             if processed.size != 0:
-                loss_valid_tokens = int(processed[1, :].sum())
-                stats["num_pad_tokens"] += num_pad
-                stats["non_pad_tokens"] += self.max_seq_length - num_pad
-                stats["num_masked_tokens"] += (
-                    self.max_seq_length - loss_valid_tokens
+                processed_stats = get_data_stats(
+                    processed, self.pad_id, self.eos_id, self.max_seq_length
                 )
-                stats["loss_valid_tokens"] += loss_valid_tokens
-                stats["num_tokens"] += len(processed[0])
+                stats["num_sequences_before_packing"] += len(
+                    tokenized_text_chunks
+                )
+                for key in processed_stats:
+                    stats[key] += processed_stats[key]
                 processed = np.expand_dims(processed, axis=0)
                 results["data"].append(processed)
         if results["data"] == []:
@@ -295,137 +322,205 @@ class VSLPretrainingTokenGenerator(PretrainingTokenGenerator):
             Tuple[List[np.ndarray], Dict[str, int]]: Tokenized and processed text features
                                                      and statistics.
         """
-        text, raw_data_stats = self.parse_semantic_data_array(
+        region_data, raw_data_stats = self.parse_semantic_data_array(
             semantic_data_array
         )
-        if text == "":
-            return {"data": []}, raw_data_stats
+        if not region_data:
+            return {}, raw_data_stats
+
+        semantic_regions = region_data.get("semantic_regions")
+
+        data, image_paths = (
+            region_data.get("data"),
+            region_data.get("image_paths"),
+        )
+
+        if data == "":
+            return {}, raw_data_stats
+
         if self.mlm:
             tokenized_data = self.tokenizer(
-                text,
+                data,
                 max_length=self.max_seq_length,
                 truncation=True,
                 padding=False,
                 return_attention_mask=True,
             )
             input_ids = tokenized_data['input_ids']
+
+            raw_data_stats["processed"] = 1
+
+            if input_ids == []:
+                raw_data_stats["discarded"] = 1
+            else:
+                raw_data_stats["successful"] = 1
+
             return {"data": [input_ids]}, raw_data_stats
 
-        # tokenize text
-        tokenized_text = self.tokenizer.encode(text)
-        if self.eos_id is not None:
-            tokenized_text += [self.eos_id]
-
-        tokenized_text_len = len(tokenized_text)
-        if tokenized_text_len < self.min_sequence_len:
-            raw_data_stats["discarded"] = 1
-            raw_data_stats["processed"] = 1
-            raw_data_stats["successful"] = 0
-            return {"data": []}, raw_data_stats
-
-        if self.rng.random() < self.short_seq_prob:
-            tokenized_text = tokenized_text[
-                0 : self.rng.randint(2, self.max_seq_length)
-            ]
-            tokenized_text_len = len(tokenized_text)
-
-        if tokenized_text_len > self.max_seq_length + 1:
-            if not self.fold_long_doc:
-                raw_data_stats["discarded"] = 1
-                raw_data_stats["processed"] = 1
-                raw_data_stats["successful"] = 0
-                return {"data": []}, raw_data_stats
-
-        tokenized_text_chunks = (
-            [
-                tokenized_text[i : i + self.max_seq_length]
-                for i in range(0, len(tokenized_text), self.max_seq_length)
-            ]
-            if self.mlm
-            else [
-                tokenized_text[i : i + self.max_seq_length + 1]
-                for i in range(0, len(tokenized_text), self.max_seq_length)
-            ]
+        tokenized_data = self.tokenizer(
+            data,
+            return_offsets_mapping=True,
         )
 
-        # update prefix if last chunk is < max_seq_length
-        num_tokens_last_chunk = len(tokenized_text_chunks[-1])
-        if num_tokens_last_chunk < 2:
-            _ = tokenized_text_chunks.pop(-1)
+        if len(semantic_regions) > 0:
+            append_eos_to_multiple_semantic_regions(
+                data,
+                self.data_ranges,
+                self.eos_token,
+                self.image_token,
+                False,
+            )
 
-        return {"data": tokenized_text_chunks}, raw_data_stats
+        tokenized_semantic_region_list = self.get_segment_indices(
+            tokenized_data,
+            semantic_regions,
+        )
+        data = {
+            "tokenized_data": tokenized_data,
+            "image_paths": image_paths,
+            "tokenized_semantic_regions": tokenized_semantic_region_list,
+        }
+
+        doc_list = self.chop_doc_into_msl(data)
+        results, tokenized_data_stats = self.process_docs(doc_list)
+        data_stats = {
+            "discarded": tokenized_data_stats["discarded"],
+            "processed": tokenized_data_stats["processed"],
+            "successful": tokenized_data_stats["successful"],
+            "raw_chars_count": raw_data_stats["raw_chars_count"],
+            "raw_bytes_count": raw_data_stats["raw_bytes_count"],
+            "normalized_chars_count": raw_data_stats["normalized_chars_count"],
+            "normalized_bytes_count": raw_data_stats["normalized_bytes_count"],
+            "num_pad_tokens": tokenized_data_stats["num_pad_tokens"],
+            "non_pad_tokens": tokenized_data_stats["non_pad_tokens"],
+            "num_masked_tokens": tokenized_data_stats["num_masked_tokens"],
+            "loss_valid_tokens": tokenized_data_stats["loss_valid_tokens"],
+            "num_tokens": tokenized_data_stats["num_tokens"],
+        }
+        return results, data_stats
+
+    def create_features_pretraining(
+        self,
+        doc,
+        token_modality_idx=None,
+    ):
+        input_ids = doc.get("input_ids")
+        total_len = len(input_ids)
+        if total_len < self.min_sequence_len:
+            self.logger.warning(
+                "Length of token ids < min_sequence_len, skipping this example..."
+            )
+            return []
+
+        input_mask, attention_mask = doc.get("loss_mask"), doc.get(
+            "attention_mask"
+        )
+
+        if not self.is_multimodal and self.rng.random() < self.short_seq_prob:
+            input_ids = input_ids[
+                0 : self.rng.randint(2, self.max_seq_length - 1)
+            ]
+            input_mask = input_mask[0 : len(input_ids)]
+            attention_mask = attention_mask[0 : len(input_ids)]
+
+        labels = input_ids
+        assert (
+            len(input_ids) == len(labels)
+            and len(labels) == len(input_mask)
+            and len(input_mask) == len(attention_mask)
+        ), "Wrong sequence length"
+
+        # Create features dictionary
+        features = {
+            "input_ids": getattr(np, self.input_ids_dtype)(input_ids),
+            "labels": getattr(np, self.input_ids_dtype)(labels),
+        }
+        input_mask = getattr(np, self.input_mask_dtype)(input_mask)
+        attention_mask = getattr(np, self.input_ids_dtype)(attention_mask)
+        if self.inverted_mask:
+            input_mask = np.equal(input_mask, 0).astype(self.input_mask_dtype)
+
+        return np.stack(
+            [
+                features["input_ids"],
+                input_mask,
+                features["labels"],
+            ]
+        )
 
     def append_within_max_length(
         self, tokenized_data: Dict[str, List[List[Any]]]
     ) -> List[List[List[Any]]]:
         """
-        Optimizes representation of tokenized data by merging shorter sequences
-        within the specified maximum sequence length. Converts 3D list to a
-        modified 3D structure where each innermost list is treated as a separate
-        2D list, then merges these 2D lists if their combined length is within
-        the max sequence length.
+        Optimizes the representation of tokenized data by merging shorter sequences
+        within the specified maximum sequence length (MSL). This function can handle
+        tokenized data structured either as a list of lists of lists of integers or
+        as a list of lists of NumPy arrays of integers.
+
+        The function converts a 3D list into a modified 3D structure where each
+        innermost list or array is treated as a separate 2D list. It then merges
+        these 2D lists or arrays if their combined length is within the maximum
+        sequence length (MSL).
 
         Args:
-            tokenized_data (Dict[str, List[List[Any]]]): 3D list of tokenized text data.
+            tokenized_data (Dict[str, List[List[Any]]]): A dictionary containing the
+                tokenized text data under the "data" key. The data can be a 3D list
+                of tokenized sequences, where sequences are either lists of integers
+                or NumPy arrays of integers.
 
         Returns:
-            List[List[List[Any]]]: Optimized 3D list after merging shorter sequences.
+            List[List[List[Any]]]: An optimized 3D list after merging shorter sequences
+            within the maximum sequence length. The output maintains the structure
+            of grouped sequences that adhere to the specified MSL.
         """
         tokenized_data = tokenized_data["data"]
 
-        def convert_3d_to_modified_3d(tokenized_data):
-            # First, flatten the 3D list to a 2D list
-            flattened_2d_list = []
-            for two_d_list in tokenized_data:
-                for one_d_list in two_d_list:
-                    flattened_2d_list.append(one_d_list)
+        def get_sequence_length(data_element):
+            """
+            Helper function to determine the length of a sequence based on its type.
+            Handles both lists of integers and numpy arrays.
+            """
+            if isinstance(data_element, list):
+                return len(data_element)
+            elif isinstance(data_element, np.ndarray):
+                return data_element.shape[1]
+            else:
+                raise ValueError(
+                    "Unsupported data type for sequence length calculation."
+                )
 
-            # Then, convert each list in the flattened 2D list to a 2D list
-            # within a new 3D list
-            new_3d_list = []
-            for one_d_list in flattened_2d_list:
-                new_2d_list = [one_d_list]
-                new_3d_list.append(new_2d_list)
+        def group_arrays_by_msl(tokenized_data, msl):
+            grouped_arrays = []
+            current_group = []
+            current_length = 0
 
-            return new_3d_list
+            # Flatten the list of lists into a single list of arrays or lists
+            flat_data = [item for sublist in tokenized_data for item in sublist]
 
-        tokenized_data = convert_3d_to_modified_3d(tokenized_data)
-        # Precompute combined length of all lists in each 2D list
-        combined_lengths = [
-            sum(len(one_d_list) for one_d_list in two_d_list)
-            for two_d_list in tokenized_data
-        ]
+            # Sort the flat_data by sequence length in descending order
+            flat_data.sort(key=lambda x: get_sequence_length(x), reverse=True)
 
-        indices_to_remove = set()
+            for data_element in flat_data:
+                num_tokens = get_sequence_length(data_element)
 
-        # Iterate over each 2D list in the 3D list in reverse order
-        for i in range(len(tokenized_data) - 1, 0, -1):
-            # Use the precomputed length
-            current_combined_length = combined_lengths[i]
-            # Check if combined length of current 2D list is less than max_seq_length
-            if current_combined_length < self.max_seq_length:
-                # Look for a previous 2D list to merge with
-                for j in range(i - 1, -1, -1):
-                    # Use the precomputed length
-                    total_combined_length = (
-                        current_combined_length + combined_lengths[j]
-                    )
+                # If adding this array or list exceeds the MSL, finalize the current group and start a new one
+                if current_length + num_tokens > msl:
+                    if current_group:  # Ensure the current group is not empty
+                        grouped_arrays.append(current_group)
+                    current_group = []
+                    current_length = 0
 
-                    # Check if combined length of both 2D lists is within max_seq_length
-                    if total_combined_length <= self.max_seq_length:
-                        # If so, merge current 2D list into the previous 2D list
-                        tokenized_data[j].extend(tokenized_data[i])
-                        # Update combined length for merged 2D list
-                        combined_lengths[j] += combined_lengths[i]
+                # Add the current element to the group
+                current_group.append(data_element)
+                current_length += num_tokens
 
-                        # Instead of deleting immediately, add the index to the set
-                        indices_to_remove.add(i)
-                        break  # Exit inner loop as merge is done
+            # Add the last group if it has any elements
+            if current_group:
+                grouped_arrays.append(current_group)
 
-        # Delete the elements after the loop is done
-        # Convert indices_to_remove to a list and sort in reverse order to ensure indices remain correct while deleting
-        for index in sorted(indices_to_remove, reverse=True):
-            del tokenized_data[index]
-            del combined_lengths[index]
+            return grouped_arrays
 
-        return tokenized_data
+        tokenized_data_by_group = group_arrays_by_msl(
+            tokenized_data, self.max_seq_length
+        )
+        return tokenized_data_by_group

@@ -27,7 +27,7 @@
             <div class="controls">
                 <div class="dropdown-containers">
                     <div class="dropdown-container">
-                        <select id="fileSelector" class="dropdown" onchange="loadData(0, true)">
+                        <select id="fileSelector" class="dropdown" onchange="loadData(0, null, true)">
                             {% for file in files %}
                                 <option value="{{ file }}">{{ file.split('/')[-1] }}</option>
                             {% endfor %}
@@ -40,6 +40,11 @@
                     </div>
                 </div>
                 <div class="legend">
+                    <div id="removeSpecialCharDiv" class="legend-item" style="font-size: 12px;">
+                        <label for="special-characters" style="white-space: nowrap;">Remove Word Boundary:</label>
+                        <input type="text" id="special-characters" name="special-characters" placeholder="Enter text here" style="font-size: 12px; padding: 2px 4px; width: 100px;">
+                        <button onClick="removeSpecialCharacter()" style="font-size: 12px; padding: 2px 6px; margin-left: 5px;">Remove</button>
+                    </div>
                     <div class="legend-item">
                         <span class="color-box" style="background-color: #78fd68;"></span> Loss On
                     </div>
@@ -50,23 +55,11 @@
                 </div>            
             </div>
             <div class="fixed-sections">
-                <!-- <div class="images-section">
-                    <h2>Image(s)</h2>
-                    <div class="multimodal-images-display">
-                        <div class="image-block">
-                            <img src="{{ url_for('static', filename='images/cerebras_logo.png') }}" alt="Image 1">
-                            <p>/path/to/image</p>
-                        </div>
-                        <div class="image-block">
-                            <img src="{{ url_for('static', filename='images/cerebras_logo.png') }}" alt="Image 1">
-                            <p>/path/to/image</p>
-                        </div>
-                    </div>
-                </div> -->
-                <div class="top-tokens">
-                    <h2>Top Tokens</h2>
-                    <div class="token-list">
-                        <ul id="tokensList"></ul>
+                <div class="seq-dist">
+                    <h2>Sequence Distribution</h2>
+                    <div class="sequence-distribution">
+                        <div id="spinner" class="spinner"></div>
+                        <img id="sequence-image" alt="Sequence Distribution" style="display: none;">
                     </div>
                 </div>
                 <div class="stats">
@@ -74,6 +67,7 @@
                     <table id="statsTable"></table>
                 </div>
             </div>
+            <div class="overlay" style="display: none;"></div>
         </div>
         <div class="main-content">
             <div class="dynamic-sections">
@@ -93,11 +87,6 @@
                     <h3 class="section-title">Label IDs</h3>
                     <div id="label_ids_display" class="data-display"></div>
                 </div>
-                <!-- <div id="input_loss_mask_section" class="section">
-                    <h3 class="section-title">Input Loss Mask</h3>
-                    <div id="input_loss_mask_display" class="data-display"></div>
-                </div> -->
-                <!-- Add other sections similarly -->
             </div>
         </div>
     </div>
@@ -106,7 +95,7 @@
     <script src="{{ url_for('static', filename='js/main.js') }}"></script>
     <script type="text/javascript">
         document.addEventListener('DOMContentLoaded', function() {
-            loadData(0, true);
+            loadData(0, null, true);
         });
     </script>
     

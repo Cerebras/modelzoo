@@ -12,132 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import importlib
 import logging
 import re
-from collections import OrderedDict
-from dataclasses import asdict, dataclass, is_dataclass
-from typing import Any, List
+from typing import List
 
 import torch
-
-
-@dataclass
-class MultimodalModelMapping:
-    model_name: str
-    module_import_path: str
-
-
-@dataclass
-class ProjectorMapping:
-    projector_name: str
-    module_import_path: str
-    config_class: str
-
-
-# SUPPORTED PROJECTORS
-# Dict[projector_name, ProjectorMapping]
-PROJECTOR_NAME_MODULE_DEFAULTFCN_MAPPING = OrderedDict(
-    [
-        (
-            "MLP",
-            ProjectorMapping(
-                "MLP",
-                "cerebras.modelzoo.layers.FeedForwardNetwork",
-                "FeedForwardNetworkConfig",
-            ),
-        ),
-        (
-            "FeedForwardNetwork",
-            ProjectorMapping(
-                "FeedForwardNetwork",
-                "cerebras.modelzoo.layers.FeedForwardNetwork",
-                "FeedForwardNetworkConfig",
-            ),
-        ),
-    ]
-)
-
-# SUPPORTED MODELS FOR MODALITIES
-# Dict[model_name, MultimodalModelMapping]
-MODEL_MODULE_DEFAULTFCN_MAPPING = OrderedDict(
-    [
-        (
-            "ViTModel",
-            MultimodalModelMapping(
-                "ViTModel",
-                "cerebras.modelzoo.models.vision.vision_transformer.ViTModel.ViTModel",
-            ),
-        ),
-        (
-            "T5ForConditionalGeneration",
-            MultimodalModelMapping(
-                "T5ForConditionalGeneration",
-                "cerebras.modelzoo.models.nlp.t5.t5_model.T5ForConditionalGeneration",
-            ),
-        ),
-        (
-            "LlamaModel",
-            MultimodalModelMapping(
-                "LlamaModel",
-                "cerebras.modelzoo.models.nlp.gpt2.gpt2_model.GPT2LMHeadModel",
-            ),
-        ),
-        (
-            "FeedForwardNetwork",
-            MultimodalModelMapping(
-                "FeedForwardNetwork",
-                (
-                    "cerebras.modelzoo.layers.FeedForwardNetwork",
-                    "cerebras.modelzoo.layers.FeedForwardNetworkConfig",
-                ),
-            ),
-        ),
-    ]
-)
-
-
-def _import_helper(import_module_path, import_object_name):
-    try:
-        module = importlib.import_module(import_module_path)
-        obj = getattr(module, import_object_name)
-    except Exception as e:
-        raise ImportError(
-            f"Unable to import {import_object_name} from {import_module_path}"
-        )
-    return obj
-
-
-def get_per_model_handle(model_name: str) -> object:
-    _model_map = model_name.split(".")
-    _module_path, _modelclass = ".".join(_model_map[:-1]), _model_map[-1]
-    model_handle = _import_helper(_module_path, _modelclass)
-    return model_handle
-
-
-def get_model_handle_from_mapping(model_name: str) -> object:
-    _model_map = MODEL_MODULE_DEFAULTFCN_MAPPING[model_name].module_import_path
-    if type(_model_map) is tuple or type(_model_map) is list:
-        model_handle_list = [get_per_model_handle(x) for x in _model_map]
-        return model_handle_list
-    else:
-        return get_per_model_handle(_model_map)
-
-
-def get_projector_model_handle_from_mapping(projector_name: str) -> object:
-    _proj_mapping = PROJECTOR_NAME_MODULE_DEFAULTFCN_MAPPING[projector_name]
-    _proj_model_map = _proj_mapping.module_import_path.split(".")
-    _module_path, _modelclass = (
-        ".".join(_proj_model_map[:-1]),
-        _proj_model_map[-1],
-    )
-    model_class = _import_helper(_module_path, _modelclass)
-    config_class = _import_helper(_module_path, _proj_mapping.config_class)
-
-    def handle_from_config_args(*args, **kwargs):
-        return model_class(config_class(*args, **kwargs))
-
-    return handle_from_config_args
 
 
 def freeze_modules(
@@ -190,18 +69,3 @@ def freeze_modules(
         f"The follow parameters are being trained: "
         f"{[n for n, p in model.named_parameters() if p.requires_grad]}"
     )
-
-
-def init_component_model(component_params: Any) -> object:
-    if is_dataclass(component_params):
-        component_params = asdict(component_params)
-    component_name = component_params.pop("name")
-    component_handle = get_model_handle_from_mapping(component_name)
-    if type(component_handle) is list:
-        component_model = component_handle[0](
-            component_handle[1](**component_params)
-        )
-    else:
-        component_model = component_handle(**component_params)
-
-    return component_model

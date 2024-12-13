@@ -12,21 +12,32 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from cerebras.modelzoo.common.registry import registry
+from typing import Literal
+
 from cerebras.modelzoo.data.vision.classification.data.imagenet import (
     ImageNet1KProcessor,
+    ImageNet1KProcessorConfig,
 )
 from cerebras.modelzoo.data.vision.masked_auto_encoding.MAEProcessor import (
     MAEProcessor,
+    MAEProcessorConfig,
 )
 
 
-@registry.register_datasetprocessor("ImageNet1KMAEProcessor")
-class ImageNet1KMAEProcessor(MAEProcessor, ImageNet1KProcessor):
-    def __init__(self, params):
-        super().__init__(params=params)
+class ImageNet1KMAEProcessorConfig(
+    MAEProcessorConfig, ImageNet1KProcessorConfig
+):
+    data_processor: Literal["ImageNet1KMAEProcessor"]
 
-    def create_dataloader(self, dataset, is_training=False):
-        dataloader = super().create_dataloader(dataset, is_training)
+
+class ImageNet1KMAEProcessor(MAEProcessor, ImageNet1KProcessor):
+    def __init__(self, config: ImageNet1KMAEProcessorConfig):
+        if isinstance(config, dict):
+            config = ImageNet1KMAEProcessorConfig(**config)
+        MAEProcessor.__init__(self, config)
+        ImageNet1KProcessor.__init__(self, config)
+
+    def create_dataloader(self):
+        dataloader = super().create_dataloader()
         dataloader.collate_fn = self.mae_collate_fn
         return dataloader

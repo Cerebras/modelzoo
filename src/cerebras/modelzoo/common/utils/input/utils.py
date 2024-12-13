@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Specifies `SamplesSaver` and `SamplesViewer` classes for writing and reading numpy array datasets."""
+"""Specifies `SamplesSaver` class for writing numpy array datasets."""
 
 import logging
 import os
@@ -31,6 +31,7 @@ class SamplesSaver:
         data_dir: str,
         max_file_size: int,
         filename_prefix: Optional[str] = None,
+        dtype: Optional[np.dtype] = None,
     ):
         """Constructs a `SamplesSaver` instance.
 
@@ -38,6 +39,7 @@ class SamplesSaver:
             data_dir: Path to mounted dir where the samples are dumped
             max_file_size: Maximum file size (in bytes) for the .npy samples file(s)
             filename_prefix: (Optional) filename prefix for the .npy file(s)
+            dtype: (Optional) numpy dtype for the array. If unspecified, the dtype is np.int32
         """
         self.data_dir = data_dir
         os.makedirs(data_dir, exist_ok=True)
@@ -46,6 +48,7 @@ class SamplesSaver:
         self.filename_prefix = (
             filename_prefix if filename_prefix is not None else "samples"
         )
+        self.dtype = dtype if dtype is not None else np.int32
 
         self._data_samples = []
         self._samples_file_list = []
@@ -93,7 +96,7 @@ class SamplesSaver:
         )
         try:
             with open(samples_file_path, 'wb') as f:
-                np.save(f, np.array(self._data_samples))
+                np.save(f, np.array(self._data_samples, dtype=self.dtype))
         except Exception as e:
             raise RuntimeError(
                 f"Failed to save samples in file {samples_file_path} "
@@ -120,7 +123,7 @@ class SamplesSaver:
         try:
             if os.path.exists(self.data_dir):
                 shutil.rmtree(self.data_dir)
-        except Exception as e:
+        except Exception as e:  # pylint: disable=broad-except
             logging.error(
                 f"Failed to delete samples data directory due to: {e}"
             )

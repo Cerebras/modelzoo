@@ -14,6 +14,7 @@
 
 import random
 from abc import ABC, abstractmethod
+from typing import Literal
 
 import torch
 from torchvision import transforms
@@ -22,14 +23,19 @@ import cerebras.pytorch as cstorch
 import cerebras.pytorch.distributed as dist
 from cerebras.modelzoo.common.input_utils import get_streaming_batch_size
 from cerebras.modelzoo.common.pytorch_utils import BufferedShuffleDataset
-from cerebras.modelzoo.common.registry import registry
+from cerebras.modelzoo.data.vision.segmentation.Hdf5BaseDataProcessor import (
+    Hdf5BaseDataProcessorConfig,
+)
 from cerebras.modelzoo.data.vision.segmentation.preprocessing_utils import (
     normalize_tensor_transform,
 )
 from cerebras.modelzoo.data.vision.utils import create_worker_cache
 
 
-@registry.register_datasetprocessor("Hdf5BaseIterDataProcessor")
+class Hdf5BaseIterDataProcessorConfig(Hdf5BaseDataProcessorConfig):
+    data_processor: Literal["Hdf5BaseIterDataProcessor"]
+
+
 class Hdf5BaseIterDataProcessor(ABC, torch.utils.data.IterableDataset):
     """
     A HDF5 dataset processor for UNet HDF dataset.
@@ -38,33 +44,13 @@ class Hdf5BaseIterDataProcessor(ABC, torch.utils.data.IterableDataset):
     Functionality includes:
         Reading data from HDF5 documents
         Augmenting data
-
-    :param dict params: dict containing training
-        input parameters for creating dataset.
-    Expects the following fields:
-
-    - "data_dir" (str or list of str): Path to dataset HDF5 files
-    - "num_classes (int): Maximum length of the sequence to generate
-    - "image_shape" (int): Expected shape of output images and label, used in assert checks.
-    - "loss" (str): Loss type, supported: {"bce", "multilabel_bce", "ssce"}
-    - "normalize_data_method" (str): Can be one of {None, "zero_centered", "zero_one"}
-    - "batch_size" (int): Batch size.
-    - "shuffle" (bool): Flag to enable data shuffling.
-    - "shuffle_buffer" (int): Size of shuffle buffer in samples.
-    - "shuffle_seed" (int): Shuffle seed.
-    - "num_workers" (int):  How many subprocesses to use for data loading.
-    - "drop_last" (bool): If True and the dataset size is not divisible
-       by the batch size, the last incomplete batch will be dropped.
-    - "prefetch_factor" (int): Number of samples loaded in advance by each worker.
-    - "persistent_workers" (bool): If True, the data loader will not shutdown
-       the worker processes after a dataset has been consumed once.
     """
 
-    def __init__(self, params):
+    def __init__(self, config: Hdf5BaseIterDataProcessorConfig):
         super(Hdf5BaseIterDataProcessor, self).__init__()
 
-        use_worker_cache = params["use_worker_cache"]
-        self.data_dir = params["data_dir"]
+        use_worker_cache = config.use_worker_cache
+        self.data_dir = config.data_dir
         if use_worker_cache and dist.is_streamer():
             if not cstorch.use_cs():
                 raise RuntimeError(
@@ -73,43 +59,39 @@ class Hdf5BaseIterDataProcessor(ABC, torch.utils.data.IterableDataset):
             else:
                 self.data_dir = create_worker_cache(self.data_dir)
 
-        self.num_classes = params["num_classes"]
-        self.normalize_data_method = params.get("normalize_data_method")
+        self.num_classes = config.num_classes
+        self.normalize_data_method = config.normalize_data_method
         if self.normalize_data_method:
             # Normalize
             self.normalize_transform = transforms.Lambda(
                 self._apply_normalization
             )
 
-        self.image_shape = params["image_shape"]  # of format (H, W, C)
+        self.image_shape = config.image_shape  # of format (H, W, C)
         (
             self.tgt_image_height,
             self.tgt_image_width,
             self.channels,
         ) = self.image_shape
 
-        self.loss_type = params["loss"]
+        self.loss_type = config.loss
 
-        self.shuffle_seed = params.get("shuffle_seed", None)
+        self.shuffle_seed = config.shuffle_seed
         if self.shuffle_seed is not None:
             torch.manual_seed(self.shuffle_seed)
 
-        self.augment_data = params.get("augment_data", True)
-        self.batch_size = get_streaming_batch_size(params["batch_size"])
-        self.shuffle = params.get("shuffle", True)
+        self.augment_data = config.augment_data
+        self.batch_size = get_streaming_batch_size(config.batch_size)
+        self.shuffle = config.shuffle
 
-        self.shuffle_buffer = params.get("shuffle_buffer", 10 * self.batch_size)
+        self.shuffle_buffer = config.shuffle_buffer
 
-        self.num_workers = params.get("num_workers", 0)
-        self.drop_last = params.get("drop_last", True)
-        self.prefetch_factor = params.get("prefetch_factor", 10)
-        self.persistent_workers = params.get("persistent_workers", True)
+        self.num_workers = config.num_workers
+        self.drop_last = config.drop_last
+        self.prefetch_factor = config.prefetch_factor
+        self.persistent_workers = config.persistent_workers
 
-        self.mixed_precision = params.get("mixed_precision")
-        if self.mixed_precision:
-            self.mp_type = cstorch.amp.get_half_dtype()
-        else:
-            self.mp_type = torch.float32
+        self.mp_type = cstorch.amp.get_floating_point_dtype()
 
         self.num_tasks = dist.num_streamers() if dist.is_streamer() else 1
         self.task_id = dist.get_streaming_rank() if dist.is_streamer() else 0
@@ -157,10 +139,11 @@ class Hdf5BaseIterDataProcessor(ABC, torch.utils.data.IterableDataset):
 
         self.data_partitions = self._shard_dataset(worker_id, num_workers)
 
-    def create_dataloader(self, is_training=True):
+    def create_dataloader(self):
         """
         Classmethod to create the dataloader object.
         """
+        is_training = self.split == "train"
         self._shard_files(is_training)
 
         if self.shuffle:

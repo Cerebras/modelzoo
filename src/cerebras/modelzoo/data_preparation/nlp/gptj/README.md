@@ -64,7 +64,7 @@ The input to this script, `<INPUT_FILE>`, is the cleaned file from the last step
 
 After splitting the dataset into smaller chunks from the previous step you can then convert the dataset into tokenized input ids in HDF5 file and use it with the `GptHDF5DataProcessor` class in [`GptHDF5DataProcessor.py`](../../../data/nlp/gpt/GptHDF5DataProcessor.py).
 
-For the details on the processing, please refer to the [HDF5 preprocessing](../../../data_preparation/nlp/hdf5_preprocessing/README.md).
+For the details on the processing, please refer to the section on [HDF5 preprocessing](https://docs.cerebras.net/en/latest/wsc/Model-zoo/Components/Data-preprocessing/data_preprocessing.html).
 
 For processing the split files into HDF5, below command can be used as a reference:
 

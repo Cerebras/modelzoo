@@ -237,7 +237,9 @@ class Converter_Falcon_7B_Attention_HF_CS19(
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-1.9", "cs-2.0", "cs-2.1", "cs-2.2", "cs-2.3"),
+            FormatVersions(
+                "cs-1.9", "cs-2.0", "cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4"
+            ),
         )
 
     @staticmethod
@@ -402,7 +404,9 @@ class Converter_Falcon_7B_Headless_WithoutModelPrefix_HF_CS19(
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-1.9", "cs-2.0", "cs-2.1", "cs-2.2", "cs-2.3"),
+            FormatVersions(
+                "cs-1.9", "cs-2.0", "cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4"
+            ),
         )
 
     @classmethod
@@ -492,7 +496,9 @@ class Converter_Falcon_7B_WithoutModelPrefix_HF_CS19(
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-1.9", "cs-2.0", "cs-2.1", "cs-2.2", "cs-2.3"),
+            FormatVersions(
+                "cs-1.9", "cs-2.0", "cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4"
+            ),
         )
 
     @classmethod
@@ -726,10 +732,11 @@ class ConfigConverter_Falcon_7B_HF_CS19(BaseConfigConverter_HF_CS):
 
     def pre_config_convert(
         self,
+        model,
         config,
         converter_indices,
     ):
-        config = super().pre_config_convert(config, converter_indices)
+        config = super().pre_config_convert(model, config, converter_indices)
 
         # Apply defaults
         for key in self.defaults[converter_indices.direction]:
@@ -740,6 +747,7 @@ class ConfigConverter_Falcon_7B_HF_CS19(BaseConfigConverter_HF_CS):
 
     def post_config_convert(
         self,
+        model,
         original_config,
         old_config,
         new_config,
@@ -783,6 +791,7 @@ class ConfigConverter_Falcon_7B_HF_CS19(BaseConfigConverter_HF_CS):
                 ), "We only support num_kv_groups==1 (7B case)."
 
         return super().post_config_convert(
+            model,
             original_config,
             old_config,
             new_config,
@@ -794,5 +803,7 @@ class ConfigConverter_Falcon_7B_HF_CS19(BaseConfigConverter_HF_CS):
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-1.9", "cs-2.0", "cs-2.1", "cs-2.2", "cs-2.3"),
+            FormatVersions(
+                "cs-1.9", "cs-2.0", "cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4"
+            ),
         )

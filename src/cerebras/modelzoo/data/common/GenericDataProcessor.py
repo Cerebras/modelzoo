@@ -15,6 +15,7 @@
 """Pytorch Generic Dataloader"""
 
 import random
+from typing import Literal, Optional
 
 import torch
 
@@ -23,47 +24,74 @@ from cerebras.modelzoo.common.pytorch_utils import (
     BufferedShuffleDataset,
     IterableDatasetSampler,
 )
+from cerebras.modelzoo.config import DataConfig
 from cerebras.modelzoo.data.common.input_utils import num_tasks, task_id
+
+
+class GenericDataProcessorConfig(DataConfig):
+    data_processor: Literal["GenericDataProcessor"]
+
+    batch_size: int = ...
+    "The Batch size."
+
+    shuffle: bool = False
+    "Flag to enable data shuffling."
+
+    shuffle_seed: Optional[int] = None
+    "Shuffle seed."
+
+    shuffle_buffer: Optional[int] = None
+    "Size of shuffle buffer in samples."
+
+    num_workers: int = 0
+    "How many subprocesses to use for data loading."
+
+    drop_last: bool = True
+    """
+    If True and the dataset size is not divisible by the batch size, the last
+    incomplete batch will be dropped.
+    """
+
+    prefetch_factor: Optional[int] = 10
+    "Number of batches loaded in advance by each worker."
+
+    persistent_workers: bool = True
+    """
+    If True, the data loader will not shutdown the worker processes after a
+    dataset has been consumed once.
+    """
 
 
 class GenericDataProcessor:
     """
     A Generic PyTorch Data Processor.
-    :param dict params: dict containing training
-        input parameters for creating dataset.
-    Expects the following fields:
-    - "batch_size" (int): Batch size.
-    - "shuffle" (bool): Flag to enable data shuffling.
-    - "shuffle_seed" (int): Shuffle seed.
-    - "shuffle_buffer" (int): Size of shuffle buffer in samples.
-    - "num_workers" (int):  How many subprocesses to use for data loading.
-    - "drop_last" (bool): If True and the dataset size is not divisible
-       by the batch size, the last incomplete batch will be dropped.
-    - "prefetch_factor" (int): Number of batches loaded in advance by each worker.
-    - "persistent_workers" (bool): If True, the data loader will not shutdown
-       the worker processes after a dataset has been consumed once.
+
+    Args:
+        config: the configuration object for the data processor.
     """
 
-    def __init__(self, params):
-        super(GenericDataProcessor, self).__init__()
+    def __init__(self, config: GenericDataProcessorConfig, dataset):
+        if isinstance(config, dict):
+            config = GenericDataProcessorConfig(**config)
 
-        self.batch_size = get_streaming_batch_size(params["batch_size"])
+        super().__init__()
 
-        self.shuffle = params["shuffle"]
-        self.shuffle_seed = params.get("shuffle_seed", None)
-        self.shuffle_buffer = params.get("shuffle_buffer", 10 * self.batch_size)
+        self.batch_size = get_streaming_batch_size(config.batch_size)
 
-        self.num_workers = params.get("num_workers", 0)
-        self.drop_last = params.get("drop_last", True)
-        self.prefetch_factor = params.get("prefetch_factor", 10)
-        self.persistent_workers = params.get("persistent_workers", True)
+        self.shuffle = config.shuffle
+        self.shuffle_seed = config.shuffle_seed
+        self.shuffle_buffer = config.shuffle_buffer
+        if self.shuffle_buffer is None:
+            self.shuffle_buffer = 10 * self.batch_size
+
+        self.num_workers = config.num_workers
+        self.drop_last = config.drop_last
+        self.prefetch_factor = config.prefetch_factor
+        self.persistent_workers = config.persistent_workers
 
         assert self.batch_size > 0, "Batch size should be positive."
 
-        if not hasattr(self, "dataset"):
-            assert hasattr(
-                self, "dataset"
-            ), "The child class should implement self.dataset"
+        self.dataset = dataset
 
         if isinstance(self.dataset, torch.utils.data.IterableDataset):
             self.map_style_dataset = False

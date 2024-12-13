@@ -38,6 +38,14 @@ def _get_activation_fn(activation: str) -> Callable[[Tensor], Tensor]:
     )
 
 
+def reset_norm(module):
+    "Resets a norm layer by zeroing out the bias and replacing weight with 1s."
+    if hasattr(module, 'bias') and hasattr(module.bias, 'data'):
+        module.bias.data.zero_()
+    if hasattr(module, 'weight') and hasattr(module.weight, 'data'):
+        module.weight.data.fill_(1.0)
+
+
 def patchify_helper(input_image, patch_size):
     batch_size, num_channels, height, width = input_image.shape
     num_patches = [

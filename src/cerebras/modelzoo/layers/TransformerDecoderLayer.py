@@ -16,7 +16,7 @@
 Adapted from https://github.com/pytorch/pytorch/blob/master/torch/nn/modules/transformer.py
 """
 
-from typing import Callable, Optional, Tuple, Type, Union
+from typing import Callable, Dict, Optional, Tuple, Type, Union
 
 import torch.nn as nn
 from torch import Tensor
@@ -26,11 +26,16 @@ from cerebras.modelzoo.layers.AttentionHelper import get_attention_module
 from cerebras.modelzoo.layers.FeedForwardNetwork import (
     FeedForwardNetwork,
     FeedForwardNetworkConfig,
+    MoEConfig,
+)
+from cerebras.modelzoo.layers.MemoryTokenHelpers import (
+    create_mem_token_attn_module,
 )
 from cerebras.modelzoo.layers.RotaryPositionEmbeddingHelper import (
     RotaryPositionEmbeddingHelper,
 )
 from cerebras.modelzoo.layers.SparseMoEBlock import SparseMoEBlock
+from cerebras.modelzoo.layers.utils import reset_norm
 
 SelfAttnKV = Tuple[Tensor, Tensor]
 CrossAttnKV = Tuple[Tensor, Tensor]
@@ -134,7 +139,8 @@ class TransformerDecoderLayer(nn.Module):
         use_ff_layer1_dropout: bool = True,
         use_ff_layer2_dropout: bool = True,
         ffn_dropout_rate: Optional[float] = None,
-        moe_params=dict(num_experts=1),
+        moe_params=MoEConfig(),
+        use_memory_tokens=False,
     ) -> None:
         super(TransformerDecoderLayer, self).__init__()
 
@@ -145,6 +151,10 @@ class TransformerDecoderLayer(nn.Module):
         AttentionModule = get_attention_module(
             attention_module, extra_attention_params
         )
+        # Wrap the attention module so that a separate set of
+        # weights is added for memory tokens
+        if use_memory_tokens:
+            AttentionModule = create_mem_token_attn_module(AttentionModule)
 
         self.self_attn = AttentionModule(
             d_model,
@@ -254,11 +264,17 @@ class TransformerDecoderLayer(nn.Module):
             output_layer_initializer=ffn_output_layer_initializer,
             bias_initializer="zeros",
             device=device,
-            **moe_params,
+            moe_params=moe_params,
             **extra_ffn_params,
         )
 
-        self.moe_enabled = moe_params["num_experts"] > 1
+        total_experts = moe_params.num_experts
+        if moe_params.num_shared_experts:
+            total_experts += moe_params.num_shared_experts
+        self.moe_enabled = total_experts > 1
+        self.router_selection_nonlinearity = (
+            moe_params.router_selection_nonlinearity
+        )
         if self.moe_enabled:
             self.ffn = SparseMoEBlock(ffn_config)
         else:
@@ -272,43 +288,20 @@ class TransformerDecoderLayer(nn.Module):
     def __reset_parameters(self):
         self.self_attn.reset_parameters()
         self.ffn.reset_parameters()
-        if hasattr(self.norm1, 'bias') and hasattr(self.norm1.bias, 'data'):
-            self.norm1.bias.data.zero_()
-        if hasattr(self.norm1, 'weight') and hasattr(self.norm1.weight, 'data'):
-            self.norm1.weight.data.fill_(1.0)
+        reset_norm(self.norm1)
+
         if self.norm3 is not None:
-            if hasattr(self.norm3, 'bias') and hasattr(self.norm3.bias, 'data'):
-                self.norm3.bias.data.zero_()
-            if hasattr(self.norm3, 'weight') and hasattr(
-                self.norm3.weight, 'data'
-            ):
-                self.norm3.weight.data.fill_(1.0)
+            reset_norm(self.norm3)
+
         if self.norm_first_sandwich:
-            if hasattr(self.norm1_post, 'bias') and hasattr(
-                self.norm1_post.bias, 'data'
-            ):
-                self.norm1_post.bias.data.zero_()
-            if hasattr(self.norm1_post, 'weight') and hasattr(
-                self.norm1_post.weight, 'data'
-            ):
-                self.norm1_post.weight.data.fill_(1.0)
+            reset_norm(self.norm1_post)
+
             if self.norm3_post is not None:
-                if hasattr(self.norm3_post, 'bias') and hasattr(
-                    self.norm3_post.bias, 'data'
-                ):
-                    self.norm3_post.bias.data.zero_()
-                if hasattr(self.norm3_post, 'weight') and hasattr(
-                    self.norm3_post.weight, 'data'
-                ):
-                    self.norm3_post.weight.data.fill_(1.0)
+                reset_norm(self.norm3_post)
+
         if self.add_cross_attention:
             self.multihead_attn.reset_parameters()
-            if hasattr(self.norm2, 'bias') and hasattr(self.norm2.bias, 'data'):
-                self.norm2.bias.data.zero_()
-            if hasattr(self.norm2, 'weight') and hasattr(
-                self.norm2.weight, 'data'
-            ):
-                self.norm2.weight.data.fill_(1.0)
+            reset_norm(self.norm2)
 
     def forward(
         self,
@@ -327,6 +320,7 @@ class TransformerDecoderLayer(nn.Module):
         cross_attn_position_bias: Optional[Tensor] = None,
         layer_idx: Optional[int] = None,
         expert_hash_idx: Optional[Tensor] = None,
+        special_token_indices: Dict[str, Tensor] = None,
         **extra_args,
     ) -> Union[Tensor, Tuple[Tensor, Union[SelfAttnKV, SelfAndCrossAttnKV]]]:
         r"""Pass the inputs (and mask) through the decoder layer.
@@ -363,6 +357,7 @@ class TransformerDecoderLayer(nn.Module):
         ), "Cannot provide past_kv because inference is not supported yet."
 
         ffn_extra_args = {}
+        ffn_extra_args["layer_idx"] = layer_idx
         if (
             extra_args
             and ("token_modality_idx" in extra_args)
@@ -374,6 +369,7 @@ class TransformerDecoderLayer(nn.Module):
             extra_args.pop('token_modality_idx')
         if self.moe_enabled and expert_hash_idx is not None:
             ffn_extra_args["expert_hash_idx"] = expert_hash_idx
+
         x = tgt
         if self.norm_first:
             attn1_out = self._sa_block(
@@ -385,6 +381,7 @@ class TransformerDecoderLayer(nn.Module):
                 cache_present_kv=cache_present_kv,
                 self_attn_position_bias=self_attn_position_bias,
                 layer_idx=layer_idx,
+                special_token_indices=special_token_indices,
                 **extra_args,
             )
             post_attn1 = attn1_out[0]
@@ -403,6 +400,7 @@ class TransformerDecoderLayer(nn.Module):
                     cache_present_kv=cache_present_kv,
                     cross_attn_position_bias=cross_attn_position_bias,
                     layer_idx=layer_idx,
+                    special_token_indices=special_token_indices,
                     **extra_args,
                 )
 
@@ -413,11 +411,7 @@ class TransformerDecoderLayer(nn.Module):
                 else self.ffn(x, **ffn_extra_args)
             )
             if self.moe_enabled:
-                (
-                    ffn_output,
-                    routing_weights,
-                    expert_mask,
-                ) = ffn_output
+                (ffn_output, routing_weights, expert_mask) = ffn_output
 
             post_ffn_output = ffn_output
             if self.norm_first_sandwich:
@@ -434,6 +428,7 @@ class TransformerDecoderLayer(nn.Module):
                 cache_present_kv=cache_present_kv,
                 self_attn_position_bias=self_attn_position_bias,
                 layer_idx=layer_idx,
+                special_token_indices=special_token_indices,
                 **extra_args,
             )
 
@@ -448,16 +443,13 @@ class TransformerDecoderLayer(nn.Module):
                     cache_present_kv=cache_present_kv,
                     cross_attn_position_bias=cross_attn_position_bias,
                     layer_idx=layer_idx,
+                    special_token_indices=special_token_indices,
                     **extra_args,
                 )
                 x = self.norm2(x + attn2_out[0])
             ffn_output = self.ffn(x, **ffn_extra_args)
             if self.moe_enabled:
-                (
-                    ffn_output,
-                    routing_weights,
-                    expert_mask,
-                ) = ffn_output
+                (ffn_output, routing_weights, expert_mask) = ffn_output
 
             x = (
                 self.norm3(x + ffn_output)

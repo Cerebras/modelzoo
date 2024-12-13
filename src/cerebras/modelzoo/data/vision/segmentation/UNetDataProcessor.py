@@ -12,13 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
+from typing import Any, List, Literal, Optional, Union
+
 import matplotlib.pyplot as plt
 import torch
+from pydantic import Field, field_validator
 from torchvision import transforms
 
 import cerebras.pytorch as cstorch
 from cerebras.modelzoo.common.input_utils import get_streaming_batch_size
-from cerebras.modelzoo.common.registry import registry
+from cerebras.modelzoo.config import DataConfig
 from cerebras.modelzoo.data.vision.segmentation.preprocessing_utils import (
     adjust_brightness_transform,
     normalize_tensor_transform,
@@ -33,47 +37,127 @@ from cerebras.modelzoo.data.vision.utils import (
 )
 
 
-@registry.register_datasetprocessor("UNetDataProcessor")
+class UNetDataProcessorConfig(DataConfig):
+    data_processor: Literal["UNetDataProcessor"]
+
+    data_dir: Union[str, List[str]] = ...
+
+    num_classes: Optional[int] = None
+
+    loss: Optional[Literal["bce", "multilabel_bce", "ssce", "ssce_dice"]] = None
+
+    normalize_data_method: Optional[
+        Literal["zero_centered", "zero_one", "standard_score"]
+    ] = None
+
+    shuffle: bool = True
+
+    shuffle_seed: Optional[int] = None
+
+    augment_data: bool = True
+
+    batch_size: int = ...
+
+    num_workers: int = 0
+
+    image_shape: Optional[List[int]] = None
+
+    drop_last: bool = True
+
+    prefetch_factor: Optional[int] = 10
+
+    persistent_workers: bool = True
+
+    use_fast_dataloader: bool = True
+
+    duplicate_act_worker_data: bool = False
+
+    convert_to_onehot: Optional[bool] = None
+
+    fp16_type: Optional[Any] = Field(default=None, deprecated=True)
+    mixed_precision: Optional[Any] = Field(default=None, deprecated=True)
+
+    @field_validator("convert_to_onehot")
+    @classmethod
+    def set_convert_to_onehot(cls, convert_to_onehot, info):
+        if info.context:
+            model_config = info.context.get("model", {}).get("config")
+            if convert_to_onehot is None:
+                convert_to_onehot = model_config.loss == "multilabel_bce"
+
+        return convert_to_onehot
+
+    def post_init(self, context):
+        model_config = context.get("model", {}).get("config")
+
+        if model_config is not None:
+            if hasattr(model_config, "image_shape"):
+                self.image_shape = model_config.image_shape
+
+            if hasattr(model_config, "num_classes"):
+                self.num_classes = model_config.num_classes
+
+            if "loss" in self.model_fields_set:
+                logging.warning(
+                    "Loss cannot be set in data configuration. "
+                    "Defaulting to value in model configuration."
+                )
+            if hasattr(model_config, "loss"):
+                self.loss = model_config.loss
+
+        if any(
+            x is None
+            for x in [
+                self.image_shape,
+                self.num_classes,
+                self.loss,
+            ]
+        ):
+            raise ValueError(
+                "image_shape, num_classes and loss must "
+                "be configured from the model config."
+            )
+
+
 class UNetDataProcessor:
-    def __init__(self, params):
-        self.data_dir = params["data_dir"]
+    def __init__(self, config: UNetDataProcessorConfig):
+        self.data_dir = config.data_dir
 
-        self.num_classes = params["num_classes"]
+        self.num_classes = config.num_classes
 
-        self.loss_type = params["loss"]
-        self.normalize_data_method = params.get("normalize_data_method")
+        self.loss_type = config.loss
+        self.normalize_data_method = config.normalize_data_method
 
-        self.shuffle_seed = params.get("shuffle_seed", None)
+        self.shuffle_seed = config.shuffle_seed
         if self.shuffle_seed is not None:
             torch.manual_seed(self.shuffle_seed)
 
-        self.augment_data = params.get("augment_data", True)
-        self.batch_size = get_streaming_batch_size(params["batch_size"])
-        self.shuffle = params.get("shuffle", True)
+        self.augment_data = config.augment_data
+        self.batch_size = get_streaming_batch_size(config.batch_size)
+        self.shuffle = config.shuffle
 
         # Multi-processing params.
-        self.num_workers = params.get("num_workers", 0)
-        self.drop_last = params.get("drop_last", True)
-        self.prefetch_factor = params.get("prefetch_factor", 10)
-        self.persistent_workers = params.get("persistent_workers", True)
+        self.num_workers = config.num_workers
+        self.drop_last = config.drop_last
+        self.prefetch_factor = config.prefetch_factor
+        self.persistent_workers = config.persistent_workers
 
-        self.mixed_precision = params.get("mixed_precision")
-        if self.mixed_precision:
-            self.mp_type = cstorch.amp.get_half_dtype()
-        else:
-            self.mp_type = torch.float32
+        self.mp_type = cstorch.amp.get_floating_point_dtype()
 
         # Using Faster Dataloader for mapstyle dataset.
-        self.use_fast_dataloader = params.get("use_fast_dataloader", False)
+        self.use_fast_dataloader = config.use_fast_dataloader
 
         # Each activation worker can access entire dataset when True
-        self.duplicate_act_worker_data = params.get(
-            "duplicate_act_worker_data", False
+        self.duplicate_act_worker_data = config.duplicate_act_worker_data
+
+    def create_dataset():
+        raise NotImplementedError(
+            "create_dataset must be implemented in a child class!!"
         )
 
-    def create_dataloader(self, is_training=False):
-        dataset = self.create_dataset(is_training)
-        shuffle = self.shuffle and is_training
+    def create_dataloader(self):
+        dataset = self.create_dataset()
+
         generator_fn = torch.Generator(device="cpu")
         if self.shuffle_seed is not None:
             generator_fn.manual_seed(self.shuffle_seed)
@@ -82,11 +166,13 @@ class UNetDataProcessor:
         samples_per_task = len(dataset) // num_tasks()
         if self.batch_size > samples_per_task:
             print(
-                f"Dataset size: {len(dataset)} too small for num_tasks: {num_tasks} and batch_size: {self.batch_size}, using duplicate data for activation workers..."
+                f"Dataset size: {len(dataset)} too small for num_tasks:"
+                f" {num_tasks} and batch_size: {self.batch_size},"
+                " using duplicate data for activation workers..."
             )
             self.disable_sharding = True
 
-        if shuffle:
+        if self.shuffle:
             if self.duplicate_act_worker_data or self.disable_sharding:
                 # Multiples activation workers, each sending same data in different
                 # order since the dataset is extremely small
@@ -101,7 +187,7 @@ class UNetDataProcessor:
                 )
             else:
                 data_sampler = ShardedSampler(
-                    dataset, shuffle, self.shuffle_seed, self.drop_last
+                    dataset, self.shuffle, self.shuffle_seed, self.drop_last
                 )
         else:
             data_sampler = torch.utils.data.SequentialSampler(dataset)
@@ -185,7 +271,7 @@ class UNetDataProcessor:
             mask = torch.squeeze(mask, 0)
 
             mask = mask.to(torch.int32)
-        if self.mixed_precision:
+        if cstorch.amp.mixed_precision():
             image = image.to(self.mp_type)
 
         return image, mask

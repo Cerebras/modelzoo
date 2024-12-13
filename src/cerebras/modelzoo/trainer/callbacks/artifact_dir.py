@@ -17,14 +17,15 @@ Contains callback that handles setting up the artifact directory.
 """
 
 import json
+import os
+import time
 from dataclasses import asdict
-from pathlib import Path
 
-from cerebras.modelzoo.trainer.callbacks import Callback
+from cerebras.modelzoo.trainer.callbacks import CoreCallback
 from cerebras.pytorch.utils.data.utils import Schedule
 
 
-class ArtifactDirCallback(Callback):
+class ArtifactDirCallback(CoreCallback):
     """
     Sets up the artifact directory and write metadata to executor artifact dir
     with some information about the run.
@@ -38,14 +39,53 @@ class ArtifactDirCallback(Callback):
         self.loop = None
 
     def pre_setup(self, trainer):
-        # TODO: Move setup_artifact_dir logic into this callback
-        from cerebras.modelzoo.common.pytorch_utils import setup_artifact_dir
+        from cerebras.appliance.utils.file import create_symlink
 
-        trainer.artifact_dir = Path(
-            setup_artifact_dir(trainer.model_dir, mode="")
+        cerebras_logs_path = trainer.model_dir / "cerebras_logs"
+
+        def _create():
+            artifact_dir = cerebras_logs_path / time.strftime("%Y%m%d_%H%M%S")
+            artifact_dir.mkdir(parents=True)
+            return artifact_dir
+
+        # Method for adding additional logs to the artifact directory.
+        # For now we are only adding a log for environment variables
+        def _create_support_logs():
+            # get the user enviroment variables and log them
+            env_vars_log = trainer.artifact_dir / "env_vars.txt"
+            with open(env_vars_log, "w") as f:
+                for key, value in sorted(os.environ.items()):
+                    f.write(f'{key}={value}\n')
+            return
+
+        # CPU runs could potentially finish very fast, so back-to-back runs
+        # may end up getting the same timestamp and we'd fail in creating
+        # the duplicate directory. In case of directory already existing,
+        # sleep for more than 1 second and try again. If we fail again,
+        # then throw.
+        try:
+            trainer.artifact_dir = _create()
+        except FileExistsError:
+            time.sleep(1.5)
+            try:
+                trainer.artifact_dir = _create()
+            except Exception as e:
+                raise e from None
+
+        # Create a symlink to the artifact_dir so that it's easy to find the latest run.
+        # The symlink needs to be at the same level as the subdirectories.
+        latest = cerebras_logs_path.joinpath("latest")
+        # symlink to relative path
+        create_symlink(
+            latest,
+            trainer.artifact_dir.relative_to(cerebras_logs_path),
+            target_is_directory=True,
         )
         trainer.summary_dir = trainer.model_dir / trainer.artifact_dir.stem
         trainer.summary_dir.mkdir(parents=True, exist_ok=True)
+
+        # Create a support directory for logging other info about user runs
+        _create_support_logs()
 
     def _save_metadata(  # pylint: disable=no-self-use
         self, artifact_dir, metadata
@@ -68,7 +108,6 @@ class ArtifactDirCallback(Callback):
                 {
                     "stage": "train",
                     "num_steps": self.loop.train_steps,
-                    # TODO: Handle properly exporting Schedule objects
                     "checkpoint_steps": checkpoint_steps,
                 },
             )

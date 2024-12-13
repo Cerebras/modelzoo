@@ -15,13 +15,18 @@
 """
 Processor for PyTorch BERT fine tuning - Summarization.
 """
+
 import csv
+import os
+from typing import List, Literal, Optional, Union
 
 import numpy as np
 import torch
+from pydantic import PositiveInt, field_validator
 
 from cerebras.modelzoo.common.input_utils import get_streaming_batch_size
-from cerebras.modelzoo.common.registry import registry
+from cerebras.modelzoo.config import DataConfig
+from cerebras.modelzoo.config.types import AliasedPath
 from cerebras.modelzoo.data.common.input_utils import (
     check_sharding_sanity,
     get_data_for_task,
@@ -39,7 +44,85 @@ from cerebras.modelzoo.data_preparation.utils import (
 )
 
 
-@registry.register_datasetprocessor("BertSumCSVDataProcessor")
+class BertSumCSVDataProcessorConfig(DataConfig):
+    data_processor: Literal["BertSumCSVDataProcessor"]
+
+    data_dir: Union[str, List[str]] = ...
+    "Path to the data files to use."
+
+    vocab_file: Optional[AliasedPath] = None
+    "Path to the vocabulary file."
+
+    batch_size: PositiveInt = ...
+    "The batch size."
+
+    max_sequence_length: int = ...
+
+    max_cls_tokens: int = ...
+
+    pad_id: Optional[int] = None
+
+    mask_whole_word: bool = False
+    "Flag to whether mask the entire word."
+
+    do_lower: bool = False
+    "Flag to lower case the texts."
+
+    shuffle: bool = True
+    "Whether or not to shuffle the dataset."
+
+    shuffle_seed: Optional[int] = None
+    "The seed used for deterministic shuffling."
+
+    shuffle_buffer: Optional[int] = None
+    """
+    Buffer size to shuffle samples across.
+    If None and shuffle is enabled, 10*batch_size is used.
+    """
+
+    num_workers: int = 0
+    "The number of PyTorch processes used in the dataloader."
+
+    prefetch_factor: Optional[int] = 10
+    "The number of batches to prefetch in the dataloader."
+
+    persistent_workers: bool = True
+    "Whether or not to keep workers persistent between epochs."
+
+    drop_last: bool = True
+    "Whether to drop last batch of epoch if it's an incomplete batch."
+
+    @field_validator("vocab_file", mode="after")
+    @classmethod
+    def get_vocab_file(cls, vocab_file, info):
+        if info.context:
+            model_config = info.context.get("model", {}).get("config")
+
+            if model_config is not None:
+                if vocab_file is None:
+                    vocab_file = model_config.vocab_file
+
+                if vocab_file != model_config.vocab_file:
+                    raise ValueError(
+                        f"Vocab file from model and input do not match."
+                        f"\n\tmodel vocab file: {model_config.vocab_file}"
+                        f"\n\tinput vocab file: {vocab_file}"
+                    )
+
+        if vocab_file is None:
+            raise ValueError("Vocab file must be provided.")
+        if not os.path.exists(vocab_file):
+            raise ValueError(f"Vocab file does not exist: {vocab_file}")
+        return os.path.abspath(vocab_file)
+
+    def post_init(self, context):
+        super().post_init(context)
+
+        if not self.num_workers:
+            self.prefetch_factor = None  # the default value in DataLoader
+            self.persistent_workers = False
+
+
 class BertSumCSVDataProcessor(torch.utils.data.IterableDataset):
     """
     Reads csv file containing the `input_token_ids`, and `label_ids`.
@@ -47,11 +130,11 @@ class BertSumCSVDataProcessor(torch.utils.data.IterableDataset):
     :param <dict> params: dict containing input parameters for creating dataset.
     """
 
-    def __init__(self, params):
-        super(BertSumCSVDataProcessor, self).__init__()
+    def __init__(self, config: BertSumCSVDataProcessorConfig):
+        super().__init__()
 
         # Input params.
-        self.meta_data = get_meta_data(params["data_dir"])
+        self.meta_data = get_meta_data(config.data_dir)
 
         self.meta_data_values = list(self.meta_data.values())
         self.meta_data_filenames = list(self.meta_data.keys())
@@ -59,7 +142,7 @@ class BertSumCSVDataProcessor(torch.utils.data.IterableDataset):
         self.meta_data_values_cum_sum = np.cumsum([0] + self.meta_data_values)
 
         self.num_examples = sum(map(int, self.meta_data.values()))
-        self.batch_size = get_streaming_batch_size(params["batch_size"])
+        self.batch_size = get_streaming_batch_size(config.batch_size)
 
         self.num_batches = self.num_examples // self.batch_size
         assert (
@@ -81,17 +164,20 @@ class BertSumCSVDataProcessor(torch.utils.data.IterableDataset):
             self.meta_data_filenames,
         )
 
-        self.shuffle = params.get("shuffle", True)
-        self.shuffle_seed = params.get("shuffle_seed", None)
-        self.shuffle_buffer = params.get("shuffle_buffer", 10 * self.batch_size)
-        self.mask_whole_word = params.get("mask_whole_word", False)
-        self.do_lower = params.get("do_lower", False)
+        self.shuffle = config.shuffle
+        self.shuffle_seed = config.shuffle_seed
+        if config.shuffle_buffer is None:
+            self.shuffle_buffer = 10 * self.batch_size
+        else:
+            self.shuffle_buffer = config.shuffle_buffer
+        self.mask_whole_word = config.mask_whole_word
+        self.do_lower = config.do_lower
 
         # Multi-processing params.
-        self.num_workers = params.get("num_workers", 0)
-        self.drop_last = params.get("drop_last", True)
-        self.prefetch_factor = params.get("prefetch_factor", 10)
-        self.persistent_workers = params.get("persistent_workers", True)
+        self.num_workers = config.num_workers
+        self.drop_last = config.drop_last
+        self.prefetch_factor = config.prefetch_factor
+        self.persistent_workers = config.persistent_workers
 
         # Check that our sharding will produce at least one batch
         check_sharding_sanity(
@@ -113,7 +199,7 @@ class BertSumCSVDataProcessor(torch.utils.data.IterableDataset):
             }
 
         # Get vocab file and size.
-        self.vocab_file = params["vocab_file"]
+        self.vocab_file = config.vocab_file
         self.vocab, self.vocab_size = build_vocab(
             self.vocab_file, self.do_lower, self.special_tokens["oov_token"]
         )
@@ -128,16 +214,17 @@ class BertSumCSVDataProcessor(torch.utils.data.IterableDataset):
         }
 
         # Padding indices.
-        self.pad_id = params.get(
-            "pad_id", self.special_tokens_indices["pad_token"]
-        )
+        if config.pad_id is None:
+            self.pad_id = self.special_tokens_indices["pad_token"]
+        else:
+            self.pad_id = config.pad_id
 
         assert (
             self.pad_id >= 0
         ), f"`pad_id` must be non-negative, got {self.pad_id}"
 
-        self.max_sequence_length = params["max_sequence_length"]
-        self.max_cls_tokens = params["max_cls_tokens"]
+        self.max_sequence_length = config.max_sequence_length
+        self.max_cls_tokens = config.max_cls_tokens
 
         self.csv_files_per_task_per_worker = []
         self.processed_buffers = 0

@@ -585,6 +585,16 @@ def register_global_callback(callback):
         raise TypeError(f"Expected a Callback. Got: {type(callback)}")
 
 
+class CoreCallback(Callback):
+    """
+    A special type of callback that indicates to the trainer that it is a core
+    callback. Core callbacks are used internally by the trainer and should not
+    be removed or replaced by the user.
+
+    Note: User-defined callbacks should not subclass `CoreCallback`
+    """
+
+
 class ValidationCallback(Callback, ABC):
     """
     A special type of callback that indicates to the trainer
