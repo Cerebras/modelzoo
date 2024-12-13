@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, List, Optional
 import torch
 
 import cerebras.pytorch as cstorch
+from cerebras.modelzoo.common.half_dtype import cb16_to_fp32
 from cerebras.modelzoo.trainer.callbacks import RateProfiler
 from cerebras.modelzoo.trainer.loggers import Logger
 from cerebras.pytorch.utils.data.utils import infer_batch_size
@@ -83,7 +84,8 @@ class ProgressLogger(Logger):
         if batch_size:
             self.total_samples.add(batch_size)
 
-        self.print_training_progress(trainer, outputs["loss"], batch_size)
+        loss = cb16_to_fp32(outputs["loss"])
+        self.print_training_progress(trainer, loss, batch_size)
 
     @cstorch.step_closure
     def print_training_progress(
@@ -123,9 +125,8 @@ class ProgressLogger(Logger):
         self.total_eval_steps = 0
 
     def on_validate_batch_end(self, trainer, model, outputs, batch, batch_idx):
-        self.print_validation_progress(
-            trainer, outputs["loss"], infer_batch_size(batch)
-        )
+        loss = cb16_to_fp32(outputs["loss"])
+        self.print_validation_progress(trainer, loss, infer_batch_size(batch))
 
     @cstorch.step_closure
     def print_validation_progress(

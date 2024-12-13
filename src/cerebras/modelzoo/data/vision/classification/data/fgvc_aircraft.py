@@ -12,27 +12,43 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Any, Literal, Optional
+
 import torchvision
+from pydantic import Field
 
 from cerebras.modelzoo.data.vision.classification.dataset_factory import (
-    Processor,
+    VisionClassificationProcessor,
+    VisionClassificationProcessorConfig,
 )
 
 
-class FGVCAircraftProcessor(Processor):
-    def __init__(self, params):
-        super().__init__(params)
-        self.allowable_split = ["train", "val", "trainval", "test"]
+class FGVCAircraftProcessorConfig(VisionClassificationProcessorConfig):
+    data_processor: Literal["FGVCAircraftProcessor"]
+
+    use_worker_cache: bool = ...
+
+    split: Literal["train", "val", "trainval", "test"] = "train"
+    "Dataset split."
+
+    num_classes: Optional[Any] = Field(None, deprecated=True)
+
+
+class FGVCAircraftProcessor(VisionClassificationProcessor):
+    def __init__(self, config: FGVCAircraftProcessorConfig):
+        super().__init__(config)
+        self.split = config.split
+        self.shuffle = self.shuffle and (self.split == "train")
         self.num_classes = 102
 
-    def create_dataset(self, use_training_transforms=True, split="train"):
-        self.check_split_valid(split)
+    def create_dataset(self):
+        use_training_transforms = self.split == "train"
         transform, target_transform = self.process_transform(
             use_training_transforms
         )
         dataset = torchvision.datasets.FGVCAircraft(
             root=self.data_dir,
-            split=split,
+            split=self.split,
             transform=transform,
             target_transform=target_transform,
             download=False,

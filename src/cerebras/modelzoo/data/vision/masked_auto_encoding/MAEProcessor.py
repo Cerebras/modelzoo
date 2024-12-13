@@ -12,23 +12,55 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import List, Optional
+
 import torch
 
+from cerebras.modelzoo.config import BaseConfig
 from cerebras.modelzoo.layers.utils import patchify_helper
 
 
+class MAEProcessorConfig(BaseConfig):
+    image_size: Optional[List[int]] = None
+    patch_size: Optional[List[int]] = None
+    image_channels: Optional[int] = None
+    mask_ratio: float = 0.75
+
+    def post_init(self, context):
+        super().post_init(context)
+
+        model_config = context.get("model", {}).get("config")
+        if model_config is not None:
+            if hasattr(model_config, "image_size"):
+                self.image_size = model_config.image_size
+
+            if hasattr(model_config, "patch_size"):
+                self.patch_size = model_config.patch_size
+
+            if hasattr(model_config, "num_channels"):
+                self.image_channels = model_config.num_channels
+
+        if any(
+            x is None
+            for x in [self.image_size, self.patch_size, self.image_channels]
+        ):
+            raise ValueError(
+                "image_size, patch_size, and image_channels must be provided "
+                "or be configured from the model config."
+            )
+
+
 class MAEProcessor:
-    def __init__(self, params):
-        super().__init__(params)
-        self.image_size = params.get("image_size")
-        self.patch_size = params.get("patch_size")
-        self.image_channels = params.get("image_channels")
+    def __init__(self, config: MAEProcessorConfig):
+        self.image_size = config.image_size
+        self.patch_size = config.patch_size
+        self.image_channels = config.image_channels
         # calculate embedding sequence length
         self.patchified_seq_len = (self.image_size[0] // self.patch_size[0]) * (
             self.image_size[1] // self.patch_size[1]
         )
 
-        self.mask_ratio = params.get("mask_ratio", 0.75)
+        self.mask_ratio = config.mask_ratio
         self.encoder_portion = int(
             (1 - self.mask_ratio) * self.patchified_seq_len
         )

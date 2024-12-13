@@ -36,6 +36,9 @@ from cerebras.modelzoo.tools.checkpoint_converters.bert import (
     ConfigConverter_Bert_HF_CS21,
     Converter_BertModel_WithoutOptionalModel_HF_CS21,
 )
+from cerebras.modelzoo.tools.checkpoint_converters.helper import (
+    Build_HF_CS_Converter_WithOptionalModel,
+)
 
 DPR_CONFIG_ERROR_MESSAGE = """
     DPRConverter assumes that the input file will
@@ -93,7 +96,10 @@ class Converter_DPR_BertWrapper(
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-2.2", "cs-2.3"))
+        return (
+            FormatVersions("hf"),
+            FormatVersions("cs-2.2", "cs-2.3", "cs-2.4"),
+        )
 
     @staticmethod
     def get_config_converter_class() -> BaseConfigConverter:
@@ -106,7 +112,7 @@ class Converter_DPRQuestionEncoder_HF_CS(BaseCheckpointConverter_HF_CS):
         self.rules = [
             ConversionRule(
                 [
-                    "question_encoder.",
+                    r"question_encoder\.",
                     EquivalentSubkey("bert_model.", ""),
                     Converter_DPR_BertWrapper("question_encoder"),
                 ],
@@ -130,7 +136,10 @@ class Converter_DPRQuestionEncoder_HF_CS(BaseCheckpointConverter_HF_CS):
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-2.2", "cs-2.3"))
+        return (
+            FormatVersions("hf"),
+            FormatVersions("cs-2.2", "cs-2.3", "cs-2.4"),
+        )
 
     @classmethod
     def converter_note(cls) -> str:
@@ -147,7 +156,7 @@ class Converter_DPRContextEncoder_HF_CS(BaseCheckpointConverter_HF_CS):
         self.rules = [
             ConversionRule(
                 [
-                    "ctx_encoder.",
+                    r"ctx_encoder\.",
                     EquivalentSubkey("bert_model.", ""),
                     Converter_DPR_BertWrapper("context_encoder"),
                 ],
@@ -173,7 +182,10 @@ class Converter_DPRContextEncoder_HF_CS(BaseCheckpointConverter_HF_CS):
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-2.2", "cs-2.3"))
+        return (
+            FormatVersions("hf"),
+            FormatVersions("cs-2.2", "cs-2.3", "cs-2.4"),
+        )
 
     @classmethod
     def converter_note(cls) -> str:
@@ -182,6 +194,23 @@ class Converter_DPRContextEncoder_HF_CS(BaseCheckpointConverter_HF_CS):
     @staticmethod
     def get_config_converter_class() -> BaseConfigConverter:
         return ConfigConverter_DPRModel_HF_CS22
+
+
+Converter_DPRQuestionEncoderWithOptionalModelPrefix_HF_CS = (
+    Build_HF_CS_Converter_WithOptionalModel(
+        "Converter_DPRQuestionEncoder_HF_CS",
+        Converter_DPRQuestionEncoder_HF_CS,
+        Converter_DPRQuestionEncoder_HF_CS,
+    )
+)
+
+Converter_DPRContextEncoderWithOptionalModelPrefix_HF_CS = (
+    Build_HF_CS_Converter_WithOptionalModel(
+        "Converter_DPRContextEncoder_HF_CS",
+        Converter_DPRContextEncoder_HF_CS,
+        Converter_DPRContextEncoder_HF_CS,
+    )
+)
 
 
 class Converter_DPRModel_HF_CS22(BaseCheckpointConverter_UnpackedHF_PackedCS):
@@ -194,8 +223,8 @@ class Converter_DPRModel_HF_CS22(BaseCheckpointConverter_UnpackedHF_PackedCS):
     @staticmethod
     def converters() -> List[Type[BaseCheckpointConverter]]:
         return (
-            Converter_DPRQuestionEncoder_HF_CS,
-            Converter_DPRContextEncoder_HF_CS,
+            Converter_DPRQuestionEncoderWithOptionalModelPrefix_HF_CS,
+            Converter_DPRContextEncoderWithOptionalModelPrefix_HF_CS,
         )
 
     @staticmethod
@@ -208,7 +237,10 @@ class Converter_DPRModel_HF_CS22(BaseCheckpointConverter_UnpackedHF_PackedCS):
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-2.2", "cs-2.3"))
+        return (
+            FormatVersions("hf"),
+            FormatVersions("cs-2.2", "cs-2.3", "cs-2.4"),
+        )
 
     @staticmethod
     def get_config_converter_class() -> BaseConfigConverter:
@@ -261,7 +293,30 @@ class ConfigConverter_DPR_HF_CS(ConfigConverter_Bert_HF_CS21):
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-2.2", "cs-2.3"))
+        return (
+            FormatVersions("hf"),
+            FormatVersions("cs-2.2", "cs-2.3", "cs-2.4"),
+        )
+
+
+class ConfigConverterEncoder_HF_CS(ConfigConverter_DPR_HF_CS):
+    def post_config_convert(
+        self,
+        model,
+        original_config,
+        old_config,
+        new_config,
+        converter_indices,
+        drop_unmatched_keys,
+    ):
+        return super().post_config_convert(
+            "bert_model",
+            original_config,
+            old_config,
+            new_config,
+            converter_indices,
+            drop_unmatched_keys,
+        )
 
 
 class ConfigConverter_DPRModel_HF_CS22(BaseConfigConverter_UnpackedHF_PackedCS):
@@ -276,9 +331,44 @@ class ConfigConverter_DPRModel_HF_CS22(BaseConfigConverter_UnpackedHF_PackedCS):
             }
         )
 
+    def post_config_convert(
+        self,
+        model,
+        original_config,
+        old_config,
+        new_config,
+        converter_indices,
+        drop_unmatched_keys,
+    ):
+        from_index = converter_indices.direction
+        model_config = super().post_config_convert(
+            model,
+            original_config,
+            old_config,
+            new_config,
+            converter_indices,
+            drop_unmatched_keys,
+        )
+        if from_index == 1:
+            model_config[0].update(
+                {
+                    "_name_or_path": "facebook/dpr-question_encoder-single-nq-base",
+                    "architectures": ["DPRQuestionEncoder"],
+                    "model_type": "dpr",
+                }
+            )
+            model_config[1].update(
+                {
+                    "_name_or_path": "facebook/dpr-ctx_encoder-single-nq-base",
+                    "architectures": ["DPRContextEncoder"],
+                    "model_type": "dpr",
+                }
+            )
+        return model_config
+
     @staticmethod
     def converters() -> List[Type[BaseCheckpointConverter]]:
-        return (ConfigConverter_DPR_HF_CS, ConfigConverter_DPR_HF_CS)
+        return (ConfigConverterEncoder_HF_CS, ConfigConverterEncoder_HF_CS)
 
     @staticmethod
     def component_names() -> List[str]:
@@ -286,17 +376,20 @@ class ConfigConverter_DPRModel_HF_CS22(BaseConfigConverter_UnpackedHF_PackedCS):
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-2.2", "cs-2.3"))
+        return (
+            FormatVersions("hf"),
+            FormatVersions("cs-2.2", "cs-2.3", "cs-2.4"),
+        )
 
 
-class ConfigConverter_DPR_HF_CS23(ConfigConverter_DPR_HF_CS):
+class ConfigConverter_DPR_HF_CS23(ConfigConverterEncoder_HF_CS):
     def __init__(self):
         self.model_type = "dpr"
         super().__init__()
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-2.3"))
+        return (FormatVersions("hf"), FormatVersions("cs-2.3", "cs-2.4"))
 
 
 class ConfigConverter_DPRModel_HF_CS23(ConfigConverter_DPRModel_HF_CS22):
@@ -323,13 +416,13 @@ class ConfigConverter_DPRModel_HF_CS23(ConfigConverter_DPRModel_HF_CS22):
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-2.3"))
+        return (FormatVersions("hf"), FormatVersions("cs-2.3", "cs-2.4"))
 
 
 class Converter_DPRModel_HF_CS23(Converter_DPRModel_HF_CS22):
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-2.3"))
+        return (FormatVersions("hf"), FormatVersions("cs-2.3", "cs-2.4"))
 
     @staticmethod
     def get_config_converter_class() -> BaseConfigConverter:
@@ -346,7 +439,7 @@ class Converter_DPRModel_CS22_CS23(BaseCheckpointConverter_CS_CS):
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("cs-2.2"), FormatVersions("cs-2.3"))
+        return (FormatVersions("cs-2.2"), FormatVersions("cs-2.3", "cs-2.4"))
 
     @staticmethod
     def get_config_converter_class() -> BaseConfigConverter:
@@ -420,4 +513,4 @@ class ConfigConverter_DPRModel_CS22_CS23(BaseConfigConverter_CS_CS):
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("cs-2.2"), FormatVersions("cs-2.3"))
+        return (FormatVersions("cs-2.2"), FormatVersions("cs-2.3", "cs-2.4"))

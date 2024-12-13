@@ -7,7 +7,6 @@ Evolutionary Scale Modeling ([ESM-2](https://www.science.org/doi/abs/10.1126/sci
 # Structure of the code
 * `configs/`: YAML configuration files.
 * `model.py`: Provides a common wrapper for all models under class `Esm2ForPreTrainingModel`, which interfaces with model-specific code. In this repo the model-specific code, i.e., model architecture is in `esm2_pretrain_models.py::Esm2PretrainModel`. This wrapper provides a common interface for handling the function call of the model with its specific data format. It also provides a common interface to use the same format of configuration files from `configs/` to construct various models.
-* `data.py`: The entry point to the data input pipeline code.
 * `run.py`: Training script. Performs training and validation.
 * `utils.py`: Miscellaneous helper functions.
 

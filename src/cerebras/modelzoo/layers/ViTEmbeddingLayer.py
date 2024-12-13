@@ -15,11 +15,23 @@
 import torch
 from torch import nn
 
+from cerebras.modelzoo.config import BaseConfig
 from cerebras.modelzoo.layers.create_initializer import create_initializer
 from cerebras.modelzoo.layers.utils import (
     get_2d_fixed_position_embeddings,
     patchify_helper,
 )
+
+
+class InterpolatePositionEmbeddingConfig(BaseConfig):
+    antialias: bool = False
+    "apply anti-aliasing when interpolating positional embeddings."
+
+    interpolate_offset: float = 0.1
+    "Historical kludge: add a small number to avoid floating point error in the interpolation, see https://github.com/facebookresearch/dino/issues/8"
+
+    local_patch_dims: [int, int] = [7, 7]
+    "Local crop patch dimensions"
 
 
 class ViTEmbeddingLayer(nn.Module):
@@ -41,6 +53,8 @@ class ViTEmbeddingLayer(nn.Module):
         use_post_embed_layer_norm=False,
         layer_norm_epsilon=1.0e-5,
         use_embed_proj_bias=True,
+        interpolate_position_embedding=None,
+        use_masked_patches=False,
     ):
         super(ViTEmbeddingLayer, self).__init__()
         self.image_size = image_size
@@ -53,6 +67,9 @@ class ViTEmbeddingLayer(nn.Module):
         self.prepend_cls_token = prepend_cls_token
         self.init_conv_like_linear = init_conv_like_linear
         self.use_post_embed_layer_norm = use_post_embed_layer_norm
+        self.use_masked_patches = use_masked_patches
+        if self.use_masked_patches:
+            self.mask_token = nn.Parameter(torch.zeros(self.hidden_size))
 
         assert (
             self.image_size[0] % self.patch_size[0] == 0
@@ -134,6 +151,19 @@ class ViTEmbeddingLayer(nn.Module):
                 hidden_size, eps=layer_norm_epsilon
             )
 
+        if interpolate_position_embedding is not None:
+            interpolation_matrix = self.create_bicubic_interpolation_matrix(
+                interpolate_position_embedding
+            )
+            interpolation_matrix = interpolation_matrix.to(
+                self.position_embeddings.weight.device
+            )
+            self.register_buffer(
+                "interpolation_matrix", interpolation_matrix, persistent=False
+            )
+        else:
+            self.interpolation_matrix = None
+
         self.__reset_parameters()
 
     def reset_parameters(self):
@@ -162,6 +192,8 @@ class ViTEmbeddingLayer(nn.Module):
             create_initializer(self.position_embedding_initializer)(
                 self.position_embeddings.weight.data
             )
+        if self.use_masked_patches:
+            create_initializer("zeros")(self.mask_token.data)
         if hasattr(self.post_embed_ln, 'bias') and hasattr(
             self.post_embed_ln.bias, "data"
         ):
@@ -171,13 +203,62 @@ class ViTEmbeddingLayer(nn.Module):
         ):
             self.post_embed_ln.weight.data.fill_(1.0)
 
+    def create_bicubic_interpolation_matrix(self, interpolation_config):
+        # Pre-calculate constant co-efficients to do bicubic interpolate
+        gw, gh = self.num_patches  # global patch dims
+        num_global_patches = gw * gh
+
+        def get_kernel(position):
+            lw, lh = interpolation_config.local_patch_dims  # local patch dims
+            sx = (lw + interpolation_config.interpolate_offset) / gw
+            sy = (lh + interpolation_config.interpolate_offset) / gh
+            return nn.functional.interpolate(
+                position,
+                mode="bicubic",
+                antialias=interpolation_config.antialias,
+                scale_factor=(sx, sy),
+            )
+
+        assert self.position_embedding_type == "learned"
+        T = torch.eye(num_global_patches, device="cpu").reshape(
+            num_global_patches, 1, 1, gw, gh
+        )
+        mm = (
+            torch.vmap(get_kernel, in_dims=0)(T)
+            .reshape(num_global_patches, -1)
+            .transpose(1, 0)
+        )
+        if self.prepend_cls_token:
+            # Last Col: expand interpolation matrix to accomodate for cls token pos emb in embedding matrix
+            # First Row: calculate cls token pos embedding with matmul
+            mm = nn.functional.pad(
+                mm, pad=(0, 1, 1, 0), mode='constant', value=0
+            )
+            mm[0, -1] = 1
+
+        return mm
+
+    def get_interpolated_position_embeddings(self, position_ids, dtype):
+        # Interpolate position embeddings
+        # Use matmul with pre-calculated co-efficients to do bicubic interpolate
+        # instead of using nn.functional.interpolate(mode='bicubic')
+        assert self.interpolation_matrix.shape[0] == position_ids.shape[1]
+
+        interpolation_cst = self.interpolation_matrix.to(dtype)
+        # Add batch dim
+        interpolation_cst = interpolation_cst[None, :, :].broadcast_to(
+            position_ids.shape[0], *interpolation_cst.shape
+        )
+        position_embeddings = torch.matmul(
+            interpolation_cst, self.position_embeddings.weight
+        )
+        return position_embeddings
+
     def get_image_sequence_position_embeddings(self, embeddings, indices=None):
         # embeddings shape [batch_size, seq_len, hidden_size], shouldn't contain cls
         # indices shape [batch_size, seq_len]
 
         if indices is None:
-            pass
-
             position_ids = torch.arange(
                 embeddings.shape[1],
                 device=embeddings.device,
@@ -202,7 +283,16 @@ class ViTEmbeddingLayer(nn.Module):
             position_ids = indices
 
         if self.position_embedding_type == "learned":
-            position_embeddings = self.position_embeddings(position_ids)
+            if (
+                position_ids.shape[1]
+                != self.position_embeddings.weight.shape[0]
+                and self.interpolation_matrix is not None
+            ):
+                position_embeddings = self.get_interpolated_position_embeddings(
+                    position_ids, dtype=embeddings.dtype
+                )
+            else:
+                position_embeddings = self.position_embeddings(position_ids)
         elif self.position_embedding_type == "fixed":  # fixed
             position_ids = torch.broadcast_to(
                 position_ids.unsqueeze(-1),
@@ -245,7 +335,7 @@ class ViTEmbeddingLayer(nn.Module):
 
         return patches
 
-    def forward(self, input_images, patch_indices=None):
+    def forward(self, input_images, patch_indices=None, masks=None):
         """Applies patching and linear projection to the input images.
 
         Args:
@@ -289,9 +379,27 @@ class ViTEmbeddingLayer(nn.Module):
 
         embeddings = image_embeddings
 
+        # apply masks to patches for masked head in dinov2 like arch
+        # Note masking is applied before position embedding
+        if not self.use_masked_patches and masks is not None:
+            raise ValueError(
+                "Cannot use masks if setting use_masked_patches=False."
+            )
+
+        if masks is not None:
+            masks_reshaped = masks.reshape(batch_size, -1, 1).to(torch.int)
+            mask_token_bcasted = self.mask_token.to(
+                embeddings.dtype
+            ).broadcast_to(embeddings.shape)
+
+            embeddings = (
+                masks_reshaped * mask_token_bcasted
+                + (1 - masks_reshaped) * embeddings
+            )
+
         if self.prepend_cls_token:
             expanded_cls_embedding = self.cls_embedding.type_as(
-                image_embeddings
+                embeddings
             ).broadcast_to((batch_size, 1, self.hidden_size))
 
             embeddings = torch.cat([expanded_cls_embedding, embeddings], dim=1)

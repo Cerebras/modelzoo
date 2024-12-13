@@ -16,6 +16,7 @@
 Preprocessed CSV data generator for BERT pretraining from
 raw text documents.
 """
+
 import argparse
 import csv
 import json

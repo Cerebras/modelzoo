@@ -17,6 +17,9 @@ This module contains the WeightCompression callback class which is used to apply
 weight compression to the model.
 """
 
+from typing import List, Union
+
+import cerebras.pytorch as cstorch
 from cerebras.modelzoo.trainer.callbacks import Callback
 
 
@@ -25,18 +28,45 @@ class WeightCompression(Callback):
     Callback class to apply weight compression to the model.
     """
 
-    def __init__(self, compressions: dict):
+    def __init__(self, compressions: Union[dict, List[dict]]):
         """
         Args:
             compressions: Compression configuration to apply to the model.
         """
         if compressions:
-            # TODO: Move this configure_compression function to this file
-            from cerebras.modelzoo.common.utils.utils import (
-                configure_compression,
-            )
 
-            self.compressions = configure_compression(compressions)
+            def get_compression_from_dict(single_config):
+                if not isinstance(single_config, dict):
+                    raise ValueError(
+                        "Improper compression format due to "
+                        "configuration not being a dictionary"
+                    )
+                if "format" not in single_config:
+                    raise ValueError(
+                        "Improper compression format due to "
+                        "configuration not having \"format\" as a field"
+                    )
+                if "param_filter" not in single_config:
+                    raise ValueError(
+                        "Improper compression format due to "
+                        "configuration not having \"param_filter\" as a field"
+                    )
+
+                return cstorch.experimental.Compression(
+                    single_config["format"], single_config["param_filter"]
+                )
+
+            if isinstance(compressions, dict):
+                # then turn this single dictionary value to a compression
+                self.compressions = [get_compression_from_dict(compressions)]
+            elif isinstance(compressions, list):
+                self.compressions = list(
+                    map(get_compression_from_dict, compressions)
+                )
+            else:
+                raise ValueError(
+                    "Expected `compressions` to be a dict or a list of dicts."
+                )
         else:
             self.compressions = []
 

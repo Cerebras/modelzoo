@@ -12,71 +12,45 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Any, Literal, Optional
+
 import torchvision
+from pydantic import Field
 
 from cerebras.modelzoo.data.vision.classification.dataset_factory import (
-    Processor,
+    VisionClassificationProcessor,
+    VisionClassificationProcessorConfig,
 )
 
 
-class OxfordIIITPetProcessor(Processor):
-    def __init__(self, params):
-        super().__init__(params)
-        self.allowable_split = ["trainval", "test"]
+class OxfordIIITPetProcessorConfig(VisionClassificationProcessorConfig):
+    data_processor: Literal["OxfordIIITPetProcessor"]
+
+    use_worker_cache: bool = ...
+
+    split: Literal["trainval", "test"] = "trainval"
+    "Dataset split."
+
+    num_classes: Optional[Any] = Field(None, deprecated=True)
+
+
+class OxfordIIITPetProcessor(VisionClassificationProcessor):
+    def __init__(self, config: OxfordIIITPetProcessorConfig):
+        super().__init__(config)
+        self.split = config.split
+        self.shuffle = self.shuffle and (self.split == "trainval")
         self.num_classes = 37
 
-    def create_dataset(self, use_training_transforms=True, split="trainval"):
-        self.check_split_valid(split)
+    def create_dataset(self):
+        use_training_transforms = self.split == "trainval"
         transform, target_transform = self.process_transform(
             use_training_transforms
         )
         dataset = torchvision.datasets.OxfordIIITPet(
             root=self.data_dir,
-            split=split,
+            split=self.split,
             transform=transform,
             target_transform=target_transform,
             download=False,
         )
         return dataset
-
-    def create_vtab_dataset(
-        self, use_1k_sample=True, train_split_percent=None, seed=42
-    ):
-        train_transform, train_target_transform = self.process_transform(
-            use_training_transforms=True
-        )
-        eval_transform, eval_target_transform = self.process_transform(
-            use_training_transforms=False
-        )
-
-        trainval_set = torchvision.datasets.OxfordIIITPet(
-            root=self.data_dir,
-            split="trainval",
-            transform=None,
-            download=False,
-        )
-        test_set = torchvision.datasets.OxfordIIITPet(
-            root=self.data_dir,
-            split="test",
-            transform=eval_transform,
-            download=False,
-        )
-
-        train_percent = train_split_percent or 80  # default is 80%
-        val_percent = 100 - train_percent
-        train_set, val_set = self.split_dataset(
-            trainval_set, [train_percent, val_percent], seed
-        )
-
-        if use_1k_sample:
-            train_set.truncate_to_idx(800)
-            val_set.truncate_to_idx(200)
-
-        train_set.set_transforms(
-            transform=train_transform, target_transform=train_target_transform
-        )
-        val_set.set_transforms(
-            transform=eval_transform, target_transform=eval_target_transform
-        )
-
-        return train_set, val_set, test_set

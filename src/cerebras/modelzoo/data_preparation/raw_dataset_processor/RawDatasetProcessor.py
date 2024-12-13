@@ -18,19 +18,23 @@
     and all data transformations are handled as part of the collator function
 """
 
+import logging
+import os
 import random
-from typing import Any, Dict, Iterator, List
+from typing import Any, Dict, Iterator, List, Literal, Optional
 
 import numpy as np
 import torch
+from PIL import Image
 from torch.utils.data import DataLoader, default_collate
 
-from cerebras.modelzoo.common.registry import registry
+from cerebras.modelzoo.config import DataConfig
 from cerebras.modelzoo.data.common.input_utils import (
     num_tasks,
     shard_list_contiguous,
     task_id,
 )
+from cerebras.modelzoo.data.vision.preprocessing import get_preprocess_transform
 from cerebras.modelzoo.data_preparation.data_preprocessing.data_preprocessor import (
     DataPreprocessor,
 )
@@ -38,37 +42,74 @@ from cerebras.modelzoo.data_preparation.raw_dataset_processor.utils import (
     Reader,
 )
 
+LOGGER = logging.getLogger(__name__)
 
-@registry.register_datasetprocessor("RawDatasetProcessor")
+
+class RawDatasetProcessorConfig(DataConfig):
+    """Configuration class for RawDatasetProcessor."""
+
+    data_processor: Literal["RawDatasetProcessor"]
+    batch_size: int = ...
+
+    """ The dataset preprocessing configuration. """
+
+    ##TODO: Create a config class for preprocessing as well
+    preprocessing: dict = ...
+
+    shuffle: bool = True
+    shuffle_seed: int = 0
+    num_workers: int = 0
+    prefetch_factor: Optional[int] = 10
+    persistent_workers: bool = True
+    drop_last: bool = True
+    seed: Optional[int] = None
+
+    def post_init(self, context):
+        if not self.num_workers:
+            self.prefetch_factor = None  # the default value in DataLoader
+            self.persistent_workers = False
+
+
+class MultimodalRawDatasetProcessorConfig(RawDatasetProcessorConfig):
+    """Multimodal Configuration class for RawDatasetProcessor."""
+
+    data_processor: Literal["MultimodalRawDatasetProcessor"]
+    image_data_size: List[int] = ...
+    """ The final C x H x W shape of the image. """
+
+    transforms: List[dict] = ...
+    """ List of transformations to apply to images. """
+
+    img_data_dir: str = ...
+    """ The directory containing the image data. """
+
+
 class RawDatasetProcessor(torch.utils.data.IterableDataset):
-    def __init__(self, params: Dict[str, Any]):
+    def __init__(self, config: RawDatasetProcessorConfig):
+        if isinstance(config, dict):
+            config = RawDatasetProcessorConfig(**config)
         super(RawDatasetProcessor, self).__init__()
-        self.params = params
-        self.preprocessing_params = self.params.get("preprocessing", None)
+        self.config = config
+        self.batch_size = self.config.batch_size
+        self.preprocessing_params = self.config.preprocessing
+
         self.dataset_processor = DataPreprocessor(self.preprocessing_params)
-        self.features_list = self.preprocessing_params["processing"].get(
-            "features_list", ["input_ids", "attention_mask", "labels"]
-        )
-        self.num_workers = params.get("num_workers", 0)
-        self.drop_last = params.get("drop_last", True)
-        if self.num_workers == 0:
-            self.prefetch_factor = None
-        else:
-            self.prefetch_factor = params.get("prefetch_factor", 10)
-        self.persistent_workers = params.get("persistent_workers", True)
-        self.reader = None
-        self.batch_size = params.get("batch_size", None)
-        self.seed = self.params.pop("seed", None)
-        self.rng = random.Random(self.seed)
+        self.features_list = self.dataset_processor.token_generator.features
+
+        self.num_workers = self.config.num_workers
+        self.prefetch_factor = self.config.prefetch_factor
+        self.persistent_workers = self.config.persistent_workers
+
         self.reader = Reader(
             self.dataset_processor.input_files,
             keys=self.dataset_processor.data_keys,
-            format_hook_fn=self.dataset_processor.format_hook_fn,
+            read_hook_fn=self.dataset_processor.read_hook_fn,
         )
-        self.num_tasks = num_tasks()
-        self.task_id = task_id()
+
+        self.seed = self.config.seed
+        self.rng = random.Random(self.seed)
         self.input_files_in_this_task = shard_list_contiguous(
-            self.dataset_processor.input_files, self.task_id, self.num_tasks
+            self.dataset_processor.input_files, task_id(), num_tasks()
         )
 
     def _worker_init_fn(self, worker_id: int):
@@ -118,12 +159,12 @@ class RawDatasetProcessor(torch.utils.data.IterableDataset):
             and NumPy array values.
         """
         for data in self.reader.stream_data():
-            data_array = self.dataset_processor.format_hook_fn(data)
-
+            data_array = self.dataset_processor.read_hook_fn(data)
             # Tokenize the data and get stats
             tokenized_data, stats = (
                 self.dataset_processor.token_generator.encode(data_array)
             )
+
             # Continue to next iteration if "data" key is not present
             if "data" not in tokenized_data.keys():
                 continue
@@ -159,7 +200,7 @@ class RawDatasetProcessor(torch.utils.data.IterableDataset):
         dataloader = DataLoader(
             self,
             batch_size=self.batch_size,  # Number of samples per batch
-            drop_last=self.drop_last,  # Drop the last incomplete batch if the dataset size is not divisible by the batch size
+            drop_last=self.config.drop_last,  # Drop the last incomplete batch if the dataset size is not divisible by the batch size
             collate_fn=self.collate_fn,  # Function to merge a list of samples to form a mini-batch
             num_workers=self.num_workers,  # Number of subprocesses to use for data loading
             prefetch_factor=(
@@ -179,3 +220,93 @@ class RawDatasetProcessor(torch.utils.data.IterableDataset):
             self._worker_init_fn(0)
 
         return dataloader
+
+
+class MultimodalRawDatasetProcessor(RawDatasetProcessor):
+    """Dataset processor for multimodal data (e.g., image data)."""
+
+    def __init__(self, config: MultimodalRawDatasetProcessorConfig):
+        if isinstance(config, dict):
+            config = MultimodalRawDatasetProcessorConfig(**config)
+        super(MultimodalRawDatasetProcessor, self).__init__(config)
+        self.img_data_dir = self.config.img_data_dir
+        self.image_data_size = self.config.image_data_size
+        self.transforms = get_preprocess_transform(
+            {
+                "transforms": self.config.transforms,
+            }
+        )
+        self.image_data_size = self.config.image_data_size
+        self.transforms = get_preprocess_transform(
+            {
+                "transforms": self.config.transforms,
+            }
+        )
+
+    def preprocess_img(self, path_list):
+
+        img_list = []
+        for img_paths in path_list:
+            imgs_per_sample_list = []
+            ## iterate over all the image paths in 1 data sample
+            for path in img_paths:
+                path = path.decode("utf-8")
+                if path != "None":
+                    image_path = os.path.join(self.img_data_dir, path)
+                    image = Image.open(image_path).convert("RGB")
+                else:
+                    image = Image.new(
+                        mode="RGB",
+                        size=(self.image_data_size[2], self.image_data_size[1]),
+                    )
+                imgs_per_sample_list.append(self.transforms(image).unsqueeze(0))
+            imgs_per_sample = torch.cat(
+                imgs_per_sample_list, dim=0
+            )  ## shape - max_num_img * C * H * W
+            img_list.append(imgs_per_sample.unsqueeze(0))
+
+        img = torch.cat(
+            img_list, dim=0
+        )  ## shape - batch_size * max_num_img * C * H * W
+        return img
+
+    def get_next_item(self) -> Iterator[Dict[str, np.ndarray]]:
+        """
+        Returns the next item in the iteration.
+
+        This function iterates over the data stream from the reader, tokenizes the data,
+        and yields dictionaries containing features as keys and NumPy arrays as values.
+
+        Returns:
+            Iterator[Dict[str, np.ndarray]]: An iterator yielding dictionaries with string keys
+            and NumPy array values.
+        """
+        for data in self.reader.stream_data():
+            data_array = self.dataset_processor.read_hook_fn(data)
+            # Tokenize the data and get stats
+            tokenized_data, stats = (
+                self.dataset_processor.token_generator.encode(data_array)
+            )
+
+            # Continue to next iteration if "data" key is not present
+            if "data" not in tokenized_data.keys():
+                continue
+
+            # Apply image transformation
+            tokenized_data['image_data'] = self.preprocess_img(
+                tokenized_data['img_path']
+            )
+            for i in range(len(tokenized_data["data"])):
+                data = {
+                    feature: np.array(
+                        tokenized_data["data"][i][feature_idx], np.int32
+                    )
+                    for feature_idx, feature in enumerate(self.features_list)
+                }
+                data.update(
+                    {
+                        "image_data": tokenized_data["image_data"][i],
+                        "image_data_loc": tokenized_data["img_data_loc"][i],
+                    }
+                )
+                yield data

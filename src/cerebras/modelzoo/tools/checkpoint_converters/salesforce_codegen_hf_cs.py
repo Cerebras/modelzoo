@@ -747,10 +747,11 @@ class ConfigConverter_Codegen_Model_HF_CS17(BaseConfigConverter_HF_CS):
 
     def pre_config_convert(
         self,
+        model,
         config,
         converter_indices,
     ):
-        config = super().pre_config_convert(config, converter_indices)
+        config = super().pre_config_convert(model, config, converter_indices)
 
         if converter_indices.direction == 0:
             if "n_inner" not in config or config["n_inner"] is None:
@@ -783,7 +784,7 @@ class Converter_Codegen_LMHeadModel_CS18_CS20(
     Converter_GPTJ_LMHeadModel_CS18_CS20
 ):
     r"""
-    Codegen uses the GPTJ backbone
+    Codegen uses the GPTJ backbone.
     """
 
     @classmethod
@@ -799,7 +800,7 @@ class ConfigConverter_Codegen_Model_CS18_CS20(
     ConfigConverter_GPTJModel_CS18_CS20
 ):
     r"""
-    Codegen uses the GPTJ backbone
+    Codegen uses the GPTJ backbone.
     """
 
 
@@ -808,7 +809,7 @@ class Converter_Codegen_Headless_HF_CS20(Converter_Codegen_Headless_HF_CS18):
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.0", "cs-2.1", "cs-2.2", "cs-2.3"),
+            FormatVersions("cs-2.0", "cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4"),
         )
 
     @staticmethod
@@ -823,7 +824,7 @@ class Converter_Codegen_LMHeadModel_HF_CS20(
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.0", "cs-2.1", "cs-2.2", "cs-2.3"),
+            FormatVersions("cs-2.0", "cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4"),
         )
 
     @staticmethod
@@ -848,7 +849,7 @@ class ConfigConverter_Codegen_Model_HF_CS20(
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.0", "cs-2.1", "cs-2.2", "cs-2.3"),
+            FormatVersions("cs-2.0", "cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4"),
         )
 
 

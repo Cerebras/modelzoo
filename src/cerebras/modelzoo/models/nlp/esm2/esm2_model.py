@@ -12,28 +12,37 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Optional
+
 import torch
 
-from cerebras.modelzoo.models.nlp.bert.bert_model import BertModel
+from cerebras.modelzoo.models.nlp.bert.bert_model import (
+    BertModel,
+    BertModelConfig,
+)
+
+
+class Esm2ModelConfig(BertModelConfig):
+    token_dropout: bool = False
+    mask_token_id: Optional[int] = None
+    norm_first: bool = True
+
+    def post_init(self, context):
+        super().post_init(context)
+
+        if self.token_dropout and self.mask_token_id is None:
+            raise ValueError(
+                "mask_token_id parameter must be provided when token_dropout is "
+                "enabled."
+            )
 
 
 class Esm2Model(BertModel):
-    def __init__(
-        self,
-        token_dropout=False,
-        mask_token_id=None,
-        embedding_layer_norm=True,
-        **kwargs,
-    ):
-        super().__init__(
-            **kwargs, embedding_layer_norm=embedding_layer_norm, norm_first=True
-        )
-        self.token_dropout = token_dropout
-        self.mask_token_id = mask_token_id
-        assert not self.token_dropout or self.mask_token_id is not None, (
-            "The mask_token_id parameter must be provided when token_dropout is"
-            "enabled"
-        )
+    def __init__(self, config: Esm2ModelConfig):
+        super().__init__(config)
+
+        self.token_dropout = config.token_dropout
+        self.mask_token_id = config.mask_token_id
 
     # ESM-2 may use token dropout. This function overrides the default BERT
     # embedding computation, and is used in the forward() fn.

@@ -292,10 +292,11 @@ class ConfigConverter_Roberta_HF_CS18(ConfigConverter_Bert_HF_CS18):
 
     def pre_config_convert(
         self,
+        model,
         config,
         converter_indices,
     ):
-        config = super().pre_config_convert(config, converter_indices)
+        config = super().pre_config_convert(model, config, converter_indices)
 
         if converter_indices.direction == 1:
             if "num_segments" not in config:
@@ -305,6 +306,7 @@ class ConfigConverter_Roberta_HF_CS18(ConfigConverter_Bert_HF_CS18):
 
     def post_config_convert(
         self,
+        model,
         original_config,
         old_config,
         new_config,
@@ -315,6 +317,7 @@ class ConfigConverter_Roberta_HF_CS18(ConfigConverter_Bert_HF_CS18):
             new_config["mlm_nonlinearity"] = "gelu"
 
         return super().post_config_convert(
+            model,
             original_config,
             old_config,
             new_config,
@@ -330,13 +333,13 @@ class ConfigConverter_Roberta_HF_CS18(ConfigConverter_Bert_HF_CS18):
 
 
 class ConfigConverter_Roberta_HF_CS21(ConfigConverter_Roberta_HF_CS18):
-    "CS 2.1 config is the same as CS 2.0"
+    "CS 2.1 config is the same as CS 2.0."
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4"),
         )
 
 
@@ -359,7 +362,7 @@ class Converter_RobertaPretrainModel_WithoutOptionalModel_HF_CS21(
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4"),
         )
 
     @staticmethod
@@ -375,7 +378,7 @@ Converter_RobertaPretrainModel_HF_CS21 = (
         config_converter_class=ConfigConverter_Roberta_HF_CS21,
         formats=(
             FormatVersions("hf"),
-            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4"),
         ),
     )
 )

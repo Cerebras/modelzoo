@@ -62,8 +62,25 @@ class FixedPositionEmbeddingLayer(nn.Module):
             if length != self.max_position_embeddings:
                 positional_embed = positional_embed[:length]
         else:
-            position_ids = position_ids.to(torch.long)
-            positional_embed = positional_embed[position_ids]
+            assert (
+                len(positional_embed.shape) == 2
+            ), "positional_embed must be a 2D tensor."
+            batch_size = position_ids.shape[0]
+            seq_length = position_ids.shape[1]
+            max_position_embeddings = positional_embed.shape[0]
+            embedding_size = positional_embed.shape[1]
+
+            bc_positional_embed = positional_embed[None, :, :].broadcast_to(
+                batch_size, max_position_embeddings, embedding_size
+            )
+            bc_position_ids = (
+                position_ids[:, :, None]
+                .broadcast_to(batch_size, seq_length, embedding_size)
+                .to(torch.long)
+            )
+            positional_embed = torch.gather(
+                bc_positional_embed, 1, bc_position_ids
+            )
         return positional_embed
 
     @staticmethod

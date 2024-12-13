@@ -12,102 +12,48 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from copy import deepcopy
-from dataclasses import asdict
+from typing import Any, Literal, Optional
 
 import torch
+from pydantic import Field
 from torch.nn import CrossEntropyLoss
 
-from cerebras.modelzoo.common.registry import registry
 from cerebras.modelzoo.models.vision.vision_transformer.ViTClassificationModel import (
     ViTClassificationModel,
+    ViTClassificationModelConfig,
 )
 from cerebras.pytorch.metrics import AccuracyMetric
 
 
-@registry.register_model(
-    "vision_transformer", datasetprocessor=["ImageNet1KProcessor"]
-)
+class VisionTransformerModelConfig(ViTClassificationModelConfig):
+    name: Literal["vision_transformer"]
+
+    # Transformer
+    num_channels: Optional[int] = 3
+    "Number of input channels"
+
+    compute_eval_metrics: bool = True
+
+    mixed_precision: Optional[Any] = Field(default=None, deprecated=True)
+    fp16_type: Optional[Any] = Field(default=None, deprecated=True)
+
+
 class ViTClassificationWrapperModel(torch.nn.Module):
-    def __init__(self, params):
+    def __init__(self, config: VisionTransformerModelConfig):
+
         super().__init__()
 
-        model_params = deepcopy(params.model)
-        self.model = self.build_model(model_params)
+        self.num_classes = config.num_classes
+
+        self.model = self.build_model(config)
         self.loss_fn = CrossEntropyLoss()
 
-        self.compute_eval_metrics = model_params.compute_eval_metrics
+        self.compute_eval_metrics = config.compute_eval_metrics
         if self.compute_eval_metrics:
             self.accuracy_metric_cls = AccuracyMetric(name="eval/accuracy_cls")
 
-    def build_model(self, model_params):
-        self.num_classes = model_params.num_classes
-
-        model = ViTClassificationModel(
-            num_classes=self.num_classes,
-            # Embedding
-            embedding_dropout_rate=model_params.embedding_dropout_rate,
-            hidden_size=model_params.hidden_size,
-            use_post_embed_layer_norm=model_params.use_post_embed_layer_norm,
-            use_embed_proj_bias=model_params.use_embed_proj_bias,
-            # Encoder
-            num_hidden_layers=model_params.num_hidden_layers,
-            layer_norm_epsilon=float(model_params.layer_norm_epsilon),
-            # Encoder Attn
-            num_heads=model_params.num_heads,
-            attention_type=model_params.attention_type,
-            attention_softmax_fp32=model_params.attention_softmax_fp32,
-            dropout_rate=model_params.dropout_rate,
-            nonlinearity=model_params.nonlinearity,
-            pooler_nonlinearity=model_params.pooler_nonlinearity,
-            attention_dropout_rate=model_params.attention_dropout_rate,
-            use_projection_bias_in_attention=model_params.use_projection_bias_in_attention,
-            use_ffn_bias_in_attention=model_params.use_ffn_bias_in_attention,
-            # Encoder ffn
-            filter_size=model_params.filter_size,
-            use_ffn_bias=model_params.use_ffn_bias,
-            # Task-specific
-            initializer_range=model_params.initializer_range,
-            projection_initializer=(
-                asdict(model_params.projection_initializer)
-                if model_params.projection_initializer
-                else None
-            ),
-            position_embedding_initializer=(
-                asdict(model_params.position_embedding_initializer)
-                if model_params.position_embedding_initializer
-                else None
-            ),
-            position_embedding_type=model_params.position_embedding_type,
-            attention_initializer=(
-                asdict(model_params.attention_initializer)
-                if model_params.attention_initializer
-                else None
-            ),
-            ffn_initializer=(
-                asdict(model_params.ffn_initializer)
-                if model_params.ffn_initializer
-                else None
-            ),
-            pooler_initializer=(
-                asdict(model_params.pooler_initializer)
-                if model_params.pooler_initializer
-                else None
-            ),
-            norm_first=model_params.norm_first,
-            use_final_layer_norm=model_params.use_final_layer_norm,
-            # vision related params
-            image_size=model_params.image_size,
-            num_channels=model_params.num_channels,
-            patch_size=model_params.patch_size,
-            use_conv_patchified_embedding=model_params.use_conv_patchified_embedding,
-            use_encoder_pooler_layer=model_params.use_encoder_pooler_layer,
-            prepend_cls_token=model_params.prepend_cls_token,
-            # classifier related
-            use_bias_in_output=model_params.use_bias_in_output,
-        )
-
-        return model
+    def build_model(self, config):
+        return ViTClassificationModel(config)
 
     def _post_device_transfer(self):
         pass

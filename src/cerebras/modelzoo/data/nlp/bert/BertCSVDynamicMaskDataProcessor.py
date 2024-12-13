@@ -15,17 +15,22 @@
 """
 Processor for PyTorch BERT training.
 """
+
 import csv
+import os
 import random
+from typing import Any, List, Literal, Optional, Union
 
 import numpy as np
 import torch
+from pydantic import Field, PositiveInt, field_validator
 
 from cerebras.modelzoo.common.input_utils import (
     bucketed_batch,
     get_streaming_batch_size,
 )
-from cerebras.modelzoo.common.registry import registry
+from cerebras.modelzoo.config import DataConfig
+from cerebras.modelzoo.config.types import AliasedPath
 from cerebras.modelzoo.data.common.input_utils import (
     get_data_for_task,
     num_tasks,
@@ -40,45 +45,138 @@ from cerebras.modelzoo.data.nlp.bert.bert_utils import (
 )
 
 
-@registry.register_datasetprocessor("BertCSVDynamicMaskDataProcessor")
+class BertCSVDynamicMaskDataProcessorConfig(DataConfig):
+    data_processor: Literal["BertCSVDynamicMaskDataProcessor"]
+
+    data_dir: Union[str, List[str]] = ...
+    "Path to the data files to use."
+
+    batch_size: PositiveInt = ...
+    "The batch size."
+
+    disable_nsp: bool = False
+    "Whether Next Sentence Prediction (NSP) objective is disabled."
+
+    dynamic_mlm_scale: bool = False
+    "Whether to dynamically scale the loss."
+
+    buckets: Optional[List[int]] = None
+    """
+    A list of bucket boundaries. If set to None, then no
+    bucketing will happen, and data will be batched normally. If set to
+    a list, then data will be grouped into `len(buckets) + 1` buckets. A
+    sample `s` will go into bucket `i` if
+    `buckets[i-1] <= element_length_fn(s) < buckets[i]` where 0 and inf are
+    the implied lowest and highest boundaries respectively. `buckets` must
+    be sorted and all elements must be non-zero.
+    """
+
+    mask_whole_word: bool = False
+    "Flag to whether mask the entire word."
+
+    do_lower: bool = False
+    "Flag to lower case the texts."
+
+    vocab_file: AliasedPath = ...
+    "Path to the vocabulary file."
+
+    oov_token: str = "[UNK]"
+    "Out of vocabulary token."
+
+    mask_token: str = "[MASK]"
+    "Mask token."
+
+    document_separator_token: str = "[SEP]"
+    "Seperator token."
+
+    exclude_from_masking: List[str] = ["[CLS]", "[SEP]", "[PAD]", "[MASK]"]
+    "Tokens that should be excluded from being masked."
+
+    max_sequence_length: int = ...
+
+    max_predictions_per_seq: int = ...
+
+    masked_lm_prob: float = 0.15
+
+    gather_mlm_labels: bool = True
+
+    labels_pad_id: int = 0
+
+    input_pad_id: int = 0
+
+    attn_mask_pad_id: int = 0
+
+    segment_pad_id: int = 0
+
+    shuffle: bool = True
+    "Whether or not to shuffle the dataset."
+
+    shuffle_seed: Optional[int] = None
+    "The seed used for deterministic shuffling."
+
+    shuffle_buffer: Optional[int] = None
+    """
+    Buffer size to shuffle samples across.
+    If None and shuffle is enabled, 10*batch_size is used.
+    """
+
+    num_workers: int = 0
+    "The number of PyTorch processes used in the dataloader."
+
+    prefetch_factor: Optional[int] = 10
+    "The number of batches to prefetch in the dataloader."
+
+    persistent_workers: bool = True
+    "Whether or not to keep workers persistent between epochs."
+
+    drop_last: bool = True
+    "Whether to drop last batch of epoch if it's an incomplete batch."
+
+    # The following fields are deprecated and unused.
+    # They will be removed in the future once all configs have been fixed
+    mixed_precision: Optional[Any] = Field(default=None, deprecated=True)
+    vocab_size: Optional[Any] = Field(default=None, deprecated=True)
+    num_examples: Optional[Any] = Field(default=None, deprecated=True)
+    steps: Optional[Any] = Field(default=None, deprecated=True)
+    whole_word_masking: Optional[Any] = Field(default=None, deprecated=True)
+
+    def post_init(self, context):
+        super().post_init(context)
+
+        if not self.num_workers:
+            self.prefetch_factor = None  # the default value in DataLoader
+            self.persistent_workers = False
+
+    @field_validator("disable_nsp", mode="after")
+    @classmethod
+    def get_disable_nsp(cls, disable_nsp, info):
+        if info.context:
+            model_config = info.context.get("model", {}).get("config")
+
+            if hasattr(model_config, "disable_nsp"):
+                return model_config.disable_nsp
+
+        return disable_nsp
+
+    @field_validator("vocab_file", mode="after")
+    @classmethod
+    def get_vocab_file(cls, vocab_file):
+        if not os.path.exists(vocab_file):
+            raise ValueError(f"Vocab file does not exist: {vocab_file}")
+        return os.path.abspath(vocab_file)
+
+
 class BertCSVDynamicMaskDataProcessor(torch.utils.data.IterableDataset):
     """
     Reads csv files containing the input text tokens, adds MLM features
     on the fly.
-    :param <dict> params: dict containing input parameters for creating dataset.
-    Expects the following fields:
-
-    - "data_dir" (string): path to the data files to use.
-    - "batch_size" (int): Batch size.
-    - "shuffle" (bool): Flag to enable data shuffling.
-    - "shuffle_seed" (int): Shuffle seed.
-    - "shuffle_buffer" (int): Shuffle buffer size.
-    - "mask_whole_word" (bool): Flag to whether mask the entire word.
-    - "do_lower" (bool): Flag to lower case the texts.
-    - "dynamic_mlm_scale" (bool): Flag to dynamically scale the loss.
-    - "num_workers" (int):  How many subprocesses to use for data loading.
-    - "drop_last" (bool): If True and the dataset size is not divisible
-       by the batch size, the last incomplete batch will be dropped.
-    - "prefetch_factor" (int): Number of samples loaded in advance by each worker.
-    - "persistent_workers" (bool): If True, the data loader will not shutdown
-       the worker processes after a dataset has been consumed once.
-    - "oov_token" (string): Out of vocabulary token.
-    - "mask_token" (string): Mask token.
-    - "document_separator_token" (string): Seperator token.
-    - "exclude_from_masking" list(string): tokens that should be excluded from being masked.
-    - "max_sequence_length" (int): Maximum length of the sequence to generate.
-    - "max_predictions_per_seq" (int): Maximum number of masked tokens per sequence.
-    - "masked_lm_prob" (float): Ratio of the masked tokens over the sequence length.
-    - "gather_mlm_labels" (bool): Flag to gather mlm labels.
-    - "mixed_precision" (bool): Casts input mask to fp16 if set to True.
-      Otherwise, the generated mask is float32.
     """
 
-    def __init__(self, params):
-        super(BertCSVDynamicMaskDataProcessor, self).__init__()
+    def __init__(self, config: BertCSVDynamicMaskDataProcessorConfig):
+        super().__init__()
 
         # Input params.
-        self.meta_data = get_meta_data(params["data_dir"])
+        self.meta_data = get_meta_data(config.data_dir)
 
         self.meta_data_values = list(self.meta_data.values())
         self.meta_data_filenames = list(self.meta_data.keys())
@@ -86,8 +184,8 @@ class BertCSVDynamicMaskDataProcessor(torch.utils.data.IterableDataset):
         self.meta_data_values_cum_sum = np.cumsum([0] + self.meta_data_values)
 
         self.num_examples = sum(map(int, self.meta_data.values()))
-        self.disable_nsp = params.get("disable_nsp", False)
-        self.batch_size = get_streaming_batch_size(params["batch_size"])
+        self.disable_nsp = config.disable_nsp
+        self.batch_size = get_streaming_batch_size(config.batch_size)
 
         self.num_batches = self.num_examples // self.batch_size
         assert (
@@ -111,31 +209,30 @@ class BertCSVDynamicMaskDataProcessor(torch.utils.data.IterableDataset):
             self.meta_data_filenames,
         )
 
-        self.shuffle = params.get("shuffle", True)
-        self.shuffle_seed = params.get("shuffle_seed", None)
-        self.shuffle_buffer = params.get("shuffle_buffer", 10 * self.batch_size)
-        self.mask_whole_word = params.get("mask_whole_word", False)
-        self.do_lower = params.get("do_lower", False)
-        self.dynamic_mlm_scale = params.get("dynamic_mlm_scale", False)
-        self.buckets = params.get("buckets", None)
+        self.shuffle = config.shuffle
+        self.shuffle_seed = config.shuffle_seed
+        if config.shuffle_buffer is None:
+            self.shuffle_buffer = 10 * self.batch_size
+        else:
+            self.shuffle_buffer = config.shuffle_buffer
+        self.mask_whole_word = config.mask_whole_word
+        self.do_lower = config.do_lower
+        self.dynamic_mlm_scale = config.dynamic_mlm_scale
+        self.buckets = config.buckets
 
         # Multi-processing params.
-        self.num_workers = params.get("num_workers", 0)
-        self.drop_last = params.get("drop_last", True)
-        self.prefetch_factor = params.get("prefetch_factor", 10)
-        self.persistent_workers = params.get("persistent_workers", True)
+        self.num_workers = config.num_workers
+        self.drop_last = config.drop_last
+        self.prefetch_factor = config.prefetch_factor
+        self.persistent_workers = config.persistent_workers
 
         # Get special tokens and tokens that should not be masked.
         self.special_tokens = {
-            "oov_token": params.get("oov_token", "[UNK]"),
-            "mask_token": params.get("mask_token", "[MASK]"),
-            "document_separator_token": params.get(
-                "document_separator_token", "[SEP]"
-            ),
+            "oov_token": config.oov_token,
+            "mask_token": config.mask_token,
+            "document_separator_token": config.document_separator_token,
         }
-        self.exclude_from_masking = params.get(
-            "exclude_from_masking", ["[CLS]", "[SEP]", "[PAD]", "[MASK]"]
-        )
+        self.exclude_from_masking = config.exclude_from_masking
 
         if self.do_lower:
             self.special_tokens = {
@@ -147,9 +244,8 @@ class BertCSVDynamicMaskDataProcessor(torch.utils.data.IterableDataset):
             )
 
         # Get vocab file and size.
-        self.vocab_file = params["vocab_file"]
         self.vocab, self.vocab_size = build_vocab(
-            self.vocab_file, self.do_lower, self.special_tokens["oov_token"]
+            config.vocab_file, self.do_lower, self.special_tokens["oov_token"]
         )
 
         # Init tokenizer.
@@ -173,17 +269,17 @@ class BertCSVDynamicMaskDataProcessor(torch.utils.data.IterableDataset):
 
         # Padding indices.
         # See https://huggingface.co/transformers/glossary.html#labels.
-        self.labels_pad_id = params.get("labels_pad_id", 0)
-        self.input_pad_id = params.get("input_pad_id", 0)
-        self.attn_mask_pad_id = params.get("attn_mask_pad_id", 0)
+        self.labels_pad_id = config.labels_pad_id
+        self.input_pad_id = config.input_pad_id
+        self.attn_mask_pad_id = config.attn_mask_pad_id
         if not self.disable_nsp:
-            self.segment_pad_id = params.get("segment_pad_id", 0)
+            self.segment_pad_id = config.segment_pad_id
 
         # Max sequence lengths size params.
-        self.max_sequence_length = params["max_sequence_length"]
-        self.max_predictions_per_seq = params["max_predictions_per_seq"]
-        self.masked_lm_prob = params.get("masked_lm_prob", 0.15)
-        self.gather_mlm_labels = params.get("gather_mlm_labels", True)
+        self.max_sequence_length = config.max_sequence_length
+        self.max_predictions_per_seq = config.max_predictions_per_seq
+        self.masked_lm_prob = config.masked_lm_prob
+        self.gather_mlm_labels = config.gather_mlm_labels
 
         # Store params.
         self.data_buffer = []

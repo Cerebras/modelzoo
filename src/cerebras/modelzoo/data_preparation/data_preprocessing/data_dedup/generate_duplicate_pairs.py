@@ -30,7 +30,7 @@ import threading
 import time
 from collections import defaultdict
 from glob import glob
-from multiprocessing import Process, Queue
+from multiprocessing import Process, Queue, cpu_count
 
 from datasketch.lean_minhash import LeanMinHash
 from more_itertools import divide
@@ -181,27 +181,27 @@ if __name__ == "__main__":
     parser.add_argument(
         "--input_dir",
         type=str,
-        help="Input directory which contains documents.",
+        help="Input directory, which contains documents.",
         required=True,
     )
     parser.add_argument(
         "--out_file",
         type=str,
-        help="Output file where duplicate pairs will be stored.",
+        help="Output file, where the list of duplicate pairs will be stored.",
         required=True,
     )
     parser.add_argument(
         "--jaccard_threshold",
         type=float,
-        help="Threshold for Jaccard similarity",
+        help="Threshold for Jaccard similarity, above which documents will be considered 'similar'. By default, this is set to 0.8.",
         default=0.8,
         required=False,
     )
     parser.add_argument(
         "--processes",
         type=int,
-        help="Number of processes to parallelise on",
-        default=1,
+        help="Number of processes to parallelise on. By default, this is set to the number of cores in the machine.",
+        default=cpu_count(),
         required=False,
     )
     args = parser.parse_args()

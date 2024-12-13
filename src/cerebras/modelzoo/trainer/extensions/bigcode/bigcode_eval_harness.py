@@ -36,10 +36,7 @@ from lm_eval.utils import pattern_match
 import cerebras.pytorch as cstorch
 from cerebras.appliance.environment import appliance_environ
 from cerebras.appliance.log import ClassLogger, named_class_logger
-from cerebras.modelzoo.data.nlp.gpt.InferenceDataProcessor import (
-    RequestType,
-    tokenize_stop_words,
-)
+from cerebras.modelzoo.data.nlp.gpt.InferenceDataProcessor import RequestType
 from cerebras.modelzoo.trainer import Trainer
 from cerebras.modelzoo.trainer.callbacks import (
     Callback,
@@ -69,7 +66,7 @@ class BigCodeCLIArgs:
         instruction_tokens: A series of instruction tokens used for instruction-tuning
             benchamrks separated by comma e.g.
             <user_message>,<end_user_message>,<assistant_message>
-        max_length_generation: Maximum length of generated sequence (prompt+generation).
+        max_tokens: Maximum number of tokens to generate.
         limit: Number of samples to solve and evaluate from the benchmark
         limit_start: Optional offset to start from when limiting the number of samples
         save_every_k_tasks: Optional saving after every k tasks
@@ -103,7 +100,7 @@ class BigCodeCLIArgs:
     # Other BigCode CLI arguments
     tasks: Optional[Union[str, List[str]]] = None
     instruction_tokens: Optional[str] = None
-    max_length_generation: int = 512
+    max_tokens: Optional[int] = None
     limit: Optional[int] = None
     limit_start: int = 0
     save_every_k_tasks: int = -1
@@ -146,11 +143,6 @@ class BigCodeEvalHarnessRunner(ClassLogger):
             raise ValueError(
                 f"Task not found: {self.args.tasks}.\n"
                 f"Available tasks: {','.join(bigcode_tasks.TASK_REGISTRY.keys())}"
-            )
-        elif len(self.task_names) > 1:
-            raise RuntimeError(
-                "Running multiple generative big code eval harness tasks is not supported. "
-                "Please specify only a single task at a time."
             )
 
     @cached_property
@@ -342,6 +334,12 @@ class BigCodeEvaluator(CSEvalHarnessAdapter, Evaluator):
                 + context
             )
 
+        # Extract stop words
+        stopping_criteria = []
+        if task.stop_words:
+            for stop_word in task.stop_words:
+                stopping_criteria.append(stop_word)
+
         prompts = []
         infill = False
         instruction = False
@@ -376,7 +374,7 @@ class BigCodeEvaluator(CSEvalHarnessAdapter, Evaluator):
                 raise ValueError(
                     f"Unsupported prompt format: {type(prompt_contents)}"
                 )
-            prompts.append(prompt)
+            prompts.append((prompt, deepcopy(stopping_criteria)))
 
         return prompts
 
@@ -407,19 +405,14 @@ class BigCodeEvaluator(CSEvalHarnessAdapter, Evaluator):
            List of generated code samples
         """
         (
-            tokenizer,
             samples_file_list,
             dataset_size,
             metadata,
         ) = self.preprocess_dataset(
-            prompts, request_type=RequestType.bigcode_eh
+            prompts,
+            request_type=RequestType.bigcode_eh,
+            max_tokens=gen_kwargs.get("max_tokens"),
         )
-
-        stop_sequences = tokenize_stop_words(
-            stop_words=gen_kwargs.pop("stopping_criteria", []),
-            tokenizer=tokenizer,
-        )
-        stop_sequences.append([self.dataloader_args["eos_id"]])  # Handle EOS ID
 
         # keep track of the list of generated codes
         # where len(code_gens) = n_tasks and len(code_gens[0]) = number of generated code samples
@@ -429,7 +422,7 @@ class BigCodeEvaluator(CSEvalHarnessAdapter, Evaluator):
         )
 
         # Generate tokens on appliance
-        with GenerateTokens(metadata, stop_sequences, gen_kwargs) as gen:
+        with GenerateTokens(metadata["requests"], gen_kwargs) as gen:
             self.trainer.validate(
                 val_dataloader=cstorch.utils.data.DataLoader(
                     self.input_fn,
@@ -437,6 +430,7 @@ class BigCodeEvaluator(CSEvalHarnessAdapter, Evaluator):
                     samples_file_list,
                     dataset_size,
                     RequestType.bigcode_eh.value,
+                    **metadata["dataset_kwargs"],
                 ),
                 loop=BigCodeEvalHarnessLoop(),
                 ckpt_path=None,
@@ -446,7 +440,7 @@ class BigCodeEvaluator(CSEvalHarnessAdapter, Evaluator):
 
         code_gens = update_code_gens(
             task,
-            tokenizer,
+            self.tokenizer,
             limit_start,
             self.args.prefix,
             instruction_tokens,
@@ -550,7 +544,7 @@ class BigCodeEvaluator(CSEvalHarnessAdapter, Evaluator):
             "temperature": self.args.temperature,
             "top_p": self.args.top_p,
             "top_k": self.args.top_k,
-            "max_tokens": self.args.max_length_generation,
+            "max_tokens": self.args.max_tokens,
         }
 
         stopping_criteria = []
@@ -617,14 +611,12 @@ class GenerateTokens(Callback):
     def __init__(
         self,
         metadata: List[Tuple[int, int]],
-        stop_sequences: List[List[int]],
         gen_kwargs: Dict[str, Any],
     ):
         """
         Args:
             metadata: List of tuples of (sample idx, prompt encoding length)
                 for each sample in the batch
-            stop_sequences: List of stop token sequences for stopping generation
             gen_kwargs: Dict specifying settings for generative inference.
         """
         self.metadata = metadata
@@ -635,7 +627,6 @@ class GenerateTokens(Callback):
         )  # dict of list of generated tokens
 
         # Generation settings
-        self.stop_sequences = stop_sequences
         self.temperature = gen_kwargs.get("temperature")
         self.top_p = gen_kwargs.get("top_p")
         self.top_k = gen_kwargs.get("top_k")
@@ -655,7 +646,6 @@ class GenerateTokens(Callback):
                 "Please specify a start token for generative tasks."
             )
 
-        model.stop_sequences = self.stop_sequences
         if self.max_tokens is not None:
             model.max_tokens = self.max_tokens
 

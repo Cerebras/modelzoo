@@ -29,6 +29,7 @@ Usage:
     python modelzoo.data_preparation.vision.unet.create_hdf5_files.py --params=/path_to_modelzoo/vision/pytorch/unet/configs/params_severstal_binary.yaml --output_dir=/path_to_outdir/severstal_binary_classid_3_hdf --num_output_files=10 --num_processes=5
 
 """
+
 import argparse
 import json
 import logging
@@ -50,7 +51,6 @@ from cerebras.modelzoo.data.vision.classification.dataset_factory import (
     VisionSubset,
 )
 from cerebras.modelzoo.data_preparation.utils import split_list
-from cerebras.modelzoo.models.internal.vision.unet.utils import set_defaults
 
 from cerebras.modelzoo.data.vision.segmentation.SeverstalBinaryClassDataProcessor import (  # noqa
     SeverstalBinaryClassDataProcessor,
@@ -70,11 +70,11 @@ def update_params_from_args(args, params):
             params[k] = v if v is not None else params.get(k)
 
 
-def _get_dataset(params, is_training):
+def _get_dataset(params):
     params["use_worker_cache"] = False
     return getattr(sys.modules[__name__], params["data_processor"])(
         params
-    ).create_dataset(is_training)
+    ).create_dataset()
 
 
 def _get_data_generator(params, is_training, dataset_range):
@@ -258,7 +258,6 @@ def main():
 
     # write initial params to file
     params = read_params_file(args.params)
-    set_defaults(params)
     params["input_args"] = {}
     update_params_from_args(args, params["input_args"])
 
@@ -276,7 +275,7 @@ def main():
         check_and_create_output_dirs(args.output_dir, filetype="h5")
         args.split = split
 
-        dataset = _get_dataset(params[split], is_training="train" in split)
+        dataset = _get_dataset(params[split])
         len_dataset = len(dataset)
         dataset_range = list(range(len_dataset))
 

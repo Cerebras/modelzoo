@@ -15,6 +15,7 @@
 import gzip
 import io
 import json
+import logging
 import numbers
 import tarfile
 import types
@@ -24,13 +25,16 @@ import jsonlines
 import pyarrow.parquet as pq
 import zstandard
 
+logger = logging.getLogger("utils")
+logger.setLevel(logging.INFO)
+
 
 class Reader:
     def __init__(
         self,
         file_list: List[str],
         keys: Optional[Dict],
-        format_hook_fn: Callable,
+        read_hook_fn: Callable,
     ) -> None:
         """
         Initialize the Reader instance.
@@ -41,7 +45,7 @@ class Reader:
         """
         self.file_list = file_list
         self.keys = keys
-        self.format_hook_fn = format_hook_fn
+        self.read_hook_fn = read_hook_fn
 
     def handle_jsonl(
         self,
@@ -303,25 +307,28 @@ class Reader:
         """
         zipped_file_list = list(zip(range(len(self.file_list)), self.file_list))
         for idx, f in zipped_file_list:
-            if f.endswith(".jsonl"):
-                yield from self.read_jsonl(f, get_meta)
-            elif f.endswith(".jsonl.zst"):
-                yield from self.read_jsonl_zst(f, get_meta)
-            elif f.endswith(".jsonl.zst.tar"):
-                yield from self.read_jsonl_tar(f, get_meta)
-            elif f.endswith(".txt"):
-                assert not get_meta
-                yield from self.read_txt(f)
-            elif f.endswith(".json.gz"):
-                assert not get_meta
-                yield from self.read_jsongz(f)
-            elif f.endswith(".parquet"):
-                assert not get_meta
-                yield from self.read_parquet(f)
-            elif f.endswith(".fasta"):
-                assert not get_meta
-                yield from self.read_fasta(f)
-            else:
-                logger.warning(
-                    f"Skipping {f} as streaming for that filetype is not implemented"
-                )
+            try:
+                if f.endswith(".jsonl"):
+                    yield from self.read_jsonl(f, get_meta)
+                elif f.endswith(".jsonl.zst"):
+                    yield from self.read_jsonl_zst(f, get_meta)
+                elif f.endswith(".jsonl.zst.tar"):
+                    yield from self.read_jsonl_tar(f, get_meta)
+                elif f.endswith(".txt"):
+                    assert not get_meta
+                    yield from self.read_txt(f)
+                elif f.endswith(".json.gz"):
+                    assert not get_meta
+                    yield from self.read_jsongz(f)
+                elif f.endswith(".parquet"):
+                    assert not get_meta
+                    yield from self.read_parquet(f)
+                elif f.endswith(".fasta"):
+                    assert not get_meta
+                    yield from self.read_fasta(f)
+                else:
+                    logger.warning(
+                        f"Skipping {f} as streaming for that filetype is not implemented"
+                    )
+            except Exception as e:
+                logger.error(f"Error reading file {f}: {e}. Skipping this file")

@@ -13,43 +13,36 @@
 # limitations under the License.
 
 """
-Config classes of T5 data Configs
+Config classes of T5 data Configs.
 
 """
 
-from dataclasses import dataclass
-from typing import List, Optional, Union
+from typing import Any, List, Literal, Optional, Union
 
-from cerebras.modelzoo.common.registry import registry
-from cerebras.modelzoo.config_manager.config_classes.base.base_config import (
-    required,
-)
-from cerebras.modelzoo.config_manager.config_classes.base.data_config import (
-    DataProcessorConfig,
-)
+from pydantic import Field
+
+from cerebras.modelzoo.config import DataConfig
 from cerebras.modelzoo.data.common.config import (
     GenericDataProcessorConfig,
-    HDF5IterableDataProcessorConfig,
     HuggingFaceDataProcessorConfig,
+)
+from cerebras.modelzoo.data.common.HDF5IterableDataProcessor import (
+    HDF5IterableDataProcessorConfig,
 )
 
 
-@registry.register_data_config("DummyDataProcessor")
-@dataclass
 class DummyDataProcessorConfig(GenericDataProcessorConfig):
-    pass
+    data_processor: Literal["DummyDataProcessor"]
 
 
-@registry.register_data_config("DummyIterableDataProcessor")
-@dataclass
 class DummyIterableDataProcessorConfig(GenericDataProcessorConfig):
-    pass
+    data_processor: Literal["DummyIterableDataProcessor"]
 
 
-@registry.register_data_config("GptHDF5DataProcessor")
-@dataclass
 class GptHDF5DataProcessorConfig(HDF5IterableDataProcessorConfig):
-    data_dir: Union[str, List[str]] = required
+    data_processor: Literal["GptHDF5DataProcessor"]
+
+    data_dir: Union[str, List[str]] = ...
     "The path to the HDF5 files."
     max_sequence_length: Optional[int] = None
     """ The sequence length of samples
@@ -60,69 +53,40 @@ class GptHDF5DataProcessorConfig(HDF5IterableDataProcessorConfig):
     drop_last: bool = True
     use_vsl: bool = False
 
+    batch_size: int = ...
+    "Batch size."
 
-@registry.register_data_config("GptHDF5MapDataProcessor")
-@dataclass
-class GptHDF5MapDataProcessorConfig(DataProcessorConfig):
-    data_dir: Optional[Union[str, List[str]]] = None
-    "The path to the HDF5 files."
-    use_worker_cache: bool = False
-    max_sequence_length: Optional[int] = None
-    """ The sequence length of samples
-        produced by the dataloader. When using the corpus data format,
-        the same preprocessed data will work with any max sequence
-        length, so this may be set at runtime. When using the sample
-        format this must be set to None"""
-    mixture: Optional[List[dict]] = None
-    drop_last: bool = True
-    """
-        similar to the PyTorch drop_last setting
-        except that samples that when set to True, samples that would
-        have been dropped at the end of one epoch are yielded at the
-        start of the next epoch so that there is no data loss. This is
-        necessary for a data ordering that is independent of the
-        distributed setup being used.
-    """
-    num_samples: Optional[int] = None
-    num_workers: int = 0
-    "The number of PyTorch processes used in the dataloader"
-    prefetch_factor: int = 10
-    "The number of batches to prefetch in the dataloader"
-    persistent_workers: bool = True
-    "Whether or not to keep workers persistent between epochs"
-    sort_files: bool = True
-    """ whether or not the reader should sort the input
-        files. This is included for backwards compatibility and should
-        almost always be set to True"""
+    shuffle: bool = ...
+    "Flag to enable data shuffling."
+
+    shuffle_seed: Optional[int] = None
+    "Shuffle seed."
+
     use_vsl: bool = False
-    """ Flag to enable variable sequence length training.
-        It requires the dataset to have two extra features"""
-    pad_last: bool = False
-    data_subset: Optional[str] = None
-    dataset_map_fn: Optional[str] = None
+    """Flag to enable variable sequence length training.
+    It requires the dataset to have two extra features: the
+    `attention_span` of keys and the `position_ids` of tokens."""
+
+    repeat: Optional[Any] = Field(None, deprecated=True)
+    use_multiple_workers: Optional[Any] = Field(None, deprecated=True)
+    mixed_precision: Optional[Any] = Field(None, deprecated=True)
+    fp16_type: Optional[Any] = Field(None, deprecated=True)
 
 
-@registry.register_data_config("HuggingFaceDataProcessorEli5")
-@dataclass
-class HuggingFaceDataProcessorEli5Config(HuggingFaceDataProcessorConfig):
-    split: str = required
-    num_workers: int = 0
-
-
-@registry.register_data_config("HuggingFaceIterableDataProcessorEli5")
-@dataclass
 class HuggingFaceIterableDataProcessorEli5Config(
     HuggingFaceDataProcessorConfig
 ):
-    split: str = required
+    data_processor: Literal["HuggingFaceIterableDataProcessorEli5"]
+
+    split: str = ...
     num_workers: int = 0
 
 
-@registry.register_data_config("InferenceDataProcessor")
-@dataclass
-class InferenceDataProcessorConfig(DataProcessorConfig):
+class InferenceDataProcessorConfig(DataConfig):
+    data_processor: Literal["InferenceDataProcessor"]
+
     num_workers: int = 0
-    prefetch_factor: int = 10
+    prefetch_factor: Optional[int] = 10
     persistent_workers: bool = False
     drop_last: bool = True
     """
@@ -135,13 +99,9 @@ class InferenceDataProcessorConfig(DataProcessorConfig):
     """
 
 
-@registry.register_data_config("InferenceDataProcessorLL")
-@dataclass
 class InferenceDataProcessorLLConfig(InferenceDataProcessorConfig):
-    pass
+    data_processor: Literal["InferenceDataProcessorLL"]
 
 
-@registry.register_data_config("InferenceDataProcessorGU")
-@dataclass
 class InferenceDataProcessorGUConfig(InferenceDataProcessorConfig):
-    pass
+    data_processor: Literal["InferenceDataProcessorGU"]

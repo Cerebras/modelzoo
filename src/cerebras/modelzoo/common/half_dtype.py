@@ -14,34 +14,12 @@
 
 """Module which provides utilities for selecting 16-bit floating point representation."""
 
-from typing import Any, Dict
-
 import torch
 
 import cerebras.pytorch as cstorch
 
 
-def set_half_dtype_from_params(params: Dict[str, Any]) -> torch.dtype:
-    """Sets the half dtype in cstorch from the given model params.
-
-    Note that after this call, reading the half dtype from params is discouraged. Instead, use
-    `cstorch.amp.get_half_dtype()` to get the dtype to use in the model.
-
-    Args:
-        params: Model params where to find "fp16_type" key.
-    Returns:
-        The proxy dtype to use in the model.
-    """
-    if "use_bfloat16" in params:
-        raise KeyError(
-            f"The flag \"use_bfloat16\" is deprecated. Use the flag \"fp16_type\" instead. "
-            f"This flag accepts one of \"float16\", \"bfloat16\", or \"cbfloat16\"."
-        )
-
-    return cstorch.amp.set_half_dtype(params.get("fp16_type", "float16"))
-
-
-def maybe_to_half_dtype(tensor: torch.Tensor) -> torch.Tensor:
+def _maybe_to_half_dtype_impl(tensor: torch.Tensor) -> torch.Tensor:
     """Return tensor cast to half dtype if on CSX or autocast CPU/GPU ctx."""
     if (
         cstorch.use_cs()
@@ -50,4 +28,18 @@ def maybe_to_half_dtype(tensor: torch.Tensor) -> torch.Tensor:
     ):
         return tensor.to(cstorch.amp.get_half_dtype())
 
+    return tensor
+
+
+def maybe_to_half_dtype(
+    tree: torch.utils._pytree.PyTree,
+) -> torch.utils._pytree.PyTree:
+    """Return tree with tensors cast to half dtype if on CSX or autocast CPU/GPU ctx."""
+    return torch.utils._pytree.tree_map(_maybe_to_half_dtype_impl, tree)
+
+
+def cb16_to_fp32(tensor: torch.Tensor) -> torch.Tensor:
+    """Return tensor cast to float32 if it is cbfloat16."""
+    if cstorch.amp.is_cbfloat16_tensor(tensor):
+        return tensor.float()
     return tensor

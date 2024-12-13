@@ -191,7 +191,13 @@ class LinformerAttention(MultiheadAttention):
 
         # If `share-layerwise`, initialization should be done at model level
 
-    def construct_query_vector(self, q, attn_mask=None, key_padding_mask=None):
+    def construct_query_vector(
+        self,
+        q,
+        attn_mask=None,
+        key_padding_mask=None,
+        special_token_indices=None,
+    ):
         # linear projection
         q = self.proj_q_dense_layer(q)
 
@@ -207,7 +213,13 @@ class LinformerAttention(MultiheadAttention):
         q = self._split_heads(q, rotary=True)
         return q
 
-    def construct_key_vector(self, k, attn_mask=None, key_padding_mask=None):
+    def construct_key_vector(
+        self,
+        k,
+        attn_mask=None,
+        key_padding_mask=None,
+        special_token_indices=None,
+    ):
         # linear projection
         k = self.proj_k_dense_layer(k)
 
@@ -223,7 +235,13 @@ class LinformerAttention(MultiheadAttention):
         k = self._split_heads(k, rotary=True)
         return k
 
-    def construct_value_vector(self, v, attn_mask=None, key_padding_mask=None):
+    def construct_value_vector(
+        self,
+        v,
+        attn_mask=None,
+        key_padding_mask=None,
+        special_token_indices=None,
+    ):
         # linear projection
         v = self.proj_v_dense_layer(v)
 

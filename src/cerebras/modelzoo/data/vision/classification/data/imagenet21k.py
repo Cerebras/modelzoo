@@ -14,13 +14,16 @@
 
 import json
 import os
+from typing import Any, Literal, Optional
 
 from PIL import Image
+from pydantic import Field
 from torchvision.datasets import VisionDataset
 from torchvision.datasets.utils import verify_str_arg
 
 from cerebras.modelzoo.data.vision.classification.dataset_factory import (
-    Processor,
+    VisionClassificationProcessor,
+    VisionClassificationProcessorConfig,
 )
 
 
@@ -63,21 +66,32 @@ class ImageNet21K(VisionDataset):
         return image, target
 
 
-class ImageNet21KProcessor(Processor):
-    def __init__(self, params):
-        super().__init__(params)
-        self.allowable_split = ["train", "val"]
+class ImageNet21KProcessorConfig(VisionClassificationProcessorConfig):
+    data_processor: Literal["ImageNet21KProcessor"]
+
+    use_worker_cache: bool = ...
+
+    split: Literal["train", "val"] = "train"
+    "Dataset split."
+
+    use_fake_data: Optional[Any] = Field(None, deprecated=True)
+    num_classes: Optional[Any] = Field(None, deprecated=True)
+
+
+class ImageNet21KProcessor(VisionClassificationProcessor):
+    def __init__(self, config: ImageNet21KProcessorConfig):
+        super().__init__(config)
+        self.split = config.split
+        self.shuffle = self.shuffle and (self.split == "train")
         self.num_classes = 19167
 
-    def create_dataset(
-        self, use_training_transforms: bool = True, split: str = "train"
-    ):
-        self.check_split_valid(split)
+    def create_dataset(self):
+        use_training_transforms = self.split == "train"
         transform, target_transform = self.process_transform(
             use_training_transforms
         )
 
-        database_file = f"ILSVRC2021winter_whole_map_{split}.txt"
+        database_file = f"ILSVRC2021winter_whole_map_{self.split}.txt"
         if not os.path.isfile(os.path.join(self.data_dir, database_file)):
             raise RuntimeError(
                 f"The database file is not present in the root directory. Check "
@@ -87,7 +101,7 @@ class ImageNet21KProcessor(Processor):
 
         dataset = ImageNet21K(
             root=self.data_dir,
-            split=split,
+            split=self.split,
             transform=transform,
             target_transform=target_transform,
         )

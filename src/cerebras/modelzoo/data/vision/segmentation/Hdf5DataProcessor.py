@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from pathlib import Path
+from typing import Literal
 
 import h5py
 import numpy as np
@@ -20,9 +21,10 @@ import pandas as pd
 import torch
 from torchvision import transforms
 
-from cerebras.modelzoo.common.registry import registry
+import cerebras.pytorch as cstorch
 from cerebras.modelzoo.data.vision.segmentation.Hdf5BaseDataProcessor import (
     Hdf5BaseDataProcessor,
+    Hdf5BaseDataProcessorConfig,
 )
 from cerebras.modelzoo.data.vision.segmentation.preprocessing_utils import (
     adjust_brightness_transform,
@@ -31,36 +33,16 @@ from cerebras.modelzoo.data.vision.segmentation.preprocessing_utils import (
 )
 
 
-@registry.register_datasetprocessor("Hdf5DataProcessor")
+class Hdf5DataProcessorConfig(Hdf5BaseDataProcessorConfig):
+    data_processor: Literal["Hdf5DataProcessor"]
+
+    split: Literal["train", "val"] = "train"
+
+
 class Hdf5DataProcessor(Hdf5BaseDataProcessor):
-    """
-    A HDF5 dataset processor for UNet HDF dataset.
-    Performs on-the-fly augmentation of image and labek.
-
-    Functionality includes:
-        Reading data from HDF5 documents
-        Augmenting data
-
-    :param dict params: dict containing training
-        input parameters for creating dataset.
-    Expects the following fields:
-
-    - "data_dir" (str or list of str): Path to dataset HDF5 files
-    - "num_classes (int): Maximum length of the sequence to generate
-    - "image_shape" (int): Expected shape of output images and label, used in assert checks.
-    - "loss" (str): Loss type, supported: {"bce", "multilabel_bce", "ssce"}
-    - "normalize_data_method" (str): Can be one of {None, "zero_centered", "zero_one"}
-    - "batch_size" (int): Batch size.
-    - "shuffle" (bool): Flag to enable data shuffling.
-    - "shuffle_buffer" (int): Size of shuffle buffer in samples.
-    - "shuffle_seed" (int): Shuffle seed.
-    - "num_workers" (int):  How many subprocesses to use for data loading.
-    - "drop_last" (bool): If True and the dataset size is not divisible
-       by the batch size, the last incomplete batch will be dropped.
-    - "prefetch_factor" (int): Number of samples loaded in advance by each worker.
-    - "persistent_workers" (bool): If True, the data loader will not shutdown
-       the worker processes after a dataset has been consumed once.
-    """
+    def __init__(self, config: Hdf5DataProcessorConfig):
+        super(Hdf5DataProcessor, self).__init__(config)
+        self.split = config.split
 
     def _shard_files(self, is_training=False):
         # Features in HDF5 record files
@@ -208,7 +190,7 @@ class Hdf5DataProcessor(Hdf5BaseDataProcessor):
             # view and typecast does not change the orginal `labels`.
             mask = mask.to(torch.int32)
 
-        if self.mixed_precision:
+        if cstorch.amp.mixed_precision():
             image = image.to(self.mp_type)
 
         return image, mask

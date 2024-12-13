@@ -324,7 +324,7 @@ class Converter_Esm2PretrainModel_WithoutOptionalModel_HF_CS21(
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4"),
         )
 
     @staticmethod
@@ -431,7 +431,7 @@ class ConfigConverter_Esm2_HF_CS21(ConfigConverter_Bert_HF_CS21):
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4"),
         )
 
     def assert_rotary_dim(
@@ -550,15 +550,17 @@ class ConfigConverter_Esm2_HF_CS21(ConfigConverter_Bert_HF_CS21):
 
     def pre_config_convert(
         self,
+        model,
         config,
         converter_indices,
     ):
         return BaseConfigConverter_HF_CS.pre_config_convert(
-            self, config, converter_indices
+            self, model, config, converter_indices
         )
 
     def post_config_convert(
         self,
+        model,
         original_config,
         old_config,
         new_config,
@@ -573,6 +575,7 @@ class ConfigConverter_Esm2_HF_CS21(ConfigConverter_Bert_HF_CS21):
 
         return BaseConfigConverter_HF_CS.post_config_convert(
             self,
+            model,
             original_config,
             old_config,
             new_config,

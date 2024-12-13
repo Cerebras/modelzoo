@@ -15,33 +15,38 @@
 """GPT Inference script built using the cstorch API"""
 
 import argparse
-import copy
-import inspect
 import logging
 import os
+import re
 import sys
-from dataclasses import is_dataclass
-
-# isort: off
-sys.path.append(os.path.join(os.path.dirname(__file__), "../../.."))
-# isort: on
+import time
+import traceback
+from datetime import datetime
 from pathlib import Path
+from typing import Any, Dict, List, Optional, Union
 from warnings import warn
 
 import numpy as np
 import yaml
 
-from cerebras.modelzoo.common.utils.run.utils import update_dataclass_from_dict
-from cerebras.modelzoo.common.utils.utils import (
-    configure_compression,
-    format_rate,
-)
-from cerebras.modelzoo.config_manager.config_loader import (
-    convert_to_dict,
-    create_config_obj_from_params,
-)
+# isort: off
+sys.path.append(os.path.join(os.path.dirname(__file__), "../../.."))
+# isort: on
 
-sys.path.append(os.path.join(os.path.dirname(__file__), "../.."))
+import cerebras.pytorch as cstorch
+import cerebras.pytorch.distributed as dist
+from cerebras.appliance.utils.debug_args import (
+    get_debug_args,
+    update_debug_args_from_keys,
+)
+from cerebras.appliance.utils.file import create_symlink
+from cerebras.appliance.utils.ini import set_ini
+from cerebras.modelzoo.common.pytorch_utils import RunConfigParamsValidator
+from cerebras.pytorch.utils.call_once import call_once
+
+
+def format_rate(rate):
+    return f"{rate:.2g}" if rate < 1.0 else f"{rate:.2f}"
 
 
 def get_parser():
@@ -57,11 +62,59 @@ def get_parser():
     return parser
 
 
-def get_cluster_config(params):
-    from cerebras.modelzoo.common.run_cstorch_flow import (
-        get_cluster_config as _get_cluster_config,
+def _get_cluster_config(params):
+    runconfig = params["runconfig"]
+
+    debug_args = get_debug_args(runconfig.get("debug_args_path"))
+    if extra_debug_args := runconfig.get("debug_args"):
+        update_debug_args_from_keys(debug_args, extra_debug_args)
+    if ini := runconfig.get("ini"):
+        set_ini(debug_args, **ini)
+
+    cluster_config = cstorch.distributed.ClusterConfig(
+        mgmt_address=runconfig.get("mgmt_address"),
+        mgmt_namespace=runconfig.get("mgmt_namespace"),
+        credentials_path=runconfig.get("credentials_path"),
+        num_csx=runconfig.get("num_csx"),
+        max_wgt_servers=runconfig.get("num_wgt_servers"),
+        max_act_per_csx=runconfig.get("num_act_servers"),
+        num_workers_per_csx=runconfig.get("num_workers_per_csx"),
+        job_labels=runconfig.get("job_labels"),
+        job_time_sec=runconfig.get("job_time_sec"),
+        mount_dirs=runconfig.get("mount_dirs"),
+        python_paths=runconfig.get("python_paths"),
+        disable_version_check=runconfig.get("disable_version_check"),
     )
 
+    job_priority = runconfig.get("job_priority")
+    if job_priority:
+        cluster_config.job_priority = job_priority
+
+    transfer_processes = runconfig.get("transfer_processes")
+    if transfer_processes:
+        cstorch.backends.csx.performance.transfer_processes = transfer_processes
+
+    fabric_type_blacklist = runconfig.get("fabric_type_blacklist")
+    if fabric_type_blacklist:
+        cstorch.backends.csx.debug.fabric_type_blacklist = fabric_type_blacklist
+
+    cstorch.backends.csx.debug.debug_args = debug_args
+
+    if "precision_opt_level" in params["model"]:
+        raise ValueError(
+            "Passing `precision_opt_level` via `model` params is no longer supported. "
+            "Please use `params[\"runconfig\"][\"precision_opt_level\"]` instead."
+        )
+    precision_opt_level = runconfig.get("precision_opt_level")
+    if precision_opt_level is None:
+        precision_opt_level = 1
+
+    cstorch.backends.csx.precision.optimization_level = precision_opt_level
+
+    return cluster_config
+
+
+def get_cluster_config(params):
     cluster_config = _get_cluster_config(params)
 
     if (
@@ -76,6 +129,252 @@ def get_cluster_config(params):
         cluster_config.num_workers_per_csx = 1
 
     return cluster_config
+
+
+def get_all_checkpoints(model_dir: str) -> List[str]:
+    """Return the path to all available checkpoints"""
+    ckpts = []
+    for checkpoint in Path(model_dir).glob("checkpoint_*.mdl"):
+        match = re.match(
+            r"checkpoint_(?P<step>\d+)(?:_(?P<timestamp>\d{8}_\d{6}))?.mdl",
+            checkpoint.name,
+        )
+        if not match:
+            continue
+
+        step = int(match.group("step"))
+        timestamp = match.group("timestamp")
+        if timestamp is not None:
+            try:
+                date = datetime.strptime(timestamp, "%Y%m%d_%H%M%S")
+            except ValueError:
+                continue
+        else:
+            date = datetime.min
+
+        ckpts.append((checkpoint, step, date))
+
+    # sort by step and then by timestamp
+    return (
+        [ckpt[0] for ckpt in sorted(ckpts, key=lambda x: (x[1], x[2]))]
+        if ckpts
+        else []
+    )
+
+
+def get_latest_checkpoint(model_dir: str) -> Union[str, None]:
+    """Get the path to the checkpoint with the highest global step"""
+    ckpts = get_all_checkpoints(model_dir)
+    return ckpts[-1] if ckpts else None
+
+
+def get_model_checkpoint(runconfig: Dict[str, Any]) -> Union[str, None]:
+    """Get the path to the model checkpoint, if any."""
+    model_dir = runconfig["model_dir"]
+    ckpt_path = None
+
+    # if a checkpoint path is provided, use that
+    if runconfig.get("checkpoint_path"):
+        ckpt_path = runconfig["checkpoint_path"]
+    elif runconfig.get("autoload_last_checkpoint", True):
+        logging.info(
+            f"Checkpoint autoloading is enabled. Looking for latest checkpoint "
+            f"in \"{model_dir}\" directory with the following naming "
+            f"convention: `checkpoint_(step)(_timestamp)?.mdl`."
+        )
+        ckpt_path = get_latest_checkpoint(model_dir)
+        if ckpt_path:
+            logging.info(f"Found latest checkpoint at \"{ckpt_path}\".")
+        else:
+            logging.info(f"No checkpoints were found in \"{model_dir}\".")
+
+    if not ckpt_path:
+        logging.info(
+            f"No checkpoint was provided. Using randomly initialized model "
+            f"parameters."
+        )
+
+    return ckpt_path
+
+
+def load_from_checkpoint_file(checkpoint_path: str) -> dict:
+    """Loads state dict from checkpoint path and checks for version compatibilty."""
+    logging.info(f"Loading weights from checkpoint {checkpoint_path}")
+    state_dict = cstorch.load(checkpoint_path)
+    return state_dict
+
+
+def setup_logging(
+    chief_logging_level: str,
+    streamer_logging_level: str,
+    logging_dir: Optional[str] = None,
+    model_dir: Optional[str] = None,
+):
+    """Configure default logging format."""
+
+    class CustomFormatter(logging.Formatter):
+        """Cerebras Preferred Log Formatting."""
+
+        def __init__(self):
+            ordinal = dist.get_ordinal()
+            num_tasks = dist.num_tasks() - 1
+
+            if num_tasks > 1 and dist.is_streamer():
+                ordinal_msg = f"[{ordinal}/{num_tasks}]"
+            else:
+                ordinal_msg = ""
+
+            fmt = f"%(asctime)s %(levelname)s: {ordinal_msg}  %(message)s"
+            super().__init__(fmt=fmt)
+
+            self.info_formatter = None
+            # Only enable shorter info logging depending on environment variable
+            # This is so that we have the option to experiment with this in the future
+            if "USE_SHORT_INFO_LOGGING" in os.environ:
+                fmt = "{}%(message)s".format(
+                    f"{ordinal_msg}:  " if ordinal > 0 else ""
+                )
+                self.info_formatter = logging.Formatter(fmt)
+
+        def format(self, record):
+            if self.info_formatter and record.levelno == logging.INFO:
+                return logging.Formatter.format(self.info_formatter, record)
+
+            return super().format(record)
+
+    def build_block_filter(handler_type: str):
+        """Build a filter to block records from a specific handler."""
+
+        def block_filter(record):
+            if hasattr(record, "block"):
+                return record.block != handler_type
+            return True
+
+        return block_filter
+
+    handlers = []
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(CustomFormatter())
+    handler.addFilter(build_block_filter("console"))
+    handlers.append(handler)
+    if logging_dir:
+        logging_file = os.path.join(logging_dir, f"run.log")
+        handler = logging.FileHandler(logging_file)
+        handler.setFormatter(CustomFormatter())
+        handler.addFilter(build_block_filter("file"))
+        handlers.append(handler)
+        # set up run log symlink
+        symlink_dir = Path(model_dir) if model_dir else Path(logging_dir)
+        run_log_symlink = symlink_dir / "latest_run.log"
+        create_symlink(
+            run_log_symlink, Path(logging_file).relative_to(symlink_dir)
+        )
+
+    def get_level_name(level):
+        if not isinstance(level, str):
+            raise ValueError(
+                f"Invalid logging level: `{level}`. "
+                f"Expected a string or int level."
+            )
+
+        try:
+            level = int(level)
+        except ValueError:
+            level = level.upper()
+
+        # Custom levels defined by cerebras.appliance
+        if level == "TRACE":
+            level = logging.DEBUG - 5
+        elif level == "VERBOSE":
+            level = logging.INFO - 5
+        else:
+            if (
+                isinstance(level, str)
+                and level not in logging._nameToLevel  # pylint: disable=W0212
+            ):
+                # pylint: disable=protected-access
+                raise ValueError(
+                    f"Invalid logging level: `{level}`. Expected one of "
+                    f"{list(logging._nameToLevel.keys())}."
+                )
+
+            level = logging.getLevelName(level)
+
+        return level
+
+    if dist.is_master_ordinal():
+        level = get_level_name(chief_logging_level or "info")
+    else:
+        level = get_level_name(streamer_logging_level or "error")
+
+    # Remove any handlers that may have been inadvertently set before
+    logging.getLogger().handlers.clear()
+    logging.basicConfig(level=level, handlers=handlers)
+
+    setup_logging_excepthook()
+
+
+@call_once()
+def setup_logging_excepthook():
+    """Setup a logging hook that runs whenever an exception is raised that
+    catches and logs the exception to ensure that the full traceback is printed
+    in the log file.
+    """
+    original_hook = sys.excepthook
+
+    def cerebras_logging_hook(exc_type, exc_value, exc_traceback):
+        """Pipe uncaught exceptions through logger."""
+        msg = "".join(
+            traceback.format_exception(exc_type, exc_value, exc_traceback)
+        )
+        # Block console logging to avoid duplicate messages since exceptions
+        # are logged by python interpreter by default anyways.
+        logging.error(f"Uncaught exception:\n{msg}", extra={"block": "console"})
+
+        # Run the original except hook which prints the exception to stderr
+        original_hook(exc_type, exc_value, exc_traceback)
+
+    sys.excepthook = cerebras_logging_hook
+
+
+def setup_artifact_dir(model_dir: str, mode: str):
+    """
+    Create a unique subdirectory for this run by generating a time stamp so
+    that parallel runs using the same model_dir don't overwrite common files.
+    """
+
+    def _create():
+        time_stamp = time.strftime("%Y%m%d_%H%M%S")
+        artifact_dir = cerebras_logs_path / mode / time_stamp
+        artifact_dir.mkdir(parents=True)
+        return artifact_dir
+
+    cerebras_logs_path = Path(model_dir) / "cerebras_logs"
+
+    # CPU runs could potentially finish very fast, so back-to-back runs
+    # may end up getting the same timestamp and we'd fail in creating
+    # the duplicate directory. In case of directory already existing,
+    # sleep for more than 1 second and try again. If we fail again,
+    # then throw.
+    try:
+        artifact_dir = _create()
+    except FileExistsError:
+        time.sleep(1.5)
+        try:
+            artifact_dir = _create()
+        except Exception as e:
+            raise e from None
+
+    # Create a symlink to the artifact_dir so that it's easy to find the latest run.
+    # The symlink needs to be at the same level as the subdirectories.
+    latest = cerebras_logs_path.joinpath("latest")
+    # symlink to relative path
+    create_symlink(
+        latest,
+        artifact_dir.relative_to(cerebras_logs_path),
+        target_is_directory=True,
+    )
+    return str(artifact_dir)
 
 
 def inference_input_dataloader(params):
@@ -122,6 +421,82 @@ def inference_input_dataloader(params):
         )
 
 
+def set_attention_params(params):
+    '''
+    Set attention-related parameters.
+    :param params: An object containing model, runconfig attributes
+    :return: None
+    '''
+    # Attention softmax is fp32 by default.
+    params["model"]["attention_softmax_fp32"] = True
+
+    if params["runconfig"].get("precision_opt_level", 1) == 2:
+        params["model"]["attention_softmax_fp32"] = False
+
+    if (
+        params["model"].get("fp16_type", "bfloat16") == "cbfloat16"
+        and params["runconfig"].get("precision_opt_level", 1) == 1
+    ):
+        params["model"]["attention_softmax_fp32"] = False
+
+
+def set_defaults(params):
+    """
+    Update any missing parameters in the params dictionary with default values
+
+    Args:
+        params/object: The dictionary containing the params
+    """
+    if (
+        params.get("train_input", {}).get("data_processor")
+        == "Gpt2SyntheticDataProcessor"
+    ):
+        if "train_input" in params:
+            params["train_input"]["vocab_size"] = params["train_input"].get(
+                "vocab_size", params["model"]["vocab_size"]
+            )
+            assert (
+                params["train_input"]["vocab_size"]
+                == params["model"]["vocab_size"]
+            ), f"Found different vocab_size in train_input ({params['train_input']['vocab_size']}) vs. model ({params['model']['vocab_size']})"
+            params["train_input"]["max_sequence_length"] = params[
+                "train_input"
+            ].get(
+                "max_sequence_length",
+                params["model"]["max_position_embeddings"],
+            )
+
+        if "eval_input" in params:
+            params["eval_input"]["vocab_size"] = params["eval_input"].get(
+                "vocab_size", params["model"]["vocab_size"]
+            )
+            assert (
+                params["eval_input"]["vocab_size"]
+                == params["model"]["vocab_size"]
+            ), f"Found different vocab_size in eval_input ({params['eval_input']['vocab_size']}) vs. model ({params['model']['vocab_size']})"
+            params["eval_input"]["max_sequence_length"] = params[
+                "eval_input"
+            ].get(
+                "max_sequence_length",
+                params["model"]["max_position_embeddings"],
+            )
+
+    params["model"]["fp16_type"] = params["model"].get("fp16_type", "bfloat16")
+    params["optimizer"]["loss_scaling_factor"] = params["optimizer"].get(
+        "loss_scaling_factor", 1.0
+    )
+    params["optimizer"]["log_summaries"] = params["optimizer"].get(
+        "log_summaries", False
+    )
+    params["runconfig"]["precision_opt_level"] = params["runconfig"].get(
+        "precision_opt_level", 1
+    )
+
+    set_attention_params(params)
+
+    return params
+
+
 def main():
     from cerebras.modelzoo.common.utils.run.cli_parser import (
         get_params_from_args,
@@ -129,8 +504,6 @@ def main():
     from cerebras.modelzoo.common.utils.run.utils import DeviceType
 
     # Parse args
-    parent = inspect.getouterframes(inspect.currentframe())[1]
-    run_dir = os.path.dirname(os.path.abspath(parent.filename))
     parser_fn = lambda: [get_parser()]
     parser_args = {
         "parser_epilog": (
@@ -160,16 +533,6 @@ def main():
         **parser_args,
     )
 
-    from cerebras.modelzoo.common.pytorch_utils import (
-        RunConfigParamsValidator,
-        load_from_checkpoint_file,
-        setup_artifact_dir,
-        setup_logging,
-    )
-
-    # Set default model parameters
-    from cerebras.modelzoo.models.nlp.gpt2.utils import set_defaults
-
     set_defaults(params)
 
     # Validate runconfig
@@ -198,12 +561,13 @@ def main():
     from torch.utils._pytree import tree_map
 
     import cerebras.pytorch as cstorch
-    from cerebras.modelzoo.common.half_dtype import set_half_dtype_from_params
     from cerebras.modelzoo.common.input_utils import (
         validate_streaming_and_micro_batch_size,
     )
-    from cerebras.modelzoo.common.run_cstorch_flow import get_model_checkpoint
-    from cerebras.modelzoo.models.nlp.gpt2.model import Gpt2Model
+    from cerebras.modelzoo.models.nlp.gpt2.model import (
+        Gpt2Model,
+        GPT2ModelConfig,
+    )
 
     compile_only = runconfig.get("compile_only", False)
     validate_only = runconfig.get("validate_only", False)
@@ -218,6 +582,14 @@ def main():
             cluster_config.num_csx,
         )
 
+    cstorch.backends.csx.performance.micro_batch_size = micro_batch_size
+    cstorch.backends.csx.debug.retrace_every_iteration = runconfig.get(
+        "retrace_every_iteration", False
+    )
+    cstorch.backends.csx.debug.lazy_initialization = runconfig.get(
+        "lazy_initialization", True
+    )
+
     # Initialize the backend
     backend = cstorch.backend(
         "CSX",
@@ -226,65 +598,17 @@ def main():
         compile_only=compile_only,
         validate_only=validate_only,
         cluster_config=cluster_config,
-        retrace_every_iteration=runconfig.get("retrace_every_iteration", False),
-    )
-    backend.device.config.lazy_initialization = runconfig.get(
-        "lazy_initialization", True
     )
 
     # Set the 16 bit dtype we want the automatic mixed precision module to use
-    set_half_dtype_from_params(params["model"])
-
-    def config_validation(params, model_key):
-        # EEH-specific params added to the runconfig are not supported by our config class validation.
-        # We remove EEH args from the runconfig, perform config validation and then re-add the args
-        extra_parser_param_keys = []
-        parser = parser_fn()[0]
-        if parser:
-            if parser and isinstance(parser, argparse.ArgumentParser):
-                extra_parser_param_keys.extend(
-                    [
-                        action.dest
-                        for action in parser._actions
-                        if not isinstance(action, argparse._HelpAction)
-                    ]
-                )
-        run_params = params["runconfig"]
-        extra_parser_params = {}
-        for eeh_arg in extra_parser_param_keys:
-            if eeh_arg in run_params:
-                extra_parser_params[eeh_arg] = run_params.pop(eeh_arg, None)
-
-        # validate the params with config class (Will return the Config Class if it finds one)
-        params = create_config_obj_from_params(params, model_key)
-        params_obj = None
-        if is_dataclass(params):
-            params_obj = copy.deepcopy(params)
-            params = convert_to_dict(params_obj)
-        # Re-add extra inference args to the runconfig after config validation
-        run_params = params["runconfig"]
-        run_params.update(extra_parser_params)
-        # Update the extra params to object as well
-        if params_obj and params_obj.runconfig:
-            update_dataclass_from_dict(
-                params_obj.runconfig, extra_parser_params
-            )
-        return params, params_obj
+    cstorch.amp.set_half_dtype(params["model"].get("fp16_type", "float16"))
 
     # Initialize model (config_validation returns the Config Class if it finds one)
     with backend.device:
-        params, params_obj = config_validation(params, "gpt2")
-        model = Gpt2Model(params_obj if params_obj else params)
+        model = Gpt2Model(GPT2ModelConfig(**params["model"]))
 
     compiled_model = cstorch.compile(model, backend)
     compiled_model.eval()
-
-    # apply weight compression
-    compression_config = params["model"].pop("compression", {})
-    if compression_config:
-        compressions = configure_compression(compression_config)
-        for compression in compressions:
-            model.apply(compression)
 
     # Load weights
     checkpoint_path = get_model_checkpoint(runconfig)
@@ -303,21 +627,9 @@ def main():
         inference_input_dataloader, params
     )
 
-    summary_dir = (
-        runconfig["summary_dir"]
-        if ("summary_dir" in runconfig and runconfig["summary_dir"] is not None)
-        else artifact_dir / "inference"
-    )
-
-    from cerebras.pytorch.utils import tensorboard
-
-    writer = tensorboard.SummaryWriter(log_dir=summary_dir)
-
     executor = cstorch.utils.data.DataExecutor(
         dataloader,
         num_steps=runconfig.get("inference_steps"),
-        writer=writer,
-        micro_batch_size=micro_batch_size,
     )
 
     @cstorch.trace

@@ -13,16 +13,17 @@
 # limitations under the License.
 
 import os
-from functools import partial
+from typing import Any, Literal, Optional
 
 import h5py
 import numpy as np
 from PIL import Image
-from torchvision import transforms
+from pydantic import Field
 from torchvision.datasets.vision import VisionDataset
 
 from cerebras.modelzoo.data.vision.classification.dataset_factory import (
-    Processor,
+    VisionClassificationProcessor,
+    VisionClassificationProcessorConfig,
 )
 
 
@@ -103,33 +104,26 @@ class DSprites(VisionDataset):
         return self.length
 
 
-def _process_predicted_attribute_by_index(
-    label_index, class_division_factor, label
-):
-    target = label[label_index]
-    return np.floor(target / class_division_factor)
+class DSpritesProcessorConfig(VisionClassificationProcessorConfig):
+    data_processor: Literal["DSpritesProcessor"]
+
+    use_worker_cache: bool = ...
+
+    split: Literal["train"] = "train"
+    "Dataset split."
+
+    num_classes: Optional[Any] = Field(None, deprecated=True)
 
 
-class DSpritesProcessor(Processor):
-    _TASK_DICT = {
-        "label_x_position": {
-            "preprocess_fn": partial(_process_predicted_attribute_by_index, 4),
-            "num_classes": 32,
-        },
-        "label_orientation": {
-            "preprocess_fn": partial(_process_predicted_attribute_by_index, 3),
-            "num_classes": 40,
-        },
-    }
-
-    def __init__(self, params):
-        super().__init__(params)
-        self.allowable_split = ["train"]
-        self.allowable_task = self._TASK_DICT.keys()
+class DSpritesProcessor(VisionClassificationProcessor):
+    def __init__(self, config: DSpritesProcessorConfig):
+        super().__init__(config)
+        self.split = config.split
+        self.shuffle = self.shuffle and (self.split == "train")
         self.num_classes = 16
 
-    def create_dataset(self, use_training_transforms=True, split="train"):
-        self.check_split_valid(split)
+    def create_dataset(self):
+        use_training_transforms = self.split == "train"
         transform, target_transform = self.process_transform(
             use_training_transforms
         )
@@ -139,77 +133,3 @@ class DSpritesProcessor(Processor):
             target_transform=target_transform,
         )
         return dataset
-
-    def create_vtab_dataset(
-        self,
-        task="label_x_position",
-        num_classes=16,
-        use_1k_sample=True,
-        seed=42,
-    ):
-        if task not in self.allowable_task:
-            raise ValueError(
-                f"Task {task} is not supported, choose from "
-                f"{self.allowable_task} instead"
-            )
-
-        num_original_classes = self._TASK_DICT[task]["num_classes"]
-        if num_classes is None:
-            num_classes = num_original_classes
-        if (
-            not isinstance(num_classes, int)
-            or num_classes <= 1
-            or (num_classes > num_original_classes)
-        ):
-            raise ValueError(
-                f"The number of classes should be None or in "
-                f"[2, {num_original_classes}"
-            )
-        class_division_factor = float(num_original_classes) / num_classes
-        target_transform = partial(
-            self._TASK_DICT[task]["preprocess_fn"], class_division_factor
-        )
-
-        train_transform, train_tgt_transform = self.process_transform(
-            use_training_transforms=True
-        )
-        eval_transform, eval_tgt_transform = self.process_transform(
-            use_training_transforms=False
-        )
-
-        train_target_transform = transforms.Compose(
-            [target_transform, train_tgt_transform]
-        )
-        eval_target_transform = transforms.Compose(
-            [target_transform, eval_tgt_transform]
-        )
-
-        dataset = DSprites(
-            root=self.data_dir,
-            transform=None,
-        )
-
-        # DSprites only comes with a training set. Therefore, the training,
-        # validation, and test sets are split out of the original training set.
-        # By default, 80% is used as a new training split, 10% is used for
-        # validation, and 10% is used for testing.
-        split_percent = [80, 10, 10]
-        train_set, val_set, test_set = self.split_dataset(
-            dataset, split_percent, seed
-        )
-
-        if use_1k_sample:
-            train_set.truncate_to_idx(800)
-            val_set.truncate_to_idx(200)
-
-        train_set.set_transforms(
-            transform=train_transform, target_transform=train_target_transform
-        )
-        val_set.set_transforms(
-            eval_transform, target_transform=eval_target_transform
-        )
-        test_set.set_transforms(
-            eval_transform, target_transform=eval_target_transform
-        )
-
-        return train_set, val_set, test_set

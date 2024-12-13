@@ -16,16 +16,17 @@
 
 from abc import ABC, abstractmethod
 from contextlib import nullcontext
+from numbers import Number
 from typing import Literal, Optional, Union
 from warnings import warn
 
 import torch
 
 import cerebras.pytorch as cstorch
-from cerebras.modelzoo.trainer.callbacks import Callback
+from cerebras.modelzoo.trainer.callbacks import CoreCallback
 
 
-class Precision(Callback, ABC):
+class Precision(CoreCallback, ABC):
     """Base precision class for implementing custom backwards pass and
     optimization step to handle different precision types.
     """
@@ -69,8 +70,8 @@ class MixedPrecision(Precision):
     def __init__(
         self,
         enabled: bool = True,
-        fp16_type: Literal["float16", "bfloat16", "cbfloat16"] = "float16",
-        precision_opt_level: Optional[int] = None,
+        fp16_type: Literal["float16", "bfloat16", "cbfloat16"] = "bfloat16",
+        precision_opt_level: Optional[Literal[0, 1, 2]] = None,
         loss_scaling_factor: Union[float, Literal["dynamic"]] = 1.0,
         initial_loss_scale: Optional[float] = None,
         steps_per_increase: int = 2000,
@@ -95,9 +96,20 @@ class MixedPrecision(Precision):
             max_gradient_value: Maximum gradient value for gradient clipping.
             log_loss_scale: If True, log the gradient scaler's loss scale.
         """
+        if not (
+            isinstance(loss_scaling_factor, Number)
+            or loss_scaling_factor is None
+            or loss_scaling_factor == "dynamic"
+        ):
+            raise ValueError(
+                f"'loss_scaling_factor' must be a float, None, or 'dynamic'."
+                f"Got {loss_scaling_factor} instead."
+            )
+
         self.scaler = None
 
         self.enabled = enabled
+        cstorch.amp.enable_mixed_precision(enabled)
         self.fp16_type = fp16_type
         self.precision_opt_level = precision_opt_level
         self.loss_scaling_factor = loss_scaling_factor
@@ -114,7 +126,7 @@ class MixedPrecision(Precision):
                 precision_opt_level
             )
 
-    def setup(self, trainer):
+    def pre_setup(self, trainer):
         # pylint: disable=attribute-defined-outside-init
         self.backend = trainer.backend
 
@@ -124,6 +136,7 @@ class MixedPrecision(Precision):
                     "Mixed precision must be enabled for CSX. Setting enabled = True"
                 )
                 self.enabled = True
+                cstorch.amp.enable_mixed_precision()
             else:
                 return
 
@@ -156,6 +169,7 @@ class MixedPrecision(Precision):
 
         cstorch.amp.set_half_dtype(self.fp16_type)
 
+    def setup(self, trainer):
         if self.fp16_type == "bfloat16":
             if self.loss_scaling_factor == "dynamic":
                 trainer.logger.info(
@@ -173,12 +187,18 @@ class MixedPrecision(Precision):
             )
         else:
             if self.loss_scaling_factor == "dynamic":
-                self.scaler = torch.cuda.amp.GradScaler(
+                if self.initial_loss_scale is None:
+                    # This is the default value in PyTorch
+                    self.initial_loss_scale = 65536.0
+
+                self.scaler = torch.amp.GradScaler(
+                    device="cuda",
                     init_scale=self.initial_loss_scale,
                     growth_interval=self.steps_per_increase,
                 )
             else:
-                self.scaler = torch.cuda.amp.GradScaler(
+                self.scaler = torch.amp.GradScaler(
+                    device="cuda",
                     init_scale=self.loss_scaling_factor,
                     growth_interval=2**63 - 1,
                 )

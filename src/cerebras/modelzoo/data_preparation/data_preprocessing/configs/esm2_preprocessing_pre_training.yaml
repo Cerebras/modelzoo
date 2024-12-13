@@ -1,0 +1,28 @@
+dataset:
+    use_vsl: false
+    mlm_with_gather: true
+    training_objective: mlm
+processing:
+    eos_id: 2
+    huggingface_tokenizer: facebook/esm2_t48_15B_UR50D
+    read_chunk_size: 8192
+    write_chunk_size: 204800
+    max_seq_length: 1026
+    pad_id: 1
+    read_hook: cerebras.modelzoo.data_preparation.data_preprocessing.hooks:text_read_hook
+    read_hook_kwargs:
+      text_key: text
+    seed: 0
+    shuffle: false
+    tokenizer_type: HuggingFaceTokenizer
+    ftfy_normalizer: NFC
+    use_ftfy: false
+    wikitext_detokenize: false
+    UNSAFE_skip_jsonl_decoding_errors: False
+setup:
+    data:
+      source: <"path_to_protein_sequence_fasta">
+      type: local
+    mode: pretraining
+    output_dir: ./out_dir
+    processes: 32

@@ -94,7 +94,10 @@ class Converter_LLaVA_CLIPViT_WithoutModel_HF_CS22(
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-2.2", "cs-2.3"))
+        return (
+            FormatVersions("hf"),
+            FormatVersions("cs-2.2", "cs-2.3", "cs-2.4"),
+        )
 
     @staticmethod
     def get_config_converter_class() -> BaseConfigConverter:
@@ -195,7 +198,10 @@ class Converter_LLaVA_LLaMA_WithoutModel_HF_CS22(BaseCheckpointConverter_HF_CS):
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-2.2", "cs-2.3"))
+        return (
+            FormatVersions("hf"),
+            FormatVersions("cs-2.2", "cs-2.3", "cs-2.4"),
+        )
 
     @staticmethod
     def get_config_converter_class() -> BaseConfigConverter:
@@ -296,7 +302,10 @@ class Converter_LLaVA_WithoutModel_HF_CS22(
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-2.2", "cs-2.3"))
+        return (
+            FormatVersions("hf"),
+            FormatVersions("cs-2.2", "cs-2.3", "cs-2.4"),
+        )
 
     @staticmethod
     def architectures() -> Tuple[List[str], str]:
@@ -395,7 +404,7 @@ class ConfigConverter_LLaVA_HF_CS22(BaseConfigConverter_UnpackedHF_PackedCS):
         **kwargs,
     ) -> str:
         # saving CS requires only saving once
-        if converter_indices.direction == 0:
+        if converter_indices.direction == 0:  # HF -> CS
             return super().save(
                 file_without_ext, config, converter_indices, **kwargs
             )
@@ -433,6 +442,7 @@ class ConfigConverter_LLaVA_HF_CS22(BaseConfigConverter_UnpackedHF_PackedCS):
 
     def post_config_convert(
         self,
+        model,
         original_config,
         old_config,
         new_config,
@@ -441,9 +451,10 @@ class ConfigConverter_LLaVA_HF_CS22(BaseConfigConverter_UnpackedHF_PackedCS):
     ):
         """
         new_config: List[Dict] if converter_indices = 1 (CS -> HF)
-        else Dict if converter_indices = 0 (HF -> CS)
+        else Dict if converter_indices = 0 (HF -> CS).
         """
         new_config = super().post_config_convert(
+            model,
             original_config,
             old_config,
             new_config,
@@ -457,13 +468,9 @@ class ConfigConverter_LLaVA_HF_CS22(BaseConfigConverter_UnpackedHF_PackedCS):
             new_image_config = new_config["model"]["image_model"]
             new_image_config["name"] = "ViTModel"
             # remove non-kwargs
-            new_image_config.pop("mixed_precision")
-            new_image_config.pop("num_classes")
-            new_image_config.pop("use_bias_in_output")
 
             new_text_config = new_config["model"]["text_model"]
             new_text_config["name"] = "LlamaModel"
-            new_text_config.pop("mixed_precision")
 
             new_config["model"]["image_feature_select_mode"] = (
                 new_text_config.pop("image_feature_select_mode")
@@ -523,7 +530,10 @@ class ConfigConverter_LLaVA_HF_CS22(BaseConfigConverter_UnpackedHF_PackedCS):
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-2.2", "cs-2.3"))
+        return (
+            FormatVersions("hf"),
+            FormatVersions("cs-2.2", "cs-2.3", "cs-2.4"),
+        )
 
     @staticmethod
     def converters():
@@ -541,11 +551,12 @@ class ConfigConverter_LLaVA_HF_CS22(BaseConfigConverter_UnpackedHF_PackedCS):
 
     def pre_config_convert(
         self,
+        model,
         config,
         converter_indices,
     ):
         """
-        config: List[dicts] if converter_indices = 0 (HF-> CS) else dict (CS->HF)
+        config: List[dicts] if converter_indices = 0 (HF-> CS) else dict (CS->HF).
         """
 
         if converter_indices.direction == 0:
@@ -573,7 +584,7 @@ class ConfigConverter_LLaVA_HF_CS22(BaseConfigConverter_UnpackedHF_PackedCS):
             config["model"]["text_model"]["mm_hidden_size"] = config["model"][
                 "image_model"
             ]["hidden_size"]
-        return super().pre_config_convert(config, converter_indices)
+        return super().pre_config_convert(model, config, converter_indices)
 
 
 class ConfigConverter_LLaMaProjector_HF_CS22(ConfigConverter_LLaMa_HF_CS21):
@@ -760,11 +771,12 @@ class ConfigConverter_LLaMaProjector_HF_CS22(ConfigConverter_LLaMa_HF_CS21):
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.2", "cs-2.3"),
+            FormatVersions("cs-2.2", "cs-2.3", "cs-2.4"),
         )
 
     def post_config_convert(
         self,
+        model,
         original_config,
         old_config,
         new_config,
@@ -772,6 +784,7 @@ class ConfigConverter_LLaMaProjector_HF_CS22(ConfigConverter_LLaMa_HF_CS21):
         drop_unmatched_keys,
     ):
         return super().post_config_convert(
+            model,
             original_config,
             old_config,
             new_config,

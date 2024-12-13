@@ -68,7 +68,6 @@ Details on all the configs provided can be found [here]
 ## Structure of the code
 
 -   `configs/`: YAML configuration files.
--   `data.py`: The entry point to the data input pipeline code. Defines `train_input_dataloader` ( and `eval_input_dataloader`) which initalizes the data processor mentioned in config yaml `train_input.data_processor`( and `eval_input.data_processor`)
 -   `modeling_llava.py`: Defines the core model `Llava`.
 -   `model.py`: The entry point to the model. Defines `LlavaModel`.
 -   `run.py`: Training script. Performs training and validation.

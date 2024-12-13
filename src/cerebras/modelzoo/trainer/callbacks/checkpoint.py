@@ -14,21 +14,22 @@
 
 """Checkpointing callback that aids in saving and loading model states."""
 
+import os
 import re
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from string import Formatter
-from typing import List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
+from warnings import warn
+
+from packaging.version import parse
 
 import cerebras.pytorch as cstorch
-from cerebras.modelzoo.common.pytorch_utils import (
-    check_checkpoint_compatibility,
-)
-from cerebras.modelzoo.trainer.callbacks import Callback
+from cerebras.modelzoo.trainer.callbacks import Callback, CoreCallback
 
 
-class Checkpoint(Callback):
+class Checkpoint(CoreCallback):
     """A callback that handles standard checkpointing logic."""
 
     def __init__(
@@ -43,18 +44,14 @@ class Checkpoint(Callback):
         Args:
             steps: The frequency at which to save a checkpoint. If None, no
                 checkpoints will be saved. Defaults to None.
-
             autoload_last_checkpoint: Whether to autoload the last
                 checkpoint in the model directory. Defaults to True.
-
             disable_strict_checkpoint_loading: Whether to disable
                 strict checkpoint loading. If True, the model will not raise an
                 error if the checkpoint contains keys that are not present in the
                 model. Defaults to False.
-
             save_initial_checkpoint: Whether to save the initial
                 checkpoint at the start of training. Defaults to False.
-
             checkpoint_name: The unformatted name of the checkpoint file. The string will be
                 formatted with the following keys: `step`
         """
@@ -85,7 +82,7 @@ class Checkpoint(Callback):
         expected_keys = {"step"}
         if keys != expected_keys:
             raise ValueError(
-                f"Found invalid keys in checkpoint name. "
+                f"Found invalid keys in checkpoint_name format string. "
                 f"Expected keys: {expected_keys}. Got: {keys}"
             )
 
@@ -132,8 +129,39 @@ class Checkpoint(Callback):
         else:
             trainer.logger.info(f"Loading weights from checkpoint {ckpt_path}")
 
+    @staticmethod
+    def check_compatibility(state_dict: Dict[str, Any]):
+        """Checks that the checkpoint is compatible with the current version of modelzoo."""
+        import cerebras.modelzoo as mz
+        import cerebras.modelzoo.tools.convert_checkpoint as convert_ckpt
+
+        if "__metadata__" in state_dict:
+            # extract the last item in the list as this is the most recent metadata
+            checkpoint_version = state_dict["__metadata__"][-1].get(
+                "version", ""
+            )
+            if not checkpoint_version:
+                return
+            checkpoint_version = parse(checkpoint_version)
+            if checkpoint_version.local is None:
+                current_version = parse(cstorch.__version__)
+                if (
+                    checkpoint_version.major != current_version.major
+                    or checkpoint_version.minor != current_version.minor
+                ):
+                    converter_path = os.path.relpath(
+                        convert_ckpt.__file__,
+                        os.path.dirname(mz.__file__),
+                    )
+                    warn(
+                        f"Checkpoint version may be incompatible with Modelzoo version. Got "
+                        f"checkpoint version {checkpoint_version} but Modelzoo version "
+                        f"is {current_version}. You may need to run {converter_path} on the "
+                        f"incompatible checkpoint."
+                    )
+
     def preprocess_checkpoint(self, trainer, state_dict):
-        check_checkpoint_compatibility(state_dict)
+        self.check_compatibility(state_dict)
 
     def on_save_checkpoint(self, trainer, state_dict):
         trainer.logger.info(f"Saving checkpoint at step {trainer.global_step}")
@@ -199,7 +227,7 @@ class Checkpoint(Callback):
         )
 
         for checkpoint in Path(model_dir).glob("*"):
-            match = pattern.match(checkpoint.name)
+            match = pattern.fullmatch(checkpoint.name)
             if not match:
                 continue
 
@@ -224,9 +252,7 @@ class Checkpoint(Callback):
 
 
 class LoadCheckpointStates(Callback):
-    """
-    Callback to load specific states of the model.
-    """
+    """Callback to load specific states of the model from the checkpoint."""
 
     def __init__(
         self,
@@ -267,9 +293,9 @@ class LoadCheckpointStates(Callback):
         if not self.load_checkpoint_states.issubset(checkpoint_states):
             raise KeyError(
                 "Unexpected keys specified via `load_checkpoint_states`: "
-                f"{', '.join(self.load_checkpoint_states - checkpoint_states)} "
+                f"{_format_keys(self.load_checkpoint_states - checkpoint_states)}.\n"
                 "Only the keys in the following list are accepted: "
-                f"{', '.join(checkpoint_states)}"
+                f"{_format_keys(checkpoint_states)}."
             )
 
         if keys := (checkpoint_states - self.load_checkpoint_states):
@@ -300,10 +326,8 @@ class SaveCheckpointState(Callback):
                 Specifes after how many checkpoints saved an alternative checkpoint is saved.
                 For example, if a full checkpoint is taken every 100 steps and k=5, then an
                 alternative checkpoint is saved every 500 steps.
-
             checkpoint_states: List of valid checkpoint states to save. Can be a single state or
                 list of states or 'all' (all states).
-
             checkpoint_name: Prefix to add to the alternative checkpoint file name.
                 The name will be formatted with the following keys:
                 * ``checkpoint_states``: ``_`` separated list of checkpoint states
@@ -338,7 +362,7 @@ class SaveCheckpointState(Callback):
         expected_keys = {"checkpoint_states", "ckpt_name"}
         if keys != expected_keys:
             raise ValueError(
-                f"Found invalid keys in checkpoint name. "
+                f"Found invalid keys in checkpoint_name format string. "
                 f"Expected keys: {expected_keys}. Got: {keys}"
             )
 
@@ -368,10 +392,10 @@ class SaveCheckpointState(Callback):
             # Check that the specified states are valid checkpoint states
             if not checkpoint_states.issubset(ckpt_keys):
                 raise KeyError(
-                    "Unexpected keys specified via `load_checkpoint_states`: "
-                    f"{', '.join(checkpoint_states - ckpt_keys)} "
+                    "Unexpected keys specified via `checkpoint_states`: "
+                    f"{_format_keys(checkpoint_states - ckpt_keys)}.\n"
                     "Only the keys in the following list are accepted: "
-                    f"{', '.join(ckpt_keys)}"
+                    f"{_format_keys(ckpt_keys)}."
                 )
 
             # Store all keys specified and all "metadata"-like keys that begin with "__"
@@ -412,3 +436,8 @@ class KeepNCheckpoints(Callback):
         if len(self.ckpt_paths) > self.n:
             ckpt_path = self.ckpt_paths.pop(0)
             ckpt_path.unlink(missing_ok=True)
+
+
+def _format_keys(keys: List[str]) -> str:
+    """Format a string of keys."""
+    return ", ".join(f"\"{key}\"" for key in keys)

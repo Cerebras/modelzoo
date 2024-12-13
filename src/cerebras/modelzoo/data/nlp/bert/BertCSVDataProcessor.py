@@ -18,15 +18,17 @@ Processor for PyTorch BERT training.
 
 import csv
 import random
+from typing import Any, List, Literal, Optional, Union
 
 import numpy as np
 import torch
+from pydantic import Field, PositiveInt, field_validator
 
 from cerebras.modelzoo.common.input_utils import (
     bucketed_batch,
     get_streaming_batch_size,
 )
-from cerebras.modelzoo.common.registry import registry
+from cerebras.modelzoo.config import DataConfig
 from cerebras.modelzoo.data.common.input_utils import (
     get_data_for_task,
     num_tasks,
@@ -36,34 +38,98 @@ from cerebras.modelzoo.data.common.input_utils import (
 from cerebras.modelzoo.data.nlp.bert.bert_utils import get_meta_data
 
 
-@registry.register_datasetprocessor("BertCSVDataProcessor")
+class BertCSVDataProcessorConfig(DataConfig):
+    data_processor: Literal["BertCSVDataProcessor"]
+
+    data_dir: Union[str, List[str]] = ...
+    "Path to the data files to use."
+
+    batch_size: PositiveInt = ...
+    "The batch size."
+
+    disable_nsp: bool = False
+    "Whether Next Sentence Prediction (NSP) objective is disabled."
+
+    dynamic_mlm_scale: bool = False
+    "Whether to dynamically scale the loss."
+
+    buckets: Optional[List[int]] = None
+    """
+    A list of bucket boundaries. If set to None, then no
+    bucketing will happen, and data will be batched normally. If set to
+    a list, then data will be grouped into `len(buckets) + 1` buckets. A
+    sample `s` will go into bucket `i` if
+    `buckets[i-1] <= element_length_fn(s) < buckets[i]` where 0 and inf are
+    the implied lowest and highest boundaries respectively. `buckets` must
+    be sorted and all elements must be non-zero.
+    """
+
+    shuffle: bool = False
+    "Whether or not to shuffle the dataset."
+
+    shuffle_seed: Optional[int] = None
+    "The seed used for deterministic shuffling."
+
+    shuffle_buffer: Optional[int] = None
+    """
+    Buffer size to shuffle samples across.
+    If None and shuffle is enabled, 10*batch_size is used.
+    """
+
+    num_workers: int = 0
+    "The number of PyTorch processes used in the dataloader."
+
+    prefetch_factor: Optional[int] = 2
+    "The number of batches to prefetch in the dataloader."
+
+    persistent_workers: bool = False
+    "Whether or not to keep workers persistent between epochs."
+
+    drop_last: bool = True
+    "Whether to drop last batch of epoch if it's an incomplete batch."
+
+    # The following fields are deprecated and unused.
+    # They will be removed in the future once all configs have been fixed
+    mixed_precision: Optional[Any] = Field(default=None, deprecated=True)
+    vocab_size: Optional[Any] = Field(default=None, deprecated=True)
+    vocab_file: Optional[Any] = Field(default=None, deprecated=True)
+    whole_word_masking: Optional[Any] = Field(default=None, deprecated=True)
+    max_predictions_per_seq: Optional[Any] = Field(
+        default=None, deprecated=True
+    )
+    do_lower: Optional[Any] = Field(default=None, deprecated=True)
+    masked_lm_prob: Optional[Any] = Field(default=None, deprecated=True)
+    max_sequence_length: Optional[Any] = Field(default=None, deprecated=True)
+    max_position_embeddings: Optional[Any] = Field(
+        default=None, deprecated=True
+    )
+
+    def post_init(self, context):
+        super().post_init(context)
+
+        if not self.num_workers:
+            self.prefetch_factor = None  # the default value in DataLoader
+            self.persistent_workers = False
+
+    @field_validator("disable_nsp", mode="after")
+    @classmethod
+    def get_disable_nsp(cls, disable_nsp, info):
+        if info.context:
+            model_config = info.context.get("model", {}).get("config")
+
+            if hasattr(model_config, "disable_nsp"):
+                return model_config.disable_nsp
+
+        return disable_nsp
+
+
 class BertCSVDataProcessor(torch.utils.data.IterableDataset):
-    """
-    Reads csv files containing the input text tokens, and MLM features.
-    :param <dict> params: dict containing input parameters for creating dataset.
-    Expects the following fields:
+    """Reads csv files containing the input text tokens, and MLM features."""
 
-    - "data_dir" (string): path to the data files to use.
-    - "batch_size" (int): Batch size.
-    - "shuffle" (bool): Flag to enable data shuffling.
-    - "shuffle_seed" (int): Shuffle seed.
-    - "shuffle_buffer" (int): Shuffle buffer size.
-    - "dynamic_mlm_scale" (bool): Flag to dynamically scale the loss.
-    - "num_workers" (int):  How many subprocesses to use for data loading.
-    - "drop_last" (bool): If True and the dataset size is not divisible
-       by the batch size, the last incomplete batch will be dropped.
-    - "prefetch_factor" (int): Number of samples loaded in advance by each worker.
-    - "persistent_workers" (bool): If True, the data loader will not shutdown
-       the worker processes after a dataset has been consumed once.
-    - "mixed_precision" (bool): Casts input mask to fp16 if set to True.
-      Otherwise, the generated mask is float32.
-    """
+    def __init__(self, config: BertCSVDataProcessorConfig):
+        super().__init__()
 
-    def __init__(self, params):
-        super(BertCSVDataProcessor, self).__init__()
-
-        # Input params.
-        self.meta_data = get_meta_data(params["data_dir"])
+        self.meta_data = get_meta_data(config.data_dir)
 
         self.meta_data_values = list(self.meta_data.values())
         self.meta_data_filenames = list(self.meta_data.keys())
@@ -71,8 +137,8 @@ class BertCSVDataProcessor(torch.utils.data.IterableDataset):
         self.meta_data_values_cum_sum = np.cumsum([0] + self.meta_data_values)
 
         self.num_examples = sum(map(int, self.meta_data.values()))
-        self.disable_nsp = params.get("disable_nsp", False)
-        self.batch_size = get_streaming_batch_size(params["batch_size"])
+        self.disable_nsp = config.disable_nsp
+        self.batch_size = get_streaming_batch_size(config.batch_size)
 
         self.num_batches = self.num_examples // self.batch_size
         assert (
@@ -97,17 +163,20 @@ class BertCSVDataProcessor(torch.utils.data.IterableDataset):
             self.meta_data_filenames,
         )
 
-        self.shuffle = params.get("shuffle", True)
-        self.shuffle_seed = params.get("shuffle_seed", None)
-        self.shuffle_buffer = params.get("shuffle_buffer", 10 * self.batch_size)
-        self.dynamic_mlm_scale = params.get("dynamic_mlm_scale", False)
-        self.buckets = params.get("buckets", None)
+        self.shuffle = config.shuffle
+        self.shuffle_seed = config.shuffle_seed
+        if config.shuffle_buffer is None:
+            self.shuffle_buffer = 10 * self.batch_size
+        else:
+            self.shuffle_buffer = config.shuffle_buffer
+        self.dynamic_mlm_scale = config.dynamic_mlm_scale
+        self.buckets = config.buckets
 
         # Multi-processing params.
-        self.num_workers = params.get("num_workers", 0)
-        self.drop_last = params.get("drop_last", True)
-        self.prefetch_factor = params.get("prefetch_factor", 2)
-        self.persistent_workers = params.get("persistent_workers", False)
+        self.num_workers = config.num_workers
+        self.drop_last = config.drop_last
+        self.prefetch_factor = config.prefetch_factor
+        self.persistent_workers = config.persistent_workers
 
         # Store params.
         self.data_buffer = []

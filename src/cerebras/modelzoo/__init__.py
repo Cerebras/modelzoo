@@ -16,45 +16,12 @@
 
 import os
 
-from .trainer import Trainer
 
+def __getattr__(name):
+    # lazily importing Trainer to avoid import penalty for all cerebras.modelzoo modules
+    if name == "Trainer":
+        from .trainer import Trainer
 
-def _register_paths_for_registry():
-    """This loads all paths used by registry."""
-    from cerebras.modelzoo.common.registry import registry
+        return Trainer
 
-    modelzoo_path = os.path.dirname(os.path.realpath(__file__))
-
-    registry.register_paths(
-        "model_path", os.path.join(modelzoo_path, "models", "multimodal")
-    )
-    registry.register_paths(
-        "model_path", os.path.join(modelzoo_path, "models", "nlp")
-    )
-    registry.register_paths(
-        "model_path", os.path.join(modelzoo_path, "models", "vision")
-    )
-    registry.register_paths(
-        "model_path", os.path.join(modelzoo_path, "models", "internal")
-    )
-    registry.register_paths("loss_path", os.path.join(modelzoo_path, "losses"))
-    registry.register_paths(
-        "datasetprocessor_path",
-        os.path.join(modelzoo_path, "data", "multimodal"),
-    )
-    registry.register_paths(
-        "datasetprocessor_path", os.path.join(modelzoo_path, "data", "nlp")
-    )
-    registry.register_paths(
-        "datasetprocessor_path", os.path.join(modelzoo_path, "data", "vision")
-    )
-    registry.register_paths(
-        "datasetprocessor_path", os.path.join(modelzoo_path, "data", "internal")
-    )
-    registry.register_paths(
-        "datasetprocessor_path",
-        os.path.join(modelzoo_path, "data_preparation", "RawDatasetProcessor"),
-    )
-
-
-_register_paths_for_registry()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

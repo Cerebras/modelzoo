@@ -19,16 +19,18 @@ processing:
 
     read_hook: "cerebras.modelzoo.data_preparation.data_preprocessing.hooks:prompt_completion_key"
     read_hook_kwargs:
-        data_keys:
-            prompt_key: "article_content"
-            completion_key: "summary"
+        prompt_key: "article_content"
+        completion_key: "summary"
     
     shuffle_seed: 0
     shuffle: False
 
-dataset:
     use_ftfy: True
     ftfy_normalizer: "NFC"
     wikitext_detokenize: False
 
+    UNSAFE_skip_jsonl_decoding_errors: False
+
+dataset:
+    
     sep_token: "<SEP>"

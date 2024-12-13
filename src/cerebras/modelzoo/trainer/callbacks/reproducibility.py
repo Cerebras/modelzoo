@@ -19,10 +19,10 @@ from warnings import warn
 
 import torch
 
-from cerebras.modelzoo.trainer.callbacks import Callback
+from cerebras.modelzoo.trainer.callbacks import CoreCallback
 
 
-class Reproducibility(Callback):
+class Reproducibility(CoreCallback):
     """A callback that facilitates reproducibility."""
 
     def __init__(self, seed: Optional[int] = None):

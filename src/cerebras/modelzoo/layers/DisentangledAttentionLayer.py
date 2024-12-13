@@ -286,10 +286,10 @@ class DisentangledAttention(MultiheadAttention):
 
         # rotary embedding helper
         k = self.apply_rotary_position_embedding(
-            k, rotary_position_embedding_helper, real_seq_length, offset_length
+            k, rotary_position_embedding_helper, offset_length
         )
         q = self.apply_rotary_position_embedding(
-            q, rotary_position_embedding_helper, real_seq_length, offset_length
+            q, rotary_position_embedding_helper, offset_length
         )
         # q, k now have shape [batch_size, num_heads, seq_length, head_dim]
 

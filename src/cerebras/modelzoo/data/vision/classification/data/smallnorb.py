@@ -13,15 +13,17 @@
 # limitations under the License.
 
 import os
+from typing import Any, Literal, Optional
 
 import numpy as np
 from PIL import Image
+from pydantic import Field
 from torchvision.datasets.utils import verify_str_arg
 from torchvision.datasets.vision import VisionDataset
 
 from cerebras.modelzoo.data.vision.classification.dataset_factory import (
-    Processor,
-    VisionSubset,
+    VisionClassificationProcessor,
+    VisionClassificationProcessorConfig,
 )
 
 
@@ -175,70 +177,33 @@ def read_binary_matrix(filename):
     return data.reshape(tuple(dims))
 
 
-class SmallNORBProcessor(Processor):
-    def __init__(self, params):
-        super().__init__(params)
-        self.allowable_split = ["train", "test"]
-        self.allowable_task = ["label_azimuth", "label_elevation"]
+class SmallNORBProcessorConfig(VisionClassificationProcessorConfig):
+    data_processor: Literal["SmallNORBProcessor"]
+
+    use_worker_cache: bool = ...
+
+    split: Literal["train", "test"] = "train"
+    "Dataset split."
+
+    num_classes: Optional[Any] = Field(None, deprecated=True)
+
+
+class SmallNORBProcessor(VisionClassificationProcessor):
+    def __init__(self, config: SmallNORBProcessorConfig):
+        super().__init__(config)
+        self.split = config.split
+        self.shuffle = self.shuffle and (self.split == "train")
         self.num_classes = 5
 
-    def create_dataset(self, use_training_transforms=True, split="train"):
-        self.check_split_valid(split)
+    def create_dataset(self):
+        use_training_transforms = self.split == "train"
         transform, target_transform = self.process_transform(
             use_training_transforms
         )
         dataset = SmallNORB(
             root=self.data_dir,
-            split=split,
+            split=self.split,
             transform=transform,
             target_transform=target_transform,
         )
         return dataset
-
-    def create_vtab_dataset(
-        self, task="label_azimuth", use_1k_sample=True, seed=42
-    ):
-        if task not in self.allowable_task:
-            raise ValueError(
-                f"Task {task} is not supported. Choose from "
-                f"{self.allowable_task} instead"
-            )
-
-        train_transform, train_target_transform = self.process_transform(
-            use_training_transforms=True
-        )
-        eval_transform, eval_target_transform = self.process_transform(
-            use_training_transforms=False
-        )
-
-        train_set = SmallNORB(
-            root=self.data_dir,
-            split="train",
-            task=task,
-            transform=train_transform,
-            target_transform=train_target_transform,
-        )
-        testval_dataset = SmallNORB(
-            root=self.data_dir,
-            split="test",
-            task=task,
-            transform=eval_transform,
-            target_transform=eval_target_transform,
-        )
-
-        # SmallNORB comes only with a training and test set. Therefore, the
-        # validation set is split out of the original test set. Specifically,
-        # 50% of the official testing split is used as a new validation split
-        # and the rest is used for testing.
-        split_percent = [50, 50]
-        val_set, test_set = self.split_dataset(
-            testval_dataset, split_percent, seed
-        )
-
-        if use_1k_sample:
-            rng = np.random.default_rng(seed)
-            train_sample_idx = self.create_shuffled_idx(len(train_set), rng)
-            train_set = VisionSubset(train_set, train_sample_idx[:800])
-            val_set.truncate_to_idx(200)
-
-        return train_set, val_set, test_set

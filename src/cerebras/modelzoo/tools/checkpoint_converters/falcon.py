@@ -201,6 +201,7 @@ class ConfigConverter_Falcon_HF_CS20(BaseConfigConverter_HF_CS):
     @classmethod
     def convert(
         cls,
+        model,
         config,
         converter_indices: FormatIndices,
         drop_unmatched_keys: bool = False,
@@ -212,6 +213,7 @@ class ConfigConverter_Falcon_HF_CS20(BaseConfigConverter_HF_CS):
         )
         instance = subconverter()
         return instance.convert_helper(
+            model,
             config,
             converter_indices,
             drop_unmatched_keys=drop_unmatched_keys,
@@ -259,7 +261,7 @@ class ConfigConverter_Falcon_HF_CS21(ConfigConverter_Falcon_HF_CS20):
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4"),
         )
 
 
@@ -274,7 +276,7 @@ class Converter_Falcon_Headless_HF_CS21(Converter_Falcon_Headless_HF_CS20):
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4"),
         )
 
     @staticmethod
@@ -293,7 +295,7 @@ class Converter_Falcon_HF_CS21(Converter_Falcon_HF_CS20):
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4"),
         )
 
     @staticmethod

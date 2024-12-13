@@ -12,13 +12,48 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import torch
-from torch import nn
+from typing import List, Optional, Union
 
-from cerebras.modelzoo.models.multimodal.multimodal_utils import (
-    freeze_modules,
-    init_component_model,
+import torch
+from pydantic import Field
+from torch import nn
+from typing_extensions import Annotated
+
+from cerebras.modelzoo.config import BaseConfig
+from cerebras.modelzoo.layers.FeedForwardNetwork import FeedForwardNetworkConfig
+from cerebras.modelzoo.models.multimodal.multimodal_utils import freeze_modules
+from cerebras.modelzoo.models.vision.vision_transformer.ViTModel import (
+    ViTModelConfig,
 )
+
+
+class MultimodalImageModel(BaseConfig):
+    image_encoder: Annotated[
+        Union[ViTModelConfig,],
+        Field(discriminator="name"),
+    ] = ...
+    "Image encoder model when only one image encoder is needed."
+
+    projection_layer: Optional[
+        Annotated[
+            Union[FeedForwardNetworkConfig,],
+            Field(discriminator="name"),
+        ]
+    ] = None
+    "Projector model that is applied to the output of the image encoder."
+
+
+class MultimodalImageModelList(BaseConfig):
+    image_feature_select_mode: str = "patch"
+    image_models: List[MultimodalImageModel] = []
+    "List of image MultimodalImageModels"
+    global_image_projection: Optional[
+        Annotated[
+            Union[FeedForwardNetworkConfig,],
+            Field(discriminator="name"),
+        ]
+    ] = None
+    "Projector model that is applied to the concat of the output of all the image models.  Options include MLP, Q-Former, Pooling, Identity"
 
 
 class MultimodalSimpleImageEncoders(nn.Module):
@@ -54,73 +89,41 @@ class MultimodalSimpleImageEncoders(nn.Module):
     # end def
 
     @staticmethod
-    def build_model(params):
-        def is_image_model(image_model_params):
-            if (
-                (type(image_model_params) == dict)
-                and (len(image_model_params) == 1)
-                and ('image_model' in image_model_params)
-            ):
-                return True
+    def build_model(config: MultimodalImageModelList):
+        if isinstance(config, dict):
+            config = MultimodalImageModelList(**config)
 
-            return False
+        def build_image_model(image_model):
+            image_layer_idx = getattr(
+                image_model.image_encoder, "image_layer_idx", -1
+            )
+            # Construct a image model from the config
+            image_encoder = image_model.image_encoder()
 
-        # end def
-
-        def is_global_projection(proj_model_params):
-            if (
-                (type(proj_model_params) == dict)
-                and (len(proj_model_params) == 1)
-                and ('global_image_projection' in proj_model_params)
-            ):
-                return True
-
-            return False
-
-        # end def
-
-        def build_projection_model(proj_model_params):
-            return init_component_model(proj_model_params)
-
-        def build_image_model(image_model_params):
-            assert (
-                len(image_model_params) <= 2
-            ), "Image model can only have an image encoder and an optional projection layer"
-            image_layer_idx = -1
-            if hasattr(image_model_params[0], "image_layer_idx"):
-                image_layer_idx = image_model_params[0].image_layer_idx
-            image_model = init_component_model(image_model_params[0])
-            if len(image_model_params) > 1:
-                projection = build_projection_model(image_model_params[1])
+            if image_model.projection_layer is not None:
+                # Construct a projection model from the config
+                projection = image_model.projection_layer()
             else:
                 projection = nn.Identity()
 
-            image_model = nn.ModuleList([image_model, projection])
+            image_model = nn.ModuleList([image_encoder, projection])
             return (image_layer_idx, image_model)
-
-        # end def
 
         image_model_list = []
         projection = nn.Identity()
         image_layer_idx_list = []
-        image_feature_select_mode = params.image_feature_select_mode
-        if params.global_image_projection:
-            projection = build_projection_model(params.global_image_projection)
+        image_feature_select_mode = config.image_feature_select_mode
+        if config.global_image_projection:
+            # Construct a global projection model from the config
+            projection = config.global_image_projection()
 
-        for model_params_entry in params.image_models:
-            if is_image_model(model_params_entry):
-                image_layer_idx, image_model = build_image_model(
-                    model_params_entry['image_model']
-                )
-                image_model_list.append(image_model)
-                image_layer_idx_list.append(image_layer_idx)
-            # end if
+        for image_model in config.image_models:
+            image_layer_idx, image_model = build_image_model(image_model)
+            image_model_list.append(image_model)
+            image_layer_idx_list.append(image_layer_idx)
 
-        # end for
-
-        image_model_list = nn.ModuleList(image_model_list)
         return MultimodalSimpleImageEncoders(
-            image_model_list,
+            nn.ModuleList(image_model_list),
             projection,
             image_layer_idx_list,
             image_feature_select_mode,
@@ -205,13 +208,13 @@ class MultimodalSimple(nn.Module):
             freeze_modules(self, freeze)
 
     @staticmethod
-    def build_model(params):
-        model_params = params.model
-        freeze = model_params.freeze
+    def build_model(config):
+        freeze = config.freeze
         image_model = MultimodalSimpleImageEncoders.build_model(
-            model_params.image_model_list
+            config.image_model_list
         )
-        text_model = init_component_model(model_params.text_model)
+        # Construct a text model from the config
+        text_model = config.text_model()
         return MultimodalSimple(image_model, text_model, freeze=freeze)
 
     def reset_parameters(self):

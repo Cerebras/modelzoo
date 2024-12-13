@@ -304,7 +304,9 @@ class Converter_Falcon_40B_Attention_HF_CS20(
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-1.9", "cs-2.0", "cs-2.1", "cs-2.2", "cs-2.3"),
+            FormatVersions(
+                "cs-1.9", "cs-2.0", "cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4"
+            ),
         )
 
     @staticmethod
@@ -480,7 +482,9 @@ class Converter_Falcon_40B_Headless_WithoutModelPrefix_HF_CS20(
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-1.9", "cs-2.0", "cs-2.1", "cs-2.2", "cs-2.3"),
+            FormatVersions(
+                "cs-1.9", "cs-2.0", "cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4"
+            ),
         )
 
     @staticmethod
@@ -559,7 +563,9 @@ class Converter_Falcon_40B_WithoutModelPrefix_HF_CS20(
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-1.9", "cs-2.0", "cs-2.1", "cs-2.2", "cs-2.3"),
+            FormatVersions(
+                "cs-1.9", "cs-2.0", "cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4"
+            ),
         )
 
     @staticmethod
@@ -802,10 +808,11 @@ class ConfigConverter_Falcon_40B_HF_CS20(BaseConfigConverter_HF_CS):
 
     def pre_config_convert(
         self,
+        model,
         config,
         converter_indices,
     ):
-        config = super().pre_config_convert(config, converter_indices)
+        config = super().pre_config_convert(model, config, converter_indices)
 
         # Apply defaults
         for key in self.defaults[converter_indices.direction]:
@@ -816,6 +823,7 @@ class ConfigConverter_Falcon_40B_HF_CS20(BaseConfigConverter_HF_CS):
 
     def post_config_convert(
         self,
+        model,
         original_config,
         old_config,
         new_config,
@@ -847,6 +855,7 @@ class ConfigConverter_Falcon_40B_HF_CS20(BaseConfigConverter_HF_CS):
             ), "rotary dimension of falcon is equal to head_dim"
 
         return super().post_config_convert(
+            model,
             original_config,
             old_config,
             new_config,
@@ -858,5 +867,7 @@ class ConfigConverter_Falcon_40B_HF_CS20(BaseConfigConverter_HF_CS):
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-1.9", "cs-2.0", "cs-2.1", "cs-2.2", "cs-2.3"),
+            FormatVersions(
+                "cs-1.9", "cs-2.0", "cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4"
+            ),
         )

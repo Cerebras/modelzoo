@@ -54,7 +54,6 @@ Fig.1 - Flow Chart of steps to fine-tune BERT summarization model
 * `configs/`: YAML configuration files.
 * [data/nlp/bert](../../../../data/nlp/bert/): Input pipeline implementation based on the [DeepMind Q&A Dataset](https://cs.nyu.edu/~kcho/DMQA/).
 * `model.py`: Model implementation leveraging [BertSummarization](../bert_model.py) class.
-* `data.py`: The entry point to the data input pipeline code.
 * `run.py`: Training script. Performs training and validation.
 * `utils.py`: Miscellaneous helper functions.
 

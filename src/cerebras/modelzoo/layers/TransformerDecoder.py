@@ -16,7 +16,7 @@
 Adapted from https://github.com/pytorch/pytorch/blob/master/torch/nn/modules/transformer.py
 """
 
-from typing import List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -48,12 +48,30 @@ class TransformerDecoder(nn.Module):
         >>> out = transformer_decoder(tgt, memory)
     """
 
-    def __init__(self, decoder_layer, num_layers, norm=None):
-        super(TransformerDecoder, self).__init__()
-        self.layers = _get_clones(decoder_layer, num_layers)
+    def __init__(
+        self,
+        decoder_layer: Union[nn.Module, List[nn.Module]],
+        num_layers: int,
+        norm: Optional[nn.Module] = None,
+    ):
+        super().__init__()
+        if isinstance(decoder_layer, list):
+            if len(decoder_layer) != num_layers:
+                raise ValueError(
+                    f"The list of nn.Modules supplied to the TransformerDecoder"
+                    f" block has length {len(decoder_layer)} while num_layers "
+                    f"was set to {num_layers}. These two numbers are supposed "
+                    f"to be the same. Check your config."
+                )
+            self.layers = nn.ModuleList(decoder_layer)
+        else:
+            self.layers = _get_clones(decoder_layer, num_layers)
         self.num_layers = num_layers
         self.norm = norm
         self.moe_enabled = self.layers[0].moe_enabled
+        self.router_selection_nonlinearity = self.layers[
+            0
+        ].router_selection_nonlinearity
         # Re-initialize all layers to get new set of weights for each layer
         self.__reset_parameters()
 
@@ -89,6 +107,7 @@ class TransformerDecoder(nn.Module):
         cache_present_kv: bool = False,
         extract_layer_idx: Optional[int] = None,
         expert_hash_idx: Optional[Tensor] = None,
+        special_token_indices: Dict[str, Tensor] = None,
         **extra_args,
     ) -> Union[
         Tensor, Tuple[Tensor, List[Union[SelfAttnKV, SelfAndCrossAttnKV]]]
@@ -139,16 +158,21 @@ class TransformerDecoder(nn.Module):
         expert_masks = []
         for layer_idx in range(extract_layer_idx + 1):
             mod = self.layers[layer_idx]
+            if isinstance(tgt_mask, list):
+                # tgt_mask provided by the user is a list corresponding to the
+                # mask for each layer.
+                tgt_mask_i = tgt_mask[layer_idx]
+            elif sparse_mask is not None and layer_idx % 2 != 0:
+                # Alternate between dense and fixed sparse attention,
+                # This is used in GPT-3 model.
+                tgt_mask_i = sparse_mask
+            else:
+                tgt_mask_i = tgt_mask
+
             output = mod(
                 output,
                 memory=memory,
-                # Alternate between dense and fixed sparse attention,
-                # This is used in GPT-3 model.
-                tgt_mask=(
-                    sparse_mask
-                    if layer_idx % 2 != 0 and sparse_mask is not None
-                    else tgt_mask
-                ),
+                tgt_mask=tgt_mask_i,
                 memory_mask=memory_mask,
                 tgt_key_padding_mask=tgt_key_padding_mask,
                 memory_key_padding_mask=memory_key_padding_mask,
@@ -159,6 +183,7 @@ class TransformerDecoder(nn.Module):
                 cross_attn_position_bias=cross_attn_position_bias,
                 layer_idx=layer_idx,
                 expert_hash_idx=expert_hash_idx,
+                special_token_indices=special_token_indices,
                 **extra_args,
             )
 

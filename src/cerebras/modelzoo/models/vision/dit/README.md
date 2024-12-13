@@ -51,7 +51,6 @@ During training, an image from the dataset is taken and passed through a frozen 
 ## Structure of the code
 
 -   `configs/`: YAML configuration files.
--   `data.py`: The entry point to the data input pipeline code. Defines `train_input_dataloader` ( and `eval_input_dataloader`) which initalizes the data processor mentioned in config yaml `train_input.data_processor`( and `eval_input.data_processor`)
 -   `modeling_dit.py`: Defines the core model `DiT`.
 -   `model.py`: The entry point to the model. Defines `DiTModel`.
 -   `run.py`: Training script. Performs training and validation.

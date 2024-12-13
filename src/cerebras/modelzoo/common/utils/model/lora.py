@@ -276,7 +276,7 @@ def get_lora_config_for_module(
     lora_params: Union[LoraConfig, List[LoraConfig]], module_names: List[str]
 ) -> Optional[LoraConfig]:
     r"""
-    Gets lora parameters for a particular module
+    Gets lora parameters for a particular module.
 
     Args:
         lora_params: LoRA top-level config.
@@ -300,7 +300,8 @@ def get_lora_config_for_module(
 
 
 def make_model_lora(
-    model: nn.Module, lora_params_dict: Union[dict, List[dict]]
+    model: nn.Module,
+    lora_params: Union[dict, List[dict], LoraConfig, List[LoraConfig]],
 ):
     r"""
     Create a Low Rank Adaptation (LoRA) model from a non-LoRA model. Note that
@@ -308,17 +309,22 @@ def make_model_lora(
 
     Args:
         model: Initial model to make LoRA
-        lora_params_dict: LoRA parameters (in the form of a dict or list of
+        lora_params: LoRA parameters (in the form of a dict or list of
             dicts) which dictate how the supplied model will be converted into
             a LoRA model. The parameters should align with LoraConfig.
 
     Returns:
         LoRA model
     """
-    if isinstance(lora_params_dict, list):
-        lora_params = [LoraConfig(**e) for e in lora_params_dict]
+    if isinstance(lora_params, LoraConfig):
+        lora_params = lora_params
+    if isinstance(lora_params, list):
+        lora_params = [
+            e if isinstance(e, LoraConfig) else LoraConfig(**e)
+            for e in lora_params
+        ]
     else:
-        lora_params = LoraConfig(**lora_params_dict)
+        lora_params = LoraConfig(**lora_params)
 
     loraified_modules = set()
     lora_model = make_model_lora_helper(

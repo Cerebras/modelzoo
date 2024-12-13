@@ -628,10 +628,11 @@ class ConfigConverter_StarcoderModel_HF_CS20(BaseConfigConverter_HF_CS):
 
     def pre_config_convert(
         self,
+        model,
         config,
         converter_indices,
     ):
-        config = super().pre_config_convert(config, converter_indices)
+        config = super().pre_config_convert(model, config, converter_indices)
 
         if converter_indices.direction == 0:
             if "n_inner" not in config or config["n_inner"] is None:
@@ -664,13 +665,13 @@ class Converter_StarcoderLMHeadModel_CS20_CS21(
 class ConfigConverter_StarcoderModel_HF_CS21(
     ConfigConverter_StarcoderModel_HF_CS20
 ):
-    "CS 2.1 config is the same as CS 2.0"
+    "CS 2.1 config is the same as CS 2.0."
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4"),
         )
 
     def supports_mup_conversion(self):
@@ -699,7 +700,7 @@ class Converter_StarcoderModel_WithoutOptionalModel_HF_CS21(
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4"),
         )
 
     @staticmethod
@@ -748,7 +749,7 @@ class Converter_StarcoderForCausalLM_WithoutOptionalModel_HF_CS21(
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4"),
         )
 
     @staticmethod

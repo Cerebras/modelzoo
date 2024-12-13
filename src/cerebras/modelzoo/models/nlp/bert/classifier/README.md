@@ -39,7 +39,6 @@ Fig.1 - Flow Chart of steps to fine-tune classification model
 
 - `configs/`: YAML configuration files.
 - `model.py`: Model implementation leveraging [BertForSequenceClassification](../bert_model.py) class.
-- `data.py`: The entry point to the data input pipeline code.
 - `run.py`: Training script. Performs training and validation.
 - `utils.py`: Miscellaneous helper functions.
 

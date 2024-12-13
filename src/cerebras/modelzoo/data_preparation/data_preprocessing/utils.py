@@ -19,18 +19,12 @@ import logging
 import os
 import re
 import sys
+from collections import OrderedDict, defaultdict
 from pathlib import Path
+from typing import Dict, Optional
 
 import numpy as np
 import yaml
-from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
-
-from cerebras.modelzoo.data_preparation.nlp.tokenizers.BPETokenizer import (
-    BPETokenizer,
-)
-from cerebras.modelzoo.data_preparation.nlp.tokenizers.HFTokenizer import (
-    HFTokenizer,
-)
 
 logger = logging.getLogger("utils")
 logger.setLevel(logging.INFO)
@@ -109,12 +103,7 @@ def dump_result(
     post_process["n_examples"] = results.pop("examples", 0)
     post_process["raw_chars_count"] = results.pop("raw_chars_count", 0)
     post_process["raw_bytes_count"] = results.pop("raw_bytes_count", 0)
-
-    ## dump features for dpo to be used in DPODataProcessor
-    if "features" in results:
-        features = results.pop("features")
-        data["features"] = features
-
+    results.pop("features")
     ## put remaining key,value pairs in post process
     for key, value in results.items():
         post_process[key] = value
@@ -158,6 +147,24 @@ def dump_args(args, json_params_file):
         json.dump(args, _fout, indent=4, sort_keys=True)
 
 
+def update_args(args, json_params_file):
+    "Update eos_id and pad_id in data_params"
+
+    with open(json_params_file, "r") as _file:
+        data = json.load(_file)
+
+    data['processing']['pad_id'] = args.get(
+        'pad_id', data['processing'].get('pad_id')
+    )
+    data['processing']['eos_id'] = args.get(
+        'eos_id', data['processing'].get('eos_id')
+    )
+    data['features'] = args.get('features', None)
+
+    with open(json_params_file, "w") as _fout:
+        json.dump(data, _fout, indent=4, sort_keys=True)
+
+
 def get_parser(desc):
     """Argparser definition for command line arguments from user.
 
@@ -165,13 +172,18 @@ def get_parser(desc):
         Argparse namespace object with command line arguments.
     """
     parser = argparse.ArgumentParser(description=desc)
+    add_preprocess_args(parser)
+    return parser.parse_args()
+
+
+def add_preprocess_args(parser):
+    """Add arguments to the data preprocessing parser."""
     parser.add_argument(
         "--config",
         type=str,
         default=None,
         help="Path to the YAML config file for setting dataset preprocessing hyper-parameters.",
     )
-    return parser.parse_args()
 
 
 def update_params(params, args):
@@ -182,75 +194,70 @@ def update_params(params, args):
         "data",
         "metadata_files",
         "output_dir",
+        "image_dir",
         "processes",
-        "module",
-        "dataset_processor",
         "mode",
     ]
     processing_params = [
-        "tokenizer_type",
+        "custom_tokenizer",
         "huggingface_tokenizer",
-        "vocab_file",
-        "encoder_file",
+        "tokenizer_params",
         "eos_id",
         "pad_id",
-        "split_text_to_tokenize",
-        "chunk_len_to_split",
-        "remove_bos_in_chunks",
         "max_seq_length",
+        "min_sequence_len",
+        "input_ids_dtype",
+        "input_mask_dtype",
+        "inverted_mask",
+        "use_ftfy",
+        "ftfy_normalizer",
+        "wikitext_detokenize",
         "short_seq_prob",
-        "output_name",
-        "files_per_record",
         "write_in_batch",
         "resume_from_checkpoint",
         "seed",
+        "read_chunk_size",
+        "write_chunk_size",
+        "shuffle",
+        "shuffle_seed",
+        "fraction_of_RAM_alloted",
+        "read_hook",
+        "read_hook_kwargs",
+        "semantic_drop_mask",
+        "semantic_loss_weight",
+        "semantic_attention_mask",
+    ]
+    dataset_params = [
+        "use_vsl",
+        "truncate_to_msl",
+        "max_prompt_length",
+        "is_multimodal",
+        "training_objective",
+        "pack_sequences",
+        "sep_token",
         "fim_rate",
         "spm_rate",
         "fim_prefix_tok",
         "fim_middle_tok",
         "fim_suffix_tok",
-        "auth_token",
-        "max_chunk_size",
-        "shuffle",
-        "shuffle_seed",
-        "fraction_of_RAM_alloted",
-        "drop_input",
-        "loss_mask_weight",
-        "chat_template",
-        "multimodal_mode",
-    ]
-    dataset_params = [
-        "use_ftfy",
-        "ftfy_normalizer",
-        "wikitext_detokenize",
-        "jsonl_key",
-        "pack_sequences",
-        "min_sequence_len",
-        "input_ids_dtype",
-        "input_mask_dtype",
-        "inverted_mask",
-        "prompt_key",
-        "completion_key",
-        "sep_token",
         "fold_long_doc",
-        "seq_lengths_dtype",
-        "chosen_key",
-        "rejected_key",
+        "split_text_to_tokenize",
+        "chunk_len_to_split",
+        "remove_bos_in_chunks",
         "user_role",
         "assistant_role",
         "chat_template",
         "respose_delimiter",
-        "prompt_prefix",
-        "completion_prefix",
-        "eos_after_prompt",
-        "multi_turn_key",
-        "multi_turn_content_key",
-        "image_key",
-        "image_token",
-        "multi_modal_non_image_ex_key",
-        "image_dir",
         "num_patches",
-        "system_prompt_style",
+        "mlm_fraction",
+        "mlm_with_gather",
+        "ignore_index",
+        "excluded_tokens",
+        "max_num_img",
+    ]
+    cli_params = [
+        "cmd",
+        "func",
     ]
 
     for key, value in args.items():
@@ -263,48 +270,41 @@ def update_params(params, args):
                 params["processing"][key] = value
             elif key in dataset_params:
                 params["dataset"][key] = value
+            elif key in cli_params:
+                continue
             else:
                 raise ValueError(f"Unexpected arguments: {key}")
-    set_defaults(params)
+
+    # Sections to check
+    sections = {
+        "setup": setup_params,
+        "processing": processing_params,
+        "dataset": dataset_params,
+    }
+
+    for section, allowed_params in sections.items():
+
+        params_in_yaml = params.get(section, {})
+
+        # Check for misplaced parameters
+        for param in params_in_yaml:
+            if param not in allowed_params:
+                correct_section = next(
+                    (s for s, p in sections.items() if param in p),
+                    "unknown section",
+                )
+                if correct_section != "unknown section":
+                    raise ValueError(
+                        f"Error: Parameter '{param}' in section '{section}' is misplaced. It should be in '{correct_section}'."
+                    )
 
 
-def set_defaults(params):
-    params["processing"]["eos_id"] = params["processing"].get("eos_id")
-    params["processing"]["pad_id"] = params["processing"].get("pad_id")
-    params["processing"]["split_text_to_tokenize"] = params["processing"].get(
-        "split_text_to_tokenize", False
-    )
-    params["processing"]["chunk_len_to_split"] = params["processing"].get(
-        "chunk_len_to_split", 2000
-    )
-    params["processing"]["remove_bos_in_chunks"] = params["processing"].get(
-        "remove_bos_in_chunks", False
-    )
-    params["processing"]["write_in_batch"] = params["processing"].get(
-        "write_in_batch", True
-    )
-    params["processing"]["resume_from_checkpoint"] = params["processing"].get(
-        "resume_from_checkpoint", False
-    )
-    params["processing"]["auth_token"] = params["processing"].get(
-        "auth_token", None
-    )
-    params["dataset"]["use_ftfy"] = params["dataset"].get("use_ftfy", True)
-    params["dataset"]["ftfy_normalizer"] = params["dataset"].get(
-        "ftfy_normalizer", "NFC"
-    )
-    params["dataset"]["wikitext_detokenize"] = params["dataset"].get(
-        "wikitext_detokenize", False
-    )
-
-
-def get_params(desc):
-    """Retrieve configuration parameters
+def args_to_params(args):
+    """Process data preprocessing CLI arguments to parameters
     Returns:
         params (Dict): Dictionary contains the parameters used to configure
             the data processing.
     """
-    args = get_parser(desc)
     args = vars(args)
 
     params_file = args.pop("config", None)
@@ -322,6 +322,16 @@ def get_params(desc):
     return params
 
 
+def get_params(desc):
+    """Retrieve configuration parameters
+    Returns:
+        params (Dict): Dictionary contains the parameters used to configure
+            the data processing.
+    """
+    args = get_parser(desc)
+    return args_to_params(args)
+
+
 def dump_args(args, json_params_file):
     """
     Write the input params to file.
@@ -331,101 +341,32 @@ def dump_args(args, json_params_file):
         json.dump(args, _fout, indent=4, sort_keys=True)
 
 
-def validate_tokens(tokens, min_len=2):
-    is_valid = len(tokens) >= min_len
-    if not is_valid:
-        logger.warning(
-            f"token_ids must have at least {min_len} elements, skipping this example..."
-        )
-    return is_valid
-
-
-def create_features_auto_lm_vsl(
-    bin,
-    max_sequence_length,
-    num_pad,
-    pad_id=0,
-    inverted_mask=False,
-    input_ids_dtype="int32",
-    input_mask_dtype="int32",
-    labels_dtype="int32",
-    attention_span_dtype="int32",
-    position_ids_dtype="int32",
-):
-    """Given a list of VSL sequences, generate input features and labels.
+def setup_warning_logging(output_dir, module_name):
+    """
+    Set up logging to log warnings to a file in the specified output directory.
 
     Args:
-        bin (list(sequence)): list of VSL sequences.
-        max_sequence_length (int): Maximum sequence length for data writes.
-        num_pad (int): number of padding tokens in the sequence.
-        pad_id (int): Id for pad token. Defaults to `0`.
-        inverted_mask (bool): Invert mask if specified for runtime execution.
-            Defaults to `False`.
-        input_ids_dtype (str): Dtype as string for input ids.
-            Defaults to `int32`.
-        input_mask_dtype (str): Dtype as string for input mask.
-            Defaults to `int32`.
-        labels_dtype (str): Dtype as string for labels. Defaults to `int32`.
-        attention_span_dtype (str): Dtype as string for keys attention span in VSL.
-            Defaults to `int32`.
-        position_ids_dtype (str): Dtype as string for position ids and
-            attention span in VSL. Defaults to `int32`.
-
-    Returns:
-        Tuple containing features and labels
+        output_dir (str): The directory where the warnings log file should be stored.
     """
-    input_ids, labels, attention_span, position_ids = [], [], [], []
-    input_mask = []
-    for i, sample in enumerate(bin):
-        input_ids.extend(sample)
-        labels.extend(sample)
-        sample_len = len(sample)
-        if i == len(bin) - 1:
-            attention_span.extend(list(range(sample_len - 2, -1, -1)))
-            position_ids.extend(list(range(sample_len - 1)))
-            input_mask.extend([1] * (sample_len - 1))
-        else:
-            attention_span.extend(list(range(sample_len - 1, -1, -1)))
-            position_ids.extend(list(range(sample_len)))
-            input_mask.extend(
-                [1] * (sample_len - 1) + [0]
-            )  ## The separator should have 0 as eos token
+    logger = logging.getLogger(module_name)
+    logger.setLevel(logging.INFO)
+    os.makedirs(output_dir, exist_ok=True)
+    # Create a file handler that logs to 'output_dir/warnings.log'
+    log_file_path = os.path.join(output_dir, 'warnings.log')
+    file_handler = logging.FileHandler(log_file_path)
 
-    input_ids = input_ids[:-1]
-    labels = labels[1:]
-    # padding
-    num_pad = max_sequence_length - len(input_ids)
-    padding = [pad_id] * num_pad
-    input_ids.extend(padding)
-    labels.extend(padding)
-
-    padding = [0] * num_pad
-    input_mask.extend(padding)
-    attention_span.extend(padding)
-    position_ids.extend(padding)
-
-    # assertions to ensure correct output shapes
-    assert (
-        len(input_ids) == max_sequence_length
-        and len(labels) == max_sequence_length
-        and len(input_mask) == max_sequence_length
-        and len(attention_span) == max_sequence_length
-        and len(position_ids) == max_sequence_length
-    ), "Wrong sequence length"
-
-    input_ids = getattr(np, input_ids_dtype)(input_ids)
-    input_mask = getattr(np, input_mask_dtype)(input_mask)
-
-    if inverted_mask:
-        input_mask = np.equal(input_mask, 0).astype(input_mask.dtype)
-
-    labels = getattr(np, labels_dtype)(labels)
-    attention_span = getattr(np, attention_span_dtype)(attention_span)
-    position_ids = getattr(np, position_ids_dtype)(position_ids)
-
-    return np.stack(
-        [input_ids, input_mask, labels, attention_span, position_ids]
+    # Create a formatter and set it for the file handler
+    formatter = logging.Formatter(
+        '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
+    file_handler.setFormatter(formatter)
+
+    # Add the file handler to the logger
+    logger.addHandler(file_handler)
+    # Remove the default StreamHandler to prevent logging to stdout
+    logger.propagate = False
+
+    return logger
 
 
 def get_files(input_dir=None, filetypes=None, metadata_files=None):
@@ -526,6 +467,74 @@ def wikitext_detokenizer(string):
     string = string.replace(" 's", "'s")
 
     return string
+
+
+def clean_text(
+    data: str, use_ftfy: bool, wikitext_detokenize: bool, ftfy_normalizer: str
+) -> str:
+    """
+    Clean the provided text using ftfy normalization and wikitext detokenization.
+
+    Args:
+        data (str): The text to be cleaned.
+        use_ftfy (bool): Whether to use the `ftfy` library to fix text encoding issues.
+        wikitext_detokenize (bool): Whether to apply wikitext detokenization to the text.
+        ftfy_normalizer (str): The normalization method to use with `ftfy` if enabled.
+
+    Returns:
+        str: The cleaned text after applying the specified operations.
+    """
+    import ftfy
+
+    if use_ftfy:
+        data = ftfy.fix_text(data, normalization=ftfy_normalizer)
+    if wikitext_detokenize:
+        data = wikitext_detokenizer(data)
+
+    return data
+
+
+def get_data_stats(
+    sample: np.ndarray,
+    pad_id: int,
+    eos_id: int,
+    max_seq_length: int,
+    loss_valid_tokens: Optional[int] = None,
+) -> Dict[str, int]:
+    """
+    Get data statistics from the sample.
+
+    Args:
+        sample (np.ndarray): Tokenized sample in the form of a NumPy array.
+        pad_id (int): The ID used for padding tokens.
+        eos_id (int): The ID used for end-of-sequence tokens.
+        max_seq_length (int): The maximum sequence length.
+        loss_valid_tokens (Optional[int]): The number of valid tokens for loss computation. If not provided, it will be calculated from the sample.
+
+    Returns:
+        Dict[str, int]: A dictionary containing the following data statistics:
+            - "num_pad_tokens": Number of padding tokens in the sample.
+            - "non_pad_tokens": Number of tokens that are neither padding nor end-of-sequence tokens.
+            - "num_tokens": Total number of tokens in the sample.
+            - "loss_valid_tokens": Number of valid tokens for loss computation.
+            - "num_masked_tokens": Number of masked tokens based on the maximum sequence length.
+    """
+    stats = defaultdict(int)
+    if sample == []:
+        return stats
+    stats["num_pad_tokens"] = int((sample[0, :] == pad_id).sum())
+    stats["non_pad_tokens"] = int(
+        np.logical_and(sample[0, :] != eos_id, sample[0, :] != pad_id).sum()
+    )
+    stats["num_tokens"] = int(sample[0, :].shape[0])
+
+    if loss_valid_tokens:
+        stats["loss_valid_tokens"] = loss_valid_tokens
+    else:
+        stats["loss_valid_tokens"] = int(sample[1, :].sum())
+    stats["num_masked_tokens"] = max_seq_length - stats["loss_valid_tokens"]
+
+    return stats
 
 
 # routine to split the text into smaller sequences
@@ -966,6 +975,15 @@ def fim(
 
 
 def get_tokenizer_vocab(tokenizer):
+    from transformers import PreTrainedTokenizer, PreTrainedTokenizerFast
+
+    from cerebras.modelzoo.data_preparation.nlp.tokenizers.BPETokenizer import (
+        BPETokenizer,
+    )
+    from cerebras.modelzoo.data_preparation.nlp.tokenizers.HFTokenizer import (
+        HFTokenizer,
+    )
+
     if isinstance(tokenizer, BPETokenizer):
         tokenizer_vocab = tokenizer.encoder
     elif isinstance(tokenizer, HFTokenizer):
@@ -985,15 +1003,15 @@ def get_tokenizer_vocab(tokenizer):
 def check_fim_special_tokens(params, tokenizer):
     # Check that input config lists the FIM special tokens
     assert (
-        "fim_suffix_tok" in params['processing']
-        and "fim_prefix_tok" in params['processing']
-        and "fim_middle_tok" in params['processing']
+        "fim_suffix_tok" in params['dataset']
+        and "fim_prefix_tok" in params['dataset']
+        and "fim_middle_tok" in params['dataset']
     ), """Configs for FIM pre-processing must include the special tokens that
     denote prefix, middle, and suffix tokens."""
     # Check that the provided tokens are in the tokenizer
-    pre_tok = params['processing'].get("fim_prefix_tok")
-    mid_tok = params['processing'].get("fim_middle_tok")
-    suf_tok = params['processing'].get("fim_suffix_tok")
+    pre_tok = params['dataset'].get("fim_prefix_tok")
+    mid_tok = params['dataset'].get("fim_middle_tok")
+    suf_tok = params['dataset'].get("fim_suffix_tok")
     tokenizer_vocab = get_tokenizer_vocab(tokenizer)
     assert (
         pre_tok in tokenizer_vocab
@@ -1135,11 +1153,8 @@ def find_region_in_formatted_string(text_semantic_region_list, formatted_data):
 
     string_search_idx = 0
     for semantic_region in text_semantic_region_list:
-        region_name = semantic_region.get("region_modality")
         region_identifier = semantic_region.pop("region_identifier", "")
         region_len = semantic_region.get("region_len")
-        loss_weight = semantic_region.get("loss_weight")
-        attention_mask = semantic_region.get("attention_mask", None)
         region_identifier_start_idx = formatted_data.find(
             region_identifier, string_search_idx
         )
@@ -1192,3 +1207,345 @@ def find_token_range(region, offsets, starting_offset_position):
     }
 
     return data
+
+
+def truncate_sequence(
+    token_ids,
+    tokenized_semantic_region_list,
+    max_sequence_length,
+    max_turn_length,
+    prompt_truncation_mode,
+):
+    """
+    Truncates token sequences to fit within a specified MSL, parameterized by max_turn_length.
+
+    Args:
+        token_ids (list): List of token IDs representing the entire sequence.
+        tokenized_semantic_region_list (list): List of tokenized semantic regions.
+        max_sequence_length (int): Maximum allowed length of the sequence after truncation.
+        max_turn_length (int): Maximum length of any single segment that can be present, after truncation.
+        prompt_truncation_mode (str): Mode of truncation for prompt/user part of chat. Can be 'keep_start' or 'keep_end'.
+
+    Returns:
+        tokenized_semantic_region_list (list): Returned with indices updated for region after truncation.
+        list: The truncated sequence of token IDs that fits within the max_sequence_length constraint.
+    """
+
+    def update_semantic_regions(
+        part_one_list,
+        part_two_list,
+        part_one_indices_to_remove,
+        part_two_indices_to_remove,
+    ):
+        combined_list = part_one_list + part_two_list
+        combined_list.sort(key=lambda x: x[2][0])
+
+        combined_rem = part_one_indices_to_remove + part_two_indices_to_remove
+        combined_rem_dict = OrderedDict()
+
+        for element in combined_rem:
+            key = (element[0], element[1])
+            value = (element[2], element[3])
+            combined_rem_dict[key] = value
+
+        updated_ranges = []
+        cumulative_shift = 0
+
+        for index, part, (original_start, original_end) in combined_list:
+            removed_item = combined_rem_dict.get((index, part))
+
+            if removed_item is not None:
+                mode, (removed_start, removed_end) = removed_item
+                current_shift = removed_end - removed_start
+
+                if mode == "keep_start":
+                    new_start, new_end = (
+                        original_start - cumulative_shift,
+                        removed_start - cumulative_shift,
+                    )
+                elif mode == "keep_end":
+                    new_start, new_end = (
+                        removed_end - cumulative_shift - current_shift,
+                        original_end - cumulative_shift - current_shift,
+                    )
+
+                cumulative_shift += current_shift
+            else:
+                current_shift = 0
+                new_start, new_end = (
+                    original_start - cumulative_shift,
+                    original_end - cumulative_shift,
+                )
+                cumulative_shift += current_shift
+
+            updated_ranges.append((new_start, new_end))
+
+        no_of_regions = 0
+        for region in tokenized_semantic_region_list:
+            no_of_regions += 1
+
+        assert (
+            len(updated_ranges) == no_of_regions
+        ), "Mismatch in number of regions of tokenized_semantic_region_list and the updated ranges."
+
+        index = 0
+        for region in tokenized_semantic_region_list:
+            region['indices'] = updated_ranges[index]
+            index += 1
+
+        return tokenized_semantic_region_list
+
+    def _truncate(
+        tokenized_semantic_region_list,
+        part_one_list,
+        part_two_list,
+        truncate_length,
+    ):
+        """
+        Helper function to truncate two parts of the sequence based on the provided length.
+
+        Args:
+            tokenized_semantic_region_list (list): List of semantic regions that are present.
+            part_one_list (list): List of (start, end) tuples for the first part of the sequence.
+            part_two_list (list): List of (start, end) tuples for the second part of the sequence.
+            truncate_length (int): Total length that needs to be truncated from the sequence.
+
+        Returns:
+            list: Truncated sequence of token IDs.
+        """
+
+        # Enumerating the lists, to maintain indices (which are used later).
+        part_one_list = list(enumerate(part_one_list))
+        part_one_list = [
+            (item[0], 'part_one', item[1]) for item in part_one_list
+        ]
+
+        part_two_list = list(enumerate(part_two_list))
+        part_two_list = [
+            (item[0], 'part_two', item[1]) for item in part_two_list
+        ]
+
+        part_one_indices_to_remove = []
+
+        # Sort the ordered list by maximum turn length, with the maximum length indices coming first.
+        sorted_part_one = sorted(
+            part_one_list, key=lambda x: x[2][1] - x[2][0], reverse=True
+        )
+
+        # Truncate from the first part of the sequence.
+        for index, part, (start, end) in sorted_part_one:
+            length_of_turn = end - start
+
+            """
+                We also have to always maintain (max_turn_length) in every turn, after truncation.
+                Therefore, the max amount that can be truncated = (length_of_turn - max_turn_length)
+
+                What happens if length of turn is < max_turn_length?
+                Then we keep the entire turn, and move to the next user and try truncating from there.
+            """
+
+            if max_turn_length >= length_of_turn:
+                # Keep the entire turn; no truncation at all.
+                continue
+            else:
+                # max_turn_length < length_of_turn i.e truncation is possible from this turn.
+                available_truncate = length_of_turn - max_turn_length
+
+                if available_truncate < truncate_length:
+                    # Truncate the max you can, move to the next turn.
+                    truncate_length -= available_truncate
+
+                    if prompt_truncation_mode == "keep_start":
+                        part_one_indices_to_remove.append(
+                            (
+                                index,
+                                part,
+                                'keep_start',
+                                (end - available_truncate, end),
+                            )
+                        )
+                    elif prompt_truncation_mode == "keep_end":
+                        part_one_indices_to_remove.append(
+                            (
+                                index,
+                                part,
+                                'keep_end',
+                                (start, start + available_truncate),
+                            )
+                        )
+                else:
+                    # Here, available_truncate >= truncate_length i.e we have more than what we need.
+                    # Therefore, we'll take only what we need, and we have finished truncation from Part 1 solely.
+                    if prompt_truncation_mode == "keep_start":
+                        part_one_indices_to_remove.append(
+                            (
+                                index,
+                                part,
+                                'keep_start',
+                                (end - truncate_length, end),
+                            )
+                        )
+                    elif prompt_truncation_mode == "keep_end":
+                        part_one_indices_to_remove.append(
+                            (
+                                index,
+                                part,
+                                'keep_end',
+                                (start, start + truncate_length),
+                            )
+                        )
+
+                    # Sorting this, in order to not mess up the indices while removing.
+                    range_of_indices_to_remove_part_one = sorted(
+                        part_one_indices_to_remove,
+                        key=lambda x: x[3][0],
+                        reverse=True,
+                    )
+
+                    for (
+                        index,
+                        part,
+                        mode,
+                        (start, end),
+                    ) in range_of_indices_to_remove_part_one:
+                        del token_ids[start:end]
+
+                    assert (
+                        len(token_ids) == max_sequence_length
+                    ), "After truncation, the length of token IDs should be equal to MSL."
+
+                    # Now, update tokenized_semantic_region_list.
+                    tokenized_semantic_region_list = update_semantic_regions(
+                        part_one_list,
+                        part_two_list,
+                        part_one_indices_to_remove,
+                        [],
+                    )
+
+                    return tokenized_semantic_region_list, token_ids
+
+        assert (
+            truncate_length > 0
+        ), "Truncation from second part should only happen if truncation from the first part is exhausted."
+
+        # Calculate the total possible truncation length from the second part.
+        total_possible_truncation = 0
+        for index, part, (start, end) in part_two_list:
+            total_possible_truncation += (end - start) - max_turn_length
+
+        if total_possible_truncation < truncate_length:
+            return (
+                tokenized_semantic_region_list,
+                {},
+            )  # If the total truncation possible is not enough to meet the truncation length.
+        else:
+            part_two_indices_to_remove = []
+
+            # Sorting this by max turn length, so that most of the truncation happens from the longest range.
+            sorted_part_two = sorted(
+                part_two_list, key=lambda x: x[2][1] - x[2][0], reverse=True
+            )
+
+            for index, part, (start, end) in sorted_part_two:
+                length_of_turn = end - start
+
+                if max_turn_length >= length_of_turn:
+                    # Keep the entire turn; no truncation.
+                    continue
+                else:
+                    # Truncate the maximum you can, move to the next turn. By default, we keep the end i.e "keep_start" for completion.
+                    # This is done to maintain recent context as much as possible.
+                    available_truncate = length_of_turn - max_turn_length
+
+                    if available_truncate < truncate_length:
+                        # We need to truncate more than what is availabe; thus truncate max you can and move to next turn.
+                        truncate_length -= available_truncate
+                        part_two_indices_to_remove.append(
+                            (
+                                index,
+                                part,
+                                'keep_start',
+                                (end - available_truncate, end),
+                            )
+                        )
+                    else:
+                        # We can finish the truncation here, as what we have is more than what we need.
+                        part_two_indices_to_remove.append(
+                            (
+                                index,
+                                part,
+                                'keep_start',
+                                (end - truncate_length, end),
+                            )
+                        )
+                        break
+
+        # Sorting the indices in descending order, to maintain correctness while deleting.
+        range_of_indices_to_remove = (
+            part_one_indices_to_remove + part_two_indices_to_remove
+        )
+        range_of_indices_to_remove.sort(key=lambda x: x[3][0], reverse=True)
+
+        for index, part, mode, (start, end) in range_of_indices_to_remove:
+            del token_ids[start:end]
+
+        assert (
+            len(token_ids) == max_sequence_length
+        ), "After truncation, the length of token IDs should be equal to MSL."
+
+        tokenized_semantic_region_list = update_semantic_regions(
+            part_one_list,
+            part_two_list,
+            part_one_indices_to_remove,
+            part_two_indices_to_remove,
+        )
+
+        return tokenized_semantic_region_list, token_ids
+
+    def _get_truncation_indices(tokenized_semantic_region_list):
+        truncation_indices = {}
+        for regions in tokenized_semantic_region_list:
+            if regions['role'] not in truncation_indices:
+                truncation_indices[regions['role']] = []
+
+            truncation_indices[regions['role']].append(regions['indices'])
+        return truncation_indices
+
+    if prompt_truncation_mode not in ['keep_start', 'keep_end']:
+        raise ValueError(
+            "prompt_truncation_mode should only be 'keep_start' or 'keep_end'."
+        )
+
+    # Generate truncation indices
+    truncation_indices = _get_truncation_indices(tokenized_semantic_region_list)
+
+    # Determine which keys are present in the truncation indices dictionary.
+    keys = set(truncation_indices.keys())
+
+    # Total length to truncate.
+    truncate_length = len(token_ids) - max_sequence_length
+
+    if "prompt" in keys and "completion" in keys:
+        # Adjusting for BOS token in prompt/completion.
+        if truncation_indices['prompt'][0][0] != 0:
+            truncation_indices['prompt'][0][0] = 0
+
+        interaction_type = "prompt_completion"
+        return _truncate(
+            tokenized_semantic_region_list,
+            truncation_indices['prompt'],
+            truncation_indices['completion'],
+            truncate_length,
+        )
+    elif "user" in keys and "assistant" in keys:
+        interaction_type = "user_assistant"
+        return _truncate(
+            tokenized_semantic_region_list,
+            truncation_indices['user'],
+            truncation_indices['assistant'],
+            truncate_length,
+        )
+    else:
+        raise ValueError(
+            "Truncation is only supported for 'prompt'/'completion' or 'user'/'assistant'."
+        )

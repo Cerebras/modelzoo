@@ -19,13 +19,16 @@ Processor for PyTorch BERT fine tuning - Token classifier.
 import csv
 import json
 import os
+from typing import List, Literal, Optional, Union
 
 import numpy as np
 import torch
+from pydantic import PositiveInt, field_validator
 
 import cerebras.pytorch.distributed as dist
 from cerebras.modelzoo.common.input_utils import get_streaming_batch_size
-from cerebras.modelzoo.common.registry import registry
+from cerebras.modelzoo.config import DataConfig
+from cerebras.modelzoo.config.types import AliasedPath
 from cerebras.modelzoo.data.common.input_utils import (
     check_sharding_sanity,
     get_data_for_task,
@@ -38,35 +41,123 @@ from cerebras.modelzoo.data.nlp.bert.bert_utils import (
 )
 
 
-@registry.register_datasetprocessor("BertTokenClassifierDataProcessor")
+class BertTokenClassifierDataProcessorConfig(DataConfig):
+    data_processor: Literal["BertTokenClassifierDataProcessor"]
+
+    data_dir: Union[str, List[str]] = ...
+    "Path to the data files to use."
+
+    batch_size: PositiveInt = ...
+    "The batch size."
+
+    vocab_file: AliasedPath = ...
+    "Path to the vocabulary file."
+
+    label_vocab_file: Optional[AliasedPath] = None
+    "Path to json file with class name to class index."
+
+    mask_whole_word: bool = False
+    "Flag to whether mask the entire word."
+
+    do_lower: bool = False
+    "Flag to lower case the texts."
+
+    max_sequence_length: int = ...
+
+    include_padding_in_loss: bool = False
+
+    labels_pad_id: Optional[str] = None
+
+    input_pad_id: Optional[str] = None
+
+    attn_mask_pad_id: Optional[str] = None
+
+    shuffle: bool = True
+    "Whether or not to shuffle the dataset."
+
+    shuffle_seed: Optional[int] = None
+    "The seed used for deterministic shuffling."
+
+    shuffle_buffer: Optional[int] = None
+    """
+    Buffer size to shuffle samples across.
+    If None and shuffle is enabled, 10*batch_size is used.
+    """
+
+    num_workers: int = 0
+    "The number of PyTorch processes used in the dataloader."
+
+    prefetch_factor: Optional[int] = 10
+    "The number of batches to prefetch in the dataloader."
+
+    persistent_workers: bool = True
+    "Whether or not to keep workers persistent between epochs."
+
+    drop_last: bool = True
+    "Whether to drop last batch of epoch if it's an incomplete batch."
+
+    def post_init(self, context):
+        super().post_init(context)
+
+        if not self.num_workers:
+            self.prefetch_factor = None  # the default value in DataLoader
+            self.persistent_workers = False
+
+        model_config = context.get("model", {}).get("config")
+        if model_config is not None:
+            self.include_padding_in_loss = model_config.include_padding_in_loss
+
+            if model_config.label_vocab_file != self.label_vocab_file:
+                raise ValueError(
+                    f"Model and input label vocab files do not match."
+                    f"\n\tmodel value: {model_config.label_vocab_file}"
+                    f"\n\tinput value: {self.label_vocab_file}"
+                )
+
+    @field_validator("vocab_file", mode="after")
+    @classmethod
+    def get_vocab_file(cls, vocab_file):
+        if not os.path.exists(vocab_file):
+            raise FileNotFoundError(f"Vocab file does not exist: {vocab_file}")
+        return os.path.abspath(vocab_file)
+
+    @field_validator("label_vocab_file", mode="after")
+    @classmethod
+    def get_label_vocab_file(cls, label_vocab_file, info):
+        if info.context:
+            model_config = info.context.get("model", {}).get("config")
+
+            if model_config is not None:
+                if label_vocab_file is None:
+                    label_vocab_file = model_config.label_vocab_file
+
+                if label_vocab_file != model_config.label_vocab_file:
+                    raise ValueError(
+                        f"Label vocab file from model and input do not match."
+                        f"\n\tmodel vocab file: {model_config.label_vocab_file}"
+                        f"\n\tinput vocab file: {label_vocab_file}"
+                    )
+
+        if label_vocab_file is None:
+            raise ValueError("Label vocab file must be provided.")
+        if not os.path.exists(label_vocab_file):
+            raise ValueError(
+                f"Label vocab file does not exist: {label_vocab_file}"
+            )
+        return os.path.abspath(label_vocab_file)
+
+
 class BertTokenClassifierDataProcessor(torch.utils.data.IterableDataset):
     """
     Reads csv file containing the input token ids, and label_ids.
     Creates attention_masks and sedment_ids on the fly
-    :param <dict> params: dict containing input parameters for creating dataset.
-        Expects the following fields:
-            - "vocab_file" (str): Path to the vocab file.
-            - "label_vocab_file" (str): Path to json file with class name to class index.
-            - "data_dir" (str): Path to directory containing the CSV files.
-            - "batch_size" (int): Batch size.
-            - "max_sequence_length" (int): Maximum length of the sequence.
-            - "do_lower" (bool): Flag to lower case the texts.
-            - "shuffle" (bool): Flag to enable data shuffling.
-            - "shuffle_seed" (int): Shuffle seed.
-            - "shuffle_buffer" (int): Shuffle buffer size.
-            - "num_workers" (int):  How many subprocesses to use for data loading.
-            - "drop_last" (bool): If True and the dataset size is not divisible
-                by the batch size, the last incomplete batch will be dropped.
-            - "prefetch_factor" (int): Number of samples loaded in advance by each worker.
-            - "persistent_workers" (bool): If True, the data loader will not shutdown
-                the worker processes after a dataset has been consumed once.
     """
 
-    def __init__(self, params):
-        super(BertTokenClassifierDataProcessor, self).__init__()
+    def __init__(self, config: BertTokenClassifierDataProcessorConfig):
+        super().__init__()
 
         # Input params.
-        self.meta_data = get_meta_data(params["data_dir"])
+        self.meta_data = get_meta_data(config.data_dir)
 
         self.meta_data_values = list(self.meta_data.values())
         self.meta_data_filenames = list(self.meta_data.keys())
@@ -74,7 +165,7 @@ class BertTokenClassifierDataProcessor(torch.utils.data.IterableDataset):
         self.meta_data_values_cum_sum = np.cumsum([0] + self.meta_data_values)
 
         self.num_examples = sum(map(int, self.meta_data.values()))
-        self.batch_size = get_streaming_batch_size(params["batch_size"])
+        self.batch_size = get_streaming_batch_size(config.batch_size)
 
         self.num_batches = self.num_examples // self.batch_size
         assert (
@@ -96,17 +187,20 @@ class BertTokenClassifierDataProcessor(torch.utils.data.IterableDataset):
             self.meta_data_filenames,
         )
 
-        self.shuffle = params.get("shuffle", True)
-        self.shuffle_seed = params.get("shuffle_seed", None)
-        self.shuffle_buffer = params.get("shuffle_buffer", 10 * self.batch_size)
-        self.mask_whole_word = params.get("mask_whole_word", False)
-        self.do_lower = params.get("do_lower", False)
+        self.shuffle = config.shuffle
+        self.shuffle_seed = config.shuffle_seed
+        if config.shuffle_buffer is None:
+            self.shuffle_buffer = 10 * self.batch_size
+        else:
+            self.shuffle_buffer = config.shuffle_buffer
+        self.mask_whole_word = config.mask_whole_word
+        self.do_lower = config.do_lower
 
         # Multi-processing params.
-        self.num_workers = params.get("num_workers", 0)
-        self.drop_last = params.get("drop_last", True)
-        self.prefetch_factor = params.get("prefetch_factor", 10)
-        self.persistent_workers = params.get("persistent_workers", True)
+        self.num_workers = config.num_workers
+        self.drop_last = config.drop_last
+        self.prefetch_factor = config.prefetch_factor
+        self.persistent_workers = config.persistent_workers
 
         # Check that our sharding will produce at least one batch
         check_sharding_sanity(
@@ -128,13 +222,11 @@ class BertTokenClassifierDataProcessor(torch.utils.data.IterableDataset):
             }
 
         # Get vocab file and size.
-        self.vocab_file = params["vocab_file"]
+        self.vocab_file = config.vocab_file
         self.vocab, self.vocab_size = build_vocab(
             self.vocab_file, self.do_lower, self.special_tokens["oov_token"]
         )
-        self.label_vocab_file = params["label_vocab_file"]
-        if not os.path.exists(self.label_vocab_file):
-            raise FileNotFoundError(f"{self.label_vocab_file} not found.")
+        self.label_vocab_file = config.label_vocab_file
         with open(self.label_vocab_file, "r") as labelmap_fid:
             self.label_map = json.load(labelmap_fid)
 
@@ -149,15 +241,22 @@ class BertTokenClassifierDataProcessor(torch.utils.data.IterableDataset):
 
         # Padding indices.
         # See https://huggingface.co/transformers/glossary.html#labels.
-        self.labels_pad_id = params.get(
-            "labels_pad_id", self.special_tokens_indices["pad_token"]
+        self.labels_pad_id = (
+            config.labels_pad_id
+            if config.labels_pad_id is not None
+            else self.special_tokens_indices["pad_token"]
         )
-        self.input_pad_id = params.get(
-            "input_pad_id", self.special_tokens_indices["pad_token"]
+        self.input_pad_id = (
+            config.input_pad_id
+            if config.input_pad_id is not None
+            else self.special_tokens_indices["pad_token"]
         )
-        self.attn_mask_pad_id = params.get(
-            "attn_mask_pad_id", self.special_tokens_indices["pad_token"]
+        self.attn_mask_pad_id = (
+            config.attn_mask_pad_id
+            if config.attn_mask_pad_id is not None
+            else self.special_tokens_indices["pad_token"]
         )
+
         assert all(
             pad >= 0
             for pad in [
@@ -171,9 +270,9 @@ class BertTokenClassifierDataProcessor(torch.utils.data.IterableDataset):
             f" `attn_mask_pad_id` = {self.attn_mask_pad_id}."
         )
 
-        self.max_sequence_length = params["max_sequence_length"]
+        self.max_sequence_length = config.max_sequence_length
 
-        self.include_padding_in_loss = params.get("include_padding_in_loss")
+        self.include_padding_in_loss = config.include_padding_in_loss
 
         # Store params.
         self.data_buffer = []

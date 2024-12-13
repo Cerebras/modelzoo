@@ -35,8 +35,6 @@ import torch
 import torch.nn as nn
 from torch.nn import CrossEntropyLoss
 
-from cerebras.modelzoo.common.registry import registry
-
 
 ## Add label smoothing to loss function, this is a workaround method of label smoothing in our system
 def smooth_loss(prediction_scores, loss, label_smoothing, classes):
@@ -48,7 +46,6 @@ def smooth_loss(prediction_scores, loss, label_smoothing, classes):
     return loss
 
 
-@registry.register_loss("T5ForConditionalGenerationLoss")
 class T5ForConditionalGenerationLoss(nn.Module):
     def __init__(self, lm_loss_weight, mlm_loss_scaling, label_smoothing=0.0):
         super(T5ForConditionalGenerationLoss, self).__init__()

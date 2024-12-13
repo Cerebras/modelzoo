@@ -188,23 +188,24 @@ class ConfigConverter_JAISModel_HF_CS20(ConfigConverter_GPT2Model_HF_CS20):
 
         self.post_convert_defaults[0].update(
             {
-                "_name_or_path": "core42/jais-30b-v3",
+                "_name_or_path": "inceptionai/jais-30b-v3",
                 "model_type": "jais",
                 "architectures": ["JAISLMHeadModel"],
                 "use_cache": True,
                 "auto_map": {
-                    "AutoConfig": "core42/jais-30b-v3--configuration_jais.JAISConfig",
-                    "AutoModel": "core42/jais-30b-v3--modeling_jais.JAISModel",
-                    "AutoModelForCausalLM": "core42/jais-30b-v3--modeling_jais.JAISLMHeadModel",
-                    "AutoModelForQuestionAnswering": "core42/jais-30b-v3--modeling_jais.JAISForQuestionAnswering",
-                    "AutoModelForSequenceClassification": "core42/jais-30b-v3--modeling_jais.JAISForSequenceClassification",
-                    "AutoModelForTokenClassification": "core42/jais-30b-v3--modeling_jais.JAISForTokenClassification",
+                    "AutoConfig": "inceptionai/jais-30b-v3--configuration_jais.JAISConfig",
+                    "AutoModel": "inceptionai/jais-30b-v3--modeling_jais.JAISModel",
+                    "AutoModelForCausalLM": "inceptionai/jais-30b-v3--modeling_jais.JAISLMHeadModel",
+                    "AutoModelForQuestionAnswering": "inceptionai/jais-30b-v3--modeling_jais.JAISForQuestionAnswering",
+                    "AutoModelForSequenceClassification": "inceptionai/jais-30b-v3--modeling_jais.JAISForSequenceClassification",
+                    "AutoModelForTokenClassification": "inceptionai/jais-30b-v3--modeling_jais.JAISForTokenClassification",
                 },
             }
         )
 
     def pre_config_convert(
         self,
+        model,
         config,
         from_index,
     ):
@@ -229,12 +230,13 @@ class ConfigConverter_JAISModel_HF_CS20(ConfigConverter_GPT2Model_HF_CS20):
                     "adjust_learning_rate"
                 ]["decoder_kernel"]
 
-        config = super().pre_config_convert(config, from_index)
+        config = super().pre_config_convert(model, config, from_index)
 
         return config
 
     def post_config_convert(
         self,
+        model,
         original_config,
         old_config,
         new_config,
@@ -243,6 +245,7 @@ class ConfigConverter_JAISModel_HF_CS20(ConfigConverter_GPT2Model_HF_CS20):
     ):
         final_config = super().post_config_convert(
             original_config,
+            model,
             old_config,
             new_config,
             from_index,
@@ -354,7 +357,7 @@ class ConfigConverter_JAISModel_HF_CS21(ConfigConverter_JAISModel_HF_CS20):
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4"),
         )
 
 
@@ -389,7 +392,7 @@ class Converter_JAISModel_WithoutModelPrefix_HF_CS21(
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4"),
         )
 
     @staticmethod
@@ -427,7 +430,7 @@ class Converter_JAISLMHeadModel_WithoutModelPrefix_HF_CS21(
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4"),
         )
 
     @staticmethod

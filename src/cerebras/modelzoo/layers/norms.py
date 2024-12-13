@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from functools import partial
+from typing import Literal
 
 import torchvision.ops as ops
 from torch import nn
@@ -44,6 +45,8 @@ NORM2CLASS = {
     "rmsnorm": RMSNorm,
     None: nn.Identity,
 }
+
+NormType = Literal[tuple(NORM2CLASS)]
 
 
 def get_norm(norm_string):

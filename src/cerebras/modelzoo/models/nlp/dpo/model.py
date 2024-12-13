@@ -13,33 +13,90 @@
 # limitations under the License.
 
 from copy import deepcopy
+from typing import Any, Literal, Optional, Union
+from warnings import warn
 
 import torch
+from pydantic import Field, model_validator
+from typing_extensions import Annotated
 
-from cerebras.modelzoo.common.registry import registry
-from cerebras.modelzoo.losses.DPOLoss import DPOLoss
-from cerebras.modelzoo.models.nlp.gpt2.model import Gpt2Model
-from cerebras.modelzoo.models.nlp.gptj.model import GptjModel
+from cerebras.modelzoo.config import BaseConfig, ModelConfig
+from cerebras.modelzoo.losses.DPOLoss import DPOLoss, DPOLossType
+from cerebras.modelzoo.models.nlp.bloom.model import BloomModelConfig
+from cerebras.modelzoo.models.nlp.falcon.model import FalconModelConfig
+from cerebras.modelzoo.models.nlp.gpt2.model import GPT2ModelConfig
+from cerebras.modelzoo.models.nlp.gpt3.model import GPT3ModelConfig
+from cerebras.modelzoo.models.nlp.gptj.model import (
+    GPTJModelConfig,
+    GPTNeoXModelConfig,
+)
+from cerebras.modelzoo.models.nlp.llama.model import LlamaModelConfig
+from cerebras.modelzoo.models.nlp.mistral.model import MistralModelConfig
+from cerebras.modelzoo.models.nlp.mixtral.model import MixtralModelConfig
+from cerebras.modelzoo.models.nlp.santacoder.model import SantaCoderModelConfig
+from cerebras.modelzoo.models.nlp.starcoder.model import StarCoderModelConfig
 from cerebras.modelzoo.trainer import summarize_scalar
 from cerebras.pytorch.metrics import MeanMetric
 
-MODEL_MAPPING = {
-    "bloom": "gpt2",
-    "falcon": "gptj",
-    "gpt2": "gpt2",
-    "gpt3": "gpt2",
-    "gptj": "gptj",
-    "gpt-neox": "gptj",
-    "lambda": "gpt2",
-    "llama": "gpt2",
-    "mistral": "gpt2",
-    "mixtral": "gpt2",
-    "mpt": "gpt2",
-    "opt": "gpt2",
-    "palm": "gptj",
-    "santacoder": "gpt2",
-    "starcoder": "gpt2",
-}
+
+class DPOParameters(BaseConfig):
+    beta: float = 0.1
+    reference_free: bool = False
+    loss_type: DPOLossType = "sigmoid"
+    disable_dropout: bool = True
+    dpop_penalty_weight: float = 5.0
+    """Corresponds to lambda in the DPOP paper(https://arxiv.org/pdf/2402.13228)
+    This parameter only takes effect if loss_type=\"dpop\" """
+
+
+class DPOModelConfig(ModelConfig):
+    name: Literal["dpo"]
+
+    policy_model: Annotated[
+        Union[
+            BloomModelConfig,
+            FalconModelConfig,
+            GPT2ModelConfig,
+            GPT3ModelConfig,
+            GPTJModelConfig,
+            GPTNeoXModelConfig,
+            LlamaModelConfig,
+            MistralModelConfig,
+            MixtralModelConfig,
+            SantaCoderModelConfig,
+            StarCoderModelConfig,
+        ],
+        Field(discriminator="name"),
+    ] = ...
+
+    dpo: DPOParameters = ...
+    "Parameters for DPO configuration"
+
+    compute_eval_metrics: bool = True
+
+    mixed_precision: Optional[Any] = Field(default=None, deprecated=True)
+    fp16_type: Optional[Any] = Field(default=None, deprecated=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def make_submodel(cls, data):
+        if "policy_model" not in data:
+            warn(
+                f"Detected that DPO model parameters were not organized "
+                f"under the `policy_model` key. This behaviour is deprecated "
+                f"and support for it will be removed in the future"
+            )
+            model = {
+                k: data.pop(k)
+                for k in list(data)
+                if k not in ("name", "dpo", "compute_eval_metrics")
+            }
+            if "model_name" in model:
+                model["name"] = model.pop("model_name")
+
+            data["policy_model"] = model
+
+        return data
 
 
 def disable_dropout_in_model(model: torch.nn.Module) -> None:
@@ -48,27 +105,26 @@ def disable_dropout_in_model(model: torch.nn.Module) -> None:
             module.p = 0
 
 
-@registry.register_model("dpo", datasetprocessor=["DpoHDF5DataProcessor"])
 class DPOModel(torch.nn.Module):
     """
-    Differential Privacy Optimization (DPO) enhanced GPT-2 models
+    Differential Privacy Optimization (DPO) enhanced GPT-2 models.
     """
 
-    def __init__(self, params):
+    def __init__(self, config: DPOModelConfig):
+        if isinstance(config, dict):
+            config = DPOModelConfig(**config)
+
         super().__init__()
 
-        # Assume model_params is a deepcopy of params.model
-        model_params = deepcopy(params.model)
-        model_name = model_params.model_name
-
-        self.compute_eval_metrics = model_params.compute_eval_metrics
+        self.compute_eval_metrics = config.compute_eval_metrics
 
         # Directly access the 'dpo' object attributes
-        dpo_params = model_params.dpo
+        dpo_params = config.dpo
         self.beta = dpo_params.beta
         self.reference_free = dpo_params.reference_free
         disable_dropout = dpo_params.disable_dropout
         self.loss_type = dpo_params.loss_type
+        self.dpop_penalty_weight = dpo_params.dpop_penalty_weight
 
         if self.compute_eval_metrics:
             if not self.reference_free:
@@ -88,10 +144,11 @@ class DPOModel(torch.nn.Module):
             self.logps_rejected_metric = MeanMetric(name="eval/logps_rejected")
             self.logps_chosen_metric = MeanMetric(name="eval/logps_chosen")
 
-        # Turn off GPT-2/J eval metrics directly in the params.model object
-        params.model.compute_eval_metrics = False
+        self.policy_model = config.policy_model()
 
-        self.policy_model = self.build_model(MODEL_MAPPING[model_name], params)
+        # Turn off eval metrics directly in the policy_model object
+        self.policy_model.compute_eval_metrics = False
+
         if disable_dropout:
             disable_dropout_in_model(self.policy_model)
 
@@ -105,15 +162,8 @@ class DPOModel(torch.nn.Module):
             beta=self.beta,
             loss_type=self.loss_type,
             reference_free=self.reference_free,
+            dpop_penalty_weight=self.dpop_penalty_weight,
         )
-
-    def build_model(self, model_backbone, params):
-        # Model construction based on the backbone type
-        if model_backbone == "gpt2":
-            model = Gpt2Model(params)
-        elif model_backbone == "gptj":
-            model = GptjModel(params)
-        return model
 
     def forward(self, data):
         batch_size = data["chosen_input_ids"].shape[0]

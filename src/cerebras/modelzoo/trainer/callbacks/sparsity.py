@@ -17,10 +17,10 @@
 from typing import Optional
 
 import cerebras.pytorch as cstorch
-from cerebras.modelzoo.trainer.callbacks import Callback
+from cerebras.modelzoo.trainer.callbacks import Callback, CoreCallback
 
 
-class SparsityCallback(Callback):
+class SparsityCallback(CoreCallback):
     """Callback class that applies sparsity to the model and optimizer."""
 
     def __init__(

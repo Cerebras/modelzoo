@@ -17,6 +17,8 @@ Contains the ModelZooParamsMetadata class that stores the model zoo
 parameters in the checkpoint metadata.
 """
 
+from typing import Optional
+
 import cerebras.pytorch as cstorch
 from cerebras.modelzoo.trainer.callbacks import Callback
 
@@ -27,12 +29,12 @@ class ModelZooParamsMetadata(Callback):
     metadata.
     """
 
-    def __init__(self, params: dict):
+    def __init__(self, params: Optional[dict] = None):
         """
         Args:
             params: Model zoo parameters.
         """
-        self.params = params
+        self.params = params or {}
 
     def on_save_checkpoint(self, trainer, state_dict):
         state_dict["__metadata__"] = [

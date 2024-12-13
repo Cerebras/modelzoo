@@ -84,10 +84,12 @@ if __name__ == "__main__":
     parser.add_argument(
         "--input_dir",
         type=str,
-        help="Input directory where duplicates generated in previous step are present",
+        help="Input directory, where duplicates generated in previous step are present.",
     )
     parser.add_argument(
-        "--out_file", type=str, help="Name of the output .pickle file"
+        "--out_file",
+        type=str,
+        help="Name of the output .pickle file, which contains the graph of duplicates found, in the form of connected components.",
     )
     args = parser.parse_args()
     generate_connected_components_mp(args)

@@ -12,135 +12,59 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Literal
+
+from annotated_types import Ge, Le
 from torch import nn
+from typing_extensions import Annotated
 
 from cerebras.modelzoo.models.nlp.bert.bert_pretrain_models import (
     BertClassifierHead,
 )
-from cerebras.modelzoo.models.vision.vision_transformer.ViTModel import ViTModel
+from cerebras.modelzoo.models.vision.vision_transformer.ViTModel import (
+    ViTModel,
+    ViTModelConfig,
+)
+
+
+class ViTClassificationModelConfig(ViTModelConfig):
+    name: Literal["vit_classification"]
+
+    num_classes: int = 2
+    "Number of possible classes."
+
+    # Encoder Attn
+    attention_dropout_rate: Annotated[float, Ge(0), Le(1)] = 0.1
+
+    # Task-specific
+    use_bias_in_output: bool = True
+
+    use_dinov2_classifier: bool = False
 
 
 class ViTClassificationModel(nn.Module):
-    def __init__(
-        self,
-        num_classes=2,
-        # Embedding
-        embedding_dropout_rate=0.0,
-        hidden_size=768,
-        use_post_embed_layer_norm=False,
-        use_embed_proj_bias=True,
-        # Encoder
-        num_hidden_layers=12,
-        layer_norm_epsilon=1.0e-5,
-        # Encoder Attn
-        num_heads=12,
-        attention_module="aiayn_attention",
-        extra_attention_params={},
-        attention_type="scaled_dot_product",
-        attention_softmax_fp32=True,
-        dropout_rate=0.1,
-        nonlinearity="gelu",
-        pooler_nonlinearity=None,
-        attention_dropout_rate=0.1,
-        use_projection_bias_in_attention=True,
-        use_ffn_bias_in_attention=True,
-        # Encoder ffn
-        filter_size=3072,
-        use_ffn_bias=True,
-        # Task-specific
-        initializer_range=0.02,
-        projection_initializer=None,
-        position_embedding_initializer=None,
-        position_embedding_type="learned",
-        attention_initializer=None,
-        ffn_initializer=None,
-        pooler_initializer=None,
-        norm_first=True,
-        use_final_layer_norm=True,
-        # vision related params
-        image_size=[224, 224],
-        num_channels=3,
-        patch_size=[16, 16],
-        use_conv_patchified_embedding=False,
-        use_encoder_pooler_layer=False,
-        prepend_cls_token=True,
-        use_bias_in_output=True,
-        layerscale_value=None,
-        use_dinov2_classifier=False,
-        stochastic_depth_drop_prob=0.0,
-        stochastic_depth_drop_prob_schedule="linear",
-        stochastic_depth_mode="batch",
-    ):
-        super(ViTClassificationModel, self).__init__()
-        default_initializer = {
-            "name": "truncated_normal",
-            "std": initializer_range,
-            "mean": 0.0,
-            "a": initializer_range * -2.0,
-            "b": initializer_range * 2.0,
-        }
+    def __init__(self, config: ViTClassificationModelConfig):
+        if isinstance(config, dict):
+            config = ViTClassificationModelConfig(**config)
 
-        self.vit_model = ViTModel(
-            # Embedding
-            embedding_dropout_rate=embedding_dropout_rate,
-            hidden_size=hidden_size,
-            use_post_embed_layer_norm=use_post_embed_layer_norm,
-            use_embed_proj_bias=use_embed_proj_bias,
-            # Encoder
-            num_hidden_layers=num_hidden_layers,
-            layer_norm_epsilon=layer_norm_epsilon,
-            # Encoder Attn
-            num_heads=num_heads,
-            attention_module=attention_module,
-            extra_attention_params=extra_attention_params,
-            attention_type=attention_type,
-            attention_softmax_fp32=attention_softmax_fp32,
-            dropout_rate=dropout_rate,
-            nonlinearity=nonlinearity,
-            pooler_nonlinearity=pooler_nonlinearity,
-            attention_dropout_rate=attention_dropout_rate,
-            use_projection_bias_in_attention=use_projection_bias_in_attention,
-            use_ffn_bias_in_attention=use_ffn_bias_in_attention,
-            # Encoder ffn
-            filter_size=filter_size,
-            use_ffn_bias=use_ffn_bias,
-            # Task-specific
-            initializer_range=initializer_range,
-            default_initializer=default_initializer,
-            projection_initializer=projection_initializer,
-            position_embedding_initializer=position_embedding_initializer,
-            position_embedding_type=position_embedding_type,
-            attention_initializer=attention_initializer,
-            ffn_initializer=ffn_initializer,
-            pooler_initializer=pooler_initializer,
-            norm_first=norm_first,
-            use_final_layer_norm=use_final_layer_norm,
-            # vision related params
-            image_size=image_size,
-            num_channels=num_channels,
-            patch_size=patch_size,
-            use_conv_patchified_embedding=use_conv_patchified_embedding,
-            prepend_cls_token=prepend_cls_token,
-            use_encoder_pooler_layer=use_encoder_pooler_layer,
-            layerscale_value=layerscale_value,
-            stochastic_depth_drop_prob=stochastic_depth_drop_prob,
-            stochastic_depth_drop_prob_schedule=stochastic_depth_drop_prob_schedule,
-            stochastic_depth_mode=stochastic_depth_mode,
-        )
+        super().__init__()
 
-        classifier_hidden_size = hidden_size
-        self.use_dinov2_classifier = use_dinov2_classifier
-        if use_dinov2_classifier:
-            if not prepend_cls_token:
+        self.vit_model = ViTModel(config)
+
+        classifier_hidden_size = config.hidden_size
+        self.use_dinov2_classifier = config.use_dinov2_classifier
+        if self.use_dinov2_classifier:
+            if not config.prepend_cls_token:
                 raise ValueError(
                     f"prepend_cls_token must be set to True for Dinov2."
                 )
-            classifier_hidden_size = 2 * hidden_size
+            classifier_hidden_size *= 2
+
         self.classifier = BertClassifierHead(
             hidden_size=classifier_hidden_size,
-            num_classes=num_classes,
-            use_bias=use_bias_in_output,
-            kernel_initializer=default_initializer,
+            num_classes=config.num_classes,
+            use_bias=config.use_bias_in_output,
+            kernel_initializer=config.default_initializer,
         )
 
     def reset_parameters(self):
@@ -161,7 +85,7 @@ class ViTClassificationModel(nn.Module):
 
     def get_output_embeddings(self):
         """
-        Extract the final layer that produces logits
+        Extract the final layer that produces logits.
         """
         return self.classifier.classifier
 
@@ -180,7 +104,7 @@ class ViTClassificationModel(nn.Module):
                 For ex: extract_layer_idx=3 would run fwd pass from encoder_block_0 to encoder_block_3
                 and return outputs from encoder_block_3.
                 If `extract_layer_idx` = None and `norm` != None, then
-                the output returned would be encoder_block_{self.num_layers-1} -> norm -> output (return)
+                the output returned would be encoder_block_{self.num_layers-1} -> norm -> output (return).
         """
 
         return self.vit_model.extract_features(

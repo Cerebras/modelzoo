@@ -54,7 +54,6 @@ The following block diagram shows a high-level view of the sequence of steps you
 * `fine_tuning/`: Code for fine-tuning the BERT model.
 * [data/nlp/bert](../../../data/nlp/bert): Input pipeline implementation based on the [Open Web Text dataset](https://skylion007.github.io/OpenWebTextCorpus/). This directory also contains the scripts you can use to download and prepare the Open Web Text dataset. Vocab files are located in [models/vocab](../../../models/vocab).
 * `model.py`: Provides a common wrapper for all models under class `BertForPreTrainingModel`, which interfaces with model-specific code. In this repo the model-specific code, i.e., model architecture is in `bert_pretrain_models.py::BertPretrainModel` and the finetuning model architectures are in `bert_finetune_models.py`. This wrapper provides a common interface for handling the function call of the model with its specific data format. It also provides a common interface to use the same format of configuration files from `configs/` to construct various models.
-* `data.py`: The entry point to the data input pipeline code.
 * `run.py`: Training script. Performs training and validation.
 * `utils.py`: Miscellaneous helper functions.
 

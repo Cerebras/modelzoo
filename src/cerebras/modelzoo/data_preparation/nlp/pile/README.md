@@ -40,7 +40,7 @@ All files are of `jsonl.zst` format.
 
 ## Convert dataset to hdf5 files
 
-After downloading the raw data, you can convert it to hdf5 files using `create_hdf5_dataset.py`. The instructions for this can be found [here](../../../data_preparation/nlp/hdf5_preprocessing/README.md#generating-hdf5-data-from-raw-data).
+After downloading the raw data, you can convert it to hdf5 files using `preprocess_data.py`. The instructions for this can be found [here](https://docs.cerebras.net/en/latest/wsc/Model-zoo/Components/Data-preprocessing/data_preprocessing.html).
 
 ## References
 

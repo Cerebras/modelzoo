@@ -14,16 +14,18 @@
 
 import csv
 import os
+from typing import Any, Literal, Optional
 
 import cv2
 import numpy as np
 from PIL import Image
+from pydantic import Field
 from torchvision.datasets.utils import verify_str_arg
 from torchvision.datasets.vision import VisionDataset
 
 from cerebras.modelzoo.data.vision.classification.dataset_factory import (
-    Processor,
-    VisionSubset,
+    VisionClassificationProcessor,
+    VisionClassificationProcessorConfig,
 )
 
 
@@ -255,68 +257,37 @@ def _heavy_data_augmentation(image):
     return image
 
 
-class DiabeticRetinopathyProcessor(Processor):
-    def __init__(self, params):
-        super().__init__(params)
-        self.allowable_split = ["train", "val", "test"]
+class DiabeticRetinopathyProcessorConfig(VisionClassificationProcessorConfig):
+    data_processor: Literal["DiabeticRetinopathyProcessor"]
+
+    use_worker_cache: bool = ...
+
+    split: Literal["train", "val", "test"] = "train"
+    "Dataset split."
+
+    config: str = "btgraham-300"
+
+    num_classes: Optional[Any] = Field(None, deprecated=True)
+
+
+class DiabeticRetinopathyProcessor(VisionClassificationProcessor):
+    def __init__(self, config: DiabeticRetinopathyProcessorConfig):
+        super().__init__(config)
+        self.split = config.split
+        self.config = config.config
+        self.shuffle = self.shuffle and (self.split == "train")
         self.num_classes = 5
 
-    def create_dataset(
-        self, use_training_transforms=True, config="btgraham-300", split="train"
-    ):
-        self.check_split_valid(split)
+    def create_dataset(self):
+        use_training_transforms = self.split == "train"
         transform, target_transform = self.process_transform(
             use_training_transforms
         )
         dataset = DiabeticRetinopathy(
             root=self.data_dir,
-            split=split,
-            config=config,
+            split=self.split,
+            config=self.config,
             transform=transform,
             target_transform=target_transform,
         )
         return dataset
-
-    def create_vtab_dataset(
-        self, use_heavy_train_aug=False, use_1k_sample=True, seed=42
-    ):
-        train_transform, train_target_transform = self.process_transform(
-            use_training_transforms=True
-        )
-        eval_transform, eval_target_transform = self.process_transform(
-            use_training_transforms=False
-        )
-
-        config = "btgraham-300"
-        train_set = DiabeticRetinopathy(
-            root=self.data_dir,
-            split="train",
-            use_heavy_train_aug=use_heavy_train_aug,
-            config=config,
-            transform=train_transform,
-            target_transform=train_target_transform,
-        )
-        val_set = DiabeticRetinopathy(
-            root=self.data_dir,
-            split="val",
-            config=config,
-            transform=eval_transform,
-            target_transform=eval_target_transform,
-        )
-        test_set = DiabeticRetinopathy(
-            root=self.data_dir,
-            split="test",
-            config=config,
-            transform=eval_transform,
-            target_transform=eval_target_transform,
-        )
-
-        if use_1k_sample:
-            rng = np.random.default_rng(seed)
-            sample_idx = self.create_shuffled_idx(len(train_set), rng)
-            train_set = VisionSubset(train_set, sample_idx[:800])
-
-            sample_idx = self.create_shuffled_idx(len(val_set), rng)
-            val_set = VisionSubset(val_set, sample_idx[:200])
-
-        return train_set, val_set, test_set

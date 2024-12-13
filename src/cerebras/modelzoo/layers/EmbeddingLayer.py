@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import torch
 import torch.nn as nn
 
 from cerebras.modelzoo.layers.create_initializer import create_initializer
@@ -91,7 +92,7 @@ class EmbeddingLayer(nn.Module):
         # Rotary PE:
         rotary_dim=None,
         rope_theta=10000,
-        pad_rope=False,
+        fold_rope_consts=True,
         # Alibi PE:
         alibi_slopes=None,
         alibi_trainable_slopes=False,
@@ -99,10 +100,14 @@ class EmbeddingLayer(nn.Module):
         pos_scaling_factor=1.0,
         pos_scaling_type="linear",
         pos_scaling_extra_args=None,
+        rel_distance_mode="default",
+        rel_distance_extra_args=None,
         # Segment Embedding Parameters:
         num_segments=None,
         segment_embedding_size=None,
         segment_embeddings_initializer='uniform',
+        # Memory tokens
+        use_memory_tokens=False,
     ):
         super(EmbeddingLayer, self).__init__()
 
@@ -137,6 +142,16 @@ class EmbeddingLayer(nn.Module):
             device=device,
         )
 
+        self.memory_token_embedding = None
+        self.use_memory_tokens = False
+        if use_memory_tokens:
+            self.use_memory_tokens = True
+            self.memory_token_embedding = nn.Embedding(
+                1,
+                embedding_size,
+                device=device,
+            )
+
         self.position_embeddings = None
         self.position_embed_helper = None
         if position_embedding_type is not None:
@@ -156,9 +171,9 @@ class EmbeddingLayer(nn.Module):
                 raise ValueError("max_position_embeddings should be specified.")
 
             pos_scaling_type = pos_scaling_type.lower()
-            if pos_scaling_type not in ["linear", "yarn", "llama3"]:
+            if pos_scaling_type not in ["linear", "yarn", "llama3", "longrope"]:
                 raise ValueError(
-                    f"Unsupported position_embedding_type {pos_scaling_type}, should be 'linear' or 'YaRN'"
+                    f"Unsupported position_embedding_type {pos_scaling_type}, should be 'linear', 'YaRN', 'longrope' or 'llama3'"
                 )
 
             if (
@@ -224,7 +239,24 @@ class EmbeddingLayer(nn.Module):
                     scaling_factor=pos_scaling_factor,
                     scaling_type=pos_scaling_type,
                     scaling_extra_args=pos_scaling_extra_args,
-                    pad_fixed_pos_emb=pad_rope,
+                    rel_distance_mode=rel_distance_mode,
+                    rel_distance_extra_args=rel_distance_extra_args,
+                    fold_rope_consts=fold_rope_consts,
+                    constant_pos_embedding=constant_pos_embedding,
+                )
+            elif self.position_embedding_type == "longrope":
+                assert (
+                    rotary_dim is not None
+                ), "EmbeddingLayer requires rotary_dim when using rotary embeddings"
+
+                self.position_embed_helper = RotaryPositionEmbeddingHelper(
+                    self.max_position_embeddings,
+                    rotary_dim,
+                    base=rope_theta,
+                    scaling_factor=pos_scaling_factor,
+                    scaling_type=pos_scaling_type,
+                    scaling_extra_args=pos_scaling_extra_args,
+                    fold_rope_consts=fold_rope_consts,
                     constant_pos_embedding=constant_pos_embedding,
                 )
             elif self.position_embedding_type == "relative":
@@ -287,6 +319,11 @@ class EmbeddingLayer(nn.Module):
                 self.segment_embeddings.weight.data
             )
 
+        if self.memory_token_embedding:
+            create_initializer(self.embeddings_initializer)(
+                self.memory_token_embedding.weight.data
+            )
+
         if self.pad_token_id:
             self.word_embeddings.weight.data[
                 self.word_embeddings.padding_idx
@@ -309,6 +346,7 @@ class EmbeddingLayer(nn.Module):
         position_ids=None,
         segment_ids=None,
         past_length=0,
+        special_token_indices=None,
     ):
         """Convert input_ids to token embeddings according to the embedding type.
             Word embeddings (required), segment embeddings (optional) and position embeddings (optional).
@@ -322,6 +360,11 @@ class EmbeddingLayer(nn.Module):
             Token embedding output with shape ``[batch_size, seq_length, embedding_size]``.
         """
         embeddings = self.compute_token_embeddings(input_ids)
+        if special_token_indices is not None and self.use_memory_tokens:
+            embeddings = self.insert_memory_token_embeddings(
+                embeddings, special_token_indices
+            )
+
         if self.position_embeddings is not None:
             assert self.embedding_size == self.positional_embedding_size, (
                 "Cannot use EmbeddingLayer's forward function since the word "
@@ -353,8 +396,34 @@ class EmbeddingLayer(nn.Module):
     def compute_token_embeddings(self, input_ids):
         input_shape = input_ids.size()
         input_ids = input_ids.view(-1, input_shape[-1])
-        embeddings = self.word_embeddings(input_ids)
-        return embeddings
+        return self.word_embeddings(input_ids)
+
+    def insert_memory_token_embeddings(self, embeddings, special_token_indices):
+        """
+        Insert the memory token embedding vector in certain
+        positions of the embeddings tensor according to memory_token_mask
+        """
+        batch_size, _, embedding_size = embeddings.shape
+        memory_indices = special_token_indices['memory_tokens']
+        regular_indices = special_token_indices['regular_tokens']
+
+        full_embeddings = self.memory_token_embedding(
+            torch.zeros(
+                [
+                    batch_size,
+                    regular_indices.shape[1] + memory_indices.shape[1],
+                ],
+                dtype=torch.int,
+                device=embeddings.device,
+            )
+        )
+        full_embeddings = torch.scatter(
+            full_embeddings,
+            1,
+            regular_indices[..., None].broadcast_to([-1, -1, embedding_size]),
+            embeddings,
+        )
+        return full_embeddings
 
     def compute_positional_embeddings(
         self, input_ids, position_ids=None, past_length=0, dtype=None

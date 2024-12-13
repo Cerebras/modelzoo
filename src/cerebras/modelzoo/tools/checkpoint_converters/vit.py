@@ -55,7 +55,17 @@ class Converter_ViT_Core_HF_CS21(BaseCheckpointConverter_HF_CS):
                         "embeddings.patch_embeddings.projection",
                         "embedding_layer.linear_proj",
                     ),
-                    r"\.(?:weight|bias)",
+                    r"\.(?:weight)",
+                ],
+                action=self.linear_projection_convert,
+            ),
+            ConversionRule(
+                [
+                    EquivalentSubkey(
+                        "embeddings.patch_embeddings.projection",
+                        "embedding_layer.linear_proj",
+                    ),
+                    r"\.(?:bias)",
                 ],
                 action=self.replaceKey,
             ),
@@ -207,6 +217,19 @@ class Converter_ViT_Core_HF_CS21(BaseCheckpointConverter_HF_CS):
         else:
             new_state_dict[new_key] = old_state_dict[old_key].reshape(1, 1, -1)
 
+    # This allows other models using ViT backbone to subclass and override this method
+    # to handle different ways of converting linear projection weights.
+    def linear_projection_convert(
+        self,
+        old_key,
+        new_key,
+        old_state_dict,
+        new_state_dict,
+        from_index,
+        action_fn_args,
+    ):
+        new_state_dict[new_key] = old_state_dict[old_key]
+
     def position_embeddings_convert(
         self,
         old_key,
@@ -283,7 +306,7 @@ class Converter_ViT_Headless_HF_CS21(BaseCheckpointConverter_HF_CS):
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4"),
         )
 
     @classmethod
@@ -367,7 +390,7 @@ class Converter_ViT_HF_CS21(BaseCheckpointConverter_HF_CS):
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4"),
         )
 
     @classmethod
@@ -574,10 +597,11 @@ class ConfigConverter_ViT_Core_HF_CS21(BaseConfigConverter_HF_CS):
 
     def pre_config_convert(
         self,
+        model,
         config,
         converter_indices,
     ):
-        config = super().pre_config_convert(config, converter_indices)
+        config = super().pre_config_convert(model, config, converter_indices)
 
         if (
             converter_indices.direction == 0
@@ -592,6 +616,7 @@ class ConfigConverter_ViT_Core_HF_CS21(BaseConfigConverter_HF_CS):
 
     def post_config_convert(
         self,
+        model,
         original_config,
         old_config,
         new_config,
@@ -602,6 +627,7 @@ class ConfigConverter_ViT_Core_HF_CS21(BaseConfigConverter_HF_CS):
             if "encoder_stride" not in new_config:
                 new_config["encoder_stride"] = new_config["patch_size"]
         return super().post_config_convert(
+            model,
             original_config,
             old_config,
             new_config,
@@ -613,7 +639,7 @@ class ConfigConverter_ViT_Core_HF_CS21(BaseConfigConverter_HF_CS):
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4"),
         )
 
 

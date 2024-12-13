@@ -673,10 +673,11 @@ class ConfigConverter_BloomModel_HF_CS17(BaseConfigConverter_HF_CS):
 
     def pre_config_convert(
         self,
+        model,
         config,
         converter_indices,
     ):
-        config = super().pre_config_convert(config, converter_indices)
+        config = super().pre_config_convert(model, config, converter_indices)
 
         if converter_indices.direction == 0:
             if "n_embed" in config and config["n_embed"] is not None:
@@ -690,6 +691,7 @@ class ConfigConverter_BloomModel_HF_CS17(BaseConfigConverter_HF_CS):
 
     def post_config_convert(
         self,
+        model,
         original_config,
         old_config,
         new_config,
@@ -700,6 +702,7 @@ class ConfigConverter_BloomModel_HF_CS17(BaseConfigConverter_HF_CS):
             new_config["filter_size"] = 4 * new_config["hidden_size"]
 
         return super().post_config_convert(
+            model,
             original_config,
             old_config,
             new_config,
@@ -861,7 +864,7 @@ class Converter_BloomLMHeadModel_HF_CS19(BaseCheckpointConverter_HF_CS):
 
 class Converter_BloomLMHeadModel_CS19_CS20(Converter_GPT2LMHeadModel_CS18_CS20):
     r"""
-    Bloom uses the GPT2 backbone
+    Bloom uses the GPT2 backbone.
     """
 
     @classmethod
@@ -881,7 +884,7 @@ class ConfigConverter_BloomLMHeadModel_CS19_CS20(
     ConfigConverter_GPT2Model_CS18_CS20
 ):
     r"""
-    Bloom uses the GPT2 backbone
+    Bloom uses the GPT2 backbone.
     """
 
     @staticmethod
@@ -941,13 +944,13 @@ class Converter_BloomLMHeadModel_CS20_CS21(Converter_GPT2LMHeadModel_CS20_CS21):
 
 
 class ConfigConverter_BloomModel_HF_CS21(ConfigConverter_BloomModel_HF_CS20):
-    "CS 2.1 config is the same as CS 2.0"
+    "CS 2.1 config is the same as CS 2.0."
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4"),
         )
 
     def supports_mup_conversion(self):
@@ -972,7 +975,7 @@ class Converter_BloomModel_WithoutOptionalModel_HF_CS21(
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4"),
         )
 
     @staticmethod
@@ -1011,7 +1014,7 @@ class Converter_BloomLMHeadModel_WithoutOptionalModel_HF_CS21(
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4"),
         )
 
     @staticmethod

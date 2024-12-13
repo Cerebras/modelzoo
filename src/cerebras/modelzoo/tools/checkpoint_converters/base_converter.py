@@ -27,17 +27,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple, Type, Union
 
-import torch
 import yaml
 from packaging.version import Version
 from tqdm import tqdm
-
-from cerebras.modelzoo.tools.checkpoint_converters.streaming_checkpoints import (
-    OnDemandDictionaryConverter,
-    StreamingCSWriter,
-    StreamingShardedHFReader,
-    StreamingShardedHFWriter,
-)
 
 
 @dataclass
@@ -371,6 +363,17 @@ class BaseDictionaryConverter(ABC):
         else:
             return None
 
+    @classmethod
+    def match_indices(cls, converter_indices, converter):
+        src_fmt = cls.formats()[converter_indices.direction][
+            converter_indices.src_index
+        ]
+        tgt_fmt = cls.formats()[1 - converter_indices.direction][
+            converter_indices.tgt_index
+        ]
+
+        return converter.get_converter_indices(src_fmt, tgt_fmt)
+
     @staticmethod
     def replaceKey(
         old_key: str,
@@ -666,6 +669,9 @@ class BaseCheckpointConverter_CS_CS(BaseCheckpointConverter):
         converter_indices: FormatIndices,
     ) -> OrderedDict:
         import cerebras.pytorch as cstorch
+        from cerebras.modelzoo.tools.checkpoint_converters.streaming_checkpoints import (
+            StreamingCSWriter,
+        )
 
         if isinstance(checkpoint, StreamingCSWriter):
             checkpoint.save()
@@ -681,6 +687,10 @@ class BaseCheckpointConverter_CS_CS(BaseCheckpointConverter):
     def init_output_checkpoint(
         cls, file_without_ext: str, converter_indices: FormatIndices, **kwargs
     ) -> str:
+        from cerebras.modelzoo.tools.checkpoint_converters.streaming_checkpoints import (
+            StreamingCSWriter,
+        )
+
         if kwargs.get("export_safetensors", False):
             logging.warning(
                 "--export-safetensors flag will be ignored as we are converting"
@@ -863,6 +873,9 @@ class BaseCheckpointConverter_HF_CS(BaseCheckpointConverter_CS_CS):
         converter_indices: FormatIndices,
     ) -> OrderedDict:
         import cerebras.pytorch as cstorch
+        from cerebras.modelzoo.tools.checkpoint_converters.streaming_checkpoints import (
+            StreamingShardedHFReader,
+        )
 
         if os.path.isdir(file):
             raise AssertionError(
@@ -893,7 +906,13 @@ class BaseCheckpointConverter_HF_CS(BaseCheckpointConverter_CS_CS):
         checkpoint: OrderedDict,
         converter_indices: FormatIndices,
     ) -> OrderedDict:
+        import torch
+
         import cerebras.pytorch as cstorch
+        from cerebras.modelzoo.tools.checkpoint_converters.streaming_checkpoints import (
+            StreamingCSWriter,
+            StreamingShardedHFWriter,
+        )
 
         if isinstance(checkpoint, StreamingCSWriter):
             checkpoint.save()
@@ -921,6 +940,11 @@ class BaseCheckpointConverter_HF_CS(BaseCheckpointConverter_CS_CS):
         export_safetensors: bool = False,
         **kwargs,
     ) -> str:
+        from cerebras.modelzoo.tools.checkpoint_converters.streaming_checkpoints import (
+            StreamingCSWriter,
+            StreamingShardedHFWriter,
+        )
+
         from_index = converter_indices.direction
         to_index = from_index - 1
         output_file_format = cls.file_formats()[to_index]
@@ -976,6 +1000,10 @@ class BaseCheckpointConverter_HF_CS(BaseCheckpointConverter_CS_CS):
         configs: Tuple[dict, dict],
         converter_indices: FormatIndices,
     ):
+        from cerebras.modelzoo.tools.checkpoint_converters.streaming_checkpoints import (
+            OnDemandDictionaryConverter,
+        )
+
         from_index = converter_indices.direction
         if converter_indices.direction == 0:
             return input_checkpoint, output_checkpoint["model"]
@@ -1028,7 +1056,7 @@ class BaseCheckpointConverter_HF_CS(BaseCheckpointConverter_CS_CS):
         return True
 
     def get_mup_converter(self) -> bool:
-        r"""Allows models to override the default muP converters with their own"""
+        r"""Allows models to override the default muP converters with their own."""
         return None
 
 
@@ -1100,6 +1128,11 @@ class BaseCheckpointConverter_UnpackedHF_PackedCS(
         export_safetensors: bool = False,
         **kwargs,
     ) -> str:
+        from cerebras.modelzoo.tools.checkpoint_converters.streaming_checkpoints import (
+            StreamingCSWriter,
+            StreamingShardedHFWriter,
+        )
+
         from_index = converter_indices.direction
         to_index = from_index - 1
         output_file_format = cls.file_formats()[to_index]
@@ -1173,10 +1206,11 @@ class BaseCheckpointConverter_UnpackedHF_PackedCS(
         if converter_indices.direction == 0:
             for i, converter_cls in enumerate(self.converters()):
                 instance = converter_cls()
+                sub_indices = self.match_indices(converter_indices, instance)
                 output_checkpoint = instance.convert_helper(
                     input_checkpoint[i],
                     [hf_config[i], cs_configs[i]],
-                    converter_indices,
+                    sub_indices,
                     output_checkpoint=output_checkpoint,
                     drop_unmatched_keys=drop_unmatched_keys,
                     no_progress_bar=no_progress_bar,
@@ -1185,10 +1219,11 @@ class BaseCheckpointConverter_UnpackedHF_PackedCS(
         else:
             for i, converter_cls in enumerate(self.converters()):
                 instance = converter_cls()
+                sub_indices = self.match_indices(converter_indices, instance)
                 output_checkpoint[i] = instance.convert_helper(
                     input_checkpoint,
                     [hf_config[i], cs_configs[i]],
-                    converter_indices,
+                    sub_indices,
                     output_checkpoint=output_checkpoint[i],
                     drop_unmatched_keys=drop_unmatched_keys,
                     no_progress_bar=no_progress_bar,
@@ -1330,6 +1365,18 @@ class BaseCheckpointConverter_CS22_CS23(FallbackConverter_CS_CS):
         return BaseConfigConverter_CS22_CS23
 
 
+class BaseCheckpointConverter_CS23_CS24(FallbackConverter_CS_CS):
+    """Generic fallback converter class for cs-2.3 -> cs-2.4."""
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("cs-2.3"), FormatVersions("cs-2.4"))
+
+    @staticmethod
+    def get_config_converter_class() -> BaseConfigConverter:
+        return BaseConfigConverter_CS23_CS24
+
+
 # Base converters to be used as fallback if converter does not exist
 fallback_converters: List[BaseCheckpointConverter] = [
     BaseCheckpointConverter_CS18_CS19,
@@ -1337,6 +1384,7 @@ fallback_converters: List[BaseCheckpointConverter] = [
     BaseCheckpointConverter_CS20_CS21,
     BaseCheckpointConverter_CS21_CS22,
     BaseCheckpointConverter_CS22_CS23,
+    BaseCheckpointConverter_CS23_CS24,
 ]
 
 
@@ -1394,6 +1442,7 @@ class BaseConfigConverter(BaseDictionaryConverter, ABC):
     @classmethod
     def convert(
         cls,
+        model,
         config,
         converter_indices: FormatIndices,
         drop_unmatched_keys: bool = False,
@@ -1402,6 +1451,7 @@ class BaseConfigConverter(BaseDictionaryConverter, ABC):
     ):
         instance = cls()
         return instance.convert_helper(
+            model,
             config,
             converter_indices,
             drop_unmatched_keys=drop_unmatched_keys,
@@ -1411,6 +1461,7 @@ class BaseConfigConverter(BaseDictionaryConverter, ABC):
 
     def convert_helper(
         self,
+        model,
         config,
         converter_indices: FormatIndices,
         drop_unmatched_keys: bool = False,
@@ -1424,7 +1475,7 @@ class BaseConfigConverter(BaseDictionaryConverter, ABC):
         enabled. Returns the newly converted config.
         """
 
-        old_config = self.pre_config_convert(config, converter_indices)
+        old_config = self.pre_config_convert(model, config, converter_indices)
         new_config = {}
 
         matched_all_keys = self.convert_all_keys(
@@ -1440,6 +1491,7 @@ class BaseConfigConverter(BaseDictionaryConverter, ABC):
             assert matched_all_keys, "Unable to match all keys in config."
 
         final_config = self.post_config_convert(
+            model,
             config,
             old_config,
             new_config,
@@ -1450,6 +1502,7 @@ class BaseConfigConverter(BaseDictionaryConverter, ABC):
 
     def pre_config_convert(
         self,
+        model,
         config,
         converter_indices,
     ):
@@ -1467,6 +1520,7 @@ class BaseConfigConverter(BaseDictionaryConverter, ABC):
 
     def post_config_convert(
         self,
+        model,
         original_config,
         old_config,
         new_config,
@@ -1533,7 +1587,6 @@ class BaseConfigConverter_HF_CS(BaseConfigConverter):
 
     def __init__(self):
         super().__init__()
-        self.post_convert_defaults[1]["mixed_precision"] = True
 
     @staticmethod
     def file_formats() -> Tuple[str, str]:
@@ -1541,6 +1594,7 @@ class BaseConfigConverter_HF_CS(BaseConfigConverter):
 
     def pre_config_convert(
         self,
+        model,
         config,
         converter_indices,
     ):
@@ -1551,7 +1605,7 @@ class BaseConfigConverter_HF_CS(BaseConfigConverter):
         src_fmt = format_versions[from_index][converter_indices.src_index]
 
         # In CS 2.3, our config formats changed.
-        if src_fmt == "cs-2.3" and "trainer" in config:
+        if "trainer" in config:
             if isinstance(config["trainer"], (list, tuple)):
                 raise ValueError(
                     "Converting a config with multiple "
@@ -1561,12 +1615,17 @@ class BaseConfigConverter_HF_CS(BaseConfigConverter):
             config["model"] = config["trainer"]["init"]["model"]
 
         model_config = config["model"] if from_index == 1 else config
-        model_config = self._handle_mup_conversion(config, converter_indices)
+        model_config = self._handle_mup_conversion(
+            model, config, converter_indices
+        )
 
-        return super().pre_config_convert(model_config, converter_indices)
+        return super().pre_config_convert(
+            model, model_config, converter_indices
+        )
 
     def post_config_convert(
         self,
+        model,
         original_config,
         old_config,
         new_config,
@@ -1574,6 +1633,7 @@ class BaseConfigConverter_HF_CS(BaseConfigConverter):
         drop_unmatched_keys,
     ):
         model_config = super().post_config_convert(
+            model,
             original_config,
             old_config,
             new_config,
@@ -1606,12 +1666,32 @@ class BaseConfigConverter_HF_CS(BaseConfigConverter):
                     f"Invalid `fp16_type` value: {original_config['fp16_type']}"
                 )
 
+        format_versions = self.formats()
+        to_index = 1 - from_index
+
+        src_fmt = format_versions[from_index][converter_indices.src_index]
+        tgt_fmt = format_versions[to_index][converter_indices.tgt_index]
+
+        # As of CS 2.4, all model configs are required to have a `name` key
+        if src_fmt == "hf" and tgt_fmt not in (
+            "cs-1.6",
+            "cs-1.7",
+            "cs-1.8",
+            "cs-1.9",
+            "cs-2.0",
+            "cs-2.1",
+            "cs-2.2",
+            "cs-2.3",
+        ):
+            if "name" not in model_config:
+                model_config["name"] = model
+
         if converter_indices.direction == 0:
             return {"model": model_config}
         else:
             return model_config
 
-    def _handle_mup_conversion(self, config, converter_indices):
+    def _handle_mup_conversion(self, model, config, converter_indices):
         from_index = converter_indices.direction
         to_index = 1 - from_index
 
@@ -1631,6 +1711,7 @@ class BaseConfigConverter_HF_CS(BaseConfigConverter):
                         "This model currently does not support muP checkpoint conversion to HF."
                     )
                 model_config = mup_converter.convert(
+                    model,
                     model_config,
                     converter_indices,
                 )
@@ -1649,7 +1730,7 @@ class BaseConfigConverter_HF_CS(BaseConfigConverter):
         return True
 
     def get_mup_converter(self) -> bool:
-        r"""Allows models to override the default muP converters with their own"""
+        r"""Allows models to override the default muP converters with their own."""
         return None
 
 
@@ -1729,13 +1810,14 @@ class BaseConfigConverter_UnpackedHF_PackedCS(BaseConfigConverter_HF_CS):
 
     def convert_helper(
         self,
+        model,
         config,
         converter_indices: FormatIndices,
         drop_unmatched_keys: bool = False,
         no_progress_bar: bool = True,
         debug: bool = False,
     ):
-        old_config = self.pre_config_convert(config, converter_indices)
+        old_config = self.pre_config_convert(model, config, converter_indices)
 
         if converter_indices.direction == 0:
             input_config = [config for config in old_config]
@@ -1748,10 +1830,12 @@ class BaseConfigConverter_UnpackedHF_PackedCS(BaseConfigConverter_HF_CS):
         new_config = []
         for i, converter_cls in enumerate(self.converters()):
             instance = converter_cls()
+            sub_indices = self.match_indices(converter_indices, instance)
             new_config.append(
                 instance.convert_helper(
+                    model,
                     input_config[i],
-                    converter_indices,
+                    sub_indices,
                     drop_unmatched_keys,
                     no_progress_bar=no_progress_bar,
                     debug=debug,
@@ -1759,6 +1843,7 @@ class BaseConfigConverter_UnpackedHF_PackedCS(BaseConfigConverter_HF_CS):
             )
 
         final_config = self.post_config_convert(
+            model,
             config,
             old_config,
             new_config,
@@ -1769,6 +1854,7 @@ class BaseConfigConverter_UnpackedHF_PackedCS(BaseConfigConverter_HF_CS):
 
     def post_config_convert(
         self,
+        model,
         original_config,
         old_config,
         new_config,
@@ -1781,6 +1867,7 @@ class BaseConfigConverter_UnpackedHF_PackedCS(BaseConfigConverter_HF_CS):
                 for name, config in zip(self.component_names(), new_config)
             }
             return super().post_config_convert(
+                model,
                 original_config,
                 old_config,
                 new_config,
@@ -1802,8 +1889,6 @@ class BaseConfigConverter_CS_CS(BaseConfigConverter):
 
     def __init__(self):
         super().__init__()
-        self.post_convert_defaults[0]["mixed_precision"] = True
-        self.post_convert_defaults[1]["mixed_precision"] = True
 
     @staticmethod
     def file_formats() -> Tuple[str, str]:
@@ -1811,15 +1896,24 @@ class BaseConfigConverter_CS_CS(BaseConfigConverter):
 
     def pre_config_convert(
         self,
+        model,
         config,
         converter_indices,
     ):
-        model_config = config["model"]
-        model_config = self._handle_mup_conversion(config, converter_indices)
-        return super().pre_config_convert(model_config, converter_indices)
+        if "trainer" in config:
+            model_config = config["trainer"]["init"]["model"]
+        else:
+            model_config = config["model"]
+        model_config = self._handle_mup_conversion(
+            model, config, converter_indices
+        )
+        return super().pre_config_convert(
+            model, model_config, converter_indices
+        )
 
     def post_config_convert(
         self,
+        model,
         original_config,
         old_config,
         new_config,
@@ -1831,13 +1925,18 @@ class BaseConfigConverter_CS_CS(BaseConfigConverter):
             for key in original_config
             if key != "model"
         }
-        final_config["model"] = super().post_config_convert(
+        model_config = super().post_config_convert(
+            model,
             original_config,
             old_config,
             new_config,
             converter_indices,
             drop_unmatched_keys,
         )
+        if "trainer" in final_config:
+            final_config["trainer"]["init"]["model"] = model_config
+        else:
+            final_config["model"] = model_config
 
         # delete the cerebras key (including the save_iter_state_path key)
         final_config.pop("cerebras", "")
@@ -1885,9 +1984,14 @@ class BaseConfigConverter_CS_CS(BaseConfigConverter):
 
             final_config = convert_legacy_params_to_trainer_params(final_config)
 
+        # As of CS 2.4, all model configs are required to have a `name` key
+        if src_fmt == "cs-2.3" and tgt_fmt == "cs-2.4":
+            if "name" not in final_config["trainer"]["init"]["model"]:
+                final_config["trainer"]["init"]["model"]["name"] = model
+
         return final_config
 
-    def _handle_mup_conversion(self, config, converter_indices):
+    def _handle_mup_conversion(self, model, config, converter_indices):
         from cerebras.modelzoo.tools.checkpoint_converters.mup import (
             ConfigConverter_muP_CS22_CS23,
         )
@@ -1897,11 +2001,15 @@ class BaseConfigConverter_CS_CS(BaseConfigConverter):
 
         format_versions = self.formats()
         tgt_fmt = format_versions[to_index][converter_indices.tgt_index]
-        model_config = config["model"]
+        if "trainer" in config:
+            model_config = config["trainer"]["init"]["model"]
+        else:
+            model_config = config["model"]
         if tgt_fmt == "cs-2.3" and ConfigConverter_muP_CS22_CS23.is_mup(
             model_config
         ):
             model_config = ConfigConverter_muP_CS22_CS23.convert(
+                model,
                 config,
                 converter_indices,
             )
@@ -2170,7 +2278,15 @@ class BaseConfigConverter_CS22_CS23(FallbackConfigConverter_CS_CS):
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("cs-2.2"), FormatVersions("cs-2.3"))
+        return (FormatVersions("cs-2.2"), FormatVersions("cs-2.3", "cs-2.4"))
+
+
+class BaseConfigConverter_CS23_CS24(FallbackConfigConverter_CS_CS):
+    """Generic fallback config converter class for cs-2.3 -> cs-2.4."""
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("cs-2.3", "cs-2.4"), FormatVersions("cs-2.4"))
 
 
 def _addindent(s_, numSpaces):

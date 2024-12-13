@@ -12,8 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
+from typing import List, Literal, Optional, Union
+
 import torch
 import torch.nn as nn
+from annotated_types import Ge, Le
+from pydantic import Field, PositiveInt, model_validator
+from typing_extensions import Annotated
 
 import cerebras.pytorch as cstorch
 from cerebras.modelzoo.common.utils.model.mup_utils import (
@@ -22,85 +28,391 @@ from cerebras.modelzoo.common.utils.model.mup_utils import (
 from cerebras.modelzoo.common.utils.model.transformer_utils import (
     create_broadcasted_autoregressive_mask,
 )
+from cerebras.modelzoo.config import ModelConfig
 from cerebras.modelzoo.layers import (
     EmbeddingLayer,
     GPTJDecoderLayer,
     TransformerDecoder,
 )
-from cerebras.modelzoo.layers.norms import get_norm
+from cerebras.modelzoo.layers.activations import ActivationType
+from cerebras.modelzoo.layers.FeedForwardNetwork import MoEConfig
+from cerebras.modelzoo.layers.init import InitializerConfig
+from cerebras.modelzoo.layers.norms import NormType, get_norm
+
+DEFAULT_EMBEDDINGS_SCALE = 1.0
+DEFAULT_OUTPUT_LOGITS_ALPHA = None
+DEFAULT_SCALE_OUTPUT_LOGITS_BY_D = True
+DEFAULT_ATTENTION_LOGITS_ALPHA = 1.0
+
+
+class GPTJSubModelConfig(ModelConfig):
+    name: Literal["gptj"]
+
+    hidden_size: int = 768
+    "The size of the transformer hidden layers"
+
+    # Embedding params
+    vocab_size: Annotated[int, Ge(1), Le(512000)] = 50257
+    "The size of the vocabulary used in the model. Max supported value - `512000`."
+
+    max_position_embeddings: PositiveInt = 1024
+    "The maximum sequence length that the model can handle."
+
+    embd_pdrop: Optional[Annotated[float, Ge(0), Le(1)]] = Field(
+        0.1, alias="embedding_dropout_rate"
+    )
+    "Dropout rate for attention layer."
+
+    share_embedding_weights: bool = True
+    "Whether to share the embedding weights between the input and out put embedding."
+
+    position_embedding_type: Optional[
+        Literal["learned", "fixed", "relative", "rotary", "alibi"]
+    ] = "rotary"
+    """The type of position embedding to use in the model.
+    Can be one of - `learned` - Learned embedding matrix,
+    `fixed` - Sinusoidal from original [Transformer](https://arxiv.org/abs/1706.03762),
+    `relative` - Relative position embedding
+    [to exploit pairwise, relative positional information](https://arxiv.org/abs/1803.02155).,
+    `rotary` - a.k.a [RoPE](https://arxiv.org/pdf/2104.09864v4.pdf),
+    `alibi` [Attention With Linear Biases](https://arxiv.org/pdf/2108.12409.pdf),
+    or `None` for no position embeddings.
+    """
+
+    rotary_dim: Optional[int] = None
+    "The number of dimensions used for the rotary position encoding."
+
+    rope_theta: float = 10000
+    """Frequency (theta) used in rotary position embedding. This value is
+    typically adjusted in long MSL runs as described in
+    [CodeLlama](https://arxiv.org/pdf/2308.12950.pdf)"""
+
+    fold_rope_consts: bool = True
+    """If True, folds the rotary position embedding constants compile time.
+
+    For very large models consider generating them on the fly by setting this to
+    False. It avoids working with large constant tensors.
+    """
+
+    num_relative_attention_buckets: Optional[int] = None
+    "Number of buckets to use in relative position embedding"
+
+    # Decoder params
+    num_hidden_layers: int = 12
+    "Number of hidden layers in the Transformer decoder"
+
+    filter_size: int = 3072
+    """Dimensionality of the feed-forward layer in the Transformer block. Commonly
+    set to 4*hidden_size.
+    """
+
+    dropout_rate: float = Field(0.1, alias="residual_dropout_rate")
+    "Default dropout for the model if specified."
+
+    nonlinearity: ActivationType = "gelu"
+    """The non-linear activation function used in the feed forward network
+    in each transformer block.
+    See list of non-linearity functions [here](https://pytorch.org/docs/stable/nn.html#non-linear-activations-weighted-sum-nonlinearity).
+    """
+
+    norm_type: NormType = "layernorm"
+    "Determines the type of normalization. See modelzoo/layers/norms.py"
+
+    layer_norm_epsilon: Union[float, List[float]] = 1e-5
+    "The epsilon value used in layer normalization layers."
+
+    use_ffn_bias: bool = False
+    "Whether to use bias in the FFN."
+
+    use_untied_layer_norm: bool = False
+    """When using parallel decoder architecture, tied layer norm means that the
+    inputs to FFN and attention use normalization-layers with the same parameters,
+    i.e. x + Attn(LN_1(x)) + FFN(LN_1(x)) vs x + Attn(LN_1(x)) + FFN(LN_2(x)).
+    GPT-NeoX uses untied whereas GPT-J uses tied."""
+
+    # Attention params
+    num_heads: Optional[int] = 12
+    "The number of attention heads."
+
+    attention_module: Literal["aiayn_attention", "multiquery_attention"] = (
+        "aiayn_attention"
+    )
+    """Determines whether to use multiheaded attention (from the Attention is
+    All You Need paper) or multi-query attention (MQA) or grouped-query
+    attention (GQA). Note that when using MQA/GQA, you must specify
+    extra_attention_params (see below). MQA/GQA are differentiated through
+    that parameter.
+    """
+
+    attention_sliding_window_length: Optional[int] = None
+    "If specified, sliding window attention is used (as seen in Mistral)."
+
+    attention_sink_tokens: Optional[int] = None
+    "Number of sink tokens to use in the attention module."
+
+    extra_attention_params: dict = {}
+    """
+    When enabling multi-query/grouped-query
+    attention, you must specify the the number of key-value groups.
+    Within the extra attention params dict, you can set `num_kv_groups:
+    1` to enable MQA or `num_kv_groups: <groups>` for GQA. The number of
+    groups should be divisible by `num_heads`.
+    """
+
+    attention_type: Literal["dot_product", "scaled_dot_product"] = (
+        "scaled_dot_product"
+    )
+    """Determines whether the QK dot product should be scaled -
+    dot_product -> QK^T
+    scaled_dot_product -> QK^T / sqrt(d)
+    """
+
+    attention_dropout_rate: Optional[float] = 0.1
+    "Dropout rate for attention layer. When None, defaults to same as `residual_dropout_rate`"
+
+    attention_softmax_fp32: bool = True
+    "Whether to use fp32 precision for attention softmax."
+
+    attention_kernel: Optional[str] = None
+
+    use_projection_bias_in_attention: bool = True
+    "Whether to include bias in the attention layer for Q/K/V projections."
+
+    use_ffn_bias_in_attention: bool = True
+    """Whether to include bias in the attention layer for output projection
+    after values have been combined (W_O in original Transformer paper).
+    """
+
+    # Task-specific
+    initializer_range: float = 0.02
+    "The standard deviation of the truncated_normal_initializer as the default initializer"
+
+    use_bias_in_output: bool = False
+    "Whether to use bias in the final output layer."
+
+    embedding_initializer: Optional[InitializerConfig] = None
+    """Initializer to use for embeddings. See [supported initializers]
+    (./common/pytorch/model_utils/create_initializer.py). Default: 'normal'
+    """
+
+    attention_initializer: Optional[InitializerConfig] = Field(
+        None, alias="initializer"
+    )
+    """The initializer to be used for all the initializers used in the model.
+    See [supported initializers]"
+    "(./common/pytorch/model_utils/create_initializer.py). Default: varies based on model"""
+
+    output_layer_initializer: Optional[InitializerConfig] = None
+    """The name of the initializer for the weights of the output layer.
+    See [supported initializers](./common/pytorch/model_utils/create_initializer.py)."""
+
+    ffn_initializer: Optional[InitializerConfig] = None
+    """The name of the initializer for the weights of the ffn kernel.
+    See [supported initializers](./common/pytorch/model_utils/create_initializer.py)."""
+
+    ffn_output_layer_initializer: Optional[InitializerConfig] = None
+    """The name of the initializer for the weights of the ffn output layer.
+    See [supported initializers](./common/pytorch/model_utils/create_initializer.py)."""
+
+    # muP (maximal update parameterization)  parameters
+    lr_adjustment_groups: Optional[dict] = None
+    "A dictionary of groups to adjust the learning rate for."
+
+    mup_base_hidden_size: Optional[float] = None
+    """The hidden size of the base model in muP transfer used to calculate the
+    necessary multipliers. Required in muP training when scaling the decoder
+    attention module"""
+
+    mup_base_filter_size: Optional[float] = None
+    """The filter size of the base model in muP transfer used to calculate the
+    necessary multipliers. Required in muP training when scaling the decoder
+    ffn"""
+
+    embeddings_scale: Optional[float] = DEFAULT_EMBEDDINGS_SCALE
+    """Scales the embedding hidden states (i.e. the tensor after embeddings &
+    embedding layer norm are applied). Required in muP training"""
+
+    scale_qk_dot_by_d: bool = False
+    """Scales attention QK dot product by d instead of sqrt(d). Must be enabled
+    for muP training. Note that this flag only has effect if
+    attention_type=scaled_dot_product"""
+
+    attention_logits_alpha: Optional[float] = DEFAULT_ATTENTION_LOGITS_ALPHA
+    """Additionally scales the attention QK dot product by the specified value.
+    Recommended to tune for stabilizing attention logits in muP training."""
+
+    scale_output_logits_by_d: Optional[bool] = DEFAULT_SCALE_OUTPUT_LOGITS_BY_D
+    """Scales the output logits in muP by mup_base_hidden_size/hidden_size if
+    True and sqrt(mup_base_hidden_size/hidden_size) if False. Only applies to
+    muP training when scaling the hidden_size"""
+
+    output_logits_alpha: Optional[float] = DEFAULT_OUTPUT_LOGITS_ALPHA
+    """Constant applied to the output logits scalar in muP training. The output
+    logits are scaled by output_logits_alpha * mup_base_hidden_size/hidden_size"""
+
+    alibi_trainable_slopes: bool = False
+    "Replaces alibi's fixed slopes with trainable slopes."
+
+    pos_scaling_factor: float = 1.0
+    """Position interpolation scaling factor for rotary & alibi. See
+    https://arxiv.org/pdf/2306.15595.pdf for details"""
+
+    pos_scaling_type: Literal["linear", "YaRN", "yarn", "longrope"] = "linear"
+    """Can be either `linear` or `YaRN` or 'longrope',
+    For YaRN see https://arxiv.org/pdf/2309.00071
+    For LongRope see https://arxiv.org/pdf/2402.13753"""
+
+    pos_scaling_extra_args: Optional[dict] = None
+    """A dict including parameters for YaRN/longrope RoPE scaling"""
+
+    moe_params: MoEConfig = Field(default_factory=MoEConfig, alias="moe")
+
+    dtype: Optional[torch.dtype] = None
+
+    @model_validator(mode="after")
+    def validate_rotary_dim(self):
+        if self.position_embedding_type == "rotary":
+            # https://github.com/huggingface/transformers/blob/f0577df6de36e7e7f28e90fa76da0657de038a39/src/transformers/models/gpt_neox/modeling_gpt_neox.py#L84-L85
+            # https://arxiv.org/pdf/2104.09864.pdf Section 3.3
+            if self.rotary_dim > self.hidden_size / self.num_heads:
+                raise ValueError(
+                    "Rotary dimensions should be <= head_dim of the attention layer, "
+                    "where head_dim = attention_inner_dim // num_heads."
+                )
+            if self.rotary_dim % 2 != 0:
+                raise ValueError("Rotary dimension must be an even number.")
+
+        return self
+
+    @model_validator(mode="after")
+    def validate_mup(self):
+        supported_mup_dimensions = [
+            'mup_base_hidden_size',
+            'mup_base_filter_size',
+        ]
+
+        detected_mup_dimensions = [
+            dimension
+            for dimension in supported_mup_dimensions
+            if getattr(self, dimension)
+        ]
+
+        if detected_mup_dimensions:
+            if detected_mup_dimensions != supported_mup_dimensions:
+                raise RuntimeError(
+                    f"Our muP formulation requires that you specify all "
+                    f"of the following base dimensions: {supported_mup_dimensions} "
+                    f"but only the following dimensions were found: "
+                    f"{detected_mup_dimensions}"
+                )
+        else:
+            if detected_mup_tunable_params := (
+                self.model_fields_set
+                & {
+                    "embeddings_scale",
+                    "output_logits_alpha",
+                    "scale_qk_dot_by_d",
+                    "scale_output_logits_by_d",
+                    "attention_logits_alpha",
+                }
+            ):
+                logging.warning(
+                    f"The following muP parameters were changed from their default "
+                    f"value outside of a muP run: {sorted(detected_mup_tunable_params)}. "
+                    f"As a result, they may have an undesired effect. Please "
+                    f"specify the muP base dimensions {supported_mup_dimensions} "
+                    f"to trigger a muP run."
+                )
+
+        return self
+
+    def post_init(self, context):
+        super().post_init(context)
+
+        if self.position_embedding_type == "rotary":
+            if self.rotary_dim is None:
+                self.rotary_dim = int(self.hidden_size // self.num_heads * 0.25)
+
+            self.num_relative_attention_buckets = None
+        else:
+            self.rotary_dim = None
+
+            if self.num_relative_attention_buckets == None:
+                self.num_relative_attention_buckets = 32
 
 
 class GPTJModel(nn.Module):
-    def __init__(
-        self,
-        hidden_size=768,
-        # Embedding params
-        vocab_size=50257,
-        max_position_embeddings=1024,
-        embd_pdrop=0.1,
-        share_embedding_weights=True,
-        position_embedding_type="rotary",
-        rotary_dim=None,
-        rope_theta=10000,
-        pad_rope=False,
-        num_relative_attention_buckets=32,
-        # Decoder params
-        num_hidden_layers=12,
-        filter_size=3072,
-        dropout_rate=0.1,
-        nonlinearity="gelu",
-        norm_type="layernorm",
-        layer_norm_epsilon=1.0e-5,
-        use_ffn_bias=True,
-        use_untied_layer_norm=False,
-        # Attention params
-        num_heads=12,
-        attention_module="aiayn_attention",
-        attention_sliding_window_length=None,
-        extra_attention_params={},
-        attention_type="scaled_dot_product",
-        attention_dropout_rate=0.1,
-        attention_softmax_fp32=True,
-        attention_kernel=None,
-        use_projection_bias_in_attention=False,
-        use_ffn_bias_in_attention=False,
-        # Task-specific
-        initializer_range=0.02,
-        use_bias_in_output=False,
-        embedding_initializer=None,
-        attention_initializer=None,
-        output_layer_initializer=None,
-        ffn_initializer=None,
-        ffn_output_layer_initializer=None,
-        # muP (maximal update parameterization)  parameters
-        lr_adjustment_groups=None,
-        mup_base_hidden_size=None,
-        mup_base_filter_size=None,
-        embeddings_scale=1.0,
-        scale_qk_dot_by_d=False,
-        attention_logits_alpha=1.0,
-        scale_output_logits_by_d=True,
-        output_logits_alpha=None,
-        alibi_trainable_slopes=False,
-        pos_scaling_factor=1.0,
-        pos_scaling_type="linear",
-        pos_scaling_extra_args=None,
-        moe_params=dict(num_experts=1),
-        dtype=None,
-    ):
-        super(GPTJModel, self).__init__()
+    def __init__(self, config: GPTJSubModelConfig):
+        if isinstance(config, dict):
+            config = GPTJSubModelConfig(**config)
+
+        super().__init__()
+
+        hidden_size = config.hidden_size
+        vocab_size = config.vocab_size
+        max_position_embeddings = config.max_position_embeddings
+        embd_pdrop = config.embd_pdrop
+        share_embedding_weights = config.share_embedding_weights
+        position_embedding_type = config.position_embedding_type
+        rotary_dim = config.rotary_dim
+        rope_theta = config.rope_theta
+        fold_rope_consts = config.fold_rope_consts
+        num_relative_attention_buckets = config.num_relative_attention_buckets
+        num_hidden_layers = config.num_hidden_layers
+        filter_size = config.filter_size
+        dropout_rate = config.dropout_rate
+        nonlinearity = config.nonlinearity
+        norm_type = config.norm_type
+        layer_norm_epsilon = config.layer_norm_epsilon
+        use_ffn_bias = config.use_ffn_bias
+        use_untied_layer_norm = config.use_untied_layer_norm
+        num_heads = config.num_heads
+        attention_module = config.attention_module
+        attention_sliding_window_length = config.attention_sliding_window_length
+        attention_sink_tokens = config.attention_sink_tokens
+        extra_attention_params = config.extra_attention_params
+        attention_type = config.attention_type
+        attention_dropout_rate = config.attention_dropout_rate
+        attention_softmax_fp32 = config.attention_softmax_fp32
+        attention_kernel = config.attention_kernel
+        use_projection_bias_in_attention = (
+            config.use_projection_bias_in_attention
+        )
+        use_ffn_bias_in_attention = config.use_ffn_bias_in_attention
+        initializer_range = config.initializer_range
+        use_bias_in_output = config.use_bias_in_output
+        embedding_initializer = config.embedding_initializer
+        attention_initializer = config.attention_initializer
+        output_layer_initializer = config.output_layer_initializer
+        ffn_initializer = config.ffn_initializer
+        ffn_output_layer_initializer = config.ffn_output_layer_initializer
+        lr_adjustment_groups = config.lr_adjustment_groups
+        mup_base_hidden_size = config.mup_base_hidden_size
+        mup_base_filter_size = config.mup_base_filter_size
+        embeddings_scale = config.embeddings_scale
+        scale_qk_dot_by_d = config.scale_qk_dot_by_d
+        attention_logits_alpha = config.attention_logits_alpha
+        scale_output_logits_by_d = config.scale_output_logits_by_d
+        output_logits_alpha = config.output_logits_alpha
+        alibi_trainable_slopes = config.alibi_trainable_slopes
+        pos_scaling_factor = config.pos_scaling_factor
+        pos_scaling_type = config.pos_scaling_type
+        pos_scaling_extra_args = config.pos_scaling_extra_args
+        moe_params = config.moe_params
+        dtype = config.dtype
+
         self.hidden_size = hidden_size
         self.vocab_size = vocab_size
         self.max_position_embeddings = max_position_embeddings
         self.share_embedding_weights = share_embedding_weights
         self.initializer_range = initializer_range
         self.num_heads = num_heads
-        self.moe_enabled = moe_params["num_experts"] > 1
-        self.moe_num_experts = moe_params["num_experts"]
-        self.moe_routing_algorithm = moe_params.get(
-            "routing_algorithm", "learned"
-        )
-
+        total_experts = moe_params.num_experts
+        if moe_params.num_shared_experts:
+            total_experts += moe_params.num_shared_experts
+        self.moe_enabled = total_experts > 1
+        self.moe_num_experts = moe_params.num_experts
+        self.moe_routing_algorithm = moe_params.routing_algorithm
         default_initializer = {
             "name": "truncated_normal",
             "std": self.initializer_range,
@@ -114,8 +426,11 @@ class GPTJModel(nn.Module):
             attention_initializer = default_initializer.copy()
         if output_layer_initializer is None:
             output_layer_initializer = default_initializer.copy()
-        if moe_params.get("gate_initializer") is None:
-            moe_params["gate_initializer"] = default_initializer
+        if moe_params.gate_initializer is None:
+            # Update the config with initializer selected
+            moe_params = moe_params.copy(
+                update=dict(gate_initializer=default_initializer)
+            )
         if ffn_initializer is None:
             ffn_initializer = output_layer_initializer.copy()
         if ffn_output_layer_initializer is None:
@@ -176,7 +491,7 @@ class GPTJModel(nn.Module):
             num_relative_attention_buckets=num_relative_attention_buckets,
             rotary_dim=rotary_dim,
             rope_theta=rope_theta,
-            pad_rope=pad_rope,
+            fold_rope_consts=fold_rope_consts,
             pos_scaling_factor=pos_scaling_factor,
             pos_scaling_type=pos_scaling_type,
             pos_scaling_extra_args=pos_scaling_extra_args,
@@ -224,6 +539,7 @@ class GPTJModel(nn.Module):
         )
 
         self.attention_sliding_window_length = attention_sliding_window_length
+        self.attention_sink_tokens = attention_sink_tokens
 
         self.lm_head = nn.Linear(
             hidden_size, vocab_size, bias=use_bias_in_output
@@ -386,7 +702,8 @@ class GPTJModel(nn.Module):
             num_heads=self.num_heads,
             tgt_seq_length=input_embeddings.shape[1],
             attention_span=attention_span,
-            sliding_window_length=self.attention_sliding_window_length,
+            attention_sliding_window_length=self.attention_sliding_window_length,
+            attention_sink_tokens=self.attention_sink_tokens,
             device=input_embeddings.device,
             dtype=input_embeddings.dtype,
         )

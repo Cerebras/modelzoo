@@ -19,17 +19,17 @@ training and validation loops in the Trainer.
 """
 
 import logging
-from abc import ABC
+from abc import ABC, abstractmethod
 from contextlib import contextmanager
 from math import ceil
 from typing import Optional, Union
 from warnings import warn
 
 import cerebras.pytorch as cstorch
-from cerebras.modelzoo.trainer.callbacks import Callback
+from cerebras.modelzoo.trainer.callbacks import CoreCallback
 
 
-class LoopCallback(Callback, ABC):
+class LoopCallback(CoreCallback, ABC):
     """
     Base class for all loop callbacks.
 
@@ -40,16 +40,9 @@ class LoopCallback(Callback, ABC):
     it after each training step.
     """
 
-    def __new__(cls, *args, **kwargs):
-        if ABC in cls.__bases__:
-            subclasses = ", ".join(
-                s.__name__ for s in LoopCallback.__subclasses__()
-            )
-            raise TypeError(
-                f"LoopCallback cannot be instantiated directly. "
-                f"Please use one of the subclasses: {subclasses}"
-            )
-        return super().__new__(cls)
+    @abstractmethod
+    def __init__(self):
+        pass
 
     def setup(self, trainer):
         trainer.global_step = 0

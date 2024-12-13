@@ -639,10 +639,11 @@ class ConfigConverter_GPT2Model_HF_CS17(BaseConfigConverter_HF_CS):
 
     def pre_config_convert(
         self,
+        model,
         config,
         converter_indices,
     ):
-        config = super().pre_config_convert(config, converter_indices)
+        config = super().pre_config_convert(model, config, converter_indices)
 
         if converter_indices.direction == 0:
             if "n_inner" not in config or config["n_inner"] is None:
@@ -1011,13 +1012,13 @@ class ConfigConverter_GPT2Model_CS20_CS21(BaseConfigConverter_CS_CS):
 
 
 class ConfigConverter_GPT2Model_HF_CS21(ConfigConverter_GPT2Model_HF_CS20):
-    "CS 2.1 config is the same as CS 2.0"
+    "CS 2.1 config is the same as CS 2.0."
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4"),
         )
 
 
@@ -1050,7 +1051,7 @@ Converter_GPT2Model_HF_CS21 = Build_HF_CS_Converter_WithOptionalModel(
     config_converter_class=ConfigConverter_GPT2Model_HF_CS21,
     formats=(
         FormatVersions("hf"),
-        FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
+        FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4"),
     ),
 )
 
@@ -1078,7 +1079,7 @@ class Converter_GPT2LMHeadModel_WithoutOptionalModel_HF_CS21(
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4"),
         )
 
     @staticmethod
@@ -1112,7 +1113,7 @@ class Converter_GPT2LMHeadModel_CS22_CS23(BaseCheckpointConverter_CS_CS):
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("cs-2.2"), FormatVersions("cs-2.3"))
+        return (FormatVersions("cs-2.2"), FormatVersions("cs-2.3", "cs-2.4"))
 
     @staticmethod
     def get_config_converter_class() -> BaseConfigConverter:
@@ -1133,4 +1134,4 @@ class ConfigConverter_GPT2Model_CS22_CS23(BaseConfigConverter_CS_CS):
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("cs-2.2"), FormatVersions("cs-2.3"))
+        return (FormatVersions("cs-2.2"), FormatVersions("cs-2.3", "cs-2.4"))

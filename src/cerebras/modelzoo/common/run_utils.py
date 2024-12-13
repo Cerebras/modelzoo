@@ -16,36 +16,20 @@
 
 import argparse
 import inspect
-import logging
 import os
 import subprocess
 import sys
 from shutil import which
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional
 
-import torch
-import yaml
-
-from cerebras.appliance.log import (
-    collect_wsc_log_settings,
-    get_level_name,
-    wsc_logger,
-)
-from cerebras.modelzoo.common.pytorch_utils import RunConfigParamsValidator
-from cerebras.modelzoo.common.registry import registry
-from cerebras.modelzoo.common.run_cstorch_flow import run_cstorch_flow
-from cerebras.modelzoo.common.utils.run.cli_parser import get_params_from_args
+from cerebras.modelzoo.common.utils.run.cli_pytorch import get_params_from_args
 from cerebras.modelzoo.common.utils.run.utils import DeviceType
-from cerebras.modelzoo.config_manager.config_loader import (
-    convert_to_dict,
-    create_config_obj_from_params,
-)
-
-DATA_FN_TYPE = Callable[[dict], torch.utils.data.DataLoader]
 
 
 def torchrun(filename: str, arguments: List[str]):
     """Starts a distributed GPU run using torchrun."""
+    import torch
+
     torchrun_cmd = [
         which("torchrun", path=os.path.dirname(sys.executable)),
         "--nnodes=1",
@@ -66,36 +50,40 @@ def torchrun(filename: str, arguments: List[str]):
 
 
 def run(
-    model_fn: Union[Callable[[dict], torch.nn.Module], str],
-    train_data_fn: Optional[DATA_FN_TYPE] = None,
-    eval_data_fn: Optional[DATA_FN_TYPE] = None,
-    default_params_fn: Optional[Callable[[dict], dict]] = None,
     extra_args_parser_fn: Optional[
         Callable[[], List[argparse.ArgumentParser]]
     ] = None,
 ):
-    """
-    Entry point to running pytorch models including CLI argument parsing.
+    """Entry point to running pytorch models including CLI argument parsing.
+
+    Args:
+        extra_args_parser_fn: An optional callable that adds any
+            extra parser args not covered in `get_parser` fn.
     """
     parent = inspect.getouterframes(inspect.currentframe())[1]
     params = get_params_from_args(extra_args_parser_fn)
-    if default_params_fn:
-        params = default_params_fn(params) or params
-
-    main(params, model_fn, train_data_fn, eval_data_fn, script=parent.filename)
+    main(
+        params,
+        script=parent.filename,
+        extra_args_parser_fn=extra_args_parser_fn,
+    )
 
 
 def main(
     params: Dict[str, Any],
-    model_fn: Union[Callable[[dict], torch.nn.Module], str],
-    train_data_fn: Optional[DATA_FN_TYPE] = None,
-    eval_data_fn: Optional[DATA_FN_TYPE] = None,
     script: Optional[str] = None,
     extra_args_parser_fn: Optional[
         Callable[[], List[argparse.ArgumentParser]]
     ] = None,
 ):
-    """Entry point to running pytorch models."""
+    """Runs a full end-to-end CS/non-CS workflow for a PyTorch model.
+
+    Args:
+        params: The parsed YAML config dictionary.
+        script: The script to run in subprocesses for distributed GPU runs.
+        extra_args_parser_fn: An optional callable that adds any
+            extra parser args not covered in `get_parser` fn.
+    """
     if not script:
         parent = inspect.getouterframes(inspect.currentframe())[1]
         script = parent.filename
@@ -112,103 +100,20 @@ def main(
         torchrun(script, sys.argv[1:])
         return None
 
-    return run_with_params(
-        params,
-        model_fn,
-        train_data_fn,
-        eval_data_fn,
-        extra_args_parser_fn=extra_args_parser_fn,
+    from cerebras.modelzoo.common.pytorch_utils import RunConfigParamsValidator
+    from cerebras.modelzoo.trainer.utils import (
+        inject_cli_args_to_trainer_params,
+        run_trainer,
     )
 
-
-def run_with_params(
-    params: Dict[str, Any],
-    model_fn: Union[Callable[[dict], torch.nn.Module], str],
-    train_data_fn: Optional[DATA_FN_TYPE] = None,
-    eval_data_fn: Optional[DATA_FN_TYPE] = None,
-    extra_args_parser_fn: Optional[
-        Callable[[], List[argparse.ArgumentParser]]
-    ] = None,
-):
-    """
-    Runs a full end-to-end CS/non-CS workflow for a given model.
-
-    Args:
-        params: The parsed YAML config dictionary.
-        model_fn: A callable that takes in a 'params' argument
-            which it uses to configure and return a torch.nn.Module
-        train_data_fn: A callable that takes in a 'params' argument
-            which it uses to configure and return a PyTorch dataloader
-            corresponding to the training dataset
-        eval_data_fn: A callable that takes in a 'params' argument
-            which it uses to configure and return a PyTorch dataloader
-            corresponding to the evaluation dataset
-        extra_args_parser_fn: An optional callable that adds any
-            extra parser args not covered in `get_parser` fn.
-    """
     runconfig_params = params["runconfig"]
     RunConfigParamsValidator(extra_args_parser_fn).validate(runconfig_params)
     mode = runconfig_params["mode"]
 
-    if not os.environ.get("RUN_LEGACY_CSTORCH_FLOW"):
-        logging.info("Running Trainer Flow")
-
-        from cerebras.modelzoo.trainer.utils import run_trainer
-
-        # Recursively update the params with the runconfig
-        if "runconfig" in params and "trainer" in params:
-            # runconfig was injected into params by the CLI parser
-            # and we need to merge it with the trainer params
-            from cerebras.modelzoo.trainer.utils import (
-                inject_cli_args_to_trainer_params,
-            )
-
-            params = inject_cli_args_to_trainer_params(
-                params.pop("runconfig"), params
-            )
-
-        # We will be getting a params_obj if we are using config classes
-        return run_trainer(
-            mode,
-            params,
-            model_fn,
-            train_data_fn,
-            eval_data_fn,
+    # Recursively update the params with the runconfig
+    if "runconfig" in params and "trainer" in params:
+        params = inject_cli_args_to_trainer_params(
+            params.pop("runconfig"), params
         )
 
-    # Save the params
-    summary_dir = os.path.join(runconfig_params["model_dir"], mode)
-    os.makedirs(summary_dir, exist_ok=True)
-    with open(os.path.join(summary_dir, f"params_{mode}.yaml"), "w") as f:
-        yaml.dump(params, f, default_flow_style=False, sort_keys=False)
-
-    wsc_log_level = params["runconfig"].get("wsc_log_level") or {}
-    set_wsc_log_level(wsc_log_level)
-
-    if isinstance(model_fn, str):
-        model_name = model_fn
-        params_obj = create_config_obj_from_params(params, model_name)
-        model_fn = registry.get_model_class(model_name)
-        params = convert_to_dict(params_obj)
-    else:
-        params_obj = None
-
-    return run_cstorch_flow(
-        params, params_obj, model_fn, train_data_fn, eval_data_fn
-    )
-
-
-def set_wsc_log_level(log_levels: Union[List[str], Dict[str, str]]):
-    """Assert the list of log levels is valid."""
-    if isinstance(log_levels, dict):
-        for task, level in log_levels.items():
-            level = int(level) if level.isdigit() else get_level_name(level)
-            if task:
-                wsc_logger.getChild(task).setLevel(level)
-            else:
-                wsc_logger.setLevel(level)
-    else:
-        raise ValueError("Invalid log levels. Input must be a dict.")
-
-    # validate log level setting
-    collect_wsc_log_settings()
+    return run_trainer(mode, params)

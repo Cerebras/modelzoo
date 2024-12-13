@@ -12,33 +12,86 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Any, List, Literal, Optional, Union
+
 import torch
 import torch.nn as nn
+from pydantic import Field
+from typing_extensions import Annotated
 
-from cerebras.modelzoo.common.registry import registry
+from cerebras.modelzoo.config import ModelConfig
 from cerebras.modelzoo.losses.GPTLMHeadModelLoss import GPTLMHeadModelLoss
 from cerebras.modelzoo.models.multimodal.multimodal_base_model import (
     ModalityType,
 )
 from cerebras.modelzoo.models.multimodal.multimodal_simple.modeling_mmsimple import (
+    MultimodalImageModelList,
     MultimodalSimple,
 )
+from cerebras.modelzoo.models.nlp.llama.model import LlamaLMHeadModelConfig
+from cerebras.modelzoo.models.nlp.t5.model import (
+    T5ForConditionalGenerationModelConfig,
+)
+
+MultimodalTextModel = Annotated[
+    Union[
+        LlamaLMHeadModelConfig,
+        T5ForConditionalGenerationModelConfig,
+    ],
+    Field(discriminator="name"),
+]
 
 
-@registry.register_model("multimodal_simple")
+class MultimodalDecoderModelConfig(ModelConfig):
+    name: Literal["multimodal_simple"]
+
+    freeze: Optional[List[str]] = None
+    """
+    Allows us to freeze parts of the model through just yaml file manipulation.
+    Filter to select which parameters are frozen.
+    Note that regex patterns should be specified as single quotes in the yaml for escape codes
+    """
+
+    image_model_list: MultimodalImageModelList = ...
+    "Allows the model to instantiate a list of image models that run same image through multiple image encoders"
+
+    text_model: MultimodalTextModel = ...
+    "Decoder-only LLM model that processes all the modalities together through the backbone and produces output"
+
+    output_list: Optional[
+        List[Literal["image", "image_encoder_out", "projector_out"]]
+    ] = None
+    "List of intermediate values that should be returned. Options include: image, image_encoder_out, projector_out. Model always returns output of VLLMModel"
+
+    loss_scaling: Literal["batch_size", "num_tokens"] = "num_tokens"
+    """The scaling type used to calculate the loss. Accepts - `batch_size`, `num_tokens`.
+    See [more](https://docs.cerebras.net/en/latest/wsc/general/num-tokens-loss-scaling.html).
+    **Note:** It is recommended to set this to `num_tokens` for convenience."""
+
+    loss_weight: float = 0.0
+    """The weight for the loss scaling when `loss_scaling = 'batch_size'`, generally set to
+    '1/max_sequence_length`.
+    """
+
+    mixed_precision: Optional[Any] = Field(default=None, deprecated=True)
+    fp16_type: Optional[Any] = Field(default=None, deprecated=True)
+
+
 class MMSimpleModel(nn.Module):
-    """Multimodal Models that combine image and text"""
+    """Multimodal Models that combine image and text."""
 
-    def __init__(self, params):
+    def __init__(self, config: MultimodalDecoderModelConfig):
+        if isinstance(config, dict):
+            config = MultimodalDecoderModelConfig(**config)
+
         super().__init__()
 
-        model_params = params.model
-        self.model = MultimodalSimple.build_model(params)
-        text_model = getattr(params.model, ModalityType.TEXT.value)
+        self.model = MultimodalSimple.build_model(config)
+        text_model = getattr(config, ModalityType.TEXT.value)
         self.loss_fn = GPTLMHeadModelLoss(
             text_model.vocab_size,
-            model_params.loss_scaling,
-            model_params.loss_weight,
+            config.loss_scaling,
+            config.loss_weight,
         )
 
     def forward(
