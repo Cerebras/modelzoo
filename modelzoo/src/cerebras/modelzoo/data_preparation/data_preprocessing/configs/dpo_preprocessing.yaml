@@ -1,0 +1,33 @@
+setup:
+    data:
+        source: "/input/dir/here"
+        type: "local"
+    output_dir: "/output/dir/here"
+    processes: 1
+    mode: "dpo"
+
+processing:
+    huggingface_tokenizer: <hf_tokenizer>
+    max_seq_length: <max_seq_length>
+
+    write_in_batch: True
+    resume_from_checkpoint: False
+
+    read_hook: "cerebras.modelzoo.data_preparation.data_preprocessing.hooks:dpo_read_hook"
+    read_hook_kwargs:
+        prompt_key: <prompt_key>
+        chosen_key: <chosen_key>
+        rejected_key: <rejected_key>
+    shuffle_seed: 0
+    shuffle: False
+
+    use_ftfy: True
+    ftfy_normalizer: "NFC"
+    wikitext_detokenize: False
+
+    UNSAFE_skip_jsonl_decoding_errors: False
+
+dataset:
+    user_role: user
+    assistant_role: assistant
+    

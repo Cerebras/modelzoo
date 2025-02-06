@@ -1,0 +1,36 @@
+##############################################################
+## Customized Curation Corpus (jsonl) Preprocessing Parameters
+## TODO: Move formatted HDF5's to /cb/datasets/language/
+##############################################################
+
+setup:
+    input_dir: "/cb/home/andrewz/temp/curation-corpus/curation-corpus" # replace with your directory
+    output_dir: "/cb/cold/andrewz/curation-corpus-dataset-hdf5" # replace with your directory
+    processes: 1
+    dataset_processor: "CurationCorpusPreprocessor"
+
+processing:
+    tokenizer_type: "GPT2Tokenizer"
+    vocab_file: "../../../models/vocab/gpt2-vocab.bpe"
+    encoder_file: "../../../models/vocab/gpt2-encoder.json"
+
+    max_seq_length: 2048
+    short_seq_prob: 0.0
+
+    output_name: "examples"
+    files_per_record: 2000
+    write_in_batch: True
+
+    write_remainder: True
+    resume_from_checkpoint: False
+    display_pbar: True
+    seed: 0
+
+dataset:
+    use_ftfy: True
+    ftfy_normalizer: "NFC"
+    wikitext_detokenize: False
+
+    sep_token: "<SEP>"
+    prompt_key: "article_content"
+    completion_key: "summary"

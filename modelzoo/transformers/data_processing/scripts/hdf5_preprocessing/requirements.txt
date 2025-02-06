@@ -1,9 +1,0 @@
-tokenizers==0.13.3
-lm-dataformat @ https://github.com/leogao2/lm_dataformat/archive/ac85cb7dae49ce25e9973a128ebd9167deaf64dd.zip
-ftfy==6.1.1
-networkit==10.1
-Keras-Preprocessing==1.1.2
-h5py==2.10.0
-pyyaml==5.1.2
-regex
-tqdm

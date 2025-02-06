@@ -1,0 +1,43 @@
+##############################################################
+## Autoregressive LM Preprocessing Parameters
+##############################################################
+
+setup:
+    data:
+        source: "/input/dir/here"
+        type: "local"
+
+    mode: "pretraining"
+    output_dir: "./output/dir/here/"
+    processes: 1
+
+processing:
+    custom_tokenizer: "gpt2tokenizer"
+    tokenizer_params:
+        vocab_file: "/path/to/vocab"
+        encoder_file: "/path/to/encoder"
+
+    max_seq_length: 2048
+    short_seq_prob: 0.0
+    write_in_batch: True
+    
+    resume_from_checkpoint: False
+    seed: 0
+
+    read_hook: "cerebras.modelzoo.data_preparation.data_preprocessing.hooks:text_read_hook"
+    read_hook_kwargs:
+        text_key: "text"
+
+    shuffle_seed: 0
+    shuffle: False
+    
+    use_ftfy: True
+    ftfy_normalizer: "NFC"
+    wikitext_detokenize: False
+
+    UNSAFE_skip_jsonl_decoding_errors: False
+
+dataset:
+    
+    pack_sequences: True
+    

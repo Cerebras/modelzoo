@@ -1,0 +1,318 @@
+body, html {
+    font-family: 'Lato', sans-serif;
+    margin: 0;
+    padding: 0;
+    background: #f4f4f4;
+}
+
+
+.container {
+    width: 95%;
+    margin: 0 auto;
+    height: 1475px;
+    background: white;
+    padding: 20px;
+    box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+}
+
+.controls {
+    top: 20px; /* Adjust based on your layout */
+    left: 20px; /* Adjust based on your layout */
+    z-index: 1000; /* Ensure it stays on top */
+    margin-left:calc(105% + 20px);
+    transition-property: margin-left;
+    transition-duration: 0.2s;
+}
+select {
+    margin-top:30px;
+}
+
+.header {
+    display: flex;
+    justify-content: space-between;
+}
+
+.controls-section {
+    position: absolute;
+    top: 25px;
+    left: calc(2.5% + 5px);
+    width: 35%;
+    z-index: 1000;
+}
+
+.main-content {
+    margin-top:100px;
+}
+
+.main-content {
+    display: flex;
+    justify-content: flex-end;
+    margin-left: 40%;
+}
+
+.dynamic-sections {
+    flex: 1;
+    margin-top:-2em;
+}
+
+.dynamic-sections .section {
+    margin-bottom: 20px;
+}
+
+.logo img {
+    height: 100px; /* Adjust size as necessary */
+}
+
+
+.fixed-sections {
+    margin-top:-100px;
+}
+
+.section {
+    padding: 8px;
+    height: 300px;
+    max-height: 300px; /* Fixed height or adjust as necessary */
+}
+
+#label_ids_display, #input_ids_display {
+    max-height: 240px!important;
+}
+
+div#label_ids_section, div#input_ids_section {
+    max-height: 265px!important;
+
+}
+
+.controls {
+    display: flex;
+    padding-bottom: 10px;
+    align-items: center;
+    margin-top: 80px;
+    justify-content: space-between;
+}
+
+.sequence-distribution {
+    padding: 5px;
+    border: 1px solid #ddd;
+    border-radius: 10px;
+    width: 100%;
+    list-style-type: none; /* Remove bullet points */
+    padding-left: 0; /* Remove default padding */
+}
+
+.sequence-distribution img {
+    max-width: 100%; /* Make sure the image doesn't overflow the container */
+    height: auto; /* Maintain aspect ratio */
+    display: block; /* Ensures the image behaves as a block element */
+    margin: 0 auto; /* Center the image horizontally */
+}
+
+.section {
+    background: #f1f1f1;
+    padding: 15px;
+    border-radius: 5px;
+    border: 1px solid #bbb9b9; /* Use a lighter shade */
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    position: relative;
+    overflow: auto;
+}
+
+.section-title {
+    position: absolute;
+    top: 0;
+    left: 0;
+    font-size: 0.8em; /* Adjust font size as needed */
+    padding: 10px; /* Add padding around the title */
+    z-index: 1; /* Ensure the title is above other content */
+    margin-top:5px;
+}
+
+.data-display {
+    overflow-y: auto; /* Scroll if content overflows */
+    max-height: 120px; /* Adjust based on your layout needs */
+    margin-top:25px;
+}
+
+.section h3 {
+    color: #777;
+    margin-bottom: 10px;
+}
+
+#input_strings_section,
+#label_strings_section {
+    height: 300px; /* Increase the height as needed */
+    max-height: 300px; /* Ensure the content stays within this height */
+}
+
+#input_strings_display,
+#label_strings_display {
+    max-height: 270px; /* Adjust for the content display area */
+}
+
+.dynamic-sections .section {
+    margin-bottom: 20px; /* Optional: Increase space between sections if needed */
+}
+
+
+tbody {
+    white-space: pre-wrap; /* Ensures the text wraps and respects whitespace */
+    word-wrap: break-word; /* Ensures long words do not cause horizontal overflow */
+}
+
+.transition-all {
+    transition-property: all;
+    transition-timing-function: cubic-bezier(.4,0,.2,1);
+    transition-duration: .15s;
+}
+
+.dropdown {
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    color: #666;
+    font-size: 16px;
+    padding: 10px;
+    margin-right: 10px; /* Adjust spacing between dropdowns */
+    -webkit-appearance: none; /* Remove default styling in WebKit browsers */
+    -moz-appearance: none; /* Remove default styling in Firefox */
+    appearance: none; /* Remove default styling in other browsers */
+}
+
+.dropdown:focus {
+    outline: none;
+    border-color: #777;
+}
+
+#fileSelector {
+    width:230px;
+}
+#stringLengthSelector {
+    width:60px;
+}
+
+.title {
+    font-weight: 700;
+    font-size: 2.5rem;
+    line-height: 2.5rem;
+    font-family: 'Lato', sans-serif;
+}
+
+.popup {
+    position: absolute;
+    background: white;
+    border: 1px solid #ddd;
+    border-radius: 5px;
+    box-shadow: 0 0px 20px 5px rgba(0, 0, 0, 0.15);
+    z-index: 1000;
+    display: flex; /* Ensures the image and text are aligned side by side */
+    font-size:12px;
+    color: #666;
+}
+
+.popup-content {
+    display: flex; /* Ensures the image and text are aligned side by side */
+    align-items: center; /* Aligns the items vertically in the center */
+    height:200px;
+}
+
+.popup-image {
+    width: 125px; /* Restricts the image width to 150px */
+    height: 125px; /* Restricts the image height to 150px */
+    margin-right: 5px; /* Adds some space between the image and the text */
+    align-self: center;
+}
+
+.popup-text {
+    flex: 1;
+    padding-right: 16px;
+}
+
+body {
+    margin: 0;
+    font-family: Arial, sans-serif;
+}
+
+.loader {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255, 255, 255, 0.8);
+    z-index: 1000;
+    display: none; /* Hidden by default */
+}
+
+.loader img {
+    width: 100px; /* Initial size */
+    animation: pulse 1.5s infinite; /* Add animation */
+}
+
+@keyframes pulse {
+    0% {
+        transform: scale(1.2);
+    }
+    50% {
+        transform: scale(1.6);
+    }
+    100% {
+        transform: scale(1.2);
+    }
+}
+
+.blur {
+    filter: blur(5px);
+    pointer-events: none; /* Disable interactions with blurred content */
+}
+
+.content {
+    transition: filter 0.3s ease; /* Smooth transition for blur effect */
+}
+
+.separator-row {
+    padding: 1px!important;
+}
+
+.spinner {
+    border: 4px solid rgba(0, 0, 0, 0.1); /* Light gray border */
+    border-left: 4px solid #3498db; /* Blue color for the spinner */
+    border-radius: 50%; /* Make it a circle */
+    width: 40px; /* Size of the spinner */
+    height: 40px; /* Size of the spinner */
+    animation: spin 1s linear infinite; /* Spin animation */
+    margin: 0 auto; /* Center it horizontally */
+    display: block; /* Make it a block element for centering */
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+#sequence-image {
+    max-width: 100%; /* Ensure image does not overflow */
+    cursor: zoom-in; /* Change cursor to indicate zoom */
+}
+
+#sequence-image.zoomed {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%) scale(0.8); /* Adjust scale for zoom */
+    z-index: 1001; /* Bring it to the front */
+    max-width: 90vw; /* Limit max width */
+    max-height: 90vh; /* Limit max height */
+    cursor: zoom-out; /* Change cursor for zoomed state */
+}
+
+.overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0, 0, 0, 0.5); /* Dim the background */
+    z-index: 1000; /* Below the zoomed image */
+}
