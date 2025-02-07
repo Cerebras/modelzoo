@@ -1,0 +1,32 @@
+setup:
+    input_dir: "/path/to/your/data"
+    output_dir: "/path/to/output/dir"
+    processes: 10
+    dataset_processor: "VSLSummarizationPreprocessor"
+
+processing:
+    tokenizer_type: "HuggingFaceTokenizer"
+    huggingface_tokenizer: "NousResearch/Llama-2-7b-hf"
+    max_seq_length: 4096
+    short_seq_prob: 0.0
+
+    output_name: "examples"
+    files_per_record: 10000
+    write_in_batch: True
+
+    write_remainder: True
+    resume_from_checkpoint: False
+    display_pbar: True
+    seed: 0
+
+dataset:
+    use_ftfy: True
+    ftfy_normalizer: "NFC"
+    wikitext_detokenize: False
+
+    multi_turn_key: "messages"
+    multi_turn_content_key: "content"
+    prompt_prefix: "<|user|>"
+    completion_prefix: "<|assistant|>"
+    eos_after_prompt: True
+    pack_sequences: True

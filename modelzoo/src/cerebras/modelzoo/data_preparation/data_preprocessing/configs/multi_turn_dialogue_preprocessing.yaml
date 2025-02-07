@@ -1,0 +1,32 @@
+setup:
+    data:
+        source: "/path/to/your/data"
+        type: "local"
+    output_dir: "/path/to/output/dir"
+    processes: 1
+    mode: "finetuning"
+
+processing:
+    huggingface_tokenizer: "NousResearch/Llama-2-7b-hf"
+    max_seq_length: 4096
+
+    write_in_batch: True
+
+    resume_from_checkpoint: False
+
+    read_hook: "cerebras.modelzoo.data_preparation.data_preprocessing.hooks:chat_read_hook"
+    read_hook_kwargs:
+        multi_turn_key: "messages"
+        multi_turn_content_key: "content"
+        multi_turn_role_key: "role" 
+
+    shuffle_seed: 0
+    shuffle: False
+    use_ftfy: True
+    ftfy_normalizer: "NFC"
+    wikitext_detokenize: False
+    UNSAFE_skip_jsonl_decoding_errors: False
+dataset:
+    truncate_to_msl: null
+   
+

@@ -1,0 +1,35 @@
+setup:
+    input_dir: "/path/to/input_directory"
+    output_dir: "/path/to/output_directory"
+    # adjust the below to however many cores you have available
+    processes: 1 
+    dataset_processor: "LlavaPhaseOnePreprocessor"
+
+processing:
+    tokenizer_type: "HuggingFaceTokenizer"
+    huggingface_tokenizer: "NousResearch/Llama-2-7b-hf"
+    max_seq_length: 2048
+    short_seq_prob: 0.0
+
+    output_name: "examples"
+    files_per_record: 10000
+    write_in_batch: True
+
+    write_remainder: True
+    resume_from_checkpoint: False
+    display_pbar: True
+    seed: 0
+
+dataset:
+    use_ftfy: True
+    ftfy_normalizer: "NFC"
+    wikitext_detokenize: False
+
+    # these can change based on dataset
+    multi_turn_key: "conversations"
+    multi_turn_content_key: "value"
+    image_key: "image"
+    image_token: "<image>"
+    
+    num_patches: 576
+    image_dir: "/path/to/image_directory"
