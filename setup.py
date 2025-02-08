@@ -41,7 +41,7 @@ def main():
     root_directory = Path(__file__).parent
     long_description = (root_directory / "PYPI-README.md").read_text()
 
-    __version__ = "2.4.0"
+    __version__ = "2.4.2"
 
     entry_points = []
 

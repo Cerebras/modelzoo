@@ -5,7 +5,7 @@
 setup:
     data:
         type: "huggingface"
-        source: "autoevaluate/xsum-sample"
+        source: "SpeedOfMagic/xsum_tiny"
         split: "validation"
     mode: "finetuning"
     output_dir: "finetuning_tutorial/valid_data"
@@ -18,9 +18,10 @@ processing:
     write_in_batch: True
     read_hook: "cerebras.modelzoo.data_preparation.data_preprocessing.hooks:prompt_completion_text_read_hook"
     read_hook_kwargs:
-        data_keys:
-            prompt_key: "document"
-            completion_key: "summary"
-
-dataset:
+        prompt_key: "document"
+        completion_key: "summary"
+    max_seq_length: 2048
     use_ftfy: True
+
+
+    

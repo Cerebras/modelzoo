@@ -38,4 +38,7 @@ class ModelEvalMetrics(Callback):
                         metrics[metric.name] = float(metric)
                         metric.reset()
 
+            trainer.logger.info("Evaluation metrics:")
+            for name, metric in metrics.items():
+                trainer.logger.info(f"  - {name} = {float(metric)}")
             trainer.log_metrics(**metrics)

@@ -43,8 +43,20 @@ from cerebras.modelzoo.models.vision.generic_image_encoders.dataset.IJEPASynthet
 
 class BaseImageDataProcessorConfig(DataConfig):
     data_processor: Literal["BaseImageDataProcessor"]
+    "Name of the data processor. Must be set to `BaseImageDataProcessor`."
 
     ssl_transform: SSLTransform
+    """
+    An image tranform suitable for self-supervised learning.
+    One of 
+    ```
+       Dinov2TransformConfig,
+       ImageRandomMultiCropTransformConfig,
+       MaskedPatchTransformConfig,
+       MultiBlockMaskedContextImageTransformConfig,
+    ```.
+    """
+
     dataset: Annotated[
         Union[
             Dinov1SyntheticDatasetConfig,
@@ -53,17 +65,34 @@ class BaseImageDataProcessorConfig(DataConfig):
         ],
         Field(discriminator=DatasetConfig.discriminator),
     ]
+    "Dataset configuration to use with this DataProcessor."
 
     batch_size: int = 128
+    "Batch size to serve to the model."
+
     shuffle: bool = True
+    "Whether to shuffle the data."
+
     shuffle_seed: int = 1456354
+    "Random seed to use when shuffling the data."
+
     drop_last: bool = True
+    "Whether to drop the last batch if it is smaller than the batch size."
+
     num_samples: Optional[int] = None
+    "Maximum number of samples to emit. No limit if None."
+
     pad_last: bool = False
+    "Add padding to the last batch in the scenario where the dataset size isn't evenly divisible by the batch size."
 
     num_workers: int = 0
+    "How many subprocesses to use for data loading. 0 means that the data will be loaded in the main process."
+
     prefetch_factor: Optional[int] = 10
+    "Number of samples loaded in advance by each worker."
+
     persistent_workers: bool = True
+    "Determines if the subprocesses should be killed and recreated between each epoch."
 
     def post_init(self, context):
         model_config = context.get("model", {}).get("config")

@@ -37,21 +37,21 @@ from cerebras.modelzoo.models.vision.generic_image_encoders.base.BaseSSLImageTra
 
 class MaskedPatchTransformConfig(BaseSSLImageTransformConfig):
     name: Literal["MaskedPatchTransform"]
+    "Name of the data transform. Must be set to `MaskedPatchTransform`."
 
     image_size: Union[int, List[int]] = ...
-    "The size of the input image. If int, the image is assumed to be square."
+    "The size of the input image. When provided as a single int, the image is assumed to be square."
 
     patch_size: Union[int, List[int]] = ...
-    "The size of each patch to be masked. If int, the patch is assumed to be square."
+    "The size of each patch to be masked. When provided as a single int, the patch is assumed to be square."
 
     mask_probability: Annotated[float, Ge(0), Le(1)] = ...
-    "Probability of applying masking to image. Otherwise image is left unmasked."
+    "Probability of applying masking to image. When the value is 0, the image is left unmasked."
 
     mask_ratio_tuple: Tuple[float, float] = ...
     """
-    For mask_probability proportion of images, we sample proportion of patches
-    to mask according to uniform distribution with bounds specified by the
-    mask_ratio_tuple.
+    When `mask_probability` is nonzero, this field specifies the proportion of patches to mask. 
+    The two fields represent the lower and upper bounds of a uniform distribution that is used to sample the masks.
     """
 
     min_num_patches: int = 4
@@ -65,8 +65,8 @@ class MaskedPatchTransformConfig(BaseSSLImageTransformConfig):
 
     max_aspect: Optional[float] = None
     """
-    Maximum aspect ratio for the patches. Default is None, which triggers
-    calculation of 1 / min_aspect.
+    Maximum aspect ratio for the patches. When `None`, this is calculated as 
+    `1 / min_aspect`.
     """
 
     composed_transform: bool = False

@@ -24,38 +24,51 @@ from cerebras.modelzoo.layers.init import (
     TruncatedNormalInitializer,
     ZerosInitializer,
 )
+from cerebras.modelzoo.layers.utils import named_matmul
 
 
 class DinoHeadConfig(ModelConfig):
     name: Literal["DinoHead"]
+    "Name of the model. Must be set to `DinoHead`."
 
     input_size: int = ...
-    "size of each input"
+    """
+    Size of the input to the MLP (multi-layer perceptron). 
+    Please note: MLP is being used interchangeably with FeedForward network.
+    """
 
     output_size: int = ...
-    "Final size of output sample after Head is applied"
+    "Final size of output sample after the Head is applied."
 
     num_layers: int = 3
-    "number of layers in FeedForward network"
+    """
+    Number of layers in the MLP.
+    Please note: MLP is being used interchangeably with FeedForward network.
+    """
 
     hidden_size: int = 2048
-    "Intermediate size of input"
+    "Intermediate size of input."
 
     bottleneck_size: int = 256
-    "Size of sample after FeedForward network is applied"
+    "Size of the activations after the MLP has been applied."
 
     use_bias_in_mlp: bool = True
-    "If set to True, Linear layers in FeedForward network have bias"
+    "If set to True, a bias term is applied inside the Linear layers of the MLP."
 
     norm_last_layer: bool = False
-    "Whether to use weight norm"
+    "When true, apply layer normalization to the last layer of the MLP."
 
     initializer: Optional[InitializerConfig] = None
-    "Initializer to use for the Head, defaults to truncated_normal if set to None"
+    """
+    Weight Initialization to use for the Head, defaults to truncated_normal if set to None.
+    See ../../../../layers/init.py for more weight initializers. 
+    """
 
     initializer_range: float = 0.02
-    """The standard deviation of the truncated_normal_initializer as the
-    default initializer"""
+    """
+    The standard deviation of the truncated_normal_initializer as the
+    default initializer.
+    """
 
     @property
     def __model_cls__(self):
@@ -146,6 +159,16 @@ class DinoHead(nn.Module):
         data = self.mlp(data)
         eps = 1e-6 if data.dtype == torch.float16 else 1e-12
         data = nn.functional.normalize(data, dim=-1, p=2, eps=eps)
-        data = self.last_layer(data)
+
+        # annotate last_layer for specialized recompute schedule
+        @named_matmul("ibot_patch_opt")
+        def named_last_layer(data):
+            return self.last_layer(data)
+
+        # only annotate head that has sequence dimension
+        if data_dim == 4:
+            data = named_last_layer(data)
+        else:
+            data = self.last_layer(data)
         data = torch.reshape(data, output_shape)
         return data

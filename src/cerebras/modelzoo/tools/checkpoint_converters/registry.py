@@ -343,6 +343,7 @@ _model_aliases = {
     "codegen-headless": "gptj",
     "code-llama": "llama",
     "code-llama-headless": "llama",
+    "dino-v2": "vision_transformer",
     "dino-v2-headless": "vision_transformer",
     "esm-2": "esm2",
     "falcon-headless": "falcon",

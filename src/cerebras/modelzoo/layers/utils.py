@@ -12,8 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
 import copy
-from typing import Callable
+from dataclasses import dataclass
+from typing import Callable, Optional
 
 import torch
 import torch.nn as nn
@@ -180,3 +183,46 @@ class ModuleWrapperClass(nn.Module):
 
     def forward(self, input):
         return self.fcn(input)
+
+
+from cerebras.pytorch.core.annotation import AnnotationMode, annotate
+
+
+class NamedMatmulAnnotationMode(AnnotationMode):
+    @dataclass
+    class NamedConfig(AnnotationMode.Config):
+        name: Optional[str]
+
+    # Global named config instance helps to handle nested annotation modes.
+    _named_config: Optional[NamedConfig] = None
+
+    @property
+    def config(self):
+        return NamedMatmulAnnotationMode._named_config
+
+    @config.setter
+    def config(self, config: NamedMatmulAnnotationMode.NamedConfig):
+        NamedMatmulAnnotationMode._named_config = config
+
+    def get_attribute(
+        self, config: NamedMatmulAnnotationMode.NamedConfig, is_backward: bool
+    ):
+        postfix = "bwd" if is_backward else "fwd"
+        name = f"{config.name}.{postfix}"
+        return AnnotationMode.Attribute('named_matmul', name)
+
+
+def named_matmul(
+    name: Optional[str] = None,
+    enable_fwd: bool = True,
+    enable_bwd: bool = True,
+):
+    return annotate(
+        annotation_mode=NamedMatmulAnnotationMode(
+            config=NamedMatmulAnnotationMode.NamedConfig(
+                name=name,
+                enable_fwd=enable_fwd,
+                enable_bwd=enable_bwd,
+            ),
+        ),
+    )
