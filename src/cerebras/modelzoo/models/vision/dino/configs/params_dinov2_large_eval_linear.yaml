@@ -11,6 +11,11 @@
 
 trainer:
   init:
+    backend:
+      backend_type: CSX
+      cluster_config:
+        num_csx: 1
+        num_workers_per_csx: 2
     model:
       name: vision_transformer
       num_classes: 1000
