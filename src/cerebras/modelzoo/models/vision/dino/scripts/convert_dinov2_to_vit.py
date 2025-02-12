@@ -188,6 +188,7 @@ def convert_dinov2_teacher_config_to_vit_classification_config(
     new_cfg = {
         "trainer": {
             "init": {
+                "backend": dino_cfg["trainer"]["init"].get("backend"),
                 "model": model_cfg,
                 "optimizer": {
                     "SGD": {
@@ -342,7 +343,13 @@ def main() -> None:
         required=True,
         help="Path to the dataset directory for the new config.",
     )
-
+    parser.add_argument(
+        "--num_classes",
+        type=int,
+        required=False,
+        default=1000,
+        help="Number of classes in classification.",
+    )
     args = parser.parse_args()
 
     # -------------------------------------------------------------------------
@@ -361,7 +368,7 @@ def main() -> None:
             old_sd = old_sd["model"]
 
         # Convert and save
-        new_sd = convert_dinov2_to_vit(old_sd)
+        new_sd = convert_dinov2_to_vit(old_sd, num_classes=args.num_classes)
         final_out = {"model": new_sd}
         cstorch.save(final_out, args.output_ckpt)
         logger.info(f"Saved converted checkpoint to {args.output_ckpt}")
@@ -380,6 +387,7 @@ def main() -> None:
         new_config = convert_dinov2_teacher_config_to_vit_classification_config(
             dino_cfg,
             args.dataset_path,
+            num_classes=args.num_classes,
         )
 
         with open(args.output_config, "w") as f:
