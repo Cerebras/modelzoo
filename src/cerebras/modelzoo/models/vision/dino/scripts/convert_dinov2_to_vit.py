@@ -350,7 +350,6 @@ def main() -> None:
         default=1000,
         help="Number of classes in classification.",
     )
-
     args = parser.parse_args()
 
     # -------------------------------------------------------------------------
