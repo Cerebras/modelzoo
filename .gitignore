@@ -1,0 +1,8 @@
+# Byte-compiled files
+__pycache__/
+
+# Python compiled objects
+*.pyc
+
+# VS Code stuff
+/.vscode
