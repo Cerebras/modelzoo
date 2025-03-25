@@ -330,6 +330,18 @@ class ViTModelConfig(ModelConfig):
 
     image_layer_idx: Optional[int] = None
 
+    layerscale_value: Optional[float] = None
+
+    stochastic_depth_drop_prob: float = 0.0
+
+    stochastic_depth_drop_prob_schedule: Literal["linear", "constant"] = (
+        "linear"
+    )
+
+    stochastic_depth_mode: str = "batch"
+
+    use_masked_patches: Optional[bool] = False
+
     mixed_precision: Optional[Any] = Field(default=None, deprecated=True)
     fp16_type: Optional[Any] = Field(default=None, deprecated=True)
 
@@ -398,6 +410,7 @@ class ViTModel(nn.Module):
             use_post_embed_layer_norm=config.use_post_embed_layer_norm,
             use_embed_proj_bias=config.use_embed_proj_bias,
             interpolate_position_embedding=config.interpolate_position_embedding,
+            use_masked_patches=config.use_masked_patches,
         )
 
         self.encoder = ViTEncoder(
@@ -430,6 +443,10 @@ class ViTModel(nn.Module):
             pooler_initializer=config.pooler_initializer,
             norm_first=config.norm_first,
             use_encoder_pooler_layer=config.use_encoder_pooler_layer,
+            layerscale_value=config.layerscale_value,
+            stochastic_depth_drop_prob=config.stochastic_depth_drop_prob,
+            stochastic_depth_drop_prob_schedule=config.stochastic_depth_drop_prob_schedule,
+            stochastic_depth_mode=config.stochastic_depth_mode,
         )
 
     def reset_parameters(self):

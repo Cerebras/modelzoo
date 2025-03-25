@@ -39,12 +39,20 @@ from cerebras.modelzoo.models.vision.generic_image_encoders.base.BaseSSLImageTra
 
 class MultiBlockMaskedContextImageTransformConfig(BaseSSLImageTransformConfig):
     name: Literal["MultiBlockMaskedContextImageTransform"]
+    "Name of the data transform. Must be set to `MultiBlockMaskedContextImageTransform`."
 
     image_size: Union[int, Tuple[int, int]] = ...  # (H, W)
+    "Size of the input image. If a single integer is provided, the image is assumed to be square."
+
     transform: Optional[List[dict]] = None
+    "Optional list of sub-transforms to apply to the image."
+
     patch_size: Tuple[int, int] = [16, 16]
+    "Patch size for the image."
+
     # Encoder
     num_encoder_masks: int = 1
+    "How many encoder masks to use."
     encoder_mask_scale: Tuple[float, float] = [0.2, 0.8]
     encoder_aspect_ratio: Tuple[float, float] = [1.0, 1.0]
     # Predictor

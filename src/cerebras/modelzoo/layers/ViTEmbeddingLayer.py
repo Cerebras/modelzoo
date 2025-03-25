@@ -159,7 +159,7 @@ class ViTEmbeddingLayer(nn.Module):
                 self.position_embeddings.weight.device
             )
             self.register_buffer(
-                "interpolation_matrix", interpolation_matrix, persistent=False
+                "interpolation_matrix", interpolation_matrix, persistent=True
             )
         else:
             self.interpolation_matrix = None

@@ -30,9 +30,13 @@ from cerebras.modelzoo.models.vision.generic_image_encoders.transforms.MaskedPat
 
 class Dinov2TransformConfig(BaseSSLImageTransformConfig):
     name: Literal["Dinov2Transform"]
+    "Name of the data transform. Must be set to `Dinov2Transform`."
 
     multi_crop_transform: ImageRandomMultiCropTransformConfig = ...
+    "Configuration for the image transformation. See `ImageRandomMultiCropTransformConfig` for more details."
+
     masked_patch_transform: MaskedPatchTransformConfig = ...
+    "Configuration for the masked patch transformation. See `MaskedPatchTransformConfig` for more details."
 
     mixed_precision: Optional[Any] = Field(None, deprecated=True)
 

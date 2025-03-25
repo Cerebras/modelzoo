@@ -22,6 +22,7 @@ from cerebras.modelzoo.models.vision.vision_transformer.ViTModel import (
 
 class MultiImageViTModelConfig(ViTModelConfig):
     name: Literal["MultiImageViTModel"]
+    "Name of the model. Must be set to `MultiImageViTModel`."
 
     @property
     def __model_cls__(self):

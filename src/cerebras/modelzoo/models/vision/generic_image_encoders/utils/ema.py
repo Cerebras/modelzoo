@@ -50,6 +50,8 @@ class EMAWrapper:
         self.src_model = src_model  # nn.Module
         self.tgt_model = tgt_model  # nn.Module
 
+        self.scheduler = scheduler  # torch.Tensor
+
     def apply_ema(self, step):
         # tgt_model = alpha * tgt_model + (1- alpha) * src_model
         # Do not apply EMA at initialization

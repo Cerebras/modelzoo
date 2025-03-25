@@ -18,6 +18,7 @@ import torch
 from pydantic import Field
 from torch.nn import CrossEntropyLoss
 
+import cerebras.pytorch as cstorch
 from cerebras.modelzoo.models.vision.vision_transformer.ViTClassificationModel import (
     ViTClassificationModel,
     ViTClassificationModelConfig,
@@ -70,10 +71,15 @@ class ViTClassificationWrapperModel(torch.nn.Module):
             eval_labels = labels.clone()
             eval_preds = logits.argmax(-1).int()
             # eval/accuracy_cls
+            metric_dtype = (
+                torch.float32
+                if cstorch.amp.is_cbfloat16_tensor(logits)
+                else logits.dtype
+            )
             self.accuracy_metric_cls(
                 labels=eval_labels,
                 predictions=eval_preds,
-                dtype=logits.dtype,
+                dtype=metric_dtype,
             )
 
         return total_loss

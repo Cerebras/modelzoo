@@ -12,12 +12,13 @@ setup:
     processes: 1
 
 processing:
-    huggingface_tokenizer: "baseten/Meta-Llama-3-tokenizer"
+    custom_tokenizer: cerebras.modelzoo.data_preparation.data_preprocessing.custom_tokenizer_example.CustomLlama3Tokenizer:CustomLlama3Tokenizer
+    tokenizer_params:
+        pretrained_model_name_or_path: "baseten/Meta-Llama-3-tokenizer"
     write_in_batch: True
     read_hook: "cerebras.modelzoo.data_preparation.data_preprocessing.hooks:text_read_hook"
     read_hook_kwargs:
-        data_keys:
-            text_key: "text"
-
-dataset:
+        text_key: "text"
+    max_seq_length: 2048
     use_ftfy: True
+    

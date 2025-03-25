@@ -23,6 +23,7 @@ import torch.nn as nn
 from torch import Tensor
 from torch.nn import Dropout, LayerNorm
 
+import cerebras.pytorch as cstorch
 from cerebras.modelzoo.layers.AttentionHelper import get_attention_module
 from cerebras.modelzoo.layers.FeedForwardNetwork import (
     FeedForwardNetwork,
@@ -222,6 +223,9 @@ class TransformerEncoderLayer(nn.Module):
 
     def __reset_parameters(self):
         self.self_attn.reset_parameters()
+        if self.layerscale_value is not None:
+            self.layer_scale1.data.fill_(self.layerscale_value)
+            self.layer_scale2.data.fill_(self.layerscale_value)
         self.ffn.reset_parameters()
         if hasattr(self.norm1, 'bias') and hasattr(self.norm1.bias, "data"):
             self.norm1.bias.data.zero_()
@@ -311,6 +315,9 @@ class TransformerEncoderLayer(nn.Module):
             **extra_args,
         )
         x = self.dropout1(x)
+        if self.layerscale_value is not None:
+            x = self.layer_scale1.to(cstorch.amp.get_half_dtype()) * x
+        x = self.drop_path(x)
         return x
 
     # ffn block
@@ -319,4 +326,7 @@ class TransformerEncoderLayer(nn.Module):
         x: Tensor,
     ) -> Tensor:
         x = self.ffn(x)
+        if self.layerscale_value is not None:
+            x = self.layer_scale2.to(cstorch.amp.get_half_dtype()) * x
+        x = self.drop_path(x)
         return x

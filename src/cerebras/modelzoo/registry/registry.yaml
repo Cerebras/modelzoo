@@ -152,6 +152,11 @@ models:
   data_processor_paths:
   - cerebras.modelzoo.models.vision.generic_image_encoders.base.BaseImageDataProcessor.BaseImageDataProcessor
 
+- name: dino
+  path: cerebras.modelzoo.models.vision.dino.model.DinoModel
+  data_processor_paths:
+  - cerebras.modelzoo.models.vision.dino.DinoImageDataProcessor.DinoImageDataProcessor
+
 - name: vision_transformer
   path: cerebras.modelzoo.models.vision.vision_transformer.model.ViTClassificationWrapperModel
   data_processor_paths:

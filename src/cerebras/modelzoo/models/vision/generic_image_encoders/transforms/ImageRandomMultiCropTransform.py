@@ -33,33 +33,33 @@ from cerebras.modelzoo.models.vision.generic_image_encoders.base.BaseSSLImageTra
 
 class ImageRandomMultiCropTransformConfig(BaseSSLImageTransformConfig):
     name: Literal["ImageRandomMultiCropTransform"]
+    "Name of the data transform. Must be set to `ImageRandomMultiCropTransform`."
 
     global_num_crops: int = ...
-    "Number of global view crops of image"
+    "Number of global crops of image."
 
     global_image_size: int = ...
-    "Image size of global views"
+    "Image size of global crops."
 
     global_crops_scale: Tuple[float, float] = ...
     """
-    crop_scale value for RandomResizedCropTRansform to generate global views
-    Specifies the lower and upper bounds for the random area of the crop, 
-    before resizing. 
-    The scale is defined with respect to the area of the original image.
+    The scale (between 0 and 1) of the global crops with respect to the original image size.
+    The two values represent the scales for the width and height of the crop.
     """
 
     local_num_crops: int = ...
-    "Number of local view crops of image"
+    "Number of local crops of image."
 
     local_image_size: int = ...
-    "Image size of local views"
+    """
+    Image size of local crops.
+    Local crops are always square, so this value is defined by a single integer.
+    """
 
     local_crops_scale: Tuple[float, float] = ...
     """
-    crop_scale value for RandomResizedCropTRansform to generate local views
-    Specifies the lower and upper bounds for the random area of the crop, 
-    before resizing. 
-    The scale is defined with respect to the area of the original image.
+    The scale (between 0 and 1) of the local crops with respect to the original image size.
+    The two values represent the scales for the width and height of the crop.
     """
 
     interpolation_type: Literal[
@@ -71,10 +71,14 @@ class ImageRandomMultiCropTransformConfig(BaseSSLImageTransformConfig):
         "hamming",
         "lanczos",
     ] = "bicubic"  # default from DinoV2 repo
-    "Interpolation for RandomResizedCropTransform to generate global and local views"
+    """
+    Method of interpolation for RandomResizedCropTransform to generate global and local views.
+
+    Default used in DinoV2 is bicubic.
+    """
 
     multicrop_transform_list: Optional[List[dict]] = None
-    "Optional set of Transforms to apply on top of local and global crops"
+    "Optional set of additional transforms to apply on top of local and global crops."
 
     mixed_precision: Optional[Any] = Field(None, deprecated=True)
 

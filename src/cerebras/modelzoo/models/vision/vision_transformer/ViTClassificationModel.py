@@ -12,12 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Literal
+from typing import List, Literal, Optional
 
+import torch
 from annotated_types import Ge, Le
 from torch import nn
 from typing_extensions import Annotated
 
+from cerebras.modelzoo.models.multimodal.multimodal_utils import freeze_modules
 from cerebras.modelzoo.models.nlp.bert.bert_pretrain_models import (
     BertClassifierHead,
 )
@@ -40,6 +42,9 @@ class ViTClassificationModelConfig(ViTModelConfig):
     use_bias_in_output: bool = True
 
     use_dinov2_classifier: bool = False
+
+    freeze: Optional[List[str]] = None
+    "List of regex strings used to freeze specific layers."
 
 
 class ViTClassificationModel(nn.Module):
@@ -67,12 +72,22 @@ class ViTClassificationModel(nn.Module):
             kernel_initializer=config.default_initializer,
         )
 
+        # Freeze specified parameters
+        if config.freeze is not None:
+            freeze_modules(self, config.freeze)
+
     def reset_parameters(self):
         self.vit_model.reset_parameters()
         self.classifier.reset_parameters()
 
     def forward(self, input_image):
         hidden_states, pooled_states = self.vit_model(input_image)
+        if self.use_dinov2_classifier:
+            cls_tokens = hidden_states[:, 0]
+            patch_tokens = hidden_states[:, 1:]
+            pooled_states = torch.cat(
+                [cls_tokens, patch_tokens.mean(dim=1)], dim=1
+            )
         logits = self.classifier(pooled_states)
         return logits
 

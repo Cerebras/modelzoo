@@ -58,7 +58,7 @@ from cerebras.modelzoo.trainer import summarize_scalar
 
 class OutputList:
     def __init__(self, input_list):
-        assert self.is_all_lists(input_list), f"Inconsistent input list"
+        assert self.is_all_lists(input_list), "Inconsistent input list"
         self._output_list = input_list
 
     @property
@@ -69,7 +69,7 @@ class OutputList:
     def output_list(self, val):
         """Sets the value for outermost list."""
         input_list, index = val
-        assert isinstance(index, int), f"index should be integer value"
+        assert isinstance(index, int), "index should be integer value"
         self.output_list[index] = input_list
 
     def __call__(self, *index):
@@ -185,18 +185,19 @@ class Loss(MultiForwardModelConfig):
 
 class GenericImageEncodersModelConfig(ModelConfig):
     name: Literal["generic_image_encoders"]
+    "Name of the model. Must be set to `generic_image_encoders`."
 
     image_model_trunks: List[ImageModelTrunk] = ...
-    "List of image_model_trunks"
+    "List of image_model_trunks."
 
     heads: List[HeadModel] = ...
-    "List of heads"
+    "List of heads."
 
     losses: List[Loss] = ...
-    "List of losses"
+    "List of losses."
 
     copy_init_weights: Optional[List[CopyWeightsConfig]] = None
-    "List of params that control weight initialization. Copy weights from source to target model parameters"
+    "List of params that control weight initialization. Copy weights from source to target model parameters."
 
     ema: Optional[List[EMAConfig]] = None
     "List of params for Exponential Moving Average of weights."
