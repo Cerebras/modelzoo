@@ -123,6 +123,12 @@ class Logging(CoreCallback, ClassLogger):
             level = get_level_name("error")
 
         # Remove any handlers that may have been inadvertently set before
+        # keep any handlers marked with the `is_sticky` attribute
+        handlers.extend(
+            handler
+            for handler in logging.getLogger().handlers
+            if getattr(handler, "is_sticky", False)
+        )
         logging.getLogger().handlers.clear()
         logging.basicConfig(level=level, handlers=handlers)
 
@@ -217,7 +223,7 @@ class Logging(CoreCallback, ClassLogger):
                 trainer.activation_steps = self.log_steps
 
             trainer.activation_steps = min(
-                trainer.activation_steps, loop.train_steps
+                trainer.activation_steps, trainer.schedule.train_steps
             )
         else:
             trainer.activation_steps = None

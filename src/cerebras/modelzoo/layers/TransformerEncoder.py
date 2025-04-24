@@ -16,7 +16,7 @@
 Adapted from https://github.com/pytorch/pytorch/blob/master/torch/nn/modules/transformer.py
 """
 
-from typing import Optional
+from typing import List, Optional
 
 import torch.nn as nn
 from torch import Tensor
@@ -81,6 +81,7 @@ class TransformerEncoder(nn.Module):
         ] = None,
         self_attn_position_bias: Optional[Tensor] = None,
         extract_layer_idx: Optional[int] = None,
+        intermediate_layers_indices: Optional[List[int]] = None,
         **extra_args,
     ) -> Tensor:
         r"""Pass the input through the encoder layers in turn.
@@ -100,6 +101,7 @@ class TransformerEncoder(nn.Module):
                 and return outputs from encoder_block_3.
                 If `extract_layer_idx` = None and `norm` != None, then
                 the output returned would be encoder_block_{self.num_layers-1} -> norm -> output (return)
+            intermediate_layers_indices: list of layer indices in range [0, self.num_layers) (zero-indexed) to return
 
         Shape:
             see the docs in Transformer class.
@@ -115,7 +117,14 @@ class TransformerEncoder(nn.Module):
 
         output = src
 
+        intermediate_layers = []
         for i in range(extract_layer_idx + 1):
+            if (
+                intermediate_layers_indices is not None
+                and i in intermediate_layers_indices
+            ):
+                intermediate_layers.append(output)
+
             mod = self.layers[i]
             output = mod(
                 output,
@@ -129,4 +138,7 @@ class TransformerEncoder(nn.Module):
         if self.norm is not None and _is_extract_idx_was_none:
             output = self.norm(output)
 
-        return output
+        if intermediate_layers_indices is not None:
+            return output, intermediate_layers
+        else:
+            return output

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Any, List, Literal, Optional, Union
+from typing import List, Literal, Optional, Union
 
 import torch
 import torch.nn as nn
@@ -44,24 +44,29 @@ MultimodalTextModel = Annotated[
 
 class MultimodalDecoderModelConfig(ModelConfig):
     name: Literal["multimodal_simple"]
+    "The name of the model. Must be set to `multimodal_simple`."
 
     freeze: Optional[List[str]] = None
     """
-    Allows us to freeze parts of the model through just yaml file manipulation.
-    Filter to select which parameters are frozen.
-    Note that regex patterns should be specified as single quotes in the yaml for escape codes
+    List of regex patterns that match layers of the model to be frozen.
+    Frozen layers will not have their weights updated during training.
+    Note that regex patterns should be specified as single quotes in the yaml for escape codes.
+    Perl style regex expected and are parsed by `re` python package.
+    Ex: freeze: ['^image_model.image_model_list', '^text_model']
+    freezes all parameters whose names start with 
+    `image_model.image_model_list` and `text_model`.
     """
 
     image_model_list: MultimodalImageModelList = ...
-    "Allows the model to instantiate a list of image models that run same image through multiple image encoders"
+    "Allows the model to instantiate a list of image models that run same image through multiple image encoders."
 
     text_model: MultimodalTextModel = ...
-    "Decoder-only LLM model that processes all the modalities together through the backbone and produces output"
+    "Decoder-only LLM model that processes all the modalities together through the backbone and produces output."
 
     output_list: Optional[
         List[Literal["image", "image_encoder_out", "projector_out"]]
     ] = None
-    "List of intermediate values that should be returned. Options include: image, image_encoder_out, projector_out. Model always returns output of VLLMModel"
+    "List of intermediate values that should be returned. Options include: image, image_encoder_out, projector_out. Model always returns output of VLLMModel."
 
     loss_scaling: Literal["batch_size", "num_tokens"] = "num_tokens"
     """The scaling type used to calculate the loss. Accepts - `batch_size`, `num_tokens`.
@@ -72,9 +77,6 @@ class MultimodalDecoderModelConfig(ModelConfig):
     """The weight for the loss scaling when `loss_scaling = 'batch_size'`, generally set to
     '1/max_sequence_length`.
     """
-
-    mixed_precision: Optional[Any] = Field(default=None, deprecated=True)
-    fp16_type: Optional[Any] = Field(default=None, deprecated=True)
 
 
 class MMSimpleModel(nn.Module):

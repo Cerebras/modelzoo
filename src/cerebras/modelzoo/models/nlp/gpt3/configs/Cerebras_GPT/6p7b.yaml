@@ -49,9 +49,6 @@ trainer:
       loss_scaling: batch_size    # needed for gradient accumulation
       loss_weight: 0.00048828125
       use_bias_in_output: false
-      # Cerebras parameters
-      mixed_precision: true
-      fp16_type: bfloat16
     optimizer:
       AdamW:
         betas:

@@ -16,6 +16,7 @@
 Adapted from https://github.com/pytorch/pytorch/blob/master/torch/nn/modules/transformer.py
 """
 
+import math
 from typing import Callable, Optional, Type, Union
 
 import torch
@@ -80,6 +81,8 @@ class TransformerEncoderLayer(nn.Module):
         use_ff_layer2_dropout = If ``True``, dropout will be enabled after the second feed forward layer. Default: True
         ffn_dropout_rate: Controls dropout rate of FF's first layer. If None, defaults to dropout.
         layerscale_value: initial value to use for LayerScale in vision transformers. Defaults to None.
+        gate_attention: If ``True``, the self attention output gated via the tanh of a learned parameter. Default: ``False``.
+        gate_ffn: If ``True``, the feedforward output is gated via the tanh of a learned parameter. Default: ``False``.
         stochastic_depth_drop_prob: drop probability for stochastic depth per sample (when applied in main path of residual blocks.
         stochastic_depth_mode: should be in ["batch", "row"].
 
@@ -127,6 +130,8 @@ class TransformerEncoderLayer(nn.Module):
         use_ff_layer2_dropout: bool = True,
         ffn_dropout_rate: Optional[float] = None,
         layerscale_value: Optional[float] = None,
+        gate_attention: bool = False,
+        gate_ffn: bool = False,
         stochastic_depth_drop_prob: Optional[float] = 0.0,
         stochastic_depth_mode: Optional[str] = "batch",
     ) -> None:
@@ -216,6 +221,13 @@ class TransformerEncoderLayer(nn.Module):
         )
         self.dropout1 = Dropout(dropout)
 
+        self.gate_attention = gate_attention
+        self.gate_ffn = gate_ffn
+        if self.gate_attention:
+            self.gate_attn_weight = nn.Parameter(torch.ones(1) * math.pi / 4)
+        if self.gate_ffn:
+            self.gate_ffn_weight = nn.Parameter(torch.ones(1) * math.pi / 4)
+
         self.__reset_parameters()
 
     def reset_parameters(self):
@@ -226,6 +238,13 @@ class TransformerEncoderLayer(nn.Module):
         if self.layerscale_value is not None:
             self.layer_scale1.data.fill_(self.layerscale_value)
             self.layer_scale2.data.fill_(self.layerscale_value)
+
+        # initialized following the llama3.2 implementation: https://github.com/huggingface/transformers/blob/e1b150862e66e16acf951edfa13206ffcd1032be/src/transformers/models/mllama/modeling_mllama.py#L345
+        if self.gate_attention:
+            self.gate_attn_weight.data.fill_(math.pi / 4)
+        if self.gate_ffn:
+            self.gate_ffn_weight.data.fill_(math.pi / 4)
+
         self.ffn.reset_parameters()
         if hasattr(self.norm1, 'bias') and hasattr(self.norm1.bias, "data"):
             self.norm1.bias.data.zero_()
@@ -315,6 +334,13 @@ class TransformerEncoderLayer(nn.Module):
             **extra_args,
         )
         x = self.dropout1(x)
+        if self.gate_attention:
+            x = (
+                self.gate_attn_weight.to(cstorch.amp.get_half_dtype())
+                .broadcast_to(x.shape)
+                .tanh()
+                * x
+            )
         if self.layerscale_value is not None:
             x = self.layer_scale1.to(cstorch.amp.get_half_dtype()) * x
         x = self.drop_path(x)
@@ -326,6 +352,13 @@ class TransformerEncoderLayer(nn.Module):
         x: Tensor,
     ) -> Tensor:
         x = self.ffn(x)
+        if self.gate_ffn:
+            x = (
+                self.gate_ffn_weight.to(cstorch.amp.get_half_dtype())
+                .broadcast_to(x.shape)
+                .tanh()
+                * x
+            )
         if self.layerscale_value is not None:
             x = self.layer_scale2.to(cstorch.amp.get_half_dtype()) * x
         x = self.drop_path(x)

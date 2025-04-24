@@ -66,11 +66,7 @@ class Converter_GPTJ_Attention_HF_CS17(BaseCheckpointConverter_HF_CS):
                     EquivalentSubkey("out_proj", "proj_output_dense_layer"),
                     r"\.(?:weight|bias)",
                 ],
-                # This is a hacky way to initialize bias and masked_bias when converting from CS to
-                # Huggingface. However, based on huggingface implementation this is unavoidable in
-                # order to initialize attn.bias and attn.masked_bias, which we initiate when we
-                # capture the `out_proj` key.
-                action=self.replace_or_fill_masked_bias,
+                action=self.replaceKey,
             ),
         ]
 
@@ -81,32 +77,6 @@ class Converter_GPTJ_Attention_HF_CS17(BaseCheckpointConverter_HF_CS):
     @staticmethod
     def get_config_converter_class() -> BaseConfigConverter:
         return None
-
-    def replace_or_fill_masked_bias(
-        self,
-        old_key,
-        new_key,
-        old_state_dict,
-        new_state_dict,
-        from_index,
-        action_fn_args,
-    ):
-        # copy between `out_proj` and `proj_output_dense_layer`
-        new_state_dict[new_key] = old_state_dict[old_key]
-
-        # take care of bias and masked_bias
-        if from_index == 1:
-            max_positions = action_fn_args["configs"][1]["model"][
-                "max_position_embeddings"
-            ]
-            bias_key = re.sub(r"out_proj\.weight", "bias", new_key)
-            masked_bias_key = re.sub(
-                r"out_proj\.weight", "masked_bias", new_key
-            )
-            new_state_dict[bias_key] = torch.tril(
-                torch.ones((max_positions, max_positions), dtype=torch.uint8)
-            ).view(1, 1, max_positions, max_positions)
-            new_state_dict[masked_bias_key] = torch.tensor(-1e9)
 
 
 class Converter_GPTJ_Headless_HF_CS17(BaseCheckpointConverter_HF_CS):
@@ -800,7 +770,7 @@ class Converter_GPTJ_Headless_HF_CS23(Converter_GPTJ_Headless_HF_CS20):
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.3", "cs-2.4"),
+            FormatVersions("cs-2.3", "cs-2.4", "cs-2.5"),
         )
 
 
@@ -816,7 +786,7 @@ class Converter_GPTJ_LMHeadModel_HF_CS23(Converter_GPTJ_LMHeadModel_HF_CS20):
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.3", "cs-2.4"),
+            FormatVersions("cs-2.3", "cs-2.4", "cs-2.5"),
         )
 
 
@@ -828,7 +798,7 @@ class ConfigConverter_GPTJModel_HF_CS23(ConfigConverter_GPTJModel_HF_CS20):
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.3", "cs-2.4"),
+            FormatVersions("cs-2.3", "cs-2.4", "cs-2.5"),
         )
 
 

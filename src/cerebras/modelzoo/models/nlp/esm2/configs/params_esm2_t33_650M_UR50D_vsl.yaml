@@ -28,7 +28,6 @@ trainer:
       layer_norm_epsilon: 1.0e-05
       mask_token_id: 32
       max_position_embeddings: 1026
-      mixed_precision: true
       mlm_nonlinearity: gelu
       mlm_loss_weight: 0.0078  # = 1/(0.15/4 * 1026) * 0.3. The data processor
       # masks 15% /4 of the sequence on average.
@@ -41,7 +40,6 @@ trainer:
       share_embedding_weights: true
       token_dropout: true
       use_final_layer_norm: true
-      fp16_type: cbfloat16
       vocab_size: 33
     optimizer:
       Adam:

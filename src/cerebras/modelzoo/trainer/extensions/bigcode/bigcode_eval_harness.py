@@ -46,8 +46,8 @@ from cerebras.modelzoo.trainer.callbacks import (
 from cerebras.modelzoo.trainer.callbacks.flags import _ScopedFlags
 from cerebras.modelzoo.trainer.extensions.eval_harness_adapter import (
     CSEvalHarnessAdapter,
-    EvalHarnessProgress,
 )
+from cerebras.modelzoo.trainer.loggers import ProgressLogger
 
 
 @dataclass
@@ -632,8 +632,6 @@ class GenerateTokens(Callback):
         self.top_k = gen_kwargs.get("top_k")
         self.max_tokens = gen_kwargs.get("max_tokens")
 
-        self.progress = EvalHarnessProgress("BigCode Generative Eval")
-
     def on_bigcode_eval_harness_start(
         self, trainer, model, val_dataloader, loop
     ):
@@ -660,9 +658,12 @@ class GenerateTokens(Callback):
 
     def on_bigcode_eval_harness_batch_end(
         self, trainer, model, outputs, batch, batch_idx
-    ):
+    ):  # pylint: disable=no-self-use
         """Runs after every batch is processed."""
-        self.progress.print(trainer, batch_idx)
+        if progress := trainer.get_callback(ProgressLogger):
+            progress.print_validation_progress(
+                trainer, batch_idx, "BigCode Generative Eval"
+            )
 
     def on_before_forward(self, trainer, model, batch, args, kwargs):
         kwargs["autoregressive"] = True
@@ -696,10 +697,16 @@ class GenerateTokens(Callback):
             self.gen_token_dict[sample_idx].append(gen_tokens)
             self.sample_idx += 1
 
+    def on_save_trainer_state(self, trainer, state_dict):
+        pass
+
+    def on_load_trainer_state(self, trainer, state_dict):
+        pass
+
 
 class BigCodeEvalHarness(ValidationCallback):
     """
-    ValidationCallback class to run BigCode's Evaluation Harness.
+    Callback class to run BigCode's Evaluation Harness.
     """
 
     id = 0
@@ -765,7 +772,7 @@ class BigCodeEvalHarness(ValidationCallback):
         # Removes annoying logs relating to process forking
         appliance_environ["TOKENIZERS_PARALLELISM"] = "false"
 
-        self.every_n_vals = every_n_vals
+        self._every_n_vals = every_n_vals
 
         self.scoped_flags = ScopedBigCodeEvalHarnessFlags(**(flags or {}))
 
@@ -775,7 +782,7 @@ class BigCodeEvalHarness(ValidationCallback):
         if name_scope is None:
             name_scope = f"bigcode_{self._id}"
 
-        self.name_scope = name_scope
+        self._name_scope = name_scope
 
     def run(self, trainer):
         """Run BigCode Eval Harness.
@@ -816,12 +823,30 @@ class BigCodeEvalHarness(ValidationCallback):
         with self.scoped_flags:
             self.bceh_runner.evaluate(trainer=trainer, evaluator=bc_evaluator)
 
+    @property
+    def name_scope(self):
+        return self._name_scope
+
+    @property
+    def every_n_vals(self):
+        return self._every_n_vals
+
+    @property
+    def num_validate_loops(self):
+        return len(self.bceh_runner.task_names)
+
     def run_validation(self, trainer, loop_idx, is_last):
         if not is_last and (loop_idx + 1) % self.every_n_vals != 0:
             return
 
         with trainer.name_scope(self.name_scope):
             self.run(trainer)
+
+    def on_save_trainer_state(self, trainer, state_dict):
+        pass
+
+    def on_load_trainer_state(self, trainer, state_dict):
+        pass
 
 
 class ScopedBigCodeEvalHarnessFlags(_ScopedFlags):

@@ -42,3 +42,9 @@ class ModelEvalMetrics(Callback):
             for name, metric in metrics.items():
                 trainer.logger.info(f"  - {name} = {float(metric)}")
             trainer.log_metrics(**metrics)
+
+    def on_save_trainer_state(self, trainer, state_dict):
+        pass
+
+    def on_load_trainer_state(self, trainer, state_dict):
+        pass

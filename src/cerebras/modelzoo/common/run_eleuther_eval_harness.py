@@ -27,23 +27,9 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "../../.."))
 # isort: on
 from cerebras.modelzoo.common.utils.run.cli_parser import get_params_from_args
 from cerebras.modelzoo.common.utils.run.utils import DeviceType
-from cerebras.modelzoo.trainer.extensions.eleuther.eval_harness_utils import (
-    SUPPORTED_MODELS,
-)
-from cerebras.modelzoo.trainer.utils import (
-    configure_trainer_from_config,
-    convert_legacy_params_to_trainer_params,
-    inject_cli_args_to_trainer_params,
-    is_legacy_params,
-)
-from cerebras.modelzoo.trainer.validate import validate_trainer_params
 
 
-def eeh_parser():
-    parser = argparse.ArgumentParser(
-        "Script for running Eleuther Eval Harness for GPT style models",
-        add_help=False,
-    )
+def add_eeh_args(parser):
     optional_arguments = parser.add_argument_group(
         "Eleuther Eval Harness Arguments"
     )
@@ -55,7 +41,7 @@ def eeh_parser():
         default=None,
         type=str,
         metavar="task1,task2",
-        help="To get full list of tasks, use the command lm-eval --tasks list",
+        help="Comma-separated list of task names or task groupings to evaluate on.\nTo get full list of tasks, use one of the commands `lm-eval --tasks {{list_groups,list_subtasks,list_tags,list}}` to list out all available names for task groupings; only (sub)tasks; tags; or all of the above",
     )
     optional_arguments.add_argument(
         "--num_fewshot",
@@ -175,6 +161,12 @@ def eeh_parser():
     )
     # NONGREEDY SAMPLING ARGS FOR GENERATIVE TASKS
     optional_arguments.add_argument(
+        "--max_tokens",
+        type=int,
+        default=None,
+        help="Maximum number of tokens to generate.",
+    )
+    optional_arguments.add_argument(
         "--temperature",
         type=float,
         default=None,
@@ -203,43 +195,40 @@ def eeh_parser():
         ),
     )
 
+
+def eeh_parser():
+    parser = argparse.ArgumentParser(
+        "Script for running Eleuther Eval Harness for GPT style models",
+        add_help=False,
+    )
+
+    add_eeh_args(parser)
+
     return parser
 
 
-def run_eval_harness():
-    """Main run script."""
-    parser_fn = lambda: [eeh_parser()]
-    parser_args = {
-        "parser_epilog": (
-            "Please run 'python run_eleuther_eval_harness.py CSX -h'. \n \n"
-            "Here is an example command for running on CSX: \n \n"
-            "    python run_eleuther_eval_harness.py CSX --params /path/to/params --checkpoint_path "
-            "/path/to/checkpoint --tasks 'hellaswag,winogrande' --num_fewshot 0 \n \n"
-            "Note that Eval Harness is currently only supported for device CSX"
-        ),
-        "csx_parser_epilog": (
-            "To see a complete list of all available arguments, \n"
-            "please run 'python run_eleuther_eval_harness.py CSX -h'. \n\n"
-            "Here is an example command for running with CSX: \n \n"
-            "    python run_eleuther_eval_harness.py CSX --params /path/to/params "
-            "--checkpoint_path /path/to/checkpoint --tasks 'hellaswag,winogrande' --num_fewshot 0 "
-            "\n \nEval Harness resides in the Cerebras Model Zoo. Please specify --python_paths and "
-            "\n --mount_dirs here or in your params.yaml under the 'runconfig' section with \n"
-            "the path to the directory in which the Cerebras Model Zoo resides. \n"
-        ),
-        "modes": ["eval"],
-    }
-
-    # Parse args
-    params = get_params_from_args(
-        argv=sys.argv[1:],
-        extra_args_parser_fn=parser_fn,
-        device_type=DeviceType.CSX,
-        **parser_args,
+def run_lm_eval(params, parser):
+    from cerebras.modelzoo.trainer.extensions.eleuther.eval_harness_utils import (
+        SUPPORTED_MODELS,
     )
-    runconfig_params = params["runconfig"]
+    from cerebras.modelzoo.trainer.extensions.eleuther.lm_eval_harness import (
+        EleutherEvalHarness,
+    )
+    from cerebras.modelzoo.trainer.utils import (
+        configure_trainer_from_config,
+        convert_legacy_params_to_trainer_params,
+        inject_cli_args_to_trainer_params,
+        is_legacy_params,
+    )
+    from cerebras.modelzoo.trainer.validate import validate_trainer_params
 
-    parser = parser_fn()[0]
+    warn(
+        "Running eval harness using a standalone script is deprecated. Please switch to using the ModelZoo CLI. "
+        "See https://training-docs.cerebras.ai/model-zoo/cli-overview for more details."
+    )
+
+    runconfig_params = params.setdefault("runconfig", {})
+
     eeh_args = {}
     other_eeh_args = {}
     for arg in parser._action_groups[0]._actions:
@@ -308,20 +297,14 @@ def run_eval_harness():
             "a single trainer instance, but found a list of trainers."
         )
 
-    # Extract EleutherEvalHarness callbacks from the list of callbacks
-    eeh_callbacks = [
-        callback["EleutherEvalHarness"]
-        for callback in params["trainer"]["init"].get("callbacks", [])
-        if "EleutherEvalHarness" in callback
-    ]
-    if not eeh_callbacks:
-        raise RuntimeError(f"Found no EleutherEvalHarness callback")
+    # Inject CLI overrides to the EEH callbacks
+    for callback in params["trainer"]["init"].get("callbacks", []):
+        if "EleutherEvalHarness" in callback:
+            callback["EleutherEvalHarness"].setdefault("eeh_args", {}).update(
+                (key, value) for key, value in deepcopy(eeh_args).items()
+            )
 
-    for eeh_callback in eeh_callbacks:
-        eeh_callback.setdefault("eeh_args", {}).update(
-            (key, value) for key, value in deepcopy(eeh_args).items()
-        )
-
+    # Create a trainer config
     config = validate_trainer_params(params)[0]
 
     if config.init.model.config.name not in SUPPORTED_MODELS:
@@ -329,20 +312,77 @@ def run_eval_harness():
             f"Eleuther evaluation is not supported for model {config.init.model.config.name}. "
             f"Please choose a valid model name from: {SUPPORTED_MODELS}"
         )
+    if config.validate_all is None:
+        raise ValueError(
+            "To run Eleuther Eval Harness, `validate_all` section of the "
+            "trainer config must be provided. It may be left as an empty "
+            "dictionary or have a `ckpt_paths` key to load from one or "
+            "more checkpoints."
+        )
 
+    # Construct the trainer object
     trainer = configure_trainer_from_config(config, mode="eval_all")
 
-    kwargs = {}
-    if config.validate_all:
-        if config.validate_all.val_dataloaders:
-            logging.warning(
-                f"Found `validate_all.val_dataloaders` specified in the yaml, "
-                f"but no upstream validation will be run for the standalone "
-                f"Eleuther Eval Harness script."
+    # Check that only validation callbacks are of EEH type
+    has_eeh_callback = False
+    for callback in trainer.validation_callbacks:
+        if isinstance(callback, EleutherEvalHarness):
+            has_eeh_callback = True
+        else:
+            raise ValueError(
+                f"Standalone Eleuther Eval Harness script does not support "
+                f"other evaluation harnesses, but found a callback of type "
+                f"{type(callback)} that is a validation callback. Please "
+                f"remove this callback from the list of callbacks or run "
+                f"outside the standalone flow."
             )
-        kwargs = {"ckpt_paths": config.validate_all.ckpt_paths}
+    if not has_eeh_callback:
+        raise ValueError("No EleutherEvalHarness callback found.")
 
-    trainer.validate_all(**kwargs)
+    if config.validate_all.val_dataloaders:
+        logging.warning(
+            f"Found `validate_all.val_dataloaders` specified in the yaml, "
+            f"but no upstream validation will be run for the standalone "
+            f"Eleuther Eval Harness script."
+        )
+
+    # Run validate_all which runs the eval harness callbacks
+    trainer.validate_all(ckpt_paths=config.validate_all.ckpt_paths)
+
+
+def run_eval_harness():
+    """Main run script."""
+    parser_fn = lambda: [eeh_parser()]
+    parser_args = {
+        "parser_epilog": (
+            "Please run 'python run_eleuther_eval_harness.py CSX -h'. \n \n"
+            "Here is an example command for running on CSX: \n \n"
+            "    python run_eleuther_eval_harness.py CSX --params /path/to/params --checkpoint_path "
+            "/path/to/checkpoint --tasks 'hellaswag,winogrande' --num_fewshot 0 \n \n"
+            "Note that Eval Harness is currently only supported for device CSX"
+        ),
+        "csx_parser_epilog": (
+            "To see a complete list of all available arguments, \n"
+            "please run 'python run_eleuther_eval_harness.py CSX -h'. \n\n"
+            "Here is an example command for running with CSX: \n \n"
+            "    python run_eleuther_eval_harness.py CSX --params /path/to/params "
+            "--checkpoint_path /path/to/checkpoint --tasks 'hellaswag,winogrande' --num_fewshot 0 "
+            "\n \nEval Harness resides in the Cerebras Model Zoo. Please specify --python_paths and "
+            "\n --mount_dirs here or in your params.yaml under the 'runconfig' section with \n"
+            "the path to the directory in which the Cerebras Model Zoo resides. \n"
+        ),
+        "modes": ["eval"],
+    }
+
+    # Parse args
+    params = get_params_from_args(
+        argv=sys.argv[1:],
+        extra_args_parser_fn=parser_fn,
+        device_type=DeviceType.CSX,
+        **parser_args,
+    )
+
+    run_lm_eval(params, parser_fn()[0])
 
 
 if __name__ == "__main__":

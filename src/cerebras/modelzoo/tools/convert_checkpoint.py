@@ -22,6 +22,7 @@ import re
 import sys
 import textwrap
 from typing import Optional, Tuple, Union
+from warnings import warn
 
 from packaging.version import parse
 from tabulate import tabulate
@@ -361,7 +362,11 @@ def convert_checkpoint_from_file(
     checkpoint = converter_class.load(checkpoint_file, checkpoint_from_index)
 
     if outputdir is not None and not os.path.exists(outputdir):
-        os.makedirs(outputdir)
+        from cerebras.appliance.storage.h5_storage import H5Writer
+
+        # Only make directory if output dir is a local path
+        if H5Writer.is_valid_path(outputdir):
+            os.makedirs(outputdir)
 
     checkpoint_folder, checkpoint_filename = os.path.split(checkpoint_file)
     new_checkpoint_filename_without_ext = (
@@ -565,153 +570,6 @@ def convert_config(
 TENSOR_CMP_SUPPORTED_OPS = ["equal", "allclose"]
 
 
-def diff_checkpoints_from_file(
-    file_left: str, file_right: str, tensor_comparison_op: str = "equal"
-) -> bool:
-    """
-    Compare two checkpoints (left and right). Returns True if the dicts are the
-    same.
-    """
-    import cerebras.pytorch as cstorch
-
-    file_left_exists, file_right_exists = (
-        os.path.exists(file_left),
-        os.path.exists(file_right),
-    )
-    if not file_left_exists:
-        print("No such file: {}".format(file_left))
-        return False
-    if not file_right_exists:
-        print("No such file: {}".format(file_right))
-        return False
-    if file_left_exists and file_right_exists:
-        import cerebras.pytorch as cstorch
-
-        print("Loading checkpoints...")
-        checkpoint_left = cstorch.load(file_left)
-        checkpoint_right = cstorch.load(file_right)
-        print("Comparing checkpoints...")
-        return diff_checkpoints(
-            checkpoint_left,
-            checkpoint_right,
-            tensor_comparison_op=tensor_comparison_op,
-        )
-
-
-def diff_checkpoints(
-    checkpoint_left: dict,
-    checkpoint_right: dict,
-    tensor_comparison_op: str = "equal",
-) -> bool:
-    """
-    Compare state dictionaries of two checkpoints (left and right). Returns True
-    if the dicts are the same. Tensors can be compared via the "equal" or
-    "allclose" operators. All other types are compared for strict equality.
-    """
-    import torch
-
-    def format_keys(key_path):
-        return ".".join([str(e) for e in key_path])
-
-    def diff_dict(dict_left, dict_right, prefix=[]):
-        different = False
-        keys_in_left_not_right = set(dict_left.keys()) - set(dict_right.keys())
-        if len(keys_in_left_not_right) != 0:
-            print(
-                "The following keys are in the left checkpoint but not right:"
-            )
-            print(
-                [
-                    format_keys(prefix + [missing_key])
-                    for missing_key in keys_in_left_not_right
-                ]
-            )
-            different = True
-        keys_in_right_not_left = set(dict_right.keys()) - set(dict_left.keys())
-        if len(keys_in_right_not_left) != 0:
-            print(
-                "The following keys are in the right checkpoint but not left:"
-            )
-            print(
-                [
-                    format_keys(prefix + [missing_key])
-                    for missing_key in keys_in_right_not_left
-                ]
-            )
-            different = True
-        keys_in_left_and_right = set(dict_left.keys()) & set(dict_right.keys())
-
-        for key in keys_in_left_and_right:
-            full_key_formatted = format_keys(prefix + [key])
-            if isinstance(dict_left[key], dict) and isinstance(
-                dict_right[key], dict
-            ):
-                subdict_is_different = diff_dict(
-                    dict_left[key], dict_right[key], prefix=prefix + [key]
-                )
-                different = different or subdict_is_different
-            elif type(dict_left[key]) != type(dict_right[key]):
-                print(
-                    "{} has type {} in left and type {} in right".format(
-                        full_key_formatted,
-                        type(dict_left[key]),
-                        type(dict_right[key]),
-                    )
-                )
-                different = True
-            elif isinstance(dict_left[key], torch.Tensor):
-                if dict_left[key].shape != dict_right[key].shape:
-                    print(
-                        "{} left tensor has shape {} while right has shape {}".format(
-                            full_key_formatted,
-                            dict_left[key].shape,
-                            dict_right[key].shape,
-                        )
-                    )
-                    different = True
-                elif tensor_comparison_op == "equal":
-                    if not torch.equal(dict_left[key], dict_right[key]):
-                        print(
-                            "{} left tensor is not equal to right".format(
-                                full_key_formatted
-                            )
-                        )
-                        different = True
-                elif tensor_comparison_op == "close":
-                    if not torch.allclose(dict_left[key], dict_right[key]):
-                        print(
-                            "{} left tensor is not close to right".format(
-                                full_key_formatted
-                            )
-                        )
-                        different = True
-            else:
-                if dict_left[key] != dict_right[key]:
-                    print(
-                        "{} is {} in left and {} in right".format(
-                            full_key_formatted, dict_left[key], dict_right[key]
-                        )
-                    )
-                    different = True
-        return different
-
-    assert (
-        tensor_comparison_op in TENSOR_CMP_SUPPORTED_OPS
-    ), "{} is not a supported tensor comparison operation. Please select one of the following: {}".format(
-        tensor_comparison_op, TENSOR_CMP_SUPPORTED_OPS
-    )
-    assert isinstance(
-        checkpoint_left, dict
-    ), "Expecting left checkpoint to be a state dict"
-    assert isinstance(
-        checkpoint_right, dict
-    ), "Expecting right checkpoint to be a state dict"
-    different = diff_dict(checkpoint_left, checkpoint_right)
-    print()
-    print("Checkpoints {}".format("differ" if different else "are the same "))
-    return not different
-
-
 class CheckpointConverterCLI(object):
     def __init__(self):
         parser = argparse.ArgumentParser(
@@ -725,9 +583,18 @@ The following commands are supported:
    diff             Compare two checkpoints
 ''',
         )
-        CheckpointConverterCLI.configure_parser(parser)
+        subparsers = parser.add_subparsers(dest="cmd", required=True)
+
+        CheckpointConverterCLI.configure_subparsers(subparsers)
 
         args = parser.parse_args()
+
+        warn(
+            "Running checkpoint converter using a standalone script is deprecated. "
+            "Please switch to using the ModelZoo CLI. "
+            "See https://training-docs.cerebras.ai/model-zoo/cli-overview for more details."
+        )
+
         args.func(args)
 
     @staticmethod
@@ -746,33 +613,39 @@ The following commands are supported:
             f"Convert a gpt2 config from one Cerebras version to the next:\n"
             f"  $ {MZ_CLI_NAME} checkpoint convert-config --model gpt2 --src-fmt "
             f"cs-2.3 --tgt-fmt cs-2.4 workdir/params_gpt_tiny.yaml\n\n"
-            f"Compare two checkpoints:\n"
-            f"  $ {MZ_CLI_NAME} checkpoint diff model_dir/checkpoint.mdl checkpoints_database/checkpoint.mdl\n\n"
             f"For more information on checkpoint conversion, see: "
             f"https://docs.cerebras.net/en/latest/wsc/Model-zoo/Migration/porting-checkpoints.html"
         )
 
     @staticmethod
-    def configure_parser(parser):
-        subparsers = parser.add_subparsers(dest="cmd", required=True)
-
-        convert_parser = subparsers.add_parser('convert')
+    def configure_subparsers(subparsers):
+        convert_parser = subparsers.add_parser(
+            'convert',
+            help="Convert a checkpoint between CS and HuggingFace or across CS releases.",
+        )
         convert_parser.set_defaults(func=CheckpointConverterCLI._convert)
         CheckpointConverterCLI.add_convert_args(convert_parser)
 
-        convert_config_parser = subparsers.add_parser('convert-config')
+        convert_config_parser = subparsers.add_parser(
+            'convert-config',
+            help="Convert a config between CS and HuggingFace or across CS releases.",
+        )
         convert_config_parser.set_defaults(
             func=CheckpointConverterCLI._convert_config
         )
         CheckpointConverterCLI.add_convert_config_args(convert_config_parser)
 
+        # list-converters is the preferred command to call
+        # list is deprecated but needs to remain for backwards compatibility
+        list_parser = subparsers.add_parser(
+            'list-converters', help="List available converters."
+        )
+        list_parser.set_defaults(func=CheckpointConverterCLI._list_converters)
+        CheckpointConverterCLI.add_list_args(list_parser)
+
         list_parser = subparsers.add_parser('list')
         list_parser.set_defaults(func=CheckpointConverterCLI._list)
         CheckpointConverterCLI.add_list_args(list_parser)
-
-        diff_parser = subparsers.add_parser('diff')
-        diff_parser.set_defaults(func=CheckpointConverterCLI._diff)
-        CheckpointConverterCLI.add_diff_args(diff_parser)
 
     @staticmethod
     def add_convert_args(parser):
@@ -983,6 +856,13 @@ The following commands are supported:
 
     @staticmethod
     def _list(args):
+        warn(
+            "Calling the subcommand `list` is deprecated. Please use `list-converters` instead."
+        )
+        CheckpointConverterCLI._list_converters(args)
+
+    @staticmethod
+    def _list_converters(args):
         from cerebras.modelzoo.tools.checkpoint_converters.registry import (
             converters,
         )
@@ -997,14 +877,6 @@ The following commands are supported:
             print("The model {} is not supported.".format(args.model))
             _print_supported_models()
             sys.exit(1)
-
-    @staticmethod
-    def _diff(args):
-        diff_checkpoints_from_file(
-            args.left_checkpoint,
-            args.right_checkpoint,
-            tensor_comparison_op=args.tensor_comparison_op,
-        )
 
 
 if __name__ == '__main__':

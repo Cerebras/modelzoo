@@ -18,6 +18,9 @@ from cerebras.modelzoo.models.vision.generic_image_encoders.losses.DinoDistillat
 from cerebras.modelzoo.models.vision.generic_image_encoders.losses.iBOTPatchLoss import (
     iBOTPatchLoss,
 )
+from cerebras.modelzoo.models.vision.generic_image_encoders.losses.KoLeoLoss import (
+    KoLeoLoss,
+)
 from cerebras.modelzoo.models.vision.generic_image_encoders.losses.MaskedSmoothL1Loss import (
     MaskedSmoothL1Loss,
 )

@@ -1,0 +1,86 @@
+data:
+  dataset:
+    ftfy_normalizer: NFC
+    use_ftfy: true
+    wikitext_detokenize: false
+  processing:
+    files_per_record: 100
+    huggingface_tokenizer: jinaai/jina-embeddings-v2-base-en
+    max_seq_length: 4096
+    read_hook: cerebras.modelzoo.data_preparation.data_preprocessing.raft.hooks:ctx_embed_gen_hook
+    read_hook_kwargs:
+      data_keys:
+        id: id
+        question: question
+    resume_from_checkpoint: false
+    seed: 0
+    write_in_batch: true
+    write_remainder: true
+  setup:
+    data:
+      split: raft_data/pipeline1/question_split
+      type: local
+    mode: embedding_generation
+    processes: 8
+dpr:
+  runconfig:
+    mode: eval
+    target_device: CPU
+  trainer:
+    init:
+      backend:
+        backend_type: CPU
+      checkpoint:
+        steps: 1
+      logging:
+        log_steps: 1
+      loop:
+        max_steps: 20
+      model:
+        embeddings_per_file: 10
+        encoder:
+          attention_dropout_rate: 0.0
+          dropout_rate: 0.1
+          encoder_nonlinearity: geglu
+          filter_size: 3072
+          fp16_type: float16
+          freeze_ffn_bias_in_glu: true
+          hidden_size: 768
+          initializer_range: 0.02
+          layer_norm_epsilon: 1.0e-12
+          max_position_embeddings: 8192
+          mixed_precision: true
+          mlm_nonlinearity: geglu
+          num_heads: 12
+          num_hidden_layers: 12
+          pooler_nonlinearity: tanh
+          position_embedding_type: alibi
+          share_embedding_weights: true
+          vocab_size: 30528
+        selected_encoder: question_encoder
+      optimizer:
+        AdamW:
+          learning_rate: 0.001
+      precision:
+        loss_scaling_factor: dynamic
+        precision_opt_level: 0
+      schedulers:
+      - ConstantLR:
+          learning_rate: 0.001
+      seed: 1
+    validate:
+      ckpt_path: <path to model checkpoint>
+      val_dataloader: &id001
+        batch_size: 3
+        data_processor: DPREmbedGenHDF5MapDataProcessor
+        drop_last: false
+        pad_last: true
+        num_workers: 1
+        persistent_workers: true
+        prefetch_factor: 10
+        shuffle: false
+        shuffle_buffer: 16384
+        shuffle_seed: 1
+    validate_all:
+      ckpt_paths: <path to model checkpoint>
+      val_dataloaders: *id001

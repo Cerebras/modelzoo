@@ -16,6 +16,7 @@ import os
 import shutil
 
 import yaml
+from yaml.constructor import ConstructorError
 
 
 def check_and_create_output_dirs(output_dir, filetype):
@@ -104,3 +105,16 @@ def merge_recursively(d1: dict, d2: dict, delval=None):
         return d2
 
     return d1
+
+
+class UniqueKeyLoader(yaml.SafeLoader):
+    def construct_mapping(self, node, deep=False):
+        mapping = set()
+        for key_node, value_node in node.value:
+            if ':merge' in key_node.tag:
+                continue
+            key = self.construct_object(key_node, deep=deep)
+            if key in mapping:
+                raise ConstructorError(f"Found duplicate YAML key: {key!r}")
+            mapping.add(key)
+        return super().construct_mapping(node, deep)

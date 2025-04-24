@@ -182,6 +182,21 @@ def process_lr_adjustment_params(
         corresponding list of parameter filter callables used to identify params
         that belong to the scales
     """
+    if any(
+        key not in model_lr_adjustment_groups
+        for key in params_lr_adjustment_groups
+    ):
+        missing_lr_adjust_keys = [
+            key
+            for key in params_lr_adjustment_groups
+            if key not in model_lr_adjustment_groups
+        ]
+        raise ValueError(
+            f"Learning rate adjustment key(s) from config parameters do not "
+            f"match any model LR adjustment argument:\n{missing_lr_adjust_keys} "
+            f"are not in the model's set: {sorted(model_lr_adjustment_groups)}"
+        )
+
     lr_adjustment_scales: List[float] = []
     lr_adjustment_filters: List[List[FilterCallable]] = []
     for lr_group_name, lr_group in model_lr_adjustment_groups.items():

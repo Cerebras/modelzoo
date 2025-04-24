@@ -20,6 +20,7 @@ import numpy as np
 from cerebras.modelzoo.data_preparation.data_preprocessing.utils import (
     append_eos_to_multiple_semantic_regions,
     clean_text,
+    default_chat_template,
     find_region_in_formatted_string,
     find_token_range,
     get_data_stats,
@@ -33,10 +34,8 @@ class FinetuningTokenGenerator:
         dataset_params = params.get("dataset", {})
         processing_params = params.get("processing")
         setup_params = params.get("setup")
-        warning_log_dir = (
-            os.path.join(setup_params.get("output_dir"), "logs")
-            if setup_params.get("output_dir")
-            else "./data_preprocessing_logs"
+        warning_log_dir = os.path.join(
+            setup_params.get("output_dir", "./output")
         )
         self.logger = setup_warning_logging(warning_log_dir, __name__)
         self.tokenizer = tokenizer
@@ -64,6 +63,13 @@ class FinetuningTokenGenerator:
 
         if self.chat_template:
             self.tokenizer.chat_template = self.chat_template
+
+        if self.tokenizer.chat_template is None:
+            self.logger.warning(
+                "Tokenizer doesn't have a chat template, setting a default chat template.."
+            )
+            self.tokenizer.chat_template = default_chat_template()
+
         self.eos_id = eos_id
         self.eos_token = (
             self.tokenizer.convert_ids_to_tokens(self.pad_id)
@@ -97,13 +103,39 @@ class FinetuningTokenGenerator:
             self.image_dir = params["setup"].pop("image_dir", None)
             self.max_num_img = dataset_params.pop("max_num_img", 1)
             self.num_patches = dataset_params.pop("num_patches", 1)
-            self.tokenizer.add_special_tokens(
-                {'additional_special_tokens': [self.image_token]}
+            self.register_special_image_token = dataset_params.pop(
+                "register_special_image_token", True
             )
+            self.use_single_image_token = dataset_params.pop(
+                "use_single_image_token", False
+            )
+            if self.use_single_image_token:
+                self.num_patches = 1
+                self.logger.info(
+                    f"'num_patches' is set to 1 when using 'use_single_image_token'"
+                )
+
+            if (
+                self.image_token
+                and self.image_token not in self.tokenizer.get_vocab()
+                and self.register_special_image_token
+            ):
+                self.tokenizer.add_special_tokens(
+                    {'additional_special_tokens': [self.image_token]}
+                )
             self.image_token_id = self.tokenizer.convert_tokens_to_ids(
                 self.image_token
             )
-            self.image_ids = [pad_id] * self.num_patches
+            if self.use_single_image_token and self.image_token_id is None:
+                raise ValueError(
+                    f"Image token is not in tokenizer vocab. Please choose an existing token or register as special token."
+                )
+
+            self.image_ids = (
+                [self.image_token_id]
+                if self.use_single_image_token
+                else [pad_id] * self.num_patches
+            )
         else:
             self.features = ["input_ids", "attention_mask", "labels"]
 
@@ -691,9 +723,9 @@ class FinetuningTokenGenerator:
         data_stats = {
             "total_raw_docs": 1,
             "raw_docs_skipped": 0,
-            "discarded": discarded_files,
-            "processed": 1,
-            "successful": 1 - discarded_files,
+            "discarded_files": discarded_files,
+            "processed_files": 1,
+            "successful_files": 1 - discarded_files,
             "raw_chars_count": raw_data_stats["raw_chars_count"],
             "raw_bytes_count": raw_data_stats["raw_bytes_count"],
             "normalized_chars_count": raw_data_stats["normalized_chars_count"],
@@ -760,21 +792,7 @@ class FinetuningTokenGenerator:
         tokenized_data_stats = get_data_stats(
             padded_data, self.pad_id, self.eos_id, self.max_seq_length
         )
-        data_stats = {
-            "total_raw_docs": 1,
-            "raw_docs_skipped": 0,
-            "discarded": raw_data_stats["discarded"],
-            "processed": 1,
-            "successful": 1 - raw_data_stats["discarded"],
-            "raw_chars_count": raw_data_stats["raw_chars_count"],
-            "raw_bytes_count": raw_data_stats["raw_bytes_count"],
-            "normalized_chars_count": raw_data_stats["normalized_chars_count"],
-            "normalized_bytes_count": raw_data_stats["normalized_bytes_count"],
-            "num_pad_tokens": tokenized_data_stats["num_pad_tokens"],
-            "non_pad_tokens": tokenized_data_stats["non_pad_tokens"],
-            "num_masked_tokens": tokenized_data_stats["num_masked_tokens"],
-            "loss_valid_tokens": tokenized_data_stats["loss_valid_tokens"],
-            "num_tokens": tokenized_data_stats["num_tokens"],
-        }
+        data_stats = tokenized_data_stats.copy()
+        data_stats.update(raw_data_stats)
 
         return data, data_stats

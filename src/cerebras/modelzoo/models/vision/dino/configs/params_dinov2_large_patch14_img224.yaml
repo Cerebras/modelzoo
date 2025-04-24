@@ -1,3 +1,12 @@
+# This config is from rel-2.4.2 and it is derived from params_dinov2_large_patch16_img224_cszoov2.yaml
+# Differences to params_dinov2_large_patch16_img224_cszoov2.yaml:
+# * patch_size: 14 (instead of 16)
+# * separate DinoHead and iBOTHead (instead of shared)
+# * batch_size: 1024 (instead of 2048)
+# * use_projection_bias_in_attention: false (instead of true)
+# * use_ffn_bias_in_attention: false (instead of true)
+# * use_ffn_bias: false (instead of true)
+
 trainer:
   init:
     seed: 1
@@ -245,8 +254,87 @@ trainer:
       batch_size: 1024
       shuffle: true
       shuffle_seed: 1456354
-      num_workers: 4
-      prefetch_factor: 4
+      num_workers: 2
+      prefetch_factor: 2
+      dataset:
+        name: Imagenet
+        root: ./computer_vision/datasets/imagenet/imagenet1k_ilsvrc2012
+        split: train
+      ssl_transform:
+        name: Dinov2Transform
+        multi_crop_transform:
+          global_num_crops: 2
+          local_num_crops: 8
+          global_image_size: 224
+          local_image_size: 98
+          global_crops_scale:
+          - 0.32
+          - 1
+          local_crops_scale:
+          - 0.05
+          - 0.32
+          multicrop_transform_list:
+          - name: random_horizontal_flip
+            p: 0.5
+          - name: color_jitter_with_prob
+            brightness: 0.4
+            contrast: 0.4
+            saturation: 0.2
+            hue: 0.1
+            p: 0.8
+          - name: random_gray_scale
+            p: 0.2
+          - name: random_gaussian_blur_random_radius
+            p:
+            - 1.0
+            - 0.1
+            - 0.5
+            - 0.5
+            - 0.5
+            - 0.5
+            - 0.5
+            - 0.5
+            - 0.5
+            - 0.5
+            radius_min: 0.1
+            radius_max: 2.0
+          - name: random_solarize
+            threshold: 128
+            p:
+            - 0.0
+            - 0.2
+            - 0.0
+            - 0.0
+            - 0.0
+            - 0.0
+            - 0.0
+            - 0.0
+            - 0.0
+            - 0.0
+          - name: to_tensor
+          - name: normalize
+            mean:
+            - 0.485
+            - 0.456
+            - 0.406
+            std:
+            - 0.229
+            - 0.224
+            - 0.225
+        masked_patch_transform:
+          image_size: 224
+          patch_size: 14
+          mask_probability: 0.5
+          mask_ratio_tuple:
+          - 0.1
+          - 0.5
+    val_dataloader:
+      data_processor: DinoImageDataProcessor
+      batch_size: 256
+      shuffle: true
+      shuffle_seed: 1456354
+      num_workers: 2
+      prefetch_factor: 2
       dataset:
         name: Imagenet
         root: ./computer_vision/datasets/imagenet/imagenet1k_ilsvrc2012

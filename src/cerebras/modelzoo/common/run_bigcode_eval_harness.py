@@ -21,8 +21,6 @@ import sys
 from copy import deepcopy
 from warnings import warn
 
-from bigcode_eval.tasks import ALL_TASKS
-
 # isort: off
 import os
 
@@ -30,16 +28,6 @@ sys.path.append(os.path.join(os.path.dirname(__file__), "../../.."))
 # isort: on
 from cerebras.modelzoo.common.utils.run.cli_parser import get_params_from_args
 from cerebras.modelzoo.common.utils.run.utils import DeviceType
-from cerebras.modelzoo.trainer.extensions.eleuther.eval_harness_utils import (
-    SUPPORTED_MODELS,
-)
-from cerebras.modelzoo.trainer.utils import (
-    configure_trainer_from_config,
-    convert_legacy_params_to_trainer_params,
-    inject_cli_args_to_trainer_params,
-    is_legacy_params,
-)
-from cerebras.modelzoo.trainer.validate import validate_trainer_params
 
 
 class MultiChoice:
@@ -59,11 +47,7 @@ class MultiChoice:
             yield choice
 
 
-def big_code_parser():
-    parser = argparse.ArgumentParser(
-        "Script for running Big Code Eval Harness for GPT style models",
-        add_help=False,
-    )
+def add_bigcode_args(parser):
     optional_arguments = parser.add_argument_group(
         "Big Code Eval Harness Arguments"
     )
@@ -72,6 +56,12 @@ def big_code_parser():
         type=str,
         default=None,
         help="Prefix to add to the prompt. For example InCoder needs prefix='<| file ext=.py |>\n'",
+    )
+    optional_arguments.add_argument(
+        "--max_tokens",
+        type=int,
+        default=None,
+        help="Maximum number of tokens to generate.",
     )
     optional_arguments.add_argument(
         "--temperature",
@@ -106,19 +96,17 @@ def big_code_parser():
     optional_arguments.add_argument(
         "--tasks",
         default=None,
-        choices=MultiChoice(ALL_TASKS),
-        help=f"Evaluation tasks from {ALL_TASKS}",
+        type=str,
+        metavar="task1,task2",
+        help=(
+            "To get full list of tasks, go to the bigcode_eval repository: "
+            "https://github.com/bigcode-project/bigcode-evaluation-harness"
+        ),
     )
     optional_arguments.add_argument(
         "--instruction_tokens",
         default=None,
         help="A series of instruction tokens used for instruction-tuning benchamrks separated by comma e.g. <user_message>,<end_user_message>,<assistant_message>",
-    )
-    optional_arguments.add_argument(
-        "--max_length_generation",
-        type=int,
-        default=None,
-        help="Maximum length of generated sequence (prompt+generation)",
     )
     optional_arguments.add_argument(
         "--limit",
@@ -198,6 +186,15 @@ def big_code_parser():
         ),
     )
 
+
+def bigcode_parser():
+    parser = argparse.ArgumentParser(
+        "Script for running Big Code Eval Harness for GPT style models",
+        add_help=False,
+    )
+
+    add_bigcode_args(parser)
+
     return parser
 
 
@@ -211,35 +208,28 @@ def pattern_match(patterns, source_list):
     return list(task_names)
 
 
-def main():
-    parser_fn = lambda: [big_code_parser()]
-    parser_args = {
-        "parser_epilog": (
-            "Please run 'python run_bigcode_eval_harness.py CSX -h'. \n \n"
-            "Here is an example command for running on CSX: \n \n"
-            "    python run_bigcode_eval_harness.py CSX --params /path/to/params --checkpoint_path "
-            "/path/to/checkpoint --tasks 'mbpp' \n \n"
-            "Note that BigCode Eval Harness is currently only supported for device CSX"
-        ),
-        "csx_parser_epilog": (
-            "To see a complete list of all available arguments, \n"
-            "please run 'python run_bigcode_eval_harness.py CSX -h'. \n\n"
-            "Here is an example command for running with CSX: \n \n"
-            "    python run_bigcode_eval_harness.py CSX --params /path/to/params "
-            "--checkpoint_path /path/to/checkpoint --tasks 'mbpp' "
-        ),
-        "modes": ["eval"],
-    }
-
-    params = get_params_from_args(
-        argv=sys.argv[1:],
-        extra_args_parser_fn=parser_fn,
-        device_type=DeviceType.CSX,
-        **parser_args,
+def run_bigcode_eval(params, parser):
+    from cerebras.modelzoo.trainer.extensions.bigcode.bigcode_eval_harness import (
+        BigCodeEvalHarness,
     )
-    runconfig_params = params["runconfig"]
+    from cerebras.modelzoo.trainer.extensions.eleuther.eval_harness_utils import (
+        SUPPORTED_MODELS,
+    )
+    from cerebras.modelzoo.trainer.utils import (
+        configure_trainer_from_config,
+        convert_legacy_params_to_trainer_params,
+        inject_cli_args_to_trainer_params,
+        is_legacy_params,
+    )
+    from cerebras.modelzoo.trainer.validate import validate_trainer_params
 
-    parser = parser_fn()[0]
+    warn(
+        "Running eval harness using a standalone script is deprecated. Please switch to using the ModelZoo CLI. "
+        "See https://training-docs.cerebras.ai/model-zoo/cli-overview for more details."
+    )
+
+    runconfig_params = params.setdefault("runconfig", {})
+
     bigcode_args = {}
     other_bigcode_args = {}
     for arg in parser._action_groups[0]._actions:
@@ -290,7 +280,6 @@ def main():
         # Remove fit/validate keys that are not used in the standalone flow
         for key in ("fit", "validate"):
             params["trainer"].pop(key, None)
-
     elif "runconfig" in params:
         params = inject_cli_args_to_trainer_params(
             params.pop("runconfig"), params
@@ -308,20 +297,16 @@ def main():
             "a single trainer instance, but found a list of trainers."
         )
 
-    # Extract BigCodeEvalHarness callbacks from the list of callbacks
-    bigcode_callbacks = [
-        callback["BigCodeEvalHarness"]
-        for callback in params["trainer"]["init"].get("callbacks", [])
-        if "BigCodeEvalHarness" in callback
-    ]
-    if not bigcode_callbacks:
-        raise RuntimeError(f"Found no BigCodeEvalHarness callback")
+    # Inject CLI overrides to the BigCode callbacks
+    for callback in params["trainer"]["init"].get("callbacks", []):
+        if "BigCodeEvalHarness" in callback:
+            callback["BigCodeEvalHarness"].setdefault(
+                "bigcode_args", {}
+            ).update(
+                (key, value) for key, value in deepcopy(bigcode_args).items()
+            )
 
-    for bigcode_callback in bigcode_callbacks:
-        bigcode_callback.setdefault("bigcode_args", {}).update(
-            (key, value) for key, value in deepcopy(bigcode_args).items()
-        )
-
+    # Create a trainer config
     config = validate_trainer_params(params)[0]
 
     if config.init.model.config.name not in SUPPORTED_MODELS:
@@ -329,20 +314,72 @@ def main():
             f"BigCode evaluation is not supported for model {config.init.model.config.name}. "
             f"Please choose a valid model name from: {SUPPORTED_MODELS}"
         )
+    if config.validate_all is None:
+        raise ValueError(
+            "To run BigCode Eval Harness, `validate_all` section of the "
+            "trainer config must be provided. It may be left as an empty "
+            "dictionary or have a `ckpt_paths` key to load from one or "
+            "more checkpoints."
+        )
 
+    # Construct the trainer object
     trainer = configure_trainer_from_config(config, mode="eval_all")
 
-    kwargs = {}
-    if config.validate_all:
-        if config.validate_all.val_dataloaders:
-            logging.warning(
-                f"Found `validate_all.val_dataloaders` specified in the yaml, "
-                f"but no upstream validation will be run for the standalone "
-                f"BigCode Eval Harness script."
+    # Check that only validation callbacks are of BigCode type
+    has_bigcode_callback = False
+    for callback in trainer.validation_callbacks:
+        if isinstance(callback, BigCodeEvalHarness):
+            has_bigcode_callback = True
+        else:
+            raise ValueError(
+                f"Standalone BigCode Eval Harness script does not support "
+                f"other evaluation harnesses, but found a callback of type "
+                f"{type(callback)} that is a validation callback. Please "
+                f"remove this callback from the list of callbacks or run "
+                f"outside the standalone flow."
             )
-        kwargs = {"ckpt_paths": config.validate_all.ckpt_paths}
+    if not has_bigcode_callback:
+        raise ValueError("No BigCodeEvalHarness callback found.")
 
-    trainer.validate_all(**kwargs)
+    if config.validate_all.val_dataloaders:
+        logging.warning(
+            f"Found `validate_all.val_dataloaders` specified in the yaml, "
+            f"but no upstream validation will be run for the standalone "
+            f"BigCode Eval Harness script."
+        )
+
+    # Run validate_all which runs the eval harness callbacks
+    trainer.validate_all(ckpt_paths=config.validate_all.ckpt_paths)
+
+
+def main():
+    parser_fn = lambda: [bigcode_parser()]
+    parser_args = {
+        "parser_epilog": (
+            "Please run 'python run_bigcode_eval_harness.py CSX -h'. \n \n"
+            "Here is an example command for running on CSX: \n \n"
+            "    python run_bigcode_eval_harness.py CSX --params /path/to/params --checkpoint_path "
+            "/path/to/checkpoint --tasks 'mbpp' \n \n"
+            "Note that BigCode Eval Harness is currently only supported for device CSX"
+        ),
+        "csx_parser_epilog": (
+            "To see a complete list of all available arguments, \n"
+            "please run 'python run_bigcode_eval_harness.py CSX -h'. \n\n"
+            "Here is an example command for running with CSX: \n \n"
+            "    python run_bigcode_eval_harness.py CSX --params /path/to/params "
+            "--checkpoint_path /path/to/checkpoint --tasks 'mbpp' "
+        ),
+        "modes": ["eval"],
+    }
+
+    params = get_params_from_args(
+        argv=sys.argv[1:],
+        extra_args_parser_fn=parser_fn,
+        device_type=DeviceType.CSX,
+        **parser_args,
+    )
+
+    run_bigcode_eval(params, parser_fn()[0])
 
 
 if __name__ == "__main__":

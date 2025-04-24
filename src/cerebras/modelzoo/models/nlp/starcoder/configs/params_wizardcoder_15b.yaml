@@ -41,8 +41,6 @@ trainer:
         std: 0.00223606797  # initializer_range / sqrt(2 * num_hidden_layers)
         a: -0.00447213595
         b: 0.00447213595
-      mixed_precision: true
-      fp16_type: cbfloat16
     optimizer:
       adam:
         betas:

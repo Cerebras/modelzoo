@@ -13,8 +13,12 @@
 # limitations under the License.
 
 from .dataset import (
+    DPREmbedGenHDF5Dataset,
+    DPRHDF5Dataset,
     HDF5Dataset,
     HDF5DatasetConfig,
+    MLlamaHDF5Dataset,
+    MLlamaHDF5DatasetConfig,
     MLMHDF5Dataset,
     MultiModalHDF5Dataset,
     MultiModalHDF5DatasetConfig,

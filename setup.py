@@ -41,7 +41,7 @@ def main():
     root_directory = Path(__file__).parent
     long_description = (root_directory / "PYPI-README.md").read_text()
 
-    __version__ = "2.4.3"
+    __version__ = "2.5.0"
 
     entry_points = []
 
@@ -71,8 +71,8 @@ def main():
             f"cerebras_pytorch=={__version__}",
             "argcomplete==3.5.0",
             "tabulate==0.9.0",
-            "transformers==4.40.0",
-            "tokenizers==0.19.1",
+            "transformers==4.45.2",
+            "tokenizers==0.20.1",
             "datasets==2.19.1",
             "filelock==3.14.0",
             "more-itertools==9.1.0",
@@ -90,20 +90,24 @@ def main():
             "pyYAML<6.0",
             "pandas==1.3.0",
             "jsonschema==4.19.2",
+            "torch==2.4.0",
             "torchvision==0.19.0",
             "safetensors==0.4.1",
             "sentencepiece==0.1.99",
             # pylint: disable=line-too-long
             "lm-dataformat @ https://github.com/leogao2/lm_dataformat/archive/ac85cb7dae49ce25e9973a128ebd9167deaf64dd.zip",
-            "lm-eval @ https://github.com/EleutherAI/lm-evaluation-harness/archive/refs/tags/v0.4.4.zip",
+            "lm-eval @ https://github.com/EleutherAI/lm-evaluation-harness/archive/refs/tags/v0.4.7.zip",
             "bigcode_eval @ https://github.com/bigcode-project/bigcode-evaluation-harness/archive/f0b81a9d079289881bd42f509811d42fe73e58cf.zip",
             "h5py==3.10.0",
             "tqdm==4.66.1",
             "Flask==2.3.3",
             "Pillow==9.4.0",
+            "faiss-cpu==1.8.0.post1",
+            "deepdiff>=8,<9",
             "cerebras_cloud_sdk>=1.0.0",
             "click==8.1.7",
             "termcolor==2.4.0",
+            "slack-sdk==3.11.2",
         ],
         # PyPI package information.
         classifiers=[

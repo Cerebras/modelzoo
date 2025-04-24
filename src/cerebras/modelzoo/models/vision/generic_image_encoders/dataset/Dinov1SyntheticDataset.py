@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Any, Literal, Optional, Tuple, Union
+from typing import Literal, Optional, Tuple, Union
 
 import torch
-from pydantic import Field, field_validator
+from pydantic import field_validator
 from torch.utils import data
 
 import cerebras.pytorch as cstorch
@@ -39,8 +39,6 @@ class Dinov1SyntheticDatasetConfig(DatasetConfig):
     mixed_precision: Optional[bool] = True
     num_labels: Optional[int] = 100
     seed: Optional[int] = 1223
-
-    mixed_precision: Optional[Any] = Field(None, deprecated=True)
 
     @field_validator("global_image_size", "local_image_size", mode="after")
     @classmethod

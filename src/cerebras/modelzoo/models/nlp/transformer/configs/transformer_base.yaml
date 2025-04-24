@@ -47,7 +47,6 @@ trainer:
       #                      `batch_size` is scaling loss by batch size
       mlm_loss_scaling: precomputed_num_masked
       # Cerebras configs.
-      mixed_precision: true
     optimizer:
       Adam:
         betas:

@@ -19,7 +19,8 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections import OrderedDict
 from contextlib import ExitStack
-from typing import TYPE_CHECKING, Any, Dict, List
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Dict, List, Union
 
 import torch
 
@@ -44,6 +45,13 @@ class Callback:
 
     def setup(self, trainer: Trainer):
         """Setup the callback using the trainer.
+
+        Args:
+            trainer: Trainer instance.
+        """
+
+    def post_setup(self, trainer: Trainer):
+        """Called after the trainer setup.
 
         Args:
             trainer: Trainer instance.
@@ -167,6 +175,36 @@ class Callback:
             exception: Exception object.
         """
 
+    def on_train_step_start(
+        self,
+        trainer: Trainer,
+        model: torch.nn.Module,
+        batch: Any,
+    ):
+        """Called at the beginning of every training iteration's traced step.
+
+        Args:
+            trainer: Trainer instance.
+            model: Model instance.
+            batch: Batch data.
+        """
+
+    def on_train_step_end(
+        self,
+        trainer: Trainer,
+        model: torch.nn.Module,
+        outputs: Dict[str, Any],
+        batch: Any,
+    ):
+        """Called at the end of every training iteration's traced step.
+
+        Args:
+            trainer: Trainer instance.
+            model: Model instance.
+            outputs: Model outputs.
+            batch: Batch data.
+        """
+
     def on_train_batch_start(
         self,
         trainer: Trainer,
@@ -273,6 +311,36 @@ class Callback:
             exception: Exception object.
         """
 
+    def on_validate_step_start(
+        self,
+        trainer: Trainer,
+        model: torch.nn.Module,
+        batch: Any,
+    ):
+        """Called at the beginning of every validation iteration's traced step.
+
+        Args:
+            trainer: Trainer instance.
+            model: Model instance.
+            batch: Batch data.
+        """
+
+    def on_validate_step_end(
+        self,
+        trainer: Trainer,
+        model: torch.nn.Module,
+        outputs: Dict[str, Any],
+        batch: Any,
+    ):
+        """Called at the end of every validation iteration's traced step.
+
+        Args:
+            trainer: Trainer instance.
+            model: Model instance.
+            outputs: Model outputs.
+            batch: Batch data.
+        """
+
     def on_validate_batch_start(
         self,
         trainer: Trainer,
@@ -313,6 +381,7 @@ class Callback:
         stack: ExitStack,
         val_dataloaders: cerebras.pytorch.utils.data.DataLoader,
         loop: ValidationLoop,
+        ckpt_paths: List[Union[str, Path, None]],
     ):
         """Hook that allows arbitrary context managers to be entered
         at the beginning of every validate all run.
@@ -322,6 +391,7 @@ class Callback:
             stack: ExitStack object.
             val_dataloaders: Validation dataloaders.
             loop: ValidationLoop object.
+            ckpt_paths: Checkpoints to validate.
         """
 
     def on_before_forward(
@@ -489,6 +559,28 @@ class Callback:
             state_dict: Trainer state dictionary.
         """
 
+    def on_save_trainer_state(self, trainer: Trainer, state_dict: dict):
+        """Called before saving the trainer state in a snapshot checkpoint.
+
+        Callbacks should override this method to add states to
+        the checkpoint that will be loaded when automatically restarting
+        from a failed run.
+
+        Args:
+            trainer: Trainer instance.
+            state_dict: Trainer state dictionary.
+        """
+
+    def on_after_save_trainer_state(
+        self, trainer: Trainer, trainer_state_file: str
+    ):
+        """Called after saving trainer state in a snapshot checkpoint.
+
+        Args:
+            trainer: Trainer instance.
+            trainer_state_file: Path of the checkpoint file.
+        """
+
     def postprocess_checkpoint(self, trainer: Trainer, state_dict: dict):
         """Called after constructing the checkpoint.
 
@@ -532,6 +624,18 @@ class Callback:
 
         Callbacks should override this method to load states from
         the checkpoint.
+
+        Args:
+            trainer: Trainer instance.
+            state_dict: Trainer state dictionary.
+        """
+
+    def on_load_trainer_state(self, trainer: Trainer, state_dict: dict):
+        """Called after loading the trainer state from a snapshot checkpoint
+        upon restart.
+
+        Callbacks should override this method to load states from
+        the snapshot when restarting from a failed run.
 
         Args:
             trainer: Trainer instance.
@@ -597,13 +701,14 @@ class CoreCallback(Callback):
 
 class ValidationCallback(Callback, ABC):
     """
-    A special type of callback that indicates to the trainer
-    that it will perform some custom validation logic.
+    Defines interface for the ValidationCallback.
 
-    This is useful for callbacks that need to perform downstream validation
-    logic that is not covered by the default validation loop.
+    A subclass of this callback indicates to the trainer that it will perform
+    some custom validation logic. This is useful for callbacks that need to
+    perform downstream validation logic that is not covered by the default
+    validation loop.
 
-    All ValidationCallbacks must implement the following methods:
+    All validation callbacks must implement the following methods:
 
     - run_validation
 
@@ -611,6 +716,53 @@ class ValidationCallback(Callback, ABC):
     training run.
     """
 
+    @property
     @abstractmethod
-    def run_validation(self, trainer, loop_idx, is_last):
-        pass
+    def name_scope(self) -> str:
+        """
+        A name that identifies this validation callback.
+
+        Used with `trainer.name_scope` to prefix logged metrics with the name
+        of the ValidationCallback that is currently running.
+        """
+
+    @property
+    @abstractmethod
+    def every_n_vals(self) -> int:
+        """
+        This validation callback will run on every Nth eval,
+        where N is the value returned by this property.
+
+        E.g. if eval runs every 200 training steps and N=2,
+        this validation callback runs every 400 training steps.
+        """
+
+    @property
+    @abstractmethod
+    def num_validate_loops(self) -> int:
+        """
+        Number of separate validate loops the validation callback will run.
+
+        E.g. The Eleuther validation callback can run generative and non-
+        generative tasks. All non-generative tasks are run first in one
+        validate loop, followed by the generative tasks in a second validate
+        loop, for a total of two validate_loops.
+        """
+
+    @abstractmethod
+    def run_validation(
+        self,
+        trainer: Trainer,
+        loop_idx: int,
+        is_last: bool,
+    ):
+        """Perform a validation run.
+
+        Override this method to perform a custom validation run.
+
+        Args:
+            trainer: Trainer instance.
+            val_dataloader: Validation dataloader.
+            loop_idx: Training loop index.
+            is_last: Whether the last training iteration just happened.
+        """

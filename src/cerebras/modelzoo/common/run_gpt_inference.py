@@ -46,7 +46,7 @@ from cerebras.pytorch.utils.call_once import call_once
 
 
 def format_rate(rate):
-    return f"{rate:.2g}" if rate < 1.0 else f"{rate:.2f}"
+    return f"{rate:.3g}" if rate < 1.0 else f"{rate:.2f}"
 
 
 def get_parser():

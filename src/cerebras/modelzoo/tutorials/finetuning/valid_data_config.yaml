@@ -23,5 +23,3 @@ processing:
     max_seq_length: 2048
     use_ftfy: True
 
-
-    

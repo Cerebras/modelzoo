@@ -12,13 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Cerebras ModelZoo Model Information CLI Tool"""
+"""Cerebras ModelZoo Model Information CLI Tool."""
 
 import argparse
+import io
 import json
+import os
 import pydoc
+import tempfile
+import warnings
+from contextlib import redirect_stdout
 
-from cerebras.modelzoo.cli.utils import MZ_CLI_NAME
+from cerebras.modelzoo.cli.utils import MZ_CLI_NAME, is_dir
 
 
 class ModelInfoCLI:
@@ -84,6 +89,27 @@ class ModelInfoCLI:
             help="Registered model name to display information on.",
         )
         describe_parser.set_defaults(func=ModelInfoCLI.model_describe)
+
+        init_checkpoint_parser = subparsers.add_parser(
+            "init_checkpoint",
+            help="Generates an initial checkpoint for a model.",
+        )
+        init_checkpoint_parser.add_argument(
+            "params",
+            help="Path to .yaml file with model parameters.",
+        )
+        init_checkpoint_parser.add_argument(
+            "-o",
+            "--out",
+            help=(
+                "Path to save the checkpoint to. If it's a directory, the checkpoint is saved to that "
+                "directory. Otherwise, the checkpoint is saved to the given file path. By default, the "
+                "checkpoint is saved to the current working directory."
+            ),
+        )
+        init_checkpoint_parser.set_defaults(
+            func=ModelInfoCLI.model_init_checkpoint, seen_args=set(["params"])
+        )
 
     @staticmethod
     def model_list(args):
@@ -170,6 +196,100 @@ class ModelInfoCLI:
                 print(table_out)
             else:
                 pydoc.pager(table_out)
+
+    @staticmethod
+    def model_init_checkpoint(args):
+        import torch
+
+        import cerebras.pytorch as cstorch
+        from cerebras.appliance.storage import StorageReader
+        from cerebras.modelzoo.cli.utils import _args_to_params
+        from cerebras.modelzoo.trainer.utils import (
+            configure_trainer_from_config,
+            convert_legacy_params_to_trainer_params,
+            is_legacy_params,
+        )
+        from cerebras.modelzoo.trainer.validate import validate_trainer_params
+
+        def path_exists(path: str):
+            return StorageReader.path_exists(path)
+
+        out_path = args.out or os.path.join(os.getcwd(), "")
+
+        if not is_dir(out_path) and path_exists(out_path):
+            raise ValueError(f"Checkpoint {out_path} already exists.")
+
+        with tempfile.TemporaryDirectory() as tempdir:
+            params = _args_to_params(args)
+
+            if isinstance(params, dict) and is_legacy_params(params):
+                warnings.warn(
+                    f"Detected that legacy params are being used. "
+                    f"Automatically converting params to new format."
+                )
+
+                params = convert_legacy_params_to_trainer_params(
+                    params,
+                    # Allow None values in the params
+                    obj_filter=lambda obj: obj is None,
+                )
+
+                # injecting default device to config
+                params["trainer"]["init"].setdefault("device", "CSX")
+
+            if isinstance(params["trainer"], (list, tuple)):
+                for trainer in params["trainer"]:
+                    trainer["trainer"]["init"]["model_dir"] = tempdir
+            else:
+                params["trainer"]["init"]["model_dir"] = tempdir
+
+            configs = validate_trainer_params(params)
+
+            for i, config in enumerate(configs):
+                if len(configs) > 1:
+                    print(
+                        f"Generating initial checkpoint for trainer instance {i}:"
+                    )
+                else:
+                    print(f"Generating initial checkpoint")
+                with redirect_stdout(io.StringIO()) as _:
+                    trainer = configure_trainer_from_config(config)
+
+                    assert str(trainer.model_dir) == str(
+                        tempdir
+                    ), f"{trainer.model_dir} != {tempdir}"
+
+                    if is_dir(out_path):
+                        trainer.checkpoint.checkpoint_root = out_path
+                    else:
+                        trainer.checkpoint.checkpoint_root = os.path.dirname(
+                            out_path
+                        )
+                        trainer.checkpoint.checkpoint_name = os.path.basename(
+                            out_path
+                        )
+
+                    if len(configs) > 1:
+                        name, ext = os.path.splitext(
+                            trainer.checkpoint.checkpoint_name
+                        )
+                        trainer.checkpoint.checkpoint_name = (
+                            f"{name}_trainer{i}{ext}"
+                        )
+
+                    trainer.save_checkpoint()
+
+                    for _ in cstorch.utils.data.DataExecutor(
+                        cstorch.utils.data.DataLoader(lambda: [torch.zeros(1)]),
+                        num_steps=1,
+                    ):
+                        break
+
+                ckpt_file = trainer.checkpoint.get_latest_checkpoint(trainer)
+                if not path_exists(ckpt_file):
+                    raise ValueError(f"Checkpoint {ckpt_file} not found.")
+
+                print(f"Saved initial checkpoint at: {ckpt_file}")
 
     @staticmethod
     def _get_model_path(model):

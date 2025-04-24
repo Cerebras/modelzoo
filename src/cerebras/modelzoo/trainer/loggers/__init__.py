@@ -19,10 +19,12 @@ subclasses.
 
 from .logger import Logger
 from .progress import ProgressLogger
+from .telemetry import TelemetryLogger
 from .tensorboard import TensorBoardLogger
 
 __all__ = [
     "Logger",
     "ProgressLogger",
+    "TelemetryLogger",
     "TensorBoardLogger",
 ]

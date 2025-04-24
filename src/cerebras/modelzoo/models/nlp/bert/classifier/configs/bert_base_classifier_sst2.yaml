@@ -8,7 +8,6 @@ trainer:
     seed: 1
     model:
       name: "bert/classifier"
-      mixed_precision: true
       vocab_size: 30522
       hidden_size: 768
       num_hidden_layers: 12
@@ -22,7 +21,6 @@ trainer:
       task_dropout: 0.1
       problem_type: single_label_classification
       num_labels: 2
-      fp16_type: cbfloat16
       compute_eval_metrics: false
     optimizer:
       AdamW:

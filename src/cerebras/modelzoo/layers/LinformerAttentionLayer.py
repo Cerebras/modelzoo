@@ -196,7 +196,7 @@ class LinformerAttention(MultiheadAttention):
         q,
         attn_mask=None,
         key_padding_mask=None,
-        special_token_indices=None,
+        special_token_meta=None,
     ):
         # linear projection
         q = self.proj_q_dense_layer(q)
@@ -218,7 +218,7 @@ class LinformerAttention(MultiheadAttention):
         k,
         attn_mask=None,
         key_padding_mask=None,
-        special_token_indices=None,
+        special_token_meta=None,
     ):
         # linear projection
         k = self.proj_k_dense_layer(k)
@@ -240,7 +240,7 @@ class LinformerAttention(MultiheadAttention):
         v,
         attn_mask=None,
         key_padding_mask=None,
-        special_token_indices=None,
+        special_token_meta=None,
     ):
         # linear projection
         v = self.proj_v_dense_layer(v)

@@ -15,9 +15,12 @@
 from typing import Literal
 
 import torch
-import torch.nn.functional as F
 from torch import nn
 
+from cerebras.modelzoo.common.utils.model.recompute_api import (
+    recompute_ckpt,
+    recompute_region,
+)
 from cerebras.modelzoo.config import ModelConfig
 from cerebras.modelzoo.models.vision.generic_image_encoders.utils.scheduler import (
     LinearWarmupConstantScheduler,
@@ -102,10 +105,27 @@ class iBOTPatchLoss(nn.Module):
 
         self.step += 1
 
-        return F.softmax(
-            (teacher_patch_tokens - center_reshaped) / teacher_temp,
-            dim=-1,
-        )
+        # Decomposed softmax computation.
+        x = (teacher_patch_tokens - center_reshaped) / teacher_temp
+        input_type = x.dtype
+        x = x.to(torch.float32)
+        with torch.no_grad():
+
+            @recompute_ckpt("ibot_patch_opt")
+            def fn_max(data):
+                return torch.amax(data, dim=-1)
+
+            x_max = fn_max(x).unsqueeze(-1)
+        x_sub = x - x_max
+        x_exp = torch.exp(x_sub.to(input_type)).to(torch.float32)
+
+        @recompute_ckpt("ibot_patch_opt")
+        def fn_sum(data):
+            return torch.sum(data, dim=-1)
+
+        x_sum = fn_sum(x_exp).unsqueeze(-1)
+        out = x_exp / x_sum
+        return out.to(input_type)
 
     def forward(
         self,
@@ -113,10 +133,97 @@ class iBOTPatchLoss(nn.Module):
         student_global_output,
         student_masks,
     ):
+        @recompute_region("ibot_patch_opt")
+        def annotated_patch_loss(student_global_output, teacher_global_output):
+
+            class CustomLogSoftmax(torch.autograd.Function):
+                @staticmethod
+                def forward(ctx, x):
+                    input_type = x.dtype
+                    x = x.to(torch.float32)
+                    with torch.no_grad():
+
+                        @recompute_ckpt("ibot_patch_opt")
+                        def fn_max(data):
+                            return torch.amax(data, dim=-1)
+
+                        x_max = fn_max(x).unsqueeze(-1)
+                    x_sub = x - x_max
+                    x_exp = torch.exp(x_sub)
+
+                    @recompute_ckpt("ibot_patch_opt")
+                    def fn_sum(data):
+                        return torch.sum(data, dim=-1)
+
+                    x_sum = fn_sum(x_exp).unsqueeze(-1).broadcast_to(x.shape)
+                    x_log = torch.log(x_sum)
+                    out = x_sub - x_log
+                    ctx.save_for_backward(x, out)
+                    return out
+
+                @staticmethod
+                def backward(ctx, grad_output):
+                    _, out = ctx.saved_tensors
+
+                    @recompute_region("ibot_patch_opt", is_autograd_func=True)
+                    def bwd(out, grad_output):
+                        @recompute_ckpt("ibot_patch_opt")
+                        def fn(data):
+                            return torch.sum(data, dim=-1)
+
+                        grad_sum = (
+                            fn(grad_output)
+                            .unsqueeze(-1)
+                            .broadcast_to(out.shape)
+                        )
+
+                        grad_exp = torch.exp(out)
+                        grad_mul = grad_sum * grad_exp
+                        grad_x = grad_output - grad_mul
+                        return grad_x
+
+                    return bwd(out, grad_output)
+
+            if self.no_slice:
+                student_global_patch_tokens = student_global_output
+                teacher_global_patch_tokens = teacher_global_output
+            else:
+                # ViT trunk sends outputs of shape [batch, n_img, n_patches+1, h]
+                # we're only interested in the last n_patches tokens and not the CLS
+                student_global_patch_tokens = student_global_output[:, :, 1:]
+                teacher_global_patch_tokens = teacher_global_output[:, :, 1:]
+
+            student_global_patch_tokens = (
+                student_global_patch_tokens / self.student_temp
+            )
+
+            student_global_patch_tokens = student_global_patch_tokens.reshape(
+                student_global_patch_tokens.shape[0],
+                student_global_patch_tokens.shape[1]
+                * student_global_patch_tokens.shape[2],
+                student_global_patch_tokens.shape[3],
+            )
+
+            teacher_global_patch_tokens = teacher_global_patch_tokens.reshape(
+                teacher_global_patch_tokens.shape[0],
+                teacher_global_patch_tokens.shape[1]
+                * teacher_global_patch_tokens.shape[2],
+                teacher_global_patch_tokens.shape[3],
+            )
+            self.teacher_global_patch_tokens = teacher_global_patch_tokens
+
+            # teacher centering and sharpening
+            teacher_softmax_out = self.softmax_center_teacher(
+                teacher_global_patch_tokens
+            )
+
+            student_out = CustomLogSoftmax.apply(student_global_patch_tokens)
+            out = -teacher_softmax_out * student_out
+
+            return out
+
         student_masks = student_masks.to(student_global_output.dtype)
         if self.no_slice:
-            student_global_patch_tokens = student_global_output
-            teacher_global_patch_tokens = teacher_global_output
             mask_cls_token = torch.zeros(
                 student_masks.shape[0],
                 student_masks.shape[1],
@@ -125,50 +232,20 @@ class iBOTPatchLoss(nn.Module):
                 device=student_masks.device,
             )
             student_masks = torch.cat([mask_cls_token, student_masks], dim=2)
-        else:
-            # ViT trunk sends outputs of shape [batch, n_img, n_patches+1, h]
-            # we're only interested in the last n_patches tokens and not the CLS
-            student_global_patch_tokens = student_global_output[:, :, 1:]
-            teacher_global_patch_tokens = teacher_global_output[:, :, 1:]
 
         original_mask_shape = student_masks.shape
         bsz, n_imgs = original_mask_shape[0], original_mask_shape[1]
         n_loss_terms = bsz * n_imgs  # need to divide by total images
-
-        student_global_patch_tokens = (
-            student_global_patch_tokens / self.student_temp
-        )
-
-        student_global_patch_tokens = student_global_patch_tokens.reshape(
-            student_global_patch_tokens.shape[0],
-            student_global_patch_tokens.shape[1]
-            * student_global_patch_tokens.shape[2],
-            student_global_patch_tokens.shape[3],
-        )
-
-        teacher_global_patch_tokens = teacher_global_patch_tokens.reshape(
-            teacher_global_patch_tokens.shape[0],
-            teacher_global_patch_tokens.shape[1]
-            * teacher_global_patch_tokens.shape[2],
-            teacher_global_patch_tokens.shape[3],
-        )
-
         student_masks = student_masks.reshape(
             student_masks.shape[0],
             student_masks.shape[1] * student_masks.shape[2],
         )
         new_mask_shape = student_masks.shape
-        # teacher centering and sharpening
-        teacher_softmax_out = self.softmax_center_teacher(
-            teacher_global_patch_tokens
-        )
 
-        # we are interested in cases where student and teacher operate on the same view
-        patch_loss = torch.sum(
-            -teacher_softmax_out
-            * F.log_softmax(student_global_patch_tokens, dim=-1),
-            dim=-1,
+        patch_loss = annotated_patch_loss(
+            student_global_output, teacher_global_output
         )
+        patch_loss = torch.sum(patch_loss, dim=-1)
         patch_loss = patch_loss * student_masks
         mask_weight = (
             torch.sum(
@@ -180,7 +257,7 @@ class iBOTPatchLoss(nn.Module):
         patch_loss = patch_loss / mask_weight
         patch_loss = torch.sum(patch_loss, dim=-1)
         total_loss = patch_loss.sum()
-        self.update_center(teacher_global_patch_tokens, student_masks)
+        self.update_center(self.teacher_global_patch_tokens, student_masks)
         ibot_loss = total_loss / n_loss_terms
         return ibot_loss
 

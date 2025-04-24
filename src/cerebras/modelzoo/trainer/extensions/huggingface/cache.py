@@ -32,3 +32,9 @@ class HFCacheDir(Callback):
         appliance_environ["TRANSFORMERS_CACHE"] = self._cache_dir
         appliance_environ["HF_HOME"] = self._cache_dir
         appliance_environ["HF_DATASETS_CACHE"] = self._cache_dir
+
+    def on_save_trainer_state(self, trainer, state_dict):
+        pass
+
+    def on_load_trainer_state(self, trainer, state_dict):
+        pass

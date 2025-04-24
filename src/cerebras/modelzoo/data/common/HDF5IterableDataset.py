@@ -27,6 +27,7 @@ import torch
 
 from cerebras.modelzoo.common.input_utils import get_streaming_batch_size
 from cerebras.modelzoo.config import BaseConfig
+from cerebras.modelzoo.config.types import ValidatedPath
 from cerebras.modelzoo.data.common.input_utils import (
     cluster_config,
     shard_list_of_chunks_contiguous,
@@ -34,7 +35,7 @@ from cerebras.modelzoo.data.common.input_utils import (
 
 
 class HDF5IterableDatasetConfig(BaseConfig):
-    data_dir: Union[str, List[str]] = ...
+    data_dir: Union[ValidatedPath, List[ValidatedPath]] = ...
     "Path to dataset HDF5 files"
 
     batch_size: int = ...

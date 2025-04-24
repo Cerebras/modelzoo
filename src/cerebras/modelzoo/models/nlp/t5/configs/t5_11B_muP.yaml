@@ -33,9 +33,6 @@ trainer:
       decoder_num_hidden_layers: 24
       # Loss scaling weight, 1/{average_number_valid_tokens}
       lm_loss_weight: 0.015
-      # Cerebras configs.
-      mixed_precision: true
-      fp16_type: cbfloat16
       # muP
       scale_encoder_qk_dot_by_d: true
       scale_decoder_qk_dot_by_d: true

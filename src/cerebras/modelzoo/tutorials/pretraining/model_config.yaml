@@ -19,6 +19,7 @@ trainer:
       eval_steps: 5
       max_steps: 18
     model:
+      name: "llama"
       attention_dropout_rate: 0.0
       attention_module: multiquery_attention
       attention_type: scaled_dot_product
@@ -28,14 +29,12 @@ trainer:
       extra_attention_params:
         num_kv_groups: 8
       filter_size: 14336
-      fp16_type: cbfloat16
       hidden_size: 4096
       initializer_range: 0.02
       layer_norm_epsilon: 1.0e-05
       loss_scaling: num_tokens
       loss_weight: 1.0
       max_position_embeddings: 8192
-      mixed_precision: true
       nonlinearity: swiglu
       norm_type: rmsnorm
       num_heads: 32

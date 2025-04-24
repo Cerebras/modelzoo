@@ -53,7 +53,7 @@ def freeze_modules(
             m.eval()
             m.requires_grad_(False)
 
-        logging.info(
+        logging.debug(
             f"The following modules are frozen due to pattern: {pattern.pattern}: "
             f"{[n for n, _ in module_list]}"
         )
@@ -65,7 +65,7 @@ def freeze_modules(
             if pattern.search(n):
                 p.requires_grad_(False)
 
-    logging.info(
-        f"The follow parameters are being trained: "
+    logging.debug(
+        f"The following parameters are being trained: "
         f"{[n for n, p in model.named_parameters() if p.requires_grad]}"
     )

@@ -14,9 +14,9 @@
 
 from typing import Callable, Optional, Union
 
-import torch
 import torch.nn as nn
 
+from cerebras.modelzoo.config import BaseConfig
 from cerebras.modelzoo.layers.AttentionLayer import MultiheadAttention
 from cerebras.modelzoo.layers.create_initializer import create_initializer
 from cerebras.modelzoo.layers.MultiQueryAttentionLayer import (
@@ -31,43 +31,19 @@ _SUPPORTED_ATTENTION_MODULE_TYPES = (
 AttentionModuleType = Union[_SUPPORTED_ATTENTION_MODULE_TYPES]
 
 
-def bcast2h(t: torch.Tensor, H: int):
-    return t[..., None].broadcast_to(-1, -1, H)
-
-
 def create_projection_func_override(
     ordinal_proj_module_name: str, memory_proj_module_name: str
 ) -> Callable:
-    def projection_func_override(self, inp, special_token_indices=None):
+    def projection_func_override(self, inp, special_token_meta=None):
         """Apply regular projection weights to regular tokens
         and memory token projection weights to memory tokens,
-        locations of which are given by special_token_indices
+        locations of which are given by special_token_meta
         """
-        embedding_size = inp.shape[-1]
-        memory_indices = special_token_indices["memory_tokens"]
-        regular_indices = special_token_indices["regular_tokens"]
+        memtok_mask = special_token_meta["memory_token_mask"].unsqueeze(-1)
 
-        memory_proj = getattr(self, memory_proj_module_name)(
-            torch.gather(inp, 1, bcast2h(memory_indices, embedding_size))
-        )
-        ordinal_proj = getattr(self, ordinal_proj_module_name)(
-            torch.gather(inp, 1, bcast2h(regular_indices, embedding_size))
-        )
-
-        out = torch.zeros(
-            (inp.shape[0], inp.shape[1], ordinal_proj.shape[-1]),
-            dtype=ordinal_proj.dtype,
-            device=ordinal_proj.device,
-        )
-        out = torch.scatter(
-            out, 1, bcast2h(memory_indices, ordinal_proj.shape[-1]), memory_proj
-        )
-        out = torch.scatter(
-            out,
-            1,
-            bcast2h(regular_indices, ordinal_proj.shape[-1]),
-            ordinal_proj,
-        )
+        memory_proj = getattr(self, memory_proj_module_name)(inp)
+        ordinal_proj = getattr(self, ordinal_proj_module_name)(inp)
+        out = memory_proj * memtok_mask + ordinal_proj * (~memtok_mask)
 
         return out
 
@@ -198,64 +174,114 @@ def create_mem_token_attn_module(attn_module_cls: AttentionModuleType):
     return AttnModuleWithMemTokens
 
 
-def memory_tokens_validate_param_consistency(
-    position_embedding_type: str,
-    moe_enabled: bool,
-    fixed_sparse_attention: Optional[dict] = None,
-    attention_sliding_window_length: Optional[int] = None,
-    attention_chunk_size: Optional[int] = None,
-    attention_vertical_column_spacing: Optional[int] = None,
-    attention_vertical_column_width: Optional[int] = None,
-) -> dict:
-    """Checks for options that are incompatible with memory tokens
-    and returns a dict of parameters to be set in order to be
-    aligned with memory token usage algorithm
-    """
-    if (
-        attention_sliding_window_length is not None
-        or attention_chunk_size is not None
-        or fixed_sparse_attention is not None
+class MemoryTokensConfig(BaseConfig):
+    attn_memory_chunk_size: Optional[int] = None
+    "Length of regular token segment that is inverleaved with memory tokens"
+
+    num_memory_tokens_per_chunk: Optional[int] = None
+    "Number of memory tokens to insert after every input segment"
+
+    add_qkv_memory_weights: bool = False
+    "Whether to add extra parallel memory token weights for QKV projections in attention layers"
+
+    add_extra_embedding: bool = False
+    "Whether to add extra learnable embedding for memory tokens"
+
+    add_chunked_attn_mask: bool = False
+    "Whether to use a chunked attention mask with global attention for memory tokens"
+
+    memory_token_id: int = 0
+    "Memory token ID (in the case when extra embedding is not added)"
+
+    @property
+    def memory_tokens_enabled(self):
+        return (
+            self.num_memory_tokens_per_chunk is not None
+            and self.attn_memory_chunk_size is not None
+        )
+
+    def update_model_config_params(
+        self,
+        max_position_embeddings,
+        position_embedding_type,
+        moe_enabled,
+        fixed_sparse_attention,
+        attention_sliding_window_length,
+        attention_vertical_column_spacing,
+        attention_vertical_column_width,
+        attention_chunk_size,
     ):
-        raise ValueError(
-            "Memory token option is not compatible with custom attention masks"
+        if moe_enabled:
+            raise ValueError("Memory tokens are not supported for MoE models")
+
+        if position_embedding_type != "rotary":
+            raise ValueError(
+                f"Memory tokens are only supported with rotary position embedding, "
+                f"but got type {position_embedding_type}"
+            )
+
+        total_chunk_size = (
+            self.attn_memory_chunk_size + self.num_memory_tokens_per_chunk
         )
-    if position_embedding_type != "rotary":
-        raise ValueError(
-            f"Memory tokens are only supported with rotary position embedding, "
-            f"but got type {position_embedding_type}"
+        updated_params = {}
+
+        if self.add_chunked_attn_mask:
+            # Verify parameters for triangular chunked mask with vertical columns
+            if (
+                fixed_sparse_attention is not None
+                or attention_sliding_window_length is not None
+            ):
+                raise ValueError(
+                    "Memory token option is not compatible with custom attention masks"
+                )
+
+            if attention_chunk_size is None:
+                updated_params["attention_chunk_size"] = total_chunk_size
+            elif attention_chunk_size != total_chunk_size:
+                raise ValueError(
+                    f"Expected attention_chunk_size={total_chunk_size}, "
+                    f"got {attention_chunk_size}"
+                )
+            else:
+                updated_params["attention_chunk_size"] = attention_chunk_size
+
+            if attention_vertical_column_spacing is None:
+                updated_params["attention_vertical_column_spacing"] = (
+                    total_chunk_size
+                )
+            elif attention_vertical_column_spacing != total_chunk_size:
+                raise ValueError(
+                    f"Expected attention_vertical_column_spacing={total_chunk_size}, "
+                    f"got {attention_vertical_column_spacing}"
+                )
+            else:
+                updated_params["attention_vertical_column_spacing"] = (
+                    attention_vertical_column_spacing
+                )
+
+            if attention_vertical_column_width is None:
+                updated_params["attention_vertical_column_width"] = (
+                    self.num_memory_tokens_per_chunk
+                )
+            elif (
+                attention_vertical_column_width
+                != self.num_memory_tokens_per_chunk
+            ):
+                raise ValueError(
+                    f"Expected attention_vertical_column_width={self.num_memory_tokens_per_chunk}, "
+                    f"got {attention_vertical_column_width}"
+                )
+            else:
+                updated_params["attention_vertical_column_width"] = (
+                    attention_vertical_column_width
+                )
+
+        # Update max_position_embeddings to accomodate sequence length
+        # after memory token insertion
+        updated_params["max_position_embeddings"] = (
+            max_position_embeddings
+            + self.num_memory_tokens_per_chunk
+            * (self.attn_memory_chunk_size + max_position_embeddings)
+            // self.attn_memory_chunk_size
         )
-    if moe_enabled:
-        raise ValueError("Memory tokens are not supported for MoE models")
-    if (
-        attention_vertical_column_spacing is not None
-        or attention_vertical_column_width is not None
-    ):
-        raise ValueError(
-            "Vertical column spacing/width parameters for attention masks "
-            "cannot be set together with memory tokens"
-        )
-
-
-def memory_tokens_update_params(
-    num_memory_tokens_per_chunk, attn_memory_chunk_size, max_position_embeddings
-):
-    # Setting sliding window length and vertical column spacing/width
-    # in attention parameters to be aligned with memory token locations.
-    # max_position_embeddings needs to be updated as effective sequence
-    # length is higher with memory tokens
-    updated_params = {}
-
-    total_chunk_size = attn_memory_chunk_size + num_memory_tokens_per_chunk
-    updated_params["attention_chunk_size"] = total_chunk_size
-    updated_params["attention_vertical_column_spacing"] = total_chunk_size
-    updated_params["attention_vertical_column_width"] = (
-        num_memory_tokens_per_chunk
-    )
-
-    updated_params["max_position_embeddings"] = (
-        max_position_embeddings
-        + num_memory_tokens_per_chunk
-        * (attn_memory_chunk_size + max_position_embeddings)
-        // attn_memory_chunk_size
-    )
-    return updated_params
+        return updated_params

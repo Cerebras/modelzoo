@@ -58,23 +58,56 @@ ProjectorType = Annotated[
 
 class LlavaModelConfig(ModelConfig):
     name: Literal["llava"]
+    "The name of the model. Must be set to `llava`."
 
     freeze: Optional[List[str]] = None
+    """
+    List of regex patterns that match layers of the model to be frozen.
+    Frozen layers will not have their weights updated during training.
+    Note that regex patterns should be specified as single quotes in the yaml for escape codes.
+    Perl style regex expected and are parsed by `re` python package.
+    Ex: freeze: ['^image_model.image_model_list', '^text_model']
+    freezes all parameters whose names start with 
+    `image_model.image_model_list` and `text_model`.
+    """
     image_feature_select_layer_idx: Optional[int] = -1
+    """
+    Zero based index that indicates the decoder layer whose output, 
+    should be extracted and used as image features. 
+    For example: If the image_model consists of 
+    20 decoder layers denoted as layer_0,layer_1... layer_19, 
+    then setting `image_feature_select_layer_idx` = -1
+    would extract the output of layer_19 in forward pass. 
+    Similarly setting `image_feature_select_layer_idx` = 2, 
+    would extract the output from layer_2 i.e 
+    third layer among the 20 layers present in the decoder stack.
+    """
     image_start_idx: int = 1
+    "The position in sequence where the image tokens start."
+
     image_feature_select_mode: Literal["patch", "cls_patch"] = "patch"
+    """
+    If `patch`, only consider output at image patch tokens and ignore CLS token
+    If `cls_patch`, consider both CLS token and patch features from image_model.
+    """
+
     loss_scaling: Literal["num_tokens", "batch_size"] = "num_tokens"
+    """The scaling type used to calculate the loss. Accepts - `batch_size`, `num_tokens`.
+    See [more](https://docs.cerebras.net/en/latest/wsc/general/num-tokens-loss-scaling.html).
+    **Note:** It is recommended to set this to `num_tokens` for convenience."""
+
     loss_weight: float = 1.0
+    """The weight for the loss scaling when `loss_scaling = 'batch_size'`, generally set to
+    '1/max_sequence_length`.
+    """
     image_model: MultiModalModelType = ...
-    "The underlying image model being used"
+    "The underlying image model being used."
     text_model: MultiModalModelType = ...
-    "The underlying text model being used"
+    "The underlying text model being used."
     projector: Optional[Dict[str, ProjectorType]] = None
+    "The underlying projector module that connects image_model and text_model."
     moe_params: MoEConfig = Field(default_factory=MoEConfig, alias="moe")
     "A dict of MoE params including num_experts, top_k and load_balancing_loss_coef."
-
-    mixed_precision: Optional[bool] = Field(default=None, deprecated=True)
-    fp16_type: Optional[str] = Field(default=None, deprecated=True)
 
     @field_validator("projector")
     @classmethod

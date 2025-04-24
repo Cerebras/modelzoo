@@ -574,7 +574,7 @@ class ConfigConverter_BertForSequenceClassification_HF_CS21(
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4", "cs-2.5"),
         )
 
 
@@ -597,7 +597,7 @@ class Converter_BertForSequenceClassification_WithoutOptionalModel_HF_CS21(
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4", "cs-2.5"),
         )
 
     @staticmethod
@@ -621,7 +621,7 @@ class ConfigConverter_BertForTokenClassification_HF_CS21(
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4", "cs-2.5"),
         )
 
 
@@ -644,7 +644,7 @@ class Converter_BertForTokenClassification_WithoutOptionalModel_HF_CS21(
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4", "cs-2.5"),
         )
 
     @staticmethod
@@ -668,7 +668,7 @@ class ConfigConverter_BertForQuestionAnswering_HF_CS21(
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4", "cs-2.5"),
         )
 
 
@@ -691,7 +691,7 @@ class Converter_BertForQuestionAnswering_WithoutOptionalModel_HF_CS21(
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4", "cs-2.5"),
         )
 
     @staticmethod

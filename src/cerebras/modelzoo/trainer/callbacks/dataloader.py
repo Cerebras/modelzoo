@@ -88,3 +88,9 @@ class LogInputSummaries(Callback):
 
     def on_before_forward(self, trainer, model, batch, args, kwargs):
         self.log_input_summaries(trainer, batch)
+
+    def on_save_trainer_state(self, trainer, state_dict):
+        pass
+
+    def on_load_trainer_state(self, trainer, state_dict):
+        pass

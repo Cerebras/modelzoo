@@ -19,6 +19,7 @@ import ftfy
 import numpy as np
 
 from cerebras.modelzoo.data_preparation.data_preprocessing.utils import (
+    default_chat_template,
     setup_warning_logging,
     wikitext_detokenizer,
 )
@@ -45,10 +46,8 @@ class DPOTokenGenerator:
         dataset_params = params.get("dataset", {})
         processing_params = params.get("processing")
         setup_params = params.get("setup")
-        warning_log_dir = (
-            os.path.join(setup_params.get("output_dir"), "logs")
-            if setup_params.get("output_dir")
-            else "./data_preprocessing_logs"
+        warning_log_dir = os.path.join(
+            setup_params.get("output_dir", "./output")
         )
         self.logger = setup_warning_logging(warning_log_dir, __name__)
         self.tokenizer = tokenizer
@@ -73,53 +72,26 @@ class DPOTokenGenerator:
         self.eos_id = eos_id
         self.pad_id = pad_id
 
-        if (
-            tokenizer.name_or_path == "gpt2-tokenizer"
-            or tokenizer.name_or_path == "neox-tokenizer"
-        ):
-            self.can_apply_chat_template = False
-        else:
-            self.can_apply_chat_template = hasattr(
-                self.tokenizer, 'add_special_tokens'
-            ) and hasattr(self.tokenizer, 'apply_chat_template')
-            # Additional tokenizer configuration (this assumes such a method exists on the tokenizer)
-            if self.can_apply_chat_template:
-                self.tokenizer.add_special_tokens(
-                    {
-                        "sep_token": "",
-                        "cls_token": "",
-                        "mask_token": "",
-                        "pad_token": "",
-                    }
-                )
+        self.can_apply_chat_template = hasattr(
+            self.tokenizer, 'add_special_tokens'
+        ) and hasattr(self.tokenizer, 'apply_chat_template')
 
-        # Setting roles and delimiter based on dataset_params
-        self.user_role = dataset_params.pop("user_role", "user")
-        self.assistant_role = dataset_params.pop("assistant_role", "assistant")
+        if not self.can_apply_chat_template:
+            self.logger.warning(
+                f"A chat template cannot be applied to this tokenizer. Please ensure that a chat template already exists!"
+            )
+
+        # Additional tokenizer configuration (this assumes such a method exists on the tokenizer)
+        if self.can_apply_chat_template:
+            if self.tokenizer.chat_template is None:
+                self.logger.warning(
+                    "Tokenizer doesn't have a chat template, setting a default chat template.."
+                )
+                self.tokenizer.chat_template = default_chat_template()
+
         self.response_delimiter = dataset_params.pop(
             "response_delimiter", "<response>"
         )
-
-        # Handling the case where bos_token_id might not be set
-        self.has_bos_token_id = (
-            hasattr(self.tokenizer, 'bos_token_id')
-            and self.tokenizer.bos_token_id is not None
-        )
-
-        self.add_bos_token = (
-            hasattr(self.tokenizer, 'add_bos_token')
-            and self.tokenizer.add_bos_token is True
-        )
-
-        if self.has_bos_token_id:
-            self.bos_token_id = self.tokenizer.bos_token_id
-        else:
-            # Log a warning if the tokenizer's beginning-of-sequence token ID is not set
-            self.logger.warning(
-                f"tokenizer bos_token_id is None or does not exist. Setting it to eos_token_id."
-            )
-            self.bos_token_id = self.eos_id
-
         self.chat_template = dataset_params.pop("chat_template", None)
         self.features = [
             "chosen_input_ids",
@@ -129,43 +101,6 @@ class DPOTokenGenerator:
             "rejected_attention_mask",
             "rejected_labels",
         ]
-
-    def tokenize_text(self, text: str) -> Dict[str, List[int]]:
-        """
-        Tokenizes text with the tokenizer, supporting both callable tokenizers
-        and those requiring an `encode` method.
-
-        Args:
-            text: Text to tokenize.
-
-        Returns:
-            Dictionary with 'input_ids', 'attention_mask', and 'labels'.
-        """
-        if callable(self.tokenizer):
-            # Use callable tokenizer directly, assuming it returns a dict
-            # with 'input_ids' and 'attention_mask'.
-            return self.tokenizer(text)
-
-        # Otherwise, use `encode` method to get token IDs.
-        token_ids = self.tokenizer.encode(text)
-
-        # Prepare input_ids.
-        input_ids = token_ids
-
-        # Labels are token IDs.
-        labels = token_ids
-
-        # Attention_mask of 1s for each token in input_ids.
-        attention_mask = [1] * len(input_ids)
-
-        # Package input_ids, attention_mask, and labels.
-        features = {
-            "input_ids": input_ids,
-            "attention_mask": attention_mask,
-            "labels": labels,
-        }
-
-        return features
 
     def build_tokenized_answer(
         self, prompt: str, prompt_response: str
@@ -193,10 +128,14 @@ class DPOTokenGenerator:
         """
 
         # Tokenize the prompt response without adding special tokens
-        full_tokenized = self.tokenize_text(prompt_response)
+        full_tokenized = self.tokenizer(
+            prompt_response, add_special_tokens=False
+        )
 
         # Tokenize the prompt to get its input IDs
-        prompt_input_ids = self.tokenize_text(prompt)["input_ids"]
+        prompt_input_ids = self.tokenizer(prompt, add_special_tokens=False)[
+            "input_ids"
+        ]
 
         # Extract answer's input IDs and attention mask based on the length of the prompt's input IDs
         answer_input_ids = full_tokenized["input_ids"][len(prompt_input_ids) :]
@@ -308,9 +247,9 @@ class DPOTokenGenerator:
 
         # Initialize data_stats
         data_stats = {
-            "discarded": 0,
-            "processed": 1,
-            "successful": 0,
+            "discarded_files": 0,
+            "processed_files": 1,
+            "successful_files": 0,
             "raw_chars_count": 0,
             "raw_bytes_count": 0,
             "num_pad_tokens": 0,
@@ -323,7 +262,7 @@ class DPOTokenGenerator:
 
         if doc_field:
             self.logger.warning(f"{doc_field} is empty. Skipping this doc...")
-            data_stats["discarded"] = 1
+            data_stats["discarded_files"] = 1
             return {}, data_stats
 
         prompt_chosen_input = [
@@ -383,7 +322,7 @@ class DPOTokenGenerator:
         # Extract prompt after applying chat template
         last_assistant_index = prompt_chosen.rfind(self.response_delimiter)
         if last_assistant_index == -1:
-            data_stats["discarded"] = 1
+            data_stats["discarded_files"] = 1
             self.logger.warning(
                 f"Can't determine prompt from the chosen string. No `chosen` substring found. Skipping this doc..."
             )
@@ -405,7 +344,7 @@ class DPOTokenGenerator:
         )
         if not isinstance(prompt, str):
             raise ValueError(f"prompt should be an str but got {type(prompt)}")
-        prompt_tokens = self.tokenize_text(prompt)
+        prompt_tokens = self.tokenizer(prompt, add_special_tokens=False)
         prompt_tokens = {f"prompt_{k}": v for k, v in prompt_tokens.items()}
 
         chosen_tokens = self.build_tokenized_answer(
@@ -447,34 +386,6 @@ class DPOTokenGenerator:
                 f"Num diff tokens in prompts: {num_diff_tokens}"
             )
 
-        # add BOS token to head of prompt
-        if not self.add_bos_token:
-            prompt_tokens["prompt_input_ids"] = [
-                self.bos_token_id
-            ] + prompt_tokens["prompt_input_ids"]
-            chosen_tokens["prompt_input_ids"] = [
-                self.bos_token_id
-            ] + chosen_tokens["prompt_input_ids"]
-            rejected_tokens["prompt_input_ids"] = [
-                self.bos_token_id
-            ] + rejected_tokens["prompt_input_ids"]
-
-            prompt_tokens["prompt_attention_mask"] = [1] + prompt_tokens[
-                "prompt_attention_mask"
-            ]
-            chosen_tokens["prompt_attention_mask"] = [1] + chosen_tokens[
-                "prompt_attention_mask"
-            ]
-            rejected_tokens["prompt_attention_mask"] = [1] + rejected_tokens[
-                "prompt_attention_mask"
-            ]
-
-        # add EOS token to end of answer
-        chosen_tokens["input_ids"].append(self.eos_id)
-        chosen_tokens["attention_mask"].append(1)
-        rejected_tokens["input_ids"].append(self.eos_id)
-        rejected_tokens["attention_mask"].append(1)
-
         longer_response_length = max(
             len(chosen_tokens["input_ids"]), len(rejected_tokens["input_ids"])
         )
@@ -509,7 +420,8 @@ class DPOTokenGenerator:
             ):
                 for k in ["input_ids", "attention_mask"]:
                     answer_tokens[k] = answer_tokens[k][
-                        : self.max_seq_length - self.max_prompt_length
+                        : self.max_seq_length
+                        - len(answer_tokens[f"prompt_{k}"])
                     ]
 
         # Create labels
@@ -589,11 +501,12 @@ class DPOTokenGenerator:
         sample = np.expand_dims(stacked_batch, axis=0)
         data_stats.update(
             {
-                "successful": 1,
+                "successful_files": 1,
                 "num_pad_tokens": total_pad_tokens,
                 "num_masked_tokens": total_masked_tokens,
                 "loss_valid_tokens": total_loss_valid_tokens,
                 "num_tokens": 6 * self.max_seq_length,
+                "n_examples": 1,
             }
         )
 

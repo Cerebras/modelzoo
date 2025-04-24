@@ -43,7 +43,9 @@ class MoEConfig(BaseConfig):
     "Weight for the load balancing loss"
     null_expert_bias: Optional[float] = 0.0
     "Optional bias to add null expert prob to the routing"
-    moe_implementation: Literal["functional", "optimized"] = "optimized"
+    moe_implementation: Literal["functional", "optimized", "experimental"] = (
+        "optimized"
+    )
     "Whether to use the functional or Optimized implementation of MoE"
     router_fp32: bool = True
     "Selects the precision of routing weights to be float"
@@ -51,8 +53,14 @@ class MoEConfig(BaseConfig):
     "Routing algorithm to use for selection of experts"
     router_selection_nonlinearity: Optional[
         Literal["sigmoid", "sinkhorn", "softmax"]
-    ] = None
-    "Non linearity used for routing algorithm for expert probablity generation, to be used with 'learned' routing"
+    ] = "softmax"
+    "Non linearity used for routing algorithm expert selection, to be used with 'learned' routing"
+    expert_weighting_nonlinearity: Optional[
+        Literal["sigmoid", "sinkhorn", "softmax"]
+    ] = "softmax"
+    "Non linearity used for expert probability weightings, to be used with 'learned' routing"
+    expert_weighting_normalization: Optional[bool] = True
+    "Normalize expert weights or not before weighting the experts"
     sinkhorn_n_iters: Optional[int] = 1
     "Number of iterations for sinkhorn nonlinearity"
     gate_initializer: Optional[InitializerConfig] = None
@@ -60,10 +68,6 @@ class MoEConfig(BaseConfig):
 
     def post_init(self, context):
         super().post_init(context)
-        if self.routing_algorithm == "learned":
-            # Nonlinearity defaults to softmax for learned routing
-            if self.router_selection_nonlinearity is None:
-                self.router_selection_nonlinearity = "softmax"
 
     @model_validator(mode="after")
     def validate_moe(self):
@@ -73,9 +77,24 @@ class MoEConfig(BaseConfig):
                     "Load Balancing Loss not supported with hash routing"
                 )
             if self.router_selection_nonlinearity is not None:
-                raise ValueError(
-                    "Routing non-linearity not supported with hash routing"
+                warn(
+                    f"Routing non-linearity {self.router_selection_nonlinearity} is ignored with hash routing"
                 )
+            if self.expert_weighting_nonlinearity is not None:
+                warn(
+                    f"Expert weighting non-linearity {self.expert_weighting_nonlinearity} is ignored with hash routing"
+                )
+
+        elif self.routing_algorithm == "learned":
+            if (
+                self.null_expert_bias is not None
+                and self.null_expert_bias != 0.0
+                and not self.expert_weighting_normalization
+            ):
+                raise ValueError(
+                    "expert_weighting_normalization should be set to True when using null_expert_bias"
+                )
+
         if self.router_selection_nonlinearity == "sinkhorn":
             if self.load_balancing_loss_coef != 0.0:
                 raise ValueError(
@@ -131,7 +150,7 @@ class StaticDualExpertLinear(nn.Module):
 
         Args:
             token_modality_idx: tensor to mask different modality.
-                value '1' is for image tocken and value '0' is for text token.
+                value '1' is for image token and value '0' is for text token.
         """
         assert (
             token_modality_idx != None
@@ -227,7 +246,7 @@ class FeedForwardNetworkConfig(ModelConfig):
         bias_initializer: Bias initializer. Defaults to `"zeros"`.
         output_layer_initializer: If not None, initialize the last projection
             layer with this initializer. Defaults to None.
-        moe_implementation (str): "functional" or "optimized" implementation. Defaults to "optimized".
+        moe_implementation (str): "functional", "optimized", or "experimental" implementation. Defaults to "optimized".
         device (optional): Device to create the model parameters on, can be a cuda device or CS device.
         moe_params (optional [MoEConfig]): config params for setting up MoE
     """
@@ -248,7 +267,7 @@ class FeedForwardNetworkConfig(ModelConfig):
     static_dual_expert: bool = False
     # Class variables.
     MoEImpl: ClassVar[enum.Enum] = enum.Enum(
-        "MoEImpl", ["functional", "optimized"]
+        "MoEImpl", ["functional", "optimized", "experimental"]
     )
     moe_params: Optional[MoEConfig] = None
 
@@ -296,6 +315,13 @@ class FeedForwardNetworkConfig(ModelConfig):
             )
 
         return self
+
+    def moe_experimental_impl(self) -> bool:
+        """Return True if experimental implementation is used."""
+        return (
+            self.MoEImpl[self.moe_params.moe_implementation]
+            == self.MoEImpl.experimental
+        )
 
     def moe_optimized_impl(self) -> bool:
         """Return True if optimized implementation is used."""

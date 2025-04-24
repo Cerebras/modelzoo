@@ -26,7 +26,21 @@ def resolve_path(path, pattern=r"\$MODELZOO_ROOT"):
     return re.sub(pattern, repl, path)
 
 
+def validate_path(path):
+
+    paths = path if isinstance(path, list) else [path]
+    for xpath in paths:
+        if not os.path.exists(xpath):
+            raise ValueError(f"Path {xpath} does not exist.")
+    return path
+
+
 AliasedPath = Annotated[
     str,
     BeforeValidator(resolve_path),
+]
+
+ValidatedPath = Annotated[
+    str,
+    BeforeValidator(validate_path),
 ]

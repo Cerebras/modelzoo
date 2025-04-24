@@ -54,8 +54,6 @@ trainer:
       - 2
       - 2
       use_conv_patchified_embedding: true
-      mixed_precision: true
-      fp16_type: cbfloat16
       num_diffusion_steps: 1000
       num_classes: 1000
       vae:
@@ -125,9 +123,9 @@ trainer:
       log_steps: 1
     callbacks:
     - ScopedTrainFlags:
-        csx.performance.micro_batch_size: 1100
+        csx.performance.micro_batch_size: 1168
     - ScopedValidateFlags:
-        csx.performance.micro_batch_size: 1100
+        csx.performance.micro_batch_size: 1168
     - ComputeNorm: {}
     schedulers:
     - ConstantLR:
@@ -142,7 +140,7 @@ trainer:
       # In distributed training, batch_size specifies the per-GPU batch size;
       # thus, you should divide by the number of GPU used.
       # The effective batch size, which is evenly divided across "num_csx" systems used for the run
-      batch_size: 1100
+      batch_size: 1168
       shuffle: true
       num_classes: 1000
       num_workers: 8
@@ -155,7 +153,7 @@ trainer:
       data_dir:
       - ./computer_vision/datasets/imagenet1k_ilsvrc2012_vaelatent_im256
       - ./computer_vision/datasets/imagenet1k_ilsvrc2012_vaelatent_im256_hflipped
-      batch_size: 1100
+      batch_size: 1168
       shuffle: false
       num_classes: 1000
       num_workers: 8

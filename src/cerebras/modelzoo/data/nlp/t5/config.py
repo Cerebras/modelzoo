@@ -19,6 +19,7 @@ Config classes of T5 data Configs.
 
 from typing import List, Literal, Union
 
+from cerebras.modelzoo.config.types import ValidatedPath
 from cerebras.modelzoo.data.common.HDF5IterableDataProcessor import (
     HDF5IterableDataProcessorConfig,
 )
@@ -27,7 +28,7 @@ from cerebras.modelzoo.data.common.HDF5IterableDataProcessor import (
 class T5HDF5DataProcessorConfig(HDF5IterableDataProcessorConfig):
     data_processor: Literal["T5HDF5DataProcessor"]
 
-    data_dir: Union[str, List[str]] = ...
+    data_dir: Union[ValidatedPath, List[ValidatedPath]] = ...
     "The path to the HDF5 files."
     num_workers: int = 0
     drop_last: bool = True

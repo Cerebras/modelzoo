@@ -107,7 +107,8 @@ class TransformerDecoder(nn.Module):
         cache_present_kv: bool = False,
         extract_layer_idx: Optional[int] = None,
         expert_hash_idx: Optional[Tensor] = None,
-        special_token_indices: Dict[str, Tensor] = None,
+        position_ids: Optional[Tensor] = None,
+        special_token_meta: Dict[str, Tensor] = None,
         **extra_args,
     ) -> Union[
         Tensor, Tuple[Tensor, List[Union[SelfAttnKV, SelfAndCrossAttnKV]]]
@@ -169,6 +170,16 @@ class TransformerDecoder(nn.Module):
             else:
                 tgt_mask_i = tgt_mask
 
+            from cerebras.modelzoo.common.utils.model.transformer_utils import (
+                SparseAttentionMask,
+            )
+
+            if isinstance(tgt_mask_i, SparseAttentionMask):
+                mod.self_attn.sparse_attn_mask_ranges = (
+                    tgt_mask_i.sparsity_annotation
+                )
+                tgt_mask_i = tgt_mask_i.mask_tensor
+
             output = mod(
                 output,
                 memory=memory,
@@ -183,7 +194,8 @@ class TransformerDecoder(nn.Module):
                 cross_attn_position_bias=cross_attn_position_bias,
                 layer_idx=layer_idx,
                 expert_hash_idx=expert_hash_idx,
-                special_token_indices=special_token_indices,
+                position_ids=position_ids,
+                special_token_meta=special_token_meta,
                 **extra_args,
             )
 
@@ -203,11 +215,11 @@ class TransformerDecoder(nn.Module):
                 entropy = (
                     layer_routing_weights
                     * -torch.log(layer_routing_weights + 1e-5)
-                ).sum(axis=-1)
+                ).sum() / (layer_routing_weights.numel() / num_experts)
                 max_entropy = torch.log(
                     torch.tensor(num_experts, dtype=layer_routing_weights.dtype)
                 )
-                entropy = entropy.mean() / max_entropy
+                entropy /= max_entropy
                 summarize_scalar(
                     f"expert_stats/entropy_l{layer_idx}",
                     entropy,

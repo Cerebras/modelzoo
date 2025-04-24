@@ -191,7 +191,10 @@ class Converter_Gemma2_WithoutOptionalModel_HF_CS23(
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-2.3", "cs-2.4"))
+        return (
+            FormatVersions("hf"),
+            FormatVersions("cs-2.3", "cs-2.4", "cs-2.5"),
+        )
 
     @classmethod
     def converter_note(cls) -> str:
@@ -513,7 +516,10 @@ class ConfigConverter_Gemma2_HF_CS23(BaseConfigConverter_HF_CS):
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-2.3", "cs-2.4"))
+        return (
+            FormatVersions("hf"),
+            FormatVersions("cs-2.3", "cs-2.4", "cs-2.5"),
+        )
 
     def convert_gqa(
         self,
@@ -766,6 +772,6 @@ Converter_Gemma2ForCausalLM_HF_CS23 = Build_HF_CS_Converter_WithOptionalModel(
     config_converter_class=ConfigConverter_Gemma2_HF_CS23,
     formats=(
         FormatVersions("hf"),
-        FormatVersions("cs-2.3", "cs-2.4"),
+        FormatVersions("cs-2.3", "cs-2.4", "cs-2.5"),
     ),
 )

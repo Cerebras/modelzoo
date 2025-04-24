@@ -29,6 +29,7 @@ from .callback import (
 
 # Core Callbacks
 from .artifact_dir import ArtifactDirCallback
+from .autorestart import AutoRestart
 from .backend import BackendCallback
 from .checkpoint import (
     Checkpoint,
@@ -37,9 +38,11 @@ from .checkpoint import (
     SaveCheckpointState,
 )
 from .dataloader import DataLoaderCallback, LogInputSummaries
+from .early_exit import EarlyExit
 from .grad_accum import GradientAccumulationCallback
 from .loop import LoopCallback, TrainingLoop, ValidationLoop
 from .logging import Logging
+from .loss import LossAccumulationCallback
 from .model import ModelCallback
 from .optimizer import LogOptimizerParamGroup, OptimizerCallback
 from .precision import MixedPrecision, Precision
@@ -64,18 +67,21 @@ from .lora import Lora
 from .loss import CheckLoss
 from .metadata import ModelZooParamsMetadata
 from .metrics import ModelEvalMetrics
-from .norm import ComputeNorm
-from .numerics import DumpActivations
+from .norm import ComputeNorm, ComputeNormGNS
+from .numerics import DumpActivations, NaNChecker
 from .profiler import (
     Profiler,
     RateProfiler,
     OpProfiler,
     SavePerformanceData,
     FlopUtilization,
+    DurationProfiler,
 )
+from .run_schedule import RunSchedule
 from .selective_grad import SelectiveGrad
 from .model_stats import CountParams
-from .notification import EmailNotification
+from .notification import EmailNotification, SlackNotification
+
 
 # isort: on
 
@@ -87,12 +93,15 @@ __all__ = [
     "ValidationCallback",
     # Core Callbacks
     "ArtifactDirCallback",
+    "AutoRestart",
     "BackendCallback",
     "Checkpoint",
+    "EarlyExit",
     "LoadCheckpointStates",
     "KeepNCheckpoints",
     "SaveCheckpointState",
     "DataLoaderCallback",
+    "LossAccumulationCallback",
     "GradientAccumulationCallback",
     "LoopCallback",
     "TrainingLoop",
@@ -122,13 +131,18 @@ __all__ = [
     "SummaryTensorListener",
     "NormTensorListener",
     "ComputeNorm",
+    "ComputeNormGNS",
     "DumpActivations",
     "Profiler",
     "RateProfiler",
     "OpProfiler",
     "SavePerformanceData",
     "FlopUtilization",
+    "DurationProfiler",
     "SelectiveGrad",
     "CountParams",
     "EmailNotification",
+    "SlackNotification",
+    "RunSchedule",
+    "NaNChecker",
 ]

@@ -56,18 +56,67 @@ class GptHDF5MapDataProcessorConfig(HDF5DataProcessorConfig):
             self.prefetch_factor = None  # the default value in DataLoader
             self.persistent_workers = False
         model_config = context.get('model', {}).get('config')
+
+        return_masks = False
+        enable_memory_tokens = False
         if model_config is not None:
-            if hasattr(model_config, 'attn_memory_chunk_size') and hasattr(
-                model_config, 'num_memory_tokens_per_chunk'
+            if (
+                hasattr(model_config, "memory_tokens_config")
+                and model_config.memory_tokens_config.memory_tokens_enabled
             ):
-                if model_config.attn_memory_chunk_size is not None:
-                    self.data_transforms = [
-                        {
-                            'name': 'add_memory_tokens',
-                            'attn_memory_chunk_size': model_config.attn_memory_chunk_size,
-                            'num_memory_tokens_per_chunk': model_config.num_memory_tokens_per_chunk,
-                        }
-                    ]
+
+                enable_memory_tokens = True
+                memory_tokens_config = model_config.memory_tokens_config
+                attn_memory_chunk_size = (
+                    memory_tokens_config.attn_memory_chunk_size
+                )
+                num_memory_tokens_per_chunk = (
+                    memory_tokens_config.num_memory_tokens_per_chunk
+                )
+                memory_token_id = memory_tokens_config.memory_token_id
+                return_masks = (
+                    return_masks
+                    or memory_tokens_config.add_qkv_memory_weights
+                    or memory_tokens_config.add_extra_embedding
+                )
+
+            if hasattr(model_config, "transformer_decoder"):
+                for layer_config in model_config.transformer_decoder.layers:
+                    if (
+                        hasattr(layer_config.self_attn, "memory_tokens_config")
+                        and layer_config.self_attn.memory_tokens_config.memory_tokens_enabled
+                    ):
+
+                        enable_memory_tokens = True
+                        memory_tokens_config = (
+                            layer_config.self_attn.memory_tokens_config
+                        )
+                        attn_memory_chunk_size = (
+                            memory_tokens_config.attn_memory_chunk_size
+                        )
+                        num_memory_tokens_per_chunk = (
+                            memory_tokens_config.num_memory_tokens_per_chunk
+                        )
+                        memory_token_id = memory_tokens_config.memory_token_id
+                        return_masks = (
+                            return_masks
+                            or memory_tokens_config.add_qkv_memory_weights
+                            or memory_tokens_config.add_extra_embedding
+                        )
+
+        if enable_memory_tokens:
+            if not self.data_transforms:
+                self.data_transforms = []
+
+            self.data_transforms.append(
+                {
+                    'name': 'add_memory_tokens',
+                    'attn_memory_chunk_size': attn_memory_chunk_size,
+                    'num_memory_tokens_per_chunk': num_memory_tokens_per_chunk,
+                    'memory_token_id': memory_token_id,
+                    'return_masks': return_masks,
+                }
+            )
 
 
 class GptHDF5MapDataProcessor:

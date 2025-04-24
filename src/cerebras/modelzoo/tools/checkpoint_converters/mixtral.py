@@ -398,7 +398,10 @@ class Converter_MixtralModel_WithoutOptionalModel_HF_CS23(
 ):
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-2.3", "cs-2.4"))
+        return (
+            FormatVersions("hf"),
+            FormatVersions("cs-2.3", "cs-2.4", "cs-2.5"),
+        )
 
     @staticmethod
     def get_config_converter_class() -> BaseConfigConverter:
@@ -420,7 +423,10 @@ class Converter_MixtralLMHeadModel_WithoutOptionalModel_HF_CS23(
 ):
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-2.3", "cs-2.4"))
+        return (
+            FormatVersions("hf"),
+            FormatVersions("cs-2.3", "cs-2.4", "cs-2.5"),
+        )
 
     @staticmethod
     def get_config_converter_class() -> BaseConfigConverter:
@@ -489,7 +495,10 @@ class ConfigConverter_Mixtral_HF_CS23(ConfigConverter_LLaMa_HF_CS21):
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-2.3", "cs-2.4"))
+        return (
+            FormatVersions("hf"),
+            FormatVersions("cs-2.3", "cs-2.4", "cs-2.5"),
+        )
 
 
 Converter_MixtralModel_HF_CS23 = Build_HF_CS_Converter_WithOptionalModel(

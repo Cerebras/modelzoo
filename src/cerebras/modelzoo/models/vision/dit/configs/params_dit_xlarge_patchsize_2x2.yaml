@@ -54,8 +54,6 @@ trainer:
       - 2
       - 2
       use_conv_patchified_embedding: true
-      mixed_precision: true
-      fp16_type: cbfloat16
       num_diffusion_steps: 1000
       num_classes: 1000
       vae:

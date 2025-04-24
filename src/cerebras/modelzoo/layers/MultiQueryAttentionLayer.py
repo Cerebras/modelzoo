@@ -44,6 +44,8 @@ class MultiQueryAttention(MultiheadAttention):
         use_projection_bias (bool): Whether to use bias in the key, query, and
             value projections.
         use_ffn_bias (bool): Whether to use bias in the output projection.
+        attention_qk_norm_layer (nn.Module): Norm layer for applying qk normalization
+        attention_qk_norm_eps (float): epsilon for norm layer for applying qk normalization
         attention_initializer (str): Projection kernel initializer. Defaults to
             ``xavier_uniform``.
         attention_q_initializer: Query projection kernel initializer. If not
@@ -75,6 +77,8 @@ class MultiQueryAttention(MultiheadAttention):
         vdim=None,
         use_projection_bias=None,
         use_ffn_bias=False,
+        attention_qk_norm_layer=None,
+        attention_qk_norm_eps=1e-5,
         attention_initializer="xavier_uniform",
         attention_q_initializer=None,
         output_layer_initializer=None,
@@ -106,6 +110,8 @@ class MultiQueryAttention(MultiheadAttention):
             kdim=kdim,
             use_projection_bias=use_projection_bias,
             use_ffn_bias=use_ffn_bias,
+            attention_qk_norm_layer=attention_qk_norm_layer,
+            attention_qk_norm_eps=attention_qk_norm_eps,
             attention_initializer=attention_initializer,
             attention_q_initializer=attention_q_initializer,
             output_layer_initializer=output_layer_initializer,
@@ -170,12 +176,12 @@ class MultiQueryAttention(MultiheadAttention):
         k,
         attn_mask=None,
         key_padding_mask=None,
-        special_token_indices=None,
+        special_token_meta=None,
     ):
         # linear projection
         k = self.get_key_projection(
             k,
-            special_token_indices=special_token_indices,
+            special_token_meta=special_token_meta,
         )  # [batch_size, seq_length, self.num_kv_groups * self.head_dim]
 
         if self.num_kv_groups == 1:
@@ -194,11 +200,11 @@ class MultiQueryAttention(MultiheadAttention):
         v,
         attn_mask=None,
         key_padding_mask=None,
-        special_token_indices=None,
+        special_token_meta=None,
     ):
         # linear projection
         v = self.get_value_projection(
-            v, special_token_indices=special_token_indices
+            v, special_token_meta=special_token_meta
         )  # [batch_size, seq_length, self.num_kv_groups * self.head_dim]
 
         if self.num_kv_groups == 1:
@@ -238,13 +244,13 @@ class MultiQueryAttention(MultiheadAttention):
         return super().calculate_attention_logits(q, k, layer_idx)
 
     def calculate_attention_output(
-        self, attention_scores, v, special_token_indices=None
+        self, attention_scores, v, special_token_meta=None
     ):
         if self.num_kv_groups > 1:
             v = self.expand_kv_over_group_dim(v)
 
         return super().calculate_attention_output(
-            attention_scores, v, special_token_indices
+            attention_scores, v, special_token_meta
         )
 
     def check_extra_params(params):

@@ -50,9 +50,6 @@ trainer:
       loss_scaling: num_tokens
       loss_weight: 1.0
       use_bias_in_output: false
-      # Cerebras parameters
-      mixed_precision: true
-      fp16_type: cbfloat16
     optimizer:
       AdamW:
         betas:

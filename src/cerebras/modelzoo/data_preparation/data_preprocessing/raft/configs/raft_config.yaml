@@ -1,0 +1,34 @@
+dataset: 
+  setup:
+    data: 
+        type: "huggingface"
+        source: "nvidia/ChatQA-Training-Data"
+        name: "quoref"
+        split: "train"
+        cache_dir: <specify your cache directory>  
+    context_hook: cerebras.modelzoo.data_preparation.data_preprocessing.raft.hooks:split_context_hook
+    context_hook_kwargs: &ctx_anchor
+        context_key: document
+    question_hook: cerebras.modelzoo.data_preparation.data_preprocessing.raft.hooks:split_question_hook
+    question_hook_kwargs: &q_anchor
+        question_key: messages
+    output_dir: <specify your output directory>
+    output_data_format: "jsonl"
+    processes: 16
+    
+raft_config:
+  <<: *ctx_anchor
+  <<: *q_anchor
+  k: 5
+  answer_key: answers
+  id_key: id
+  distractor_type: hard
+  context_removal_probability: 0.05
+  answer_refusal_percent: 1.0
+  
+ctx_to_ctx: True
+
+# Can be path to yaml containing config to generate embeddings
+# or directory already containing embeddings previously generated 
+context_embeddings: cerebras/modelzoo/data_preparation/data_preprocessing/raft/configs/context_embedding_config.yaml
+question_embeddings: cerebras/modelzoo/data_preparation/data_preprocessing/raft/configs/question_embedding_config.yaml

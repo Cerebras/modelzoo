@@ -18,9 +18,10 @@ Adapted from https://github.com/pytorch/pytorch/blob/master/torch/nn/modules/tra
 
 from typing import Callable, Dict, Optional, Tuple, Type, Union
 
+import torch
 import torch.nn as nn
 from torch import Tensor
-from torch.nn import Dropout, LayerNorm
+from torch.nn import Dropout, Identity, LayerNorm
 
 from cerebras.modelzoo.layers.AttentionHelper import get_attention_module
 from cerebras.modelzoo.layers.FeedForwardNetwork import (
@@ -73,6 +74,9 @@ class TransformerDecoderLayer(nn.Module):
         scale_qk_dot_by_d (bool): If ``True`` scales QK^T dot product by d(=hidden/d_head) instead of sqrt(d).
         attention_logit_alpha (float): Scales the QK^T dot product. Used to stabilize logits in muP training.
         attention_inner_dim (int):  Number of output units in attention query/key/value projection. Defaults to d_model
+        attention_qk_norm_layer: the normalization string to create the class for QK normalization,
+            as proposed in https://arxiv.org/pdf/2309.14322.pdf (default=nn.Identity)
+        attention_qk_norm_eps: the eps value in qk layer normalization components (default=1e-5).
         add_cross_attention: If ``True``, adds cross-attention layer between encoder/decoder,
             otherwise, only self-attention is used in the decoder (GPT-style models should set to ``False``)
         use_ffn_bias_in_attention: Add bias in the concluding FFN
@@ -90,6 +94,12 @@ class TransformerDecoderLayer(nn.Module):
         use_ff_layer2_dropout = If ``True``, dropout will be enabled after the second feed forward layer. Default: True
         ffn_dropout_rate: Controls dropout rate of FF's first layer. If None, defaults to dropout.
         moe_params: A dict of MoE params including num_experts, top_k and load_balancing_loss_coef
+        disable_self_attention (bool):  If ``True``, Disables the self-attention and only uses cross-attention
+            in the decoder layer. Defaults to ``False``,
+        cross_attention_gate_attention (bool):  If ``True``, the output of the cross-attention attention is multiplied by a learnable
+            gate parameter with tanh() activation. Defaults to ``False``.
+        cross_attention_gate_mlp (bool):  If ``True``, the output of the cross-attention mlp is multiplied by a learnable
+            gate parameter with tanh() activation. Defaults to ``False``.
 
     Examples:
         >>> decoder_layer = nn.TransformerDecoderLayer(d_model=512, nhead=8, batch_first=True)
@@ -126,6 +136,8 @@ class TransformerDecoderLayer(nn.Module):
         output_projection_scale=1.0,
         scale_qk_dot_by_layer_idx=False,
         attention_inner_dim=None,
+        attention_qk_norm_layer: Type[nn.Module] = Identity,
+        attention_qk_norm_eps: float = 1e-5,
         cross_attention_kv_dim=None,
         use_projection_bias_in_attention=False,
         use_ffn_bias_in_attention=False,
@@ -140,46 +152,65 @@ class TransformerDecoderLayer(nn.Module):
         use_ff_layer2_dropout: bool = True,
         ffn_dropout_rate: Optional[float] = None,
         moe_params=MoEConfig(),
-        use_memory_tokens=False,
+        memory_tokens_config=None,
+        disable_self_attention=False,
+        cross_attention_gate_attention=False,
+        cross_attention_gate_mlp=False,
     ) -> None:
         super(TransformerDecoderLayer, self).__init__()
 
         assert batch_first, "Currently, only batch_first=True is supported"
         self.add_cross_attention = add_cross_attention
+        self.disable_self_attention = disable_self_attention
+        self.cross_attention_gate_attention = cross_attention_gate_attention
+        self.cross_attention_gate_mlp = cross_attention_gate_mlp
+
+        if self.cross_attention_gate_attention:
+            self.cross_attn_attn_gate = torch.nn.Parameter(torch.zeros(1))
+
+        if self.cross_attention_gate_mlp:
+            self.cross_attn_mlp_gate = torch.nn.Parameter(torch.zeros(1))
+
         if attention_dropout_rate is None:
             attention_dropout_rate = dropout
         AttentionModule = get_attention_module(
             attention_module, extra_attention_params
         )
-        # Wrap the attention module so that a separate set of
-        # weights is added for memory tokens
-        if use_memory_tokens:
+        if (
+            memory_tokens_config is not None
+            and memory_tokens_config.add_qkv_memory_weights
+        ):
+            # Wrap the attention module so that a separate set of
+            # weights is added for memory tokens
             AttentionModule = create_mem_token_attn_module(AttentionModule)
 
-        self.self_attn = AttentionModule(
-            d_model,
-            nhead,
-            inner_dim=attention_inner_dim,
-            dropout=attention_dropout_rate,
-            batch_first=batch_first,
-            attention_type=attention_type,
-            scale_qk_dot_by_d=scale_qk_dot_by_d,
-            attention_logits_alpha=attention_logits_alpha,
-            q_projection_scale=q_projection_scale,
-            k_projection_scale=k_projection_scale,
-            v_projection_scale=v_projection_scale,
-            output_projection_scale=output_projection_scale,
-            softmax_dtype_fp32=attention_softmax_fp32,
-            use_projection_bias=use_projection_bias_in_attention,
-            use_ffn_bias=use_ffn_bias_in_attention,
-            attention_initializer=attention_initializer,
-            attention_q_initializer=attention_q_initializer,
-            output_layer_initializer=attention_output_layer_initializer,
-            scale_qk_dot_by_layer_idx=scale_qk_dot_by_layer_idx,
-            logit_softcapping=attention_logit_softcapping,
-            device=device,
-            **extra_attention_params,
-        )
+        if not disable_self_attention:
+            self.self_attn = AttentionModule(
+                d_model,
+                nhead,
+                inner_dim=attention_inner_dim,
+                dropout=attention_dropout_rate,
+                batch_first=batch_first,
+                attention_type=attention_type,
+                scale_qk_dot_by_d=scale_qk_dot_by_d,
+                attention_logits_alpha=attention_logits_alpha,
+                q_projection_scale=q_projection_scale,
+                k_projection_scale=k_projection_scale,
+                v_projection_scale=v_projection_scale,
+                output_projection_scale=output_projection_scale,
+                softmax_dtype_fp32=attention_softmax_fp32,
+                use_projection_bias=use_projection_bias_in_attention,
+                use_ffn_bias=use_ffn_bias_in_attention,
+                attention_qk_norm_layer=attention_qk_norm_layer,
+                attention_qk_norm_eps=attention_qk_norm_eps,
+                attention_initializer=attention_initializer,
+                attention_q_initializer=attention_q_initializer,
+                output_layer_initializer=attention_output_layer_initializer,
+                scale_qk_dot_by_layer_idx=scale_qk_dot_by_layer_idx,
+                logit_softcapping=attention_logit_softcapping,
+                device=device,
+                **extra_attention_params,
+            )
 
         self.norm_first = norm_first
         if norm_first_sandwich:
@@ -233,6 +264,8 @@ class TransformerDecoderLayer(nn.Module):
                 softmax_dtype_fp32=attention_softmax_fp32,
                 use_projection_bias=use_projection_bias_in_attention,
                 use_ffn_bias=use_ffn_bias_in_attention,
+                attention_qk_norm_layer=attention_qk_norm_layer,
+                attention_qk_norm_eps=attention_qk_norm_eps,
                 attention_initializer=attention_initializer,
                 attention_q_initializer=attention_q_initializer,
                 output_layer_initializer=attention_output_layer_initializer,
@@ -241,11 +274,12 @@ class TransformerDecoderLayer(nn.Module):
                 device=device,
                 **extra_attention_params,
             )
-            self.norm2 = norm_layer(
-                d_model,
-                eps=layer_norm_eps,
-                device=device,
-            )
+            if not self.disable_self_attention and self.add_cross_attention:
+                self.norm2 = norm_layer(
+                    d_model,
+                    eps=layer_norm_eps,
+                    device=device,
+                )
             self.dropout2 = Dropout(dropout)
 
         if ffn_dropout_rate is None:
@@ -286,9 +320,17 @@ class TransformerDecoderLayer(nn.Module):
         self.__reset_parameters()
 
     def __reset_parameters(self):
-        self.self_attn.reset_parameters()
+        if not self.disable_self_attention:
+            self.self_attn.reset_parameters()
         self.ffn.reset_parameters()
+
         reset_norm(self.norm1)
+
+        if self.cross_attention_gate_attention:
+            self.cross_attn_attn_gate.data.fill_(0.0)
+
+        if self.cross_attention_gate_mlp:
+            self.cross_attn_mlp_gate.data.fill_(0.0)
 
         if self.norm3 is not None:
             reset_norm(self.norm3)
@@ -301,7 +343,8 @@ class TransformerDecoderLayer(nn.Module):
 
         if self.add_cross_attention:
             self.multihead_attn.reset_parameters()
-            reset_norm(self.norm2)
+            if not self.disable_self_attention:
+                reset_norm(self.norm2)
 
     def forward(
         self,
@@ -320,7 +363,9 @@ class TransformerDecoderLayer(nn.Module):
         cross_attn_position_bias: Optional[Tensor] = None,
         layer_idx: Optional[int] = None,
         expert_hash_idx: Optional[Tensor] = None,
-        special_token_indices: Dict[str, Tensor] = None,
+        position_ids: Optional[Tensor] = None,
+        special_token_meta: Dict[str, Tensor] = None,
+        full_text_row_masked_out_mask: Optional[Tensor] = None,
         **extra_args,
     ) -> Union[Tensor, Tuple[Tensor, Union[SelfAttnKV, SelfAndCrossAttnKV]]]:
         r"""Pass the inputs (and mask) through the decoder layer.
@@ -370,29 +415,40 @@ class TransformerDecoderLayer(nn.Module):
         if self.moe_enabled and expert_hash_idx is not None:
             ffn_extra_args["expert_hash_idx"] = expert_hash_idx
 
+        # Skip this layer if no self-attention and no cross-attention
+        if self.disable_self_attention and memory is None:
+            return tgt
+
         x = tgt
         if self.norm_first:
-            attn1_out = self._sa_block(
-                self.norm1(x),
-                tgt_mask,
-                tgt_key_padding_mask,
-                rotary_position_embedding_helper=rotary_position_embedding_helper,
-                past_kv=past_kv[:2] if past_kv is not None else None,
-                cache_present_kv=cache_present_kv,
-                self_attn_position_bias=self_attn_position_bias,
-                layer_idx=layer_idx,
-                special_token_indices=special_token_indices,
-                **extra_args,
-            )
-            post_attn1 = attn1_out[0]
-            if self.norm_first_sandwich:
-                post_attn1 = self.norm1_post(post_attn1)
+            if not self.disable_self_attention:
+                attn1_out = self._sa_block(
+                    self.norm1(x),
+                    tgt_mask,
+                    tgt_key_padding_mask,
+                    rotary_position_embedding_helper=rotary_position_embedding_helper,
+                    past_kv=past_kv[:2] if past_kv is not None else None,
+                    cache_present_kv=cache_present_kv,
+                    self_attn_position_bias=self_attn_position_bias,
+                    layer_idx=layer_idx,
+                    position_ids=position_ids,
+                    special_token_meta=special_token_meta,
+                    **extra_args,
+                )
+                post_attn1 = attn1_out[0]
 
-            x = x + post_attn1
+                if self.norm_first_sandwich:
+                    post_attn1 = self.norm1_post(post_attn1)
+
+                x = x + post_attn1
 
             if self.add_cross_attention:
                 attn2_out = self._mha_block(
-                    self.norm2(x),
+                    (
+                        self.norm2(x)
+                        if not self.disable_self_attention
+                        else self.norm1(x)
+                    ),
                     memory,
                     memory_mask,
                     memory_key_padding_mask,
@@ -400,11 +456,23 @@ class TransformerDecoderLayer(nn.Module):
                     cache_present_kv=cache_present_kv,
                     cross_attn_position_bias=cross_attn_position_bias,
                     layer_idx=layer_idx,
-                    special_token_indices=special_token_indices,
+                    position_ids=position_ids,
+                    special_token_meta=special_token_meta,
                     **extra_args,
                 )
 
-                x = x + attn2_out[0]
+                if self.cross_attention_gate_attention:
+                    cross_attn_out = (
+                        attn2_out[0]
+                        * self.cross_attn_attn_gate.broadcast_to(
+                            attn2_out[0].shape
+                        ).tanh()
+                    )
+                else:
+                    cross_attn_out = attn2_out[0]
+
+                x = x + cross_attn_out
+
             ffn_output = (
                 self.ffn(self.norm3(x), **ffn_extra_args)
                 if self.norm3 is not None
@@ -417,8 +485,24 @@ class TransformerDecoderLayer(nn.Module):
             if self.norm_first_sandwich:
                 post_ffn_output = self.norm3_post(post_ffn_output)
 
+            if self.cross_attention_gate_mlp:
+                post_ffn_output = (
+                    post_ffn_output
+                    * self.cross_attn_mlp_gate.broadcast_to(
+                        post_ffn_output.shape
+                    ).tanh()
+                )
+
+            if full_text_row_masked_out_mask is not None:
+                post_ffn_output = full_text_row_masked_out_mask * post_ffn_output  # type: ignore
+
             x = x + post_ffn_output
         else:
+            if self.disable_self_attention:
+                raise NotImplementedError(
+                    "norm_first=False and disable_self_attention=True is not supported in TransformerDecoderLayer"
+                )
+
             attn1_out = self._sa_block(
                 x,
                 tgt_mask,
@@ -428,7 +512,8 @@ class TransformerDecoderLayer(nn.Module):
                 cache_present_kv=cache_present_kv,
                 self_attn_position_bias=self_attn_position_bias,
                 layer_idx=layer_idx,
-                special_token_indices=special_token_indices,
+                position_ids=position_ids,
+                special_token_meta=special_token_meta,
                 **extra_args,
             )
 
@@ -443,7 +528,8 @@ class TransformerDecoderLayer(nn.Module):
                     cache_present_kv=cache_present_kv,
                     cross_attn_position_bias=cross_attn_position_bias,
                     layer_idx=layer_idx,
-                    special_token_indices=special_token_indices,
+                    position_ids=position_ids,
+                    special_token_meta=special_token_meta,
                     **extra_args,
                 )
                 x = self.norm2(x + attn2_out[0])

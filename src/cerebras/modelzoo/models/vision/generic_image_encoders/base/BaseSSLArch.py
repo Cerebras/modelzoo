@@ -15,7 +15,7 @@
 import logging
 import re
 from inspect import getfullargspec
-from typing import Any, List, Literal, Optional, Union
+from typing import List, Literal, Optional, Union
 
 import torch
 import torch.nn as nn
@@ -36,6 +36,9 @@ from cerebras.modelzoo.models.vision.generic_image_encoders.losses.DinoDistillat
 )
 from cerebras.modelzoo.models.vision.generic_image_encoders.losses.iBOTPatchLoss import (
     iBOTPatchLossConfig,
+)
+from cerebras.modelzoo.models.vision.generic_image_encoders.losses.KoLeoLoss import (
+    KoLeoLossConfig,
 )
 from cerebras.modelzoo.models.vision.generic_image_encoders.losses.MaskedSmoothL1Loss import (
     MaskedSmoothL1LossConfig,
@@ -173,6 +176,7 @@ class Loss(MultiForwardModelConfig):
     loss: Annotated[
         Union[
             DinoDistillationLossConfig,
+            KoLeoLossConfig,
             MaskedSmoothL1LossConfig,
             iBOTPatchLossConfig,
         ],
@@ -204,9 +208,6 @@ class GenericImageEncodersModelConfig(ModelConfig):
 
     freeze: Optional[List[str]] = None
     "List of regex strings used to freeze specific layers."
-
-    mixed_precision: Optional[Any] = Field(None, deprecated=True)
-    fp16_type: Optional[Any] = Field(None, deprecated=True)
 
     @field_validator("copy_init_weights", mode="after")
     def validate_copy_init_weights(cls, copy_init_weights):
@@ -454,7 +455,7 @@ class BaseSSLArch(nn.Module):
         # Initialize target model with source model weights
         if config.copy_init_weights is not None and self.training:
             for cp_dict in config.copy_init_weights:
-                logging.info(
+                logging.debug(
                     f"Copying weights {cp_dict.source} to {cp_dict.target}"
                 )
                 src_model = self._get_model_from_str(cp_dict.source)

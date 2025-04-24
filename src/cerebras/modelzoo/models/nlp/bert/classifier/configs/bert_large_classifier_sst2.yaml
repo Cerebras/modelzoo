@@ -21,8 +21,6 @@ trainer:
       task_dropout: 0.1
       problem_type: single_label_classification
       num_labels: 2
-      mixed_precision: true
-      fp16_type: cbfloat16
       compute_eval_metrics: false
     optimizer:
       AdamW:

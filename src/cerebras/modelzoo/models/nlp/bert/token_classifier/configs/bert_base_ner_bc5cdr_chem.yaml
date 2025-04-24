@@ -19,9 +19,7 @@ trainer:
       max_position_embeddings: 512
       encoder_output_dropout_rate: 0.1
       num_classes: 7
-      mixed_precision: true
       compute_eval_metrics: false
-      fp16_type: cbfloat16
       include_padding_in_loss: true
     optimizer:
       Adam: # {"SGD", "AdamW", "Adam"}
@@ -63,8 +61,7 @@ trainer:
     val_dataloader: &val_dataloader
       data_processor: BertTokenClassifierDataProcessor
       data_dir: ./language/datasets/ner-pt/bc5cdr-chem-csv/dev
-      vocab_file: 
-        ./language/datasets/pubmed_abstracts_baseline_fulltext_vocab/Pubmed_fulltext_vocab.txt
+      vocab_file: ./language/datasets/pubmed_abstracts_baseline_fulltext_vocab/Pubmed_fulltext_vocab.txt
       max_sequence_length: 128
       batch_size: 12
       shuffle: false

@@ -36,8 +36,6 @@ trainer:
         name: truncated_normal
         mean: 0.0
         std: 0.00111607142
-      fp16_type: cbfloat16
-      mixed_precision: true
     optimizer:
       adamw:
         eps: 1e-06

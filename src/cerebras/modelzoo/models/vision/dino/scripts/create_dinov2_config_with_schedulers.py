@@ -89,8 +89,10 @@ def make_last_layer_lr_schedule(
     for i, scheduler in enumerate(lr_schedule["SequentialLR"]["schedulers"]):
         for key, value in scheduler.items():
             for k, v in value.items():
-                if "end_learning_rate" in k and i == 0:
+                if "initial_learning_rate" in k and i == 0:
                     value[k] = phase1_final_lr
+                if "end_learning_rate" in k and i == 0:
+                    value[k] = lr_val
                     value["total_iters"] = phase2_total_iters
 
     lr_schedule["SequentialLR"]["schedulers"].insert(
@@ -98,7 +100,7 @@ def make_last_layer_lr_schedule(
         {
             "LinearLR": {
                 "initial_learning_rate": phase1_initial_lr,
-                "end_learning_rate": phase1_final_lr,
+                "end_learning_rate": phase1_initial_lr,
                 "total_iters": n_iters_to_freeze,
             }
         },
@@ -150,6 +152,12 @@ if __name__ == "__main__":
         default=0.2,
         help="Patch embedding multiplier",
     )
+    parser.add_argument(
+        "--weight_decay_end",
+        type=float,
+        default=0.4,
+        help="End value for weight decay",
+    )
 
     args = parser.parse_args()
 
@@ -190,7 +198,7 @@ if __name__ == "__main__":
     wd_schedule = {
         "CosineDecayWD": {
             "initial_val": 0.04,
-            "end_val": 0.4,
+            "end_val": args.weight_decay_end,
             "total_iters": total_iters,
             "param_group_tags": "wd_params",
         }

@@ -45,8 +45,11 @@ class MultimodalImageModel(BaseConfig):
 
 class MultimodalImageModelList(BaseConfig):
     image_feature_select_mode: str = "patch"
+    "If `patch`, select features at image patches only, i.e ignore CLS token feature"
+
     image_models: List[MultimodalImageModel] = []
     "List of image MultimodalImageModels"
+
     global_image_projection: Optional[
         Annotated[
             Union[FeedForwardNetworkConfig,],

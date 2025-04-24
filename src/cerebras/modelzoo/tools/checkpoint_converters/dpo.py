@@ -156,7 +156,11 @@ class Converter_DPO_HF_CS21(BaseCheckpointConverter_HF_CS):
         return (
             FormatVersions("hf"),
             FormatVersions(
-                "cs-2.1-dpo", "cs-2.2-dpo", "cs-2.3-dpo", "cs-2.4-dpo"
+                "cs-2.1-dpo",
+                "cs-2.2-dpo",
+                "cs-2.3-dpo",
+                "cs-2.4-dpo",
+                "cs-2.5-dpo",
             ),
         )
 
@@ -175,7 +179,11 @@ class ConfigConverter_DPO_HF_CS21(BaseConfigConverter_HF_CS):
         return (
             FormatVersions("hf"),
             FormatVersions(
-                "cs-2.1-dpo", "cs-2.2-dpo", "cs-2.3-dpo", "cs-2.4-dpo"
+                "cs-2.1-dpo",
+                "cs-2.2-dpo",
+                "cs-2.3-dpo",
+                "cs-2.4-dpo",
+                "cs-2.5-dpo",
             ),
         )
 

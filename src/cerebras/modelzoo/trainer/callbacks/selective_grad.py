@@ -66,3 +66,9 @@ class SelectiveGrad(Callback):
     def setup(self, trainer):
         for selective_grad in self.selective_grads:
             trainer.model.apply(selective_grad)
+
+    def on_save_trainer_state(self, trainer, state_dict):
+        pass
+
+    def on_load_trainer_state(self, trainer, state_dict):
+        pass

@@ -50,6 +50,10 @@ EPILOG_WITHOUT_ASSISTANT = (
     f"  $ {MZ_CLI_NAME} fit workdir/params_gpt_tiny.yaml\n\n"
     f"Validate a gpt2 model:\n"
     f"  $ {MZ_CLI_NAME} validate workdir/params_gpt_tiny.yaml\n\n"
+    f"Run Eleuther Eval Harness:\n"
+    f"  $ {MZ_CLI_NAME} lm_eval workdir/params_gpt_tiny.yaml --tasks=winogrande --checkpoint_path=workdir/my_ckpt.mdl\n\n"
+    f"Run BigCode Eval Harness:\n"
+    f"  $ {MZ_CLI_NAME} bigcode_eval workdir/params_gpt_tiny.yaml --tasks=mbpp --checkpoint_path=workdir/my_ckpt.mdl\n\n"
     f"Convert a checkpoint to Huggingface format\n"
     f"  $ {MZ_CLI_NAME} checkpoint convert --model gpt2 --src-fmt "
     f"cs-auto --tgt-fmt hf --config workdir/params_gpt_tiny.yaml "
@@ -62,6 +66,18 @@ EPILOG = (
     f"  $ {MZ_CLI_NAME} assistant \"Is llama 3.1 supported in the "
     f"checkpoint converter?\""
 )
+
+
+def copy_config(cfg, additions: dict = None):
+    from cerebras.modelzoo.common.utils.utils import merge_recursively
+    from cerebras.modelzoo.trainer.validate import validate_trainer_params
+
+    params = cfg.model_dump()
+    if additions:
+        params = merge_recursively(params, additions)
+    if "trainer" not in params:
+        params = {"trainer": params}
+    return validate_trainer_params(params)
 
 
 def get_table_parser():
@@ -81,7 +97,7 @@ def get_table_parser():
     return table_parser
 
 
-def _args_to_params(args):
+def _args_to_params(args, validate=True, extra_legacy_mapping_fn=None):
     from cerebras.modelzoo.common.pytorch_utils import RunConfigParamsValidator
     from cerebras.modelzoo.common.utils.run.cli_parser import (
         get_params,
@@ -104,19 +120,22 @@ def _args_to_params(args):
     runconfig_params.pop("config", None)
     runconfig_params.pop("params", None)
 
-    runconfig_params = params["runconfig"]
-    RunConfigParamsValidator().validate(runconfig_params)
+    if validate:
+        runconfig_params = params["runconfig"]
+        RunConfigParamsValidator().validate(runconfig_params)
 
     # Recursively update the params with the runconfig
     if "runconfig" in params and "trainer" in params:
         params = inject_cli_args_to_trainer_params(
-            params.pop("runconfig"), params
+            params.pop("runconfig"),
+            params,
+            extra_legacy_mapping_fn=extra_legacy_mapping_fn,
         )
 
     return params
 
 
-def add_run_args(parser):
+def add_run_args(parser, devices=["CSX", "CPU", "GPU"]):
     from cerebras.modelzoo.common.utils.run.cli_parser import (
         patch_to_collect_specified_args,
     )
@@ -124,6 +143,12 @@ def add_run_args(parser):
     parser.add_argument(
         "params",
         help="Path to .yaml file with model parameters.",
+    )
+
+    parser.add_argument(
+        "--target_device",
+        choices=devices,
+        help=f"Target device to run on. Can be one of {', '.join(devices)}.",
     )
 
     parser.add_argument(
@@ -259,6 +284,11 @@ def add_run_args(parser):
     )
 
     parser.add_argument(
+        "--debug_args_path",
+        help="Path to debugs args file. Defaults to None.",
+    )
+
+    parser.add_argument(
         "--ini",
         nargs="*",
         action=ParseKV,
@@ -271,3 +301,21 @@ def add_run_args(parser):
         help=argparse.SUPPRESS,
     )
     return patch_to_collect_specified_args(parser)
+
+
+def is_dir(path: str):
+    # NOTE: Specifically use os.path here instead of pathlib.Path to be able
+    # to support S3 paths
+    return os.path.basename(path) == "" or os.path.isdir(path)
+
+
+def append_source_basename(source_path: str, dest_path: str) -> str:
+    """
+    Append the source path's basename if the dest path is a
+    directory
+    """
+    if is_dir(dest_path):
+        # NOTE: Specifically use os.path here instead of pathlib.Path to be able
+        # to support S3 paths
+        return os.path.join(dest_path, os.path.basename(source_path))
+    return dest_path

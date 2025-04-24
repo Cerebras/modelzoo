@@ -41,8 +41,6 @@ trainer:
       use_bias_in_output: false
       initializer_range: 0.02
       loss_scaling: num_tokens
-      mixed_precision: true
-      fp16_type: cbfloat16
     optimizer:
       adamw:
         betas:

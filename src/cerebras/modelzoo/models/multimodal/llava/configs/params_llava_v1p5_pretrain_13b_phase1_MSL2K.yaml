@@ -94,8 +94,6 @@ trainer:
       image_feature_select_layer_idx: -2
       image_start_idx: 1 # position in MSL where image tokens start
       image_feature_select_mode: patch
-      mixed_precision: true
-      fp16_type: cbfloat16
     optimizer:
       AdamW:
         betas:
@@ -145,7 +143,6 @@ trainer:
       - 3
       - 336
       - 336
-      mixed_precision: true
       transforms:
       - name: expand_to_square
         background_color:
@@ -182,7 +179,6 @@ trainer:
       - 3
       - 336
       - 336
-      mixed_precision: true
       transforms:
       - name: expand_to_square
         background_color:

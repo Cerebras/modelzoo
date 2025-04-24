@@ -12,8 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
 import logging
-from typing import Dict, Literal, Optional, Union
+from typing import Dict, List, Literal, Optional, Union
 
 import torch
 import torch.nn as nn
@@ -24,11 +25,11 @@ from typing_extensions import Annotated
 import cerebras.pytorch as cstorch
 from cerebras.modelzoo.common.utils.model.mup_utils import (
     LRAdjustmentGroup,
-    is_mup,
     scale_initializers_by_dimension,
 )
 from cerebras.modelzoo.common.utils.model.transformer_utils import (
     create_broadcasted_autoregressive_mask,
+    make_key_padding_mask_broadcastable,
     make_sparse_mask_broadcastable,
 )
 from cerebras.modelzoo.config import ModelConfig
@@ -43,10 +44,7 @@ from cerebras.modelzoo.layers.init import (
     InitializerConfig,
     TruncatedNormalInitializer,
 )
-from cerebras.modelzoo.layers.MemoryTokenHelpers import (
-    memory_tokens_update_params,
-    memory_tokens_validate_param_consistency,
-)
+from cerebras.modelzoo.layers.MemoryTokenHelpers import MemoryTokensConfig
 from cerebras.modelzoo.layers.norms import NormType, get_norm
 from cerebras.modelzoo.models.nlp.gpt2.sparse_mask import (
     create_fixed_sparse_attention_mask,
@@ -64,6 +62,9 @@ class GPT2LMHeadModelConfig(ModelConfig):
     # Embedding
     vocab_size: Annotated[int, Ge(1), Le(512000)] = 50257
     "The size of the vocabulary used in the model. Max supported value - 512000."
+
+    num_extra_input_vocab_tokens: int = 0
+    "The number of extra input vocab tokens, used for Llama 3.2 Vision model"
 
     max_position_embeddings: PositiveInt = 1024
     "The maximum sequence length that the model can handle."
@@ -114,7 +115,7 @@ class GPT2LMHeadModelConfig(ModelConfig):
     [codellama](https://arxiv.org/pdf/2308.12950.pdf)
     """
 
-    fold_rope_consts: bool = True
+    fold_rope_consts: bool = False
     """If True, folds the rotary position embedding constants compile time.
 
     For very large models consider generating them on the fly by setting this to
@@ -189,6 +190,12 @@ class GPT2LMHeadModelConfig(ModelConfig):
     attention_chunk_size: Optional[int] = None
     "Chunk size for locally banded attention (as seen in GPT-3)."
 
+    attention_qk_norm_layer: Optional[NormType] = None
+    "The normalization layer to use for the QK dot product."
+
+    attention_qk_norm_eps: float = 1.0e-5
+    "The epsilon value used in the QK normalization layer."
+
     extra_attention_params: dict = {}
     """
     When enabling multi-query/grouped-query
@@ -234,10 +241,15 @@ class GPT2LMHeadModelConfig(ModelConfig):
     fixed_sparse_attention: Optional[dict] = None
     "Applies a fixed sparse attention mask in attention. See GPT-3 configs for examples."
 
-    num_memory_tokens_per_chunk: Optional[int] = None
-    attn_memory_chunk_size: Optional[int] = None
-    """Memory token parameters: insert 'num_memory_tokens_per_chunk' memory tokens
-    after every 'attn_memory_chunk_size' regular tokens in the input"""
+    memory_tokens_config: MemoryTokensConfig = Field(
+        default_factory=MemoryTokensConfig, alias="memory_tokens"
+    )
+    "Memory tokens configuration"
+
+    use_experimental_flex_api: bool = False
+    """If true, causes attention mask construction to use the new FlexAtttention-like API and
+    generate the kernel sparsity hint by iteratively analyzing the attention decoder mask on
+    CPU during the compilation."""
 
     #
     # Encoder - ffn
@@ -353,6 +365,9 @@ class GPT2LMHeadModelConfig(ModelConfig):
 
     pos_scaling_extra_args: Optional[dict] = None
     "A dict including parameters for YaRN RoPE scaling"
+
+    cross_attention_layers: List[int] = []
+    "Indices of the cross attention layers."
 
     rel_distance_mode: Literal["default", "capped", "grouped"] = "default"
     """Mode of relative distance computation in RoPE
@@ -530,10 +545,27 @@ class GPT2LMHeadModelConfig(ModelConfig):
         if self.position_embedding_type == "rotary" and self.rotary_dim is None:
             self.rotary_dim = int(self.hidden_size // self.num_heads * 0.25)
 
-        if is_mup(self) and self.lr_adjustment_groups is None:
+        if self.lr_adjustment_groups is None:
             self.lr_adjustment_groups = (
                 self.create_default_lr_adjustment_groups()
             )
+
+        if (
+            self.memory_tokens_config
+            and self.memory_tokens_config.memory_tokens_enabled
+        ):
+            updated_params = self.memory_tokens_config.update_model_config_params(
+                max_position_embeddings=self.max_position_embeddings,
+                position_embedding_type=self.position_embedding_type,
+                moe_enabled=self.moe_params.num_experts > 1,
+                fixed_sparse_attention=self.fixed_sparse_attention,
+                attention_sliding_window_length=self.attention_sliding_window_length,
+                attention_vertical_column_spacing=self.attention_vertical_column_spacing,
+                attention_vertical_column_width=self.attention_vertical_column_width,
+                attention_chunk_size=self.attention_chunk_size,
+            )
+            for attr_name in updated_params:
+                setattr(self, attr_name, updated_params[attr_name])
 
     def create_default_lr_adjustment_groups(self):
         return {
@@ -580,6 +612,7 @@ class GPT2LMHeadModel(nn.Module):
 
         # Unpack all the fields in the config
         vocab_size = config.vocab_size
+        num_extra_input_vocab_tokens = config.num_extra_input_vocab_tokens
         max_position_embeddings = config.max_position_embeddings
         embd_pdrop = config.embd_pdrop
         position_embedding_type = config.position_embedding_type
@@ -609,6 +642,8 @@ class GPT2LMHeadModel(nn.Module):
         )
         attention_vertical_column_width = config.attention_vertical_column_width
         attention_chunk_size = config.attention_chunk_size
+        attention_qk_norm_layer = config.attention_qk_norm_layer
+        attention_qk_norm_eps = config.attention_qk_norm_eps
         extra_attention_params = config.extra_attention_params
         extra_ffn_params = config.extra_ffn_params
         attention_inner_dim = config.attention_inner_dim
@@ -621,8 +656,7 @@ class GPT2LMHeadModel(nn.Module):
         attention_kernel = config.attention_kernel
         attention_logit_softcapping = config.attention_logit_softcapping
         fixed_sparse_attention = config.fixed_sparse_attention
-        num_memory_tokens_per_chunk = config.num_memory_tokens_per_chunk
-        attn_memory_chunk_size = config.attn_memory_chunk_size
+        memory_tokens_config = config.memory_tokens_config
         filter_size = config.filter_size
         nonlinearity = config.nonlinearity
         use_ffn_bias = config.use_ffn_bias
@@ -645,6 +679,7 @@ class GPT2LMHeadModel(nn.Module):
         pos_scaling_factor = config.pos_scaling_factor
         pos_scaling_type = config.pos_scaling_type
         pos_scaling_extra_args = config.pos_scaling_extra_args
+        cross_attention_layers = config.cross_attention_layers
         rel_distance_mode = config.rel_distance_mode
         rel_distance_extra_args = config.rel_distance_extra_args
         scale_qk_dot_by_layer_idx = config.scale_qk_dot_by_layer_idx
@@ -653,6 +688,7 @@ class GPT2LMHeadModel(nn.Module):
         final_logit_softcapping = config.final_logit_softcapping
         moe_params = config.moe_params
         dtype = config.dtype
+        use_experimental_flex_api = config.use_experimental_flex_api
 
         # std deviation for weight initialization
         self.initializer_range = initializer_range
@@ -761,6 +797,8 @@ class GPT2LMHeadModel(nn.Module):
 
         norm_class = get_norm(norm_type)
 
+        qk_norm_class = get_norm(attention_qk_norm_layer)
+
         if position_embedding_type == "rotary":
             if rotary_dim is None:
                 rotary_dim = hidden_size // num_heads
@@ -780,42 +818,10 @@ class GPT2LMHeadModel(nn.Module):
                 rotary_dim % 2 == 0
             ), "Rotary dimension must be an even number."
 
-        self.num_memory_tokens_per_chunk = num_memory_tokens_per_chunk
-        self.attn_memory_chunk_size = attn_memory_chunk_size
-
-        use_memory_tokens = False
-        self.attention_chunk_size = attention_chunk_size
-        if num_memory_tokens_per_chunk is not None:
-            # Check for conflicting options if using memory tokens
-            memory_tokens_validate_param_consistency(
-                position_embedding_type=position_embedding_type,
-                moe_enabled=self.moe_enabled,
-                fixed_sparse_attention=fixed_sparse_attention,
-                attention_sliding_window_length=attention_sliding_window_length,
-                attention_vertical_column_spacing=attention_vertical_column_spacing,
-                attention_vertical_column_width=attention_vertical_column_width,
-            )
-            # Setting attention mask values that are aligned with memory tokens
-            updated_params = memory_tokens_update_params(
-                self.num_memory_tokens_per_chunk,
-                self.attn_memory_chunk_size,
-                self.max_position_embeddings,
-            )
-            self.attention_chunk_size = updated_params["attention_chunk_size"]
-            attention_vertical_column_spacing = updated_params[
-                "attention_vertical_column_spacing"
-            ]
-            attention_vertical_column_width = updated_params[
-                "attention_vertical_column_width"
-            ]
-            self.max_position_embeddings = updated_params[
-                "max_position_embeddings"
-            ]
-            max_position_embeddings = updated_params["max_position_embeddings"]
-            use_memory_tokens = True
+        self.use_experimental_flex_api = use_experimental_flex_api
 
         self.embedding_layer = EmbeddingLayer(
-            vocab_size=vocab_size,
+            vocab_size=vocab_size + num_extra_input_vocab_tokens,
             embedding_size=hidden_size,
             embeddings_initializer=embedding_initializer,
             position_embedding_type=position_embedding_type,
@@ -832,7 +838,7 @@ class GPT2LMHeadModel(nn.Module):
             pos_scaling_factor=pos_scaling_factor,
             pos_scaling_type=pos_scaling_type,
             pos_scaling_extra_args=pos_scaling_extra_args,
-            use_memory_tokens=use_memory_tokens,
+            memory_tokens_config=memory_tokens_config,
             rel_distance_mode=rel_distance_mode,
             rel_distance_extra_args=rel_distance_extra_args,
             dtype=dtype,
@@ -863,6 +869,8 @@ class GPT2LMHeadModel(nn.Module):
             attention_logits_alpha=attention_logits_alpha,
             scale_qk_dot_by_layer_idx=scale_qk_dot_by_layer_idx,
             attention_module=attention_module,
+            attention_qk_norm_layer=qk_norm_class,
+            attention_qk_norm_eps=attention_qk_norm_eps,
             attention_inner_dim=attention_inner_dim,
             attention_dropout_rate=attention_dropout_rate,
             attention_softmax_fp32=attention_softmax_fp32,
@@ -877,17 +885,72 @@ class GPT2LMHeadModel(nn.Module):
             use_ff_layer1_dropout=False,
             norm_first_sandwich=norm_first_sandwich,
             moe_params=moe_params,
-            use_memory_tokens=use_memory_tokens,
+            memory_tokens_config=memory_tokens_config,
         )
 
         # Final LayerNorm
         self.ln_f = norm_class(hidden_size, eps=layer_norm_epsilon)
 
-        self.transformer_decoder = TransformerDecoder(
-            decoder_layer,
-            num_layers=num_hidden_layers,
-            norm=self.ln_f,
-        )
+        if len(cross_attention_layers) > 0:
+            cross_attention_decoder_layer = TransformerDecoderLayer(
+                d_model=hidden_size,
+                nhead=num_heads,
+                dim_feedforward=filter_size,
+                dropout=dropout_rate,
+                activation=nonlinearity,
+                layer_norm_eps=layer_norm_epsilon,
+                norm_layer=norm_class,
+                norm_first=True,
+                extra_attention_params=extra_attention_params,
+                extra_ffn_params=extra_ffn_params,
+                add_cross_attention=True,
+                disable_self_attention=True,
+                cross_attention_gate_attention=True,
+                cross_attention_gate_mlp=True,
+                attention_type=attention_type,
+                scale_qk_dot_by_d=scale_qk_dot_by_d,
+                attention_logits_alpha=attention_logits_alpha,
+                scale_qk_dot_by_layer_idx=scale_qk_dot_by_layer_idx,
+                attention_module=attention_module,
+                attention_qk_norm_layer=get_norm("rmsnorm"),
+                attention_qk_norm_eps=attention_qk_norm_eps,
+                attention_inner_dim=attention_inner_dim,
+                attention_dropout_rate=attention_dropout_rate,
+                attention_softmax_fp32=attention_softmax_fp32,
+                use_projection_bias_in_attention=use_projection_bias_in_attention,
+                use_ffn_bias_in_attention=use_ffn_bias_in_attention,
+                use_ffn_bias=use_ffn_bias,
+                attention_initializer=attention_initializer,
+                attention_output_layer_initializer=output_layer_initializer,
+                attention_logit_softcapping=attention_logit_softcapping,
+                ffn_initializer=ffn_initializer,
+                ffn_output_layer_initializer=ffn_output_layer_initializer,
+                use_ff_layer1_dropout=False,
+                norm_first_sandwich=norm_first_sandwich,
+                moe_params=moe_params,
+                memory_tokens_config=memory_tokens_config,
+            )
+
+            decoder_layers = []
+            for layer_idx in range(num_hidden_layers):
+                if layer_idx in cross_attention_layers:
+                    decoder_layers.append(
+                        copy.deepcopy(cross_attention_decoder_layer)
+                    )
+                else:
+                    decoder_layers.append(copy.deepcopy(decoder_layer))
+
+            self.transformer_decoder = TransformerDecoder(
+                decoder_layers,
+                num_layers=num_hidden_layers,
+                norm=self.ln_f,
+            )
+        else:
+            self.transformer_decoder = TransformerDecoder(
+                decoder_layer,
+                num_layers=num_hidden_layers,
+                norm=self.ln_f,
+            )
 
         self.attention_sliding_window_length = attention_sliding_window_length
         self.attention_sink_tokens = attention_sink_tokens
@@ -895,6 +958,7 @@ class GPT2LMHeadModel(nn.Module):
             attention_vertical_column_spacing
         )
         self.attention_vertical_column_width = attention_vertical_column_width
+        self.attention_chunk_size = attention_chunk_size
         assert not (
             sliding_window_every_other_decoder_layer and fixed_sparse_attention
         ), (
@@ -903,7 +967,7 @@ class GPT2LMHeadModel(nn.Module):
         )
         if sliding_window_every_other_decoder_layer:
             assert attention_sliding_window_length is not None, (
-                "When sliding_window_every_other_decoder_layer is enabled, the"
+                "When sliding_window_every_other_decoder_layer is enabled, the "
                 "attention_sliding_window_length must be specified."
             )
 
@@ -982,12 +1046,12 @@ class GPT2LMHeadModel(nn.Module):
         return self.embedding_layer.get_input_embeddings()
 
     def compute_input_embeddings(
-        self, input_ids, position_ids=None, special_token_indices=None
+        self, input_ids, position_ids=None, special_token_meta=None
     ):
         hidden_states = self.embedding_layer(
             input_ids,
             position_ids=position_ids,
-            special_token_indices=special_token_indices,
+            special_token_meta=special_token_meta,
         )
 
         if self.embedding_layer_norm:
@@ -1003,13 +1067,16 @@ class GPT2LMHeadModel(nn.Module):
         input_ids=None,
         attention_mask=None,
         attention_span=None,
+        cross_attention_states=None,
+        cross_attention_mask=None,
         tgt_key_padding_mask=None,
         position_ids=None,
         input_embeddings=None,
         inference_loop_index=None,
         token_modality_idx=None,
         constant_pos_mask=None,
-        special_token_indices=None,
+        special_token_meta=None,
+        full_text_row_masked_out_mask=None,
     ):
         if input_ids is not None and input_embeddings is not None:
             raise ValueError(
@@ -1022,26 +1089,24 @@ class GPT2LMHeadModel(nn.Module):
                 f"either one of them should be passed to model.forward"
             )
 
-        if special_token_indices is not None:
+        if special_token_meta is not None:
             if input_embeddings is not None:
                 raise ValueError(
-                    "Adding memory tokens to the input is only supported if "
+                    "Adding special tokens to the input is only supported if "
                     "`input_ids` are passed to the model, but got `input_embeddings`"
                 )
-            if not isinstance(special_token_indices, dict):
-                raise ValueError(
-                    "Expected `special_token_indices` to be a dict"
-                )
-            for key in ("regular_tokens", "memory_tokens"):
-                if not isinstance(special_token_indices.get(key), torch.Tensor):
+            if not isinstance(special_token_meta, dict):
+                raise ValueError("Expected `special_token_meta` to be a dict")
+            for key in ("memory_token_mask",):
+                if not isinstance(special_token_meta.get(key), torch.Tensor):
                     raise ValueError(
-                        f"Expected `special_token_indices['{key}']` to be a tensor, "
-                        f"but got {type(special_token_indices.get(key))}"
+                        f"Expected `special_token_meta['{key}']` to be a tensor, "
+                        f"but got {type(special_token_meta.get(key))}"
                     )
 
         if input_embeddings is None:
             hidden_states = self.compute_input_embeddings(
-                input_ids, position_ids, special_token_indices
+                input_ids, position_ids, special_token_meta
             )
         else:
             hidden_states = input_embeddings
@@ -1054,28 +1119,22 @@ class GPT2LMHeadModel(nn.Module):
         decoder_outputs = self.apply_decoder(
             hidden_states,
             attention_mask=attention_mask,
+            cross_attention_states=cross_attention_states,
+            cross_attention_mask=cross_attention_mask,
             attention_span=attention_span,
             position_ids=position_ids,
             tgt_key_padding_mask=tgt_key_padding_mask,
             expert_hash_idx=expert_hash_idx,
             token_modality_idx=token_modality_idx,
             constant_pos_mask=constant_pos_mask,
-            special_token_indices=special_token_indices,
+            special_token_meta=special_token_meta,
+            full_text_row_masked_out_mask=full_text_row_masked_out_mask,
         )
 
         if self.moe_enabled:
             hidden_states, routing_weights, expert_masks = decoder_outputs
         else:
             hidden_states = decoder_outputs
-
-        if special_token_indices is not None:
-            # Logits corresponding to memory token positions can be discarded
-            embedding_size = hidden_states.shape[-1]
-            regular_indices = special_token_indices['regular_tokens']
-            regular_indices = regular_indices[..., None].broadcast_to(
-                [-1, -1, embedding_size]
-            )
-            hidden_states = torch.gather(hidden_states, 1, regular_indices)
 
         if inference_loop_index is not None:
             # When running an implicit autoregressive loop for generation, this
@@ -1117,13 +1176,16 @@ class GPT2LMHeadModel(nn.Module):
         input_embeddings,
         attention_mask=None,
         attention_span=None,
+        cross_attention_states=None,
+        cross_attention_mask=None,
         tgt_key_padding_mask=None,
         position_ids=None,
         extract_layer_idx=None,
         expert_hash_idx=None,
         token_modality_idx=None,
         constant_pos_mask=None,
-        special_token_indices=None,
+        special_token_meta=None,
+        full_text_row_masked_out_mask=None,
     ):
         # `extract_layer_idx` is used only multimodal use case
         # input_embeddings : shape (bsz, MSL, H)
@@ -1144,8 +1206,10 @@ class GPT2LMHeadModel(nn.Module):
             attention_span=attention_span,
             device=input_embeddings.device,
             dtype=input_embeddings.dtype,
+            use_experimental_flex_api=self.use_experimental_flex_api,
             **sparse_mask_args,
         )
+
         if self.sliding_window_every_other_decoder_layer:
             # Models like Gemma2 apply SWA every other decoder layer. This is
             # implemented by creating a non-SWA mask named causal_attention_mask
@@ -1161,6 +1225,17 @@ class GPT2LMHeadModel(nn.Module):
                 device=input_embeddings.device,
                 dtype=input_embeddings.dtype,
             )
+        elif self.use_experimental_flex_api:
+            # If the flag is active, the mask range annotation is going to be
+            # constructed based on the mask sparsity directly, and inserted
+            # via model annotation (instead of analyzing and inserting during
+            # compile).
+            sparse_attn_mask = causal_attention_mask
+            for layer in self.transformer_decoder.layers:
+                layer.self_attn.sparse_attn_mask_ranges = (
+                    sparse_attn_mask.sparsity_annotation
+                )
+            causal_attention_mask = sparse_attn_mask.mask_tensor
 
         # Fixed sparse attention, used in GPT-3 model
         if self.fixed_sparsity_mask is not None:
@@ -1182,18 +1257,29 @@ class GPT2LMHeadModel(nn.Module):
             batch_size=batch_size,
         )
 
+        if cross_attention_mask is not None:
+            memory_mask = make_key_padding_mask_broadcastable(
+                cross_attention_mask, dtype=input_embeddings.dtype
+            )
+        else:
+            memory_mask = None
+
         return self.transformer_decoder(
             input_embeddings,
             tgt_mask=causal_attention_mask,
             tgt_key_padding_mask=tgt_key_padding_mask,
             sparse_mask=sparse_attention_mask,
+            memory=cross_attention_states,
+            memory_mask=memory_mask,
             rotary_position_embedding_helper=self.embedding_layer.get_rope_helper(),
             self_attn_position_bias=self_attn_position_bias,
             extract_layer_idx=extract_layer_idx,
             expert_hash_idx=expert_hash_idx,
             token_modality_idx=token_modality_idx,
+            position_ids=position_ids,
             constant_pos_mask=constant_pos_mask,
-            special_token_indices=special_token_indices,
+            special_token_meta=special_token_meta,
+            full_text_row_masked_out_mask=full_text_row_masked_out_mask,
         )
 
     def extract_features(
@@ -1201,9 +1287,12 @@ class GPT2LMHeadModel(nn.Module):
         input_embeddings,
         extract_layer_idx,
         attention_mask=None,
+        cross_attention_states=None,
+        cross_attention_mask=None,
         attention_span=None,
         tgt_key_padding_mask=None,
         position_ids=None,
+        full_text_row_masked_out_mask=None,
     ):
         """
         Extract features of input_embeddings from `extract_layer_idx` of decoder
@@ -1221,9 +1310,12 @@ class GPT2LMHeadModel(nn.Module):
             input_embeddings,
             extract_layer_idx=extract_layer_idx,
             attention_mask=attention_mask,
+            cross_attention_states=cross_attention_states,
+            cross_attention_mask=cross_attention_mask,
             attention_span=attention_span,
             tgt_key_padding_mask=tgt_key_padding_mask,
             position_ids=position_ids,
+            full_text_row_masked_out_mask=full_text_row_masked_out_mask,
         )
 
         if isinstance(hidden_states, tuple):

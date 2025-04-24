@@ -965,7 +965,7 @@ class Converter_GPT_Neox_Headless_HF_CS21(Converter_GPT_Neox_Headless_HF_CS20):
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4", "cs-2.5"),
         )
 
     @staticmethod
@@ -980,7 +980,7 @@ class Converter_GPT_Neox_LMHeadModel_HF_CS21(
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4", "cs-2.5"),
         )
 
     @staticmethod
@@ -1076,5 +1076,5 @@ class ConfigConverter_GPT_Neox_HF_CS21(ConfigConverter_GPT_Neox_HF_CS20):
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4", "cs-2.5"),
         )

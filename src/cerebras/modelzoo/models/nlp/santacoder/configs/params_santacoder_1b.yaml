@@ -33,8 +33,6 @@ trainer:
       layer_norm_epsilon: 1.0e-05
       use_bias_in_output: false
       initializer_range: 0.02
-      mixed_precision: true
-      fp16_type: cbfloat16
     optimizer:
       Adam:
         betas:

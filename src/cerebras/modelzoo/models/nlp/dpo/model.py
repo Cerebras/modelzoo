@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from copy import deepcopy
-from typing import Any, Literal, Optional, Union
+from typing import Literal, Union
 from warnings import warn
 
 import torch
@@ -73,9 +73,6 @@ class DPOModelConfig(ModelConfig):
     "Parameters for DPO configuration"
 
     compute_eval_metrics: bool = True
-
-    mixed_precision: Optional[Any] = Field(default=None, deprecated=True)
-    fp16_type: Optional[Any] = Field(default=None, deprecated=True)
 
     @model_validator(mode="before")
     @classmethod

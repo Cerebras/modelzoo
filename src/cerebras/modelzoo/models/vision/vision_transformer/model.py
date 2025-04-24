@@ -12,10 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Any, Literal, Optional
+from typing import Literal, Optional
 
 import torch
-from pydantic import Field
 from torch.nn import CrossEntropyLoss
 
 import cerebras.pytorch as cstorch
@@ -34,9 +33,6 @@ class VisionTransformerModelConfig(ViTClassificationModelConfig):
     "Number of input channels"
 
     compute_eval_metrics: bool = True
-
-    mixed_precision: Optional[Any] = Field(default=None, deprecated=True)
-    fp16_type: Optional[Any] = Field(default=None, deprecated=True)
 
 
 class ViTClassificationWrapperModel(torch.nn.Module):

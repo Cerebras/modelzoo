@@ -121,3 +121,9 @@ class LogOptimizerParamGroup(Callback):
                     for group, val in enumerate(optimizer.param_groups)
                 }
             )
+
+    def on_save_trainer_state(self, trainer, state_dict):
+        pass
+
+    def on_load_trainer_state(self, trainer, state_dict):
+        pass

@@ -16,15 +16,13 @@ import logging
 import math
 import os
 from logging import getLogger
-from typing import Any, List, Literal, Optional, Tuple, Union
-
-import torch
+from typing import List, Literal, Optional, Tuple, Union
 
 _GLOBAL_SEED = 0
 logger = getLogger()
 
 import torch
-from pydantic import Field, field_validator
+from pydantic import field_validator
 from torchvision.transforms import transforms
 from torchvision.utils import save_image
 
@@ -61,8 +59,6 @@ class MultiBlockMaskedContextImageTransformConfig(BaseSSLImageTransformConfig):
     predictor_aspect_ratio: Tuple[float, float] = [0.3, 3.0]
     min_mask_patches: int = 4
     allow_overlap: bool = False
-
-    mixed_precision: Optional[Any] = Field(None, deprecated=True)
 
     @property
     def output_keys(cls):
@@ -151,7 +147,7 @@ class MultiBlockMaskedContextImageTransform(BaseSSLImageTransform):
         final_transform = _transforms + [self.addnl_transform]
         final_transform = transforms.Compose(final_transform)
 
-        logging.info(
+        logging.debug(
             f"The following sequence is used to transform data:\n{final_transform}"
         )
 
