@@ -92,7 +92,10 @@ class Converter_Dragon_BertWrapper(
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-2.3", "cs-2.4"))
+        return (
+            FormatVersions("hf"),
+            FormatVersions("cs-2.3", "cs-2.4", "cs-2.5"),
+        )
 
     @staticmethod
     def get_config_converter_class() -> BaseConfigConverter:
@@ -132,7 +135,10 @@ class Converter_DragonQuestionEncoder_HF_CS(BaseCheckpointConverter_HF_CS):
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-2.3", "cs-2.4"))
+        return (
+            FormatVersions("hf"),
+            FormatVersions("cs-2.3", "cs-2.4", "cs-2.5"),
+        )
 
     @classmethod
     def converter_note(cls) -> str:
@@ -178,7 +184,10 @@ class Converter_DragonContextEncoder_HF_CS(BaseCheckpointConverter_HF_CS):
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-2.3", "cs-2.4"))
+        return (
+            FormatVersions("hf"),
+            FormatVersions("cs-2.3", "cs-2.4", "cs-2.5"),
+        )
 
     @classmethod
     def converter_note(cls) -> str:
@@ -235,7 +244,10 @@ class Converter_DragonModel_HF_CS23(
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-2.3", "cs-2.4"))
+        return (
+            FormatVersions("hf"),
+            FormatVersions("cs-2.3", "cs-2.4", "cs-2.5"),
+        )
 
     @staticmethod
     def get_config_converter_class() -> BaseConfigConverter:
@@ -294,7 +306,10 @@ class ConfigConverter_Dragon_HF_CS(ConfigConverter_Bert_HF_CS21):
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-2.3", "cs-2.4"))
+        return (
+            FormatVersions("hf"),
+            FormatVersions("cs-2.3", "cs-2.4", "cs-2.5"),
+        )
 
 
 class ConfigConverter_DragonModel_HF_CS23(
@@ -325,4 +340,7 @@ class ConfigConverter_DragonModel_HF_CS23(
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-2.3", "cs-2.4"))
+        return (
+            FormatVersions("hf"),
+            FormatVersions("cs-2.3", "cs-2.4", "cs-2.5"),
+        )

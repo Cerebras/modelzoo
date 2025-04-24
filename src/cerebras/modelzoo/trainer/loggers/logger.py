@@ -28,6 +28,10 @@ class Logger(Callback, ABC):
     classes.
     """
 
+    @property
+    def name(self):
+        return self.__class__.__name__
+
     def flush(self):
         """Manually flush the logger."""
 
@@ -40,3 +44,9 @@ class Logger(Callback, ABC):
             metrics: Dictionary containing the metrics to be logged.
             step: The current step number.
         """
+
+    def on_save_trainer_state(self, trainer, state_dict):
+        pass
+
+    def on_load_trainer_state(self, trainer, state_dict):
+        pass

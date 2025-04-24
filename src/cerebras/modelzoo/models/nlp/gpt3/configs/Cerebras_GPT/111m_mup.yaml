@@ -54,9 +54,6 @@ trainer:
       scale_qk_dot_by_d: true
       output_logits_alpha: 1.0
       embeddings_scale: 10
-      # Cerebras parameters
-      mixed_precision: true
-      fp16_type: bfloat16
     optimizer:
       AdamW:
         betas:

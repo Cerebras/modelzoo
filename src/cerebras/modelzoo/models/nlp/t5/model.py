@@ -13,11 +13,10 @@
 # limitations under the License.
 
 import logging
-from typing import Any, Literal, Optional
+from typing import Literal, Optional
 
 import torch
 import torch.nn as nn
-from pydantic import Field
 
 import cerebras.pytorch as cstorch
 from cerebras.modelzoo.common.utils.model.mup_utils import (
@@ -60,9 +59,6 @@ class T5ModelConfig(T5ForConditionalGenerationModelConfig):
     # Misc:
     compute_eval_metrics: Optional[bool] = True
     "Computes perplexity & accuracy metrics in addition to loss"
-
-    mixed_precision: Optional[Any] = Field(default=None, deprecated=True)
-    fp16_type: Optional[Any] = Field(default=None, deprecated=True)
 
     @property
     def __model_cls__(self):

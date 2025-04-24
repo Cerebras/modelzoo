@@ -44,7 +44,6 @@ trainer:
       lm_loss_weight: 0.033
       use_transformer_initialization: true
       # Cerebras configs.
-      mixed_precision: true
     optimizer:
       Adam:
         betas:

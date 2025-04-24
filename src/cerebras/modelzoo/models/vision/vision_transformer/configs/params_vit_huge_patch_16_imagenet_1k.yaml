@@ -5,6 +5,7 @@ trainer:
       cluster_config:
         num_workers_per_csx: 2
       backend_type: CSX
+      csx.debug.implicit_cast_cb16_to_fp32: True
     model:
       name: vision_transformer
       num_classes: 1000
@@ -36,8 +37,6 @@ trainer:
       use_conv_patchified_embedding: true
       use_encoder_pooler_layer: false
       prepend_cls_token: true
-      mixed_precision: true
-      fp16_type: bfloat16
     optimizer:
       Adam:
         betas:
@@ -59,8 +58,8 @@ trainer:
             total_iters: 228492
     precision:
       enabled: true
-      fp16_type: bfloat16
-      loss_scaling_factor: 1.0
+      fp16_type: cbfloat16
+      loss_scaling_factor: dynamic
       max_gradient_norm: 1.0
     loop:
       max_steps: 256355

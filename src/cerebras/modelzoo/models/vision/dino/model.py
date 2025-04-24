@@ -22,6 +22,7 @@ from cerebras.modelzoo.models.vision.generic_image_encoders.base.BaseSSLArch imp
 
 class DinoModelConfig(GenericImageEncodersModelConfig):
     name: Literal["dino"]
+    "Name of the model. Must be set to `dino`."
 
 
 class DinoModel(BaseSSLArch):

@@ -32,7 +32,7 @@ from cerebras.modelzoo.common.input_utils import (
     get_streaming_batch_size,
 )
 from cerebras.modelzoo.config import DataConfig
-from cerebras.modelzoo.config.types import AliasedPath
+from cerebras.modelzoo.config.types import AliasedPath, ValidatedPath
 from cerebras.modelzoo.data.common.input_utils import (
     get_data_for_task,
     num_tasks,
@@ -59,7 +59,7 @@ class T5DynamicDataProcessorConfig(DataConfig):
     src_vocab_file: AliasedPath = ...
     "Path to file containing tokens of vocabulary, one token per line."
 
-    src_data_dir: str = ...
+    src_data_dir: ValidatedPath = ...
     """
     Path to directory containing the output of preprocess.sh, with all the files
     of tokenized data.
@@ -161,8 +161,6 @@ class T5DynamicDataProcessorConfig(DataConfig):
     input_pad_id: Optional[str] = None
     "Can set specific padding for inputs"
 
-    mixed_precision: Optional[Any] = Field(None, deprecated=True)
-    fp16_type: Optional[Any] = Field(None, deprecated=True)
     vocab_size: Optional[Any] = Field(None, deprecated=True)
     tgt_vocab_file: Optional[Any] = Field(None, deprecated=True)
     tgt_data_dir: Optional[Any] = Field(None, deprecated=True)

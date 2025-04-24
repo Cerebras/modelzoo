@@ -47,3 +47,9 @@ class ModelZooParamsMetadata(Callback):
 
     def on_load_checkpoint(self, trainer, state_dict):
         trainer.metadata = state_dict.pop("__metadata__", None)
+
+    def on_save_trainer_state(self, trainer, state_dict):
+        pass
+
+    def on_load_trainer_state(self, trainer, state_dict):
+        pass

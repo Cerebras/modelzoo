@@ -15,16 +15,16 @@
 import logging
 import random
 from abc import abstractmethod
-from typing import Any, List, Literal, Optional, Union
+from typing import List, Literal, Optional, Union
 
 import torch
-from pydantic import Field
 from torchvision import transforms
 
 import cerebras.pytorch as cstorch
 import cerebras.pytorch.distributed as dist
 from cerebras.modelzoo.common.input_utils import get_streaming_batch_size
 from cerebras.modelzoo.config import DataConfig
+from cerebras.modelzoo.config.types import ValidatedPath
 from cerebras.modelzoo.data.vision.segmentation.preprocessing_utils import (
     normalize_tensor_transform,
 )
@@ -39,7 +39,7 @@ from cerebras.modelzoo.data.vision.utils import (
 class Hdf5BaseDataProcessorConfig(DataConfig):
     data_processor: Literal["Hdf5BaseDataProcessor"]
 
-    data_dir: Union[str, List[str]] = ...
+    data_dir: Union[ValidatedPath, List[ValidatedPath]] = ...
     """Path to dataset HDF5 files"""
 
     use_worker_cache: bool = False
@@ -87,9 +87,6 @@ class Hdf5BaseDataProcessorConfig(DataConfig):
     use_fast_dataloader: bool = False
 
     duplicate_act_worker_data: bool = False
-
-    fp16_type: Optional[Any] = Field(default=None, deprecated=True)
-    mixed_precision: Optional[Any] = Field(default=None, deprecated=True)
 
     def post_init(self, context):
         if self.shuffle_buffer is None:
@@ -214,7 +211,7 @@ class Hdf5BaseDataProcessor(torch.utils.data.Dataset):
 
     def __len__(self):
         """
-        Returns the len of dataset on the task process
+        Returns the len of dataset on the task process.
         """
         return self.num_examples
 

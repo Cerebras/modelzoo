@@ -18,10 +18,14 @@ import transformers
 
 
 class GenericTokenizer:
-    def __init__(self, processing_params, filepath):
-        self.processing_params = processing_params
+    def __init__(self, params, filepath):
+        self.processing_params = params['processing']
+        self.dataset_params = params['dataset']
+
         self.filepath = filepath
-        self.custom_tokenizer = processing_params.pop("custom_tokenizer", None)
+        self.custom_tokenizer = self.processing_params.pop(
+            "custom_tokenizer", None
+        )
         if self.processing_params.get('huggingface_tokenizer'):
             self.tokenizer = self.initialize_huggingfacetokenizer()
         elif self.custom_tokenizer == "gpt2tokenizer":
@@ -34,6 +38,23 @@ class GenericTokenizer:
         else:
             self.tokenizer_type = self.processing_params.pop('tokenizer_type')
             self.tokenizer = self._initialize_customtokenizer_old()
+
+        register_image_token = self.dataset_params.get(
+            'register_special_image_token', True
+        )
+        if register_image_token and self.dataset_params.get(
+            'use_single_image_token', False
+        ):
+            image_token = self.dataset_params.get("image_token")
+
+            if not image_token:
+                raise ValueError(
+                    "The 'image_token' must be specified in dataset_params."
+                )
+
+            self.tokenizer.add_special_tokens(
+                {'additional_special_tokens': [image_token]}
+            )
 
     def initialize_gpt2tokenizer(self):
         if self.processing_params.get('vocab_file', False):

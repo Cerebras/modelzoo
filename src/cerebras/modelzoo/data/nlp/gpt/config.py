@@ -22,6 +22,7 @@ from typing import Any, List, Literal, Optional, Union
 from pydantic import Field
 
 from cerebras.modelzoo.config import DataConfig
+from cerebras.modelzoo.config.types import ValidatedPath
 from cerebras.modelzoo.data.common.config import (
     GenericDataProcessorConfig,
     HuggingFaceDataProcessorConfig,
@@ -42,7 +43,7 @@ class DummyIterableDataProcessorConfig(GenericDataProcessorConfig):
 class GptHDF5DataProcessorConfig(HDF5IterableDataProcessorConfig):
     data_processor: Literal["GptHDF5DataProcessor"]
 
-    data_dir: Union[str, List[str]] = ...
+    data_dir: Union[ValidatedPath, List[ValidatedPath]] = ...
     "The path to the HDF5 files."
     max_sequence_length: Optional[int] = None
     """ The sequence length of samples
@@ -69,8 +70,6 @@ class GptHDF5DataProcessorConfig(HDF5IterableDataProcessorConfig):
 
     repeat: Optional[Any] = Field(None, deprecated=True)
     use_multiple_workers: Optional[Any] = Field(None, deprecated=True)
-    mixed_precision: Optional[Any] = Field(None, deprecated=True)
-    fp16_type: Optional[Any] = Field(None, deprecated=True)
 
 
 class HuggingFaceIterableDataProcessorEli5Config(

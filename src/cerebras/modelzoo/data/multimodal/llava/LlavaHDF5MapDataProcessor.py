@@ -28,23 +28,33 @@ from cerebras.modelzoo.data.common.restartable_dataloader import (
 
 class LlavaHDF5MapDataProcessorConfig(MultiModalHDF5DatasetConfig, DataConfig):
     data_processor: Literal["LlavaHDF5MapDataProcessor"]
+    "The name of the dataprocessor. Must be set to `LlavaHDF5MapDataProcessor`."
 
     # TODO: Make the Callable type more specific
     dataset_map_fn: Optional[Callable] = None
+    """
+    Optional lambda function that can be applied on top of data read from H5 files.
+    For ex: dataset_map_fn = lambda h5_sample: h5_sample + 1
+    In this example, we assume that each sample in H5 file is a tensor.
+    the map function reads a sample tensor from H5 file
+    and adds one to it and returns the new sample.
+    """
 
     num_workers: int = 0
-    """ The number of PyTorch processes used in the dataloader. """
+    "The number of PyTorch processes used in the dataloader."
 
     prefetch_factor: Optional[int] = 10
-    """ The number of batches to prefetch in the dataloader. """
+    "The number of batches to prefetch in the dataloader."
 
     persistent_workers: bool = True
-    """ Whether or not to keep workers persistent between epochs. """
+    """
+    If True, the data loader will not shut down the worker processes 
+    after a dataset has been consumed once. 
+    This allows to maintain the workers Dataset instances alive.
+    """
 
     vocab_size: Optional[Any] = Field(default=None, deprecated=True)
-    bos_token_id: Optional[Any] = Field(default=None, deprecated=True)
-    pos_token_id: Optional[Any] = Field(default=None, deprecated=True)
-    mixed_precision: Optional[Any] = Field(default=None, deprecated=True)
+    "Size of vocabulary used in language model backbone of LLava model."
 
     def post_init(self, context):
         if not self.num_workers:

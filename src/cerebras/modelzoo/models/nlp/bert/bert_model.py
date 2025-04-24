@@ -90,7 +90,7 @@ class BertModelConfig(ModelConfig):
     typically adjusted in long MSL runs as described in
     [CodeLlama](https://arxiv.org/pdf/2308.12950.pdf)"""
 
-    fold_rope_consts: bool = True
+    fold_rope_consts: bool = False
     """If True, folds the rotary position embedding constants compile time.
 
     For very large models consider generating them on the fly by setting this to

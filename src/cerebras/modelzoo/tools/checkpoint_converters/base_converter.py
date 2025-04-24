@@ -1377,6 +1377,18 @@ class BaseCheckpointConverter_CS23_CS24(FallbackConverter_CS_CS):
         return BaseConfigConverter_CS23_CS24
 
 
+class BaseCheckpointConverter_CS24_CS25(FallbackConverter_CS_CS):
+    """Generic fallback converter class for cs-2.4 -> cs-2.5."""
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("cs-2.4"), FormatVersions("cs-2.5"))
+
+    @staticmethod
+    def get_config_converter_class() -> BaseConfigConverter:
+        return BaseConfigConverter_CS24_CS25
+
+
 # Base converters to be used as fallback if converter does not exist
 fallback_converters: List[BaseCheckpointConverter] = [
     BaseCheckpointConverter_CS18_CS19,
@@ -1385,6 +1397,7 @@ fallback_converters: List[BaseCheckpointConverter] = [
     BaseCheckpointConverter_CS21_CS22,
     BaseCheckpointConverter_CS22_CS23,
     BaseCheckpointConverter_CS23_CS24,
+    BaseCheckpointConverter_CS24_CS25,
 ]
 
 
@@ -1442,7 +1455,7 @@ class BaseConfigConverter(BaseDictionaryConverter, ABC):
     @classmethod
     def convert(
         cls,
-        model,
+        model: str,
         config,
         converter_indices: FormatIndices,
         drop_unmatched_keys: bool = False,
@@ -1646,10 +1659,18 @@ class BaseConfigConverter_HF_CS(BaseConfigConverter):
         # Note that we don't check versions since we don't have info on what exact version we're
         # converting here, but also it doesn't really matter to have an extra unused flag for
         # previous releases.
+        format_versions = self.formats()
+
         from_index = converter_indices.direction
+        to_index = 1 - from_index
+
+        src_fmt = format_versions[from_index][converter_indices.src_index]
+        tgt_fmt = format_versions[to_index][converter_indices.tgt_index]
+
         if (
             converter_indices.direction == 0
             and "use_bfloat16" in original_config
+            and tgt_fmt in ("cs-2.1", "cs-2.2", "cs-2.3")
         ):
             model_config["fp16_type"] = (
                 "bfloat16" if original_config["use_bfloat16"] else "float16"
@@ -1665,12 +1686,6 @@ class BaseConfigConverter_HF_CS(BaseConfigConverter):
                 raise ValueError(
                     f"Invalid `fp16_type` value: {original_config['fp16_type']}"
                 )
-
-        format_versions = self.formats()
-        to_index = 1 - from_index
-
-        src_fmt = format_versions[from_index][converter_indices.src_index]
-        tgt_fmt = format_versions[to_index][converter_indices.tgt_index]
 
         # As of CS 2.4, all model configs are required to have a `name` key
         if src_fmt == "hf" and tgt_fmt not in (
@@ -2287,6 +2302,14 @@ class BaseConfigConverter_CS23_CS24(FallbackConfigConverter_CS_CS):
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (FormatVersions("cs-2.3", "cs-2.4"), FormatVersions("cs-2.4"))
+
+
+class BaseConfigConverter_CS24_CS25(FallbackConfigConverter_CS_CS):
+    """Generic fallback config converter class for cs-2.4 -> cs-2.5."""
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("cs-2.4"), FormatVersions("cs-2.5"))
 
 
 def _addindent(s_, numSpaces):

@@ -21,6 +21,7 @@ data by merging shorter sequences within a specified maximum sequence length,
 and tokenizing text for auto-regressive language modeling.
 """
 
+import copy
 import os
 from collections import defaultdict
 from typing import Any, Dict, List, Tuple
@@ -63,10 +64,8 @@ class VSLPretrainingTokenGenerator(PretrainingTokenGenerator):
         """
         super().__init__(params, tokenizer, eos_id, pad_id)
         setup_params = params["setup"]
-        warning_log_dir = (
-            os.path.join(setup_params.get("output_dir"), "logs")
-            if setup_params.get("output_dir")
-            else "./data_preprocessing_logs"
+        warning_log_dir = os.path.join(
+            setup_params.get("output_dir", "./output")
         )
         self.logger = setup_warning_logging(warning_log_dir, __name__)
         self.fold_long_doc = params["dataset"].pop("fold_long_doc", True)
@@ -218,6 +217,7 @@ class VSLPretrainingTokenGenerator(PretrainingTokenGenerator):
             "labels": [],
         }  # List to store the processed results
         stats = defaultdict(int)
+        stats_checkpoint_list = []
 
         for tokenized_text_chunks in tokenized_data:
             (
@@ -256,13 +256,16 @@ class VSLPretrainingTokenGenerator(PretrainingTokenGenerator):
             stats["num_pad_tokens"] += num_pad
             stats["non_pad_tokens"] += self.max_seq_length - num_pad
             stats["num_tokens"] += self.max_seq_length
+            stats["n_examples"] += 1
+            stats["num_sequences_before_packing"] += len(tokenized_text_chunks)
+            stats_checkpoint_list.append(copy.deepcopy(stats))
 
         if results["data"] == []:
             data = {}
         else:
             data = results
 
-        return data, stats
+        return data, stats_checkpoint_list
 
     def process_chunks_nextwordpred(
         self, tokenized_data: List[List[Any]]
@@ -279,6 +282,7 @@ class VSLPretrainingTokenGenerator(PretrainingTokenGenerator):
         """
         results = {"data": []}  # List to store the processed results
         stats = defaultdict(int)
+        stats_checkpoint_list = []
 
         for tokenized_text_chunks in tokenized_data:
             eos_len = 1 if self.eos_id is not None else 0
@@ -296,16 +300,19 @@ class VSLPretrainingTokenGenerator(PretrainingTokenGenerator):
                 stats["num_sequences_before_packing"] += len(
                     tokenized_text_chunks
                 )
+
                 for key in processed_stats:
                     stats[key] += processed_stats[key]
                 processed = np.expand_dims(processed, axis=0)
                 results["data"].append(processed)
+                stats_checkpoint_list.append(copy.deepcopy(stats))
+
         if results["data"] == []:
             data = {}
         else:
             data = results
 
-        return data, stats
+        return data, stats_checkpoint_list
 
     def tokenize_data(
         self, semantic_data_array: List[Dict[str, Any]]
@@ -348,12 +355,12 @@ class VSLPretrainingTokenGenerator(PretrainingTokenGenerator):
             )
             input_ids = tokenized_data['input_ids']
 
-            raw_data_stats["processed"] = 1
-
+            raw_data_stats["processed_files"] = 1
+            raw_data_stats["discarded_files"] = 0
             if input_ids == []:
-                raw_data_stats["discarded"] = 1
+                raw_data_stats["discarded_files"] = 1
             else:
-                raw_data_stats["successful"] = 1
+                raw_data_stats["successful_files"] = 1
 
             return {"data": [input_ids]}, raw_data_stats
 
@@ -383,20 +390,8 @@ class VSLPretrainingTokenGenerator(PretrainingTokenGenerator):
 
         doc_list = self.chop_doc_into_msl(data)
         results, tokenized_data_stats = self.process_docs(doc_list)
-        data_stats = {
-            "discarded": tokenized_data_stats["discarded"],
-            "processed": tokenized_data_stats["processed"],
-            "successful": tokenized_data_stats["successful"],
-            "raw_chars_count": raw_data_stats["raw_chars_count"],
-            "raw_bytes_count": raw_data_stats["raw_bytes_count"],
-            "normalized_chars_count": raw_data_stats["normalized_chars_count"],
-            "normalized_bytes_count": raw_data_stats["normalized_bytes_count"],
-            "num_pad_tokens": tokenized_data_stats["num_pad_tokens"],
-            "non_pad_tokens": tokenized_data_stats["non_pad_tokens"],
-            "num_masked_tokens": tokenized_data_stats["num_masked_tokens"],
-            "loss_valid_tokens": tokenized_data_stats["loss_valid_tokens"],
-            "num_tokens": tokenized_data_stats["num_tokens"],
-        }
+        data_stats = tokenized_data_stats.copy()
+        data_stats.update(raw_data_stats)
         return results, data_stats
 
     def create_features_pretraining(

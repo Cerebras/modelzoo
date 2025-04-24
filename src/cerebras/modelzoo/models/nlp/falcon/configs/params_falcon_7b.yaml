@@ -39,10 +39,6 @@ trainer:
       layer_norm_epsilon: 1.0e-05
       use_bias_in_output: false
       initializer_range: 0.02
-      # initialization of falcon based on HF repo is all normal with mean = 0.0 & std=0.02
-      # reference: https://huggingface.co/tiiuae/falcon-7b-instruct/blob/main/modelling_RW.py#L434
-      mixed_precision: true
-      fp16_type: cbfloat16
     optimizer:
       adamw:
         betas:

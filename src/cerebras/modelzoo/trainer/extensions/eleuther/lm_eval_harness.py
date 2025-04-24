@@ -40,8 +40,8 @@ from cerebras.modelzoo.trainer.extensions.eleuther.eval_harness_utils import (
 )
 from cerebras.modelzoo.trainer.extensions.eval_harness_adapter import (
     CSEvalHarnessAdapter,
-    EvalHarnessProgress,
 )
+from cerebras.modelzoo.trainer.loggers import ProgressLogger
 from cerebras.pytorch.nn.functional import one_hot
 
 CS_LLM = "cs-llm"
@@ -248,15 +248,12 @@ class LogLikelihood(Callback):
         self.sample_idx = 0
         self.results = []
 
-        self.progress = EvalHarnessProgress("EleutherAI Eval")
-
     def on_before_forward(self, trainer, model, batch, args, kwargs):
         # TODO: We need something more generic than this. User model is not guaranteed to
         #       accept output_logits as a kwarg to its forward pass
         kwargs["output_logits"] = True
 
     def on_after_forward(self, trainer, model, outputs, batch):
-        outputs.get("loss", None)
         lm_logits = outputs.get("logits")
 
         # Calculate softmax of logits
@@ -299,7 +296,10 @@ class LogLikelihood(Callback):
         self, trainer, model, outputs, batch, batch_idx
     ):
         """Runs after every batch is processed."""
-        self.progress.print(trainer, batch_idx)
+        if progress := trainer.get_callback(ProgressLogger):
+            progress.print_validation_progress(
+                trainer, batch_idx, "EleutherAI Eval"
+            )
 
     @cstorch.step_closure
     def post_process(self, trainer, cont_comparisons, log_probs):
@@ -338,6 +338,12 @@ class LogLikelihood(Callback):
             self.results.append(answer)
             self.sample_idx += 1
 
+    def on_save_trainer_state(self, trainer, state_dict):
+        pass
+
+    def on_load_trainer_state(self, trainer, state_dict):
+        pass
+
 
 class GenerateUntil(Callback):
     """
@@ -371,8 +377,6 @@ class GenerateUntil(Callback):
         self.top_k = gen_kwargs.get("top_k")
         self.max_tokens = gen_kwargs.get("max_length_generation")
 
-        self.progress = EvalHarnessProgress("EleutherAI Generative Eval")
-
     def on_eleuther_eval_harness_start(
         self, trainer, model, val_dataloader, loop
     ):
@@ -401,7 +405,10 @@ class GenerateUntil(Callback):
         self, trainer, model, outputs, batch, batch_idx
     ):
         """Runs after every batch is processed."""
-        self.progress.print(trainer, batch_idx)
+        if progress := trainer.get_callback(ProgressLogger):
+            progress.print_validation_progress(
+                trainer, batch_idx, "EleutherAI Generative Eval"
+            )
 
     def on_before_forward(self, trainer, model, batch, args, kwargs):
         kwargs["autoregressive"] = True
@@ -449,6 +456,12 @@ class GenerateUntil(Callback):
 
             self.results.append(gen_continuation_str)
             self.sample_idx += 1
+
+    def on_save_trainer_state(self, trainer, state_dict):
+        pass
+
+    def on_load_trainer_state(self, trainer, state_dict):
+        pass
 
 
 class EleutherEvalHarness(ValidationCallback):
@@ -514,7 +527,7 @@ class EleutherEvalHarness(ValidationCallback):
         # Removes annoying logs relating to process forking
         appliance_environ["TOKENIZERS_PARALLELISM"] = "false"
 
-        self.every_n_vals = every_n_vals
+        self._every_n_vals = every_n_vals
 
         self.scoped_flags = ScopedEleutherEvalHarnessFlags(**(flags or {}))
 
@@ -524,7 +537,7 @@ class EleutherEvalHarness(ValidationCallback):
         if name_scope is None:
             name_scope = f"eleuther_{self._id}"
 
-        self.name_scope = name_scope
+        self._name_scope = name_scope
 
     @cached_property
     def has_generative_task(self):
@@ -554,6 +567,18 @@ class EleutherEvalHarness(ValidationCallback):
 
         return False
 
+    @property
+    def name_scope(self):
+        return self._name_scope
+
+    @property
+    def every_n_vals(self):
+        return self._every_n_vals
+
+    @property
+    def num_validate_loops(self):
+        return int(self.has_generative_task) + int(self.has_non_generative_task)
+
     def run_validation(self, trainer, loop_idx, is_last):
         if not is_last and (loop_idx + 1) % self.every_n_vals != 0:
             return
@@ -579,6 +604,12 @@ class EleutherEvalHarness(ValidationCallback):
                 trainer=trainer,
                 model=EleutherLM(trainer, deepcopy(self.dataloader_args)),
             )
+
+    def on_save_trainer_state(self, trainer, state_dict):
+        pass
+
+    def on_load_trainer_state(self, trainer, state_dict):
+        pass
 
 
 class ScopedEleutherEvalHarnessFlags(_ScopedFlags):

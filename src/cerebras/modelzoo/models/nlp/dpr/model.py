@@ -51,8 +51,6 @@ class DPREncoderConfig(BertModelConfig):
 
     # The following fields are deprecated and unused.
     # They will be removed in the future once all configs have been fixed
-    fp16_type: Optional[Any] = Field(default=None, deprecated=True)
-    mixed_precision: Optional[Any] = Field(default=None, deprecated=True)
     # These are required because the checkpoint converter doesn't distinguish between bert model types
     mlm_loss_weight: Optional[Any] = Field(default=None, deprecated=True)
     mlm_nonlinearity: Optional[Any] = Field(default=None, deprecated=True)
@@ -106,11 +104,6 @@ class DPRModelConfig(ModelConfig):
         Literal["q_encoder", "ctx_encoder", "encoder"]
     ] = None
     "Select which encoder to use in embedding_generation. This field is only used in embedding_generation."
-
-    # The following fields are deprecated and unused.
-    # They will be removed in the future once all configs have been fixed
-    fp16_type: Optional[Any] = Field(default=None, deprecated=True)
-    mixed_precision: Optional[Any] = Field(default=None, deprecated=True)
 
     @model_validator(mode="after")
     def validate_encoders(self):

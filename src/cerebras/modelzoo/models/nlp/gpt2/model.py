@@ -13,10 +13,9 @@
 # limitations under the License.
 
 import logging
-from typing import Any, List, Literal, Optional, Union
+from typing import List, Literal, Optional, Union
 
 import torch
-from pydantic import Field
 
 import cerebras.pytorch as cstorch
 from cerebras.modelzoo.common.utils.model.generation_utils import sample_tokens
@@ -66,9 +65,6 @@ class GPT2ModelConfig(GPT2LMHeadModelConfig):
     # Misc:
     compute_eval_metrics: bool = True
     "Computes perplexity & accuracy metrics in addition to loss"
-
-    mixed_precision: Optional[Any] = Field(default=None, deprecated=True)
-    fp16_type: Optional[Any] = Field(default=None, deprecated=True)
 
 
 class Gpt2Model(torch.nn.Module):
@@ -199,6 +195,9 @@ class Gpt2Model(torch.nn.Module):
     def training_step(
         self,
         data,
+        cross_attention_states=None,
+        cross_attention_mask=None,
+        full_text_row_masked_out_mask=None,
         reduce_batch=True,
         average_logps=False,
         output_logits=False,
@@ -231,9 +230,12 @@ class Gpt2Model(torch.nn.Module):
             attention_mask=data[
                 "attention_mask"
             ],  # doesn't actually mask anything
+            cross_attention_states=cross_attention_states,
+            cross_attention_mask=cross_attention_mask,
+            full_text_row_masked_out_mask=full_text_row_masked_out_mask,
             attention_span=data.get("attention_span"),  # VSL-only input
-            position_ids=data.get("position_ids"),  # VSL-only input
-            special_token_indices=data.get("special_token_indices"),
+            position_ids=data.get("position_ids"),
+            special_token_meta=data.get("special_token_meta"),
         )
 
         if self.moe_enabled:
@@ -265,6 +267,7 @@ class Gpt2Model(torch.nn.Module):
             summarize_scalar(
                 "expert_stats/load_balance_loss", load_balance_loss
             )
+            summarize_scalar("loss/cross_entropy_loss", loss)
             loss = loss + load_balance_loss
 
         # Calculate eval metrics if not training

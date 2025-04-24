@@ -14,11 +14,10 @@
 
 import logging
 import os
-from typing import Any, List, Literal, Optional, Tuple
+from typing import List, Literal, Optional, Tuple
 
 import torch
 from PIL import Image
-from pydantic import Field
 from torch.utils.data.dataloader import default_collate
 from torchvision.transforms import transforms
 from torchvision.utils import save_image
@@ -79,8 +78,6 @@ class ImageRandomMultiCropTransformConfig(BaseSSLImageTransformConfig):
 
     multicrop_transform_list: Optional[List[dict]] = None
     "Optional set of additional transforms to apply on top of local and global crops."
-
-    mixed_precision: Optional[Any] = Field(None, deprecated=True)
 
     @property
     def output_keys(self):
@@ -180,7 +177,7 @@ class ImageRandomMultiCropTransform(BaseSSLImageTransform):
                 transforms.Compose(_tx + [self.addnl_transform])
             )
 
-        logging.info(
+        logging.debug(
             f"The following sequence is used to transform data:\n{multi_transforms}"
         )
         return multi_transforms

@@ -51,9 +51,6 @@ trainer:
       loss_scaling: batch_size
       loss_weight: 0.0001220703125  # = 1/max_sequence_length
       use_bias_in_output: false
-      # Cerebras parameters
-      mixed_precision: true
-      fp16_type: cbfloat16
       mup_base_filter_size: 682.6
       mup_base_hidden_size: 256
       output_logits_alpha: 2.22

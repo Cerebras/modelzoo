@@ -13,10 +13,10 @@
 # limitations under the License.
 
 import logging
-from typing import Any, List, Literal, Optional, Union
+from typing import List, Literal, Optional, Union
 
 import torch
-from pydantic import Field, model_validator
+from pydantic import model_validator
 
 import cerebras.pytorch as cstorch
 from cerebras.modelzoo.common.utils.model.generation_utils import sample_tokens
@@ -67,9 +67,6 @@ class GPTJModelConfig(GPTJSubModelConfig):
     # Misc:
     compute_eval_metrics: Optional[bool] = True
     "Computes perplexity & accuracy metrics in addition to loss"
-
-    mixed_precision: Optional[Any] = Field(default=None, deprecated=True)
-    fp16_type: Optional[Any] = Field(default=None, deprecated=True)
 
     def post_init(self, context):
         super().post_init(context)
@@ -153,6 +150,7 @@ class GptjModel(torch.nn.Module):
         self.top_k = config.top_k
         self.top_p = config.top_p
 
+        # Build the model using the model parameters object
         self.model = self.build_model(config)
 
         self.loss_fn = GPTLMHeadModelLoss(
@@ -286,6 +284,7 @@ class GptjModel(torch.nn.Module):
             summarize_scalar(
                 "expert_stats/load_balance_loss", load_balance_loss
             )
+            summarize_scalar("loss/cross_entropy_loss", loss)
             loss = loss + load_balance_loss
 
         # Calculate eval metrics if not training

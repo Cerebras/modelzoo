@@ -16,13 +16,11 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, List, Optional
-
-import torch
+from collections import defaultdict
+from typing import TYPE_CHECKING, List
 
 import cerebras.pytorch as cstorch
-from cerebras.modelzoo.common.half_dtype import cb16_to_fp32
-from cerebras.modelzoo.trainer.callbacks import RateProfiler
+from cerebras.modelzoo.trainer.callbacks.profiler import TimeRemaining
 from cerebras.modelzoo.trainer.loggers import Logger
 from cerebras.pytorch.utils.data.utils import infer_batch_size
 
@@ -38,18 +36,18 @@ class ProgressLogger(Logger):
     def __init__(self):
         """Sets up the rate tracker and total samples tracker."""
 
-        self.rate_profiler = None
+        self.metrics = defaultdict(dict)
         # Keep track of the total samples processed
         # across all stages
         self.total_samples = cstorch.utils.tracker.RateTracker()
 
-        self.accum_loss = None
-
-    def setup(self, trainer):
-        self.rate_profiler = trainer.get_callback(RateProfiler)
+    def log_metrics(self, metrics, step):
+        self.metrics[step].update(
+            {k.split("/")[-1]: v for k, v in metrics.items()}
+        )
 
     @staticmethod
-    def format_rate(rate: float):
+    def format_rate(rate: float) -> str:
         """Format the rate for logging.
 
         Use two significant digits if the rate is less than 1.0, otherwise
@@ -59,22 +57,45 @@ class ProgressLogger(Logger):
             rate: Rate to format.
         """
         if rate < 1.0:
-            return f"{rate:.2g} samples/sec"
+            return f"{rate:.3g} samples/sec"
         return f"{rate:.2f} samples/sec"
 
-    @property
-    def postfix(self) -> List[str]:
-        """Returns the postfix to append to the progress message."""
-        if self.rate_profiler is not None:
-            rate = self.rate_profiler.rate
-            global_rate = self.rate_profiler.global_rate
+    @staticmethod
+    def format_time_remaining(time_remaining: TimeRemaining) -> str:
+        equals_or_gt = (
+            ">"
+            if isinstance(time_remaining, TimeRemaining)
+            and time_remaining.stages_missing_duration
+            else "="
+        )
+        return f"{equals_or_gt}{time_remaining}"
 
-            return [
-                f"Rate={self.format_rate(rate)}",
-                f"GlobalRate={self.format_rate(global_rate)}",
-            ]
+    def format_metrics(self, step: int) -> List[str]:
+        """Returns the formatted metrics to append to the progress message."""
+        formatted = []
 
-        return []
+        metrics = self.metrics.pop(step, None)
+        if metrics is None:
+            return formatted
+
+        if (loss := metrics.get("loss")) is not None:
+            formatted.append(f"Loss={loss:.5f}")
+        elif (loss := metrics.get("val_loss")) is not None:
+            formatted.append(f"Loss={loss:.5f}")
+
+        if (rate := metrics.get("local_samples_per_sec")) is not None:
+            formatted.append(f"Rate={self.format_rate(rate)}")
+        if (global_rate := metrics.get("avg_samples_per_sec")) is not None:
+            formatted.append(f"GlobalRate={self.format_rate(global_rate)}")
+
+        if (t := metrics.get("loop_time_remaining")) is not None:
+            formatted.append(
+                f"LoopTimeRemaining{self.format_time_remaining(t)}"
+            )
+        if (t := metrics.get("time_remaining")) is not None:
+            formatted.append(f"TimeRemaining{self.format_time_remaining(t)}")
+
+        return formatted
 
     def on_fit_start(self, trainer, train_dataloader, val_dataloader, loop):
         self.total_samples.reset()
@@ -83,77 +104,39 @@ class ProgressLogger(Logger):
         batch_size = infer_batch_size(batch)
         if batch_size:
             self.total_samples.add(batch_size)
-
-        loss = cb16_to_fp32(outputs["loss"])
-        self.print_training_progress(trainer, loss, batch_size)
+        self.print_training_progress(trainer)
 
     @cstorch.step_closure
-    def print_training_progress(
-        self, trainer: Trainer, loss: torch.Tensor, batch_size: Optional[int]
-    ):
+    def print_training_progress(self, trainer: Trainer):
         """Print training progress and log metrics."""
-        if trainer.should_run_optimizer_step:
-            if self.accum_loss is not None:
-                loss = self.accum_loss + loss.item()
-                self.accum_loss = None
-            else:
-                loss = loss.item()
-
-            if trainer.is_log_step:
-                progress_msg = [
-                    f"| Train Device={trainer.backend.device}",
-                    f"Step={trainer.global_step}",
-                    f"Loss={loss:.5f}",
-                    *self.postfix,
-                ]
-                trainer.logger.info(", ".join(progress_msg))
-
-                self._log_loss_rate_metrics(trainer, loss, batch_size)
-        else:
-            # accumulate loss for gradient accumulation
-            if self.accum_loss is None:
-                self.accum_loss = loss.item()
-            else:
-                self.accum_loss += loss.item()
+        # Only log progress if we are running the optimizer step
+        if trainer.should_run_optimizer_step and trainer.is_log_step:
+            progress_msg = [
+                f"| Train Device={trainer.backend.device}",
+                f"Step={trainer.global_step}",
+                *self.format_metrics(trainer.global_step),
+            ]
+            trainer.logger.info(", ".join(progress_msg))
 
     def on_train_end(self, trainer, model, loop, loop_idx):
         trainer.logger.info("Training completed successfully!")
 
-    def on_validate_start(self, trainer, model, val_dataloader, loop):
-        # pylint: disable=attribute-defined-outside-init
-        self.total_eval_loss = 0
-        self.total_eval_steps = 0
-
     def on_validate_batch_end(self, trainer, model, outputs, batch, batch_idx):
-        loss = cb16_to_fp32(outputs["loss"])
-        self.print_validation_progress(trainer, loss, infer_batch_size(batch))
+        self.print_validation_progress(trainer, batch_idx)
 
     @cstorch.step_closure
     def print_validation_progress(
-        self,
-        trainer: Trainer,
-        loss: torch.Tensor,
-        batch_size: Optional[int],
+        self, trainer: Trainer, batch_idx: int, prefix: str = "Eval"
     ):
         """Print validation progress and log metrics."""
-        self.total_eval_loss += loss.item()
-        self.total_eval_steps += 1
-
         if trainer.is_log_step:
             progress_msg = [
-                f"| Eval Device={trainer.backend.device}",
+                f"| {prefix} Device={trainer.backend.device}",
                 f"GlobalStep={trainer.global_step}",
-                f"Batch={trainer.executor.user_iteration}",
-                f"Loss={loss.item():.5f}",
-                *self.postfix,
+                f"Batch={batch_idx + 1}",  # batch_idx is 0-indexed
+                *self.format_metrics(trainer.global_step),
             ]
             trainer.logger.info(", ".join(progress_msg))
-
-            if trainer.is_final_iteration:
-                avg_eval_loss = self.total_eval_loss / self.total_eval_steps
-                trainer.logger.info(f"Avg Eval Loss: {avg_eval_loss}")
-
-                self._log_loss_rate_metrics(trainer, avg_eval_loss, batch_size)
 
     def on_validate_end(self, trainer, model, loop):
         trainer.logger.info("Evaluation completed successfully!")
@@ -168,24 +151,3 @@ class ProgressLogger(Logger):
 
     def on_fit_exception(self, trainer, exception):
         self.on_fit_end(trainer, None)
-
-    def log_metrics(self, metrics, step):
-        pass
-
-    def _log_loss_rate_metrics(
-        self, trainer: Trainer, loss: float, batch_size: Optional[int]
-    ):
-        trainer.log_metrics(loss=loss)
-
-        if self.rate_profiler:
-            metrics = {
-                "local_samples_per_sec": self.rate_profiler.rate,
-                "avg_samples_per_sec": self.rate_profiler.global_rate,
-            }
-
-            if batch_size:
-                metrics["avg_steps_per_sec"] = (
-                    self.rate_profiler.global_rate / batch_size
-                )
-
-            trainer.log_metrics(**metrics)

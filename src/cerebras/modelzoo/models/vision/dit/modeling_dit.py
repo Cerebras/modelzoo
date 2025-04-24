@@ -263,11 +263,6 @@ class DiTConfig(ModelConfig):
 
     var_loss: bool = False
 
-    fp16_type: Literal["bfloat16", "float16", "cbfloat16"] = "bfloat16"
-    "Type of 16bit precision used"
-
-    mixed_precision: bool = False
-
     def post_init(self, context):
         super().post_init(context)
 
@@ -488,7 +483,7 @@ class DiT(nn.Module):
     ):
         """
         Forward pass of DiT, but also batches the unconditional forward pass for classifier-free guidance.
-        Assumes inputs are already batched with conditional and unconditional parts
+        Assumes inputs are already batched with conditional and unconditional parts.
 
         Note: For exact reproducibility reasons, classifier-free guidance is applied only
         three channels by default, hence `num_cfg_channels` defaults to 3.

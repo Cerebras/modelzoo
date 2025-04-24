@@ -84,7 +84,7 @@ class TokenFlowDataProcessor:
 
         self.input_ids = 'text_input_ids' if self.is_multimodal else 'input_ids'
         self.tokenizer = tokenizer.GenericTokenizer(
-            deepcopy(data_params['processing']), filepath
+            deepcopy(data_params), filepath
         )
 
         self.datadict = {}

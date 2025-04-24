@@ -12,11 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Any, Literal, Optional
+from typing import Literal, Optional
 
 import torch
 import torch.nn as nn
-from pydantic import Field
 
 from cerebras.modelzoo.layers import (
     FeedForwardNetwork,
@@ -79,11 +78,6 @@ class BertForPreTrainingModelConfig(BertModelConfig):
     # Misc:
     compute_eval_metrics: bool = True
     "Computes perplexity & accuracy metrics in addition to loss."
-
-    # The following fields are deprecated and unused.
-    # They will be removed in the future once all configs have been fixed
-    mixed_precision: Optional[Any] = Field(default=None, deprecated=True)
-    fp16_type: Optional[Any] = Field(default=None, deprecated=True)
 
     def post_init(self, context):
         super().post_init(context)

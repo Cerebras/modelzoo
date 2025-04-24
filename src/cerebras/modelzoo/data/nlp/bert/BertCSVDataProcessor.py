@@ -29,6 +29,7 @@ from cerebras.modelzoo.common.input_utils import (
     get_streaming_batch_size,
 )
 from cerebras.modelzoo.config import DataConfig
+from cerebras.modelzoo.config.types import ValidatedPath
 from cerebras.modelzoo.data.common.input_utils import (
     get_data_for_task,
     num_tasks,
@@ -41,7 +42,7 @@ from cerebras.modelzoo.data.nlp.bert.bert_utils import get_meta_data
 class BertCSVDataProcessorConfig(DataConfig):
     data_processor: Literal["BertCSVDataProcessor"]
 
-    data_dir: Union[str, List[str]] = ...
+    data_dir: Union[ValidatedPath, List[ValidatedPath]] = ...
     "Path to the data files to use."
 
     batch_size: PositiveInt = ...
@@ -90,7 +91,6 @@ class BertCSVDataProcessorConfig(DataConfig):
 
     # The following fields are deprecated and unused.
     # They will be removed in the future once all configs have been fixed
-    mixed_precision: Optional[Any] = Field(default=None, deprecated=True)
     vocab_size: Optional[Any] = Field(default=None, deprecated=True)
     vocab_file: Optional[Any] = Field(default=None, deprecated=True)
     whole_word_masking: Optional[Any] = Field(default=None, deprecated=True)

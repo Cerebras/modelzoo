@@ -13,18 +13,19 @@
 # limitations under the License.
 
 import logging
-from typing import Any, List, Optional, Union
+from typing import List, Optional, Union
 
 import numpy as np
 import torch
 import torchvision
-from pydantic import Field, PositiveInt
+from pydantic import PositiveInt
 from torch.utils.data import Subset
 from torch.utils.data.dataloader import default_collate
 from torchvision.datasets.vision import StandardTransform
 
 from cerebras.modelzoo.common.input_utils import get_streaming_batch_size
 from cerebras.modelzoo.config import DataConfig
+from cerebras.modelzoo.config.types import ValidatedPath
 from cerebras.modelzoo.data.vision.classification.mixup import (
     RandomCutmix,
     RandomMixup,
@@ -39,7 +40,7 @@ from cerebras.modelzoo.data.vision.utils import is_gpu_distributed, task_id
 
 class VisionClassificationProcessorConfig(DataConfig):
 
-    data_dir: Union[str, List[str]] = "."
+    data_dir: Union[ValidatedPath, List[ValidatedPath]] = "."
     """ The path to the data """
 
     image_size: List[int] = [224, 224]
@@ -94,9 +95,6 @@ class VisionClassificationProcessorConfig(DataConfig):
 
     transforms: List[dict] = ...
     """ List of transforms for preprocessing """
-
-    mixed_precision: Optional[Any] = Field(default=None, deprecated=True)
-    fp16_type: Optional[Any] = Field(default=None, deprecated=True)
 
 
 class VisionClassificationProcessor:

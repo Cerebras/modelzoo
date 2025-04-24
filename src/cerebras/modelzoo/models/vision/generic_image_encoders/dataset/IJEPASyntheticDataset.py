@@ -13,10 +13,10 @@
 # limitations under the License.
 
 import math
-from typing import Any, List, Literal, Optional, Tuple, Union
+from typing import List, Literal, Optional, Tuple, Union
 
 import torch
-from pydantic import Field, field_validator
+from pydantic import field_validator
 from torch.utils import data
 
 import cerebras.pytorch as cstorch
@@ -46,8 +46,6 @@ class IJEPASyntheticDatasetConfig(DatasetConfig):
     predictor_aspect_ratio: Tuple[float, float] = [0.3, 3.0]
     min_mask_patches: int = 4
     seed: int = 1223
-
-    mixed_precision: Optional[Any] = Field(None, deprecated=True)
 
     @field_validator("image_size", mode="after")
     @classmethod

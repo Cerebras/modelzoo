@@ -12,12 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Any, List, Literal, Optional
+from typing import List, Literal, Optional
 from warnings import warn
 
 import numpy as np
 from annotated_types import Ge, Le
-from pydantic import Field, PositiveInt, field_validator, model_validator
+from pydantic import PositiveInt, field_validator, model_validator
 from torch import nn
 from typing_extensions import Annotated
 
@@ -341,9 +341,6 @@ class ViTModelConfig(ModelConfig):
     stochastic_depth_mode: str = "batch"
 
     use_masked_patches: Optional[bool] = False
-
-    mixed_precision: Optional[Any] = Field(default=None, deprecated=True)
-    fp16_type: Optional[Any] = Field(default=None, deprecated=True)
 
     @field_validator("name", mode="after")
     def validate_name(cls, name):

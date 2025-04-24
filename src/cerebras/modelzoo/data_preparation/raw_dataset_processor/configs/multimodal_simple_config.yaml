@@ -81,7 +81,6 @@ trainer:
       eval_steps: 1000
       max_steps: 2500
     model:
-      fp16_type: cbfloat16
       freeze:
       - ^image_model.image_model_list
       - ^text_model
@@ -132,7 +131,6 @@ trainer:
             use_projection_bias_in_attention: true
       loss_scaling: num_tokens
       loss_weight: 1.0
-      mixed_precision: true
       text_model:
         attention_dropout_rate: 0.0
         attention_type: scaled_dot_product

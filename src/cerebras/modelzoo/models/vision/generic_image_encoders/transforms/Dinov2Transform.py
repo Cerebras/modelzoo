@@ -12,9 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Any, Literal, Optional
-
-from pydantic import Field
+from typing import Literal
 
 from cerebras.modelzoo.models.vision.generic_image_encoders.base.BaseSSLImageTransform import (
     BaseSSLImageTransform,
@@ -37,8 +35,6 @@ class Dinov2TransformConfig(BaseSSLImageTransformConfig):
 
     masked_patch_transform: MaskedPatchTransformConfig = ...
     "Configuration for the masked patch transformation. See `MaskedPatchTransformConfig` for more details."
-
-    mixed_precision: Optional[Any] = Field(None, deprecated=True)
 
     @property
     def output_keys(self):

@@ -238,7 +238,13 @@ class Converter_Falcon_7B_Attention_HF_CS19(
         return (
             FormatVersions("hf"),
             FormatVersions(
-                "cs-1.9", "cs-2.0", "cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4"
+                "cs-1.9",
+                "cs-2.0",
+                "cs-2.1",
+                "cs-2.2",
+                "cs-2.3",
+                "cs-2.4",
+                "cs-2.5",
             ),
         )
 
@@ -405,7 +411,13 @@ class Converter_Falcon_7B_Headless_WithoutModelPrefix_HF_CS19(
         return (
             FormatVersions("hf"),
             FormatVersions(
-                "cs-1.9", "cs-2.0", "cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4"
+                "cs-1.9",
+                "cs-2.0",
+                "cs-2.1",
+                "cs-2.2",
+                "cs-2.3",
+                "cs-2.4",
+                "cs-2.5",
             ),
         )
 
@@ -497,7 +509,13 @@ class Converter_Falcon_7B_WithoutModelPrefix_HF_CS19(
         return (
             FormatVersions("hf"),
             FormatVersions(
-                "cs-1.9", "cs-2.0", "cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4"
+                "cs-1.9",
+                "cs-2.0",
+                "cs-2.1",
+                "cs-2.2",
+                "cs-2.3",
+                "cs-2.4",
+                "cs-2.5",
             ),
         )
 
@@ -804,6 +822,12 @@ class ConfigConverter_Falcon_7B_HF_CS19(BaseConfigConverter_HF_CS):
         return (
             FormatVersions("hf"),
             FormatVersions(
-                "cs-1.9", "cs-2.0", "cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4"
+                "cs-1.9",
+                "cs-2.0",
+                "cs-2.1",
+                "cs-2.2",
+                "cs-2.3",
+                "cs-2.4",
+                "cs-2.5",
             ),
         )

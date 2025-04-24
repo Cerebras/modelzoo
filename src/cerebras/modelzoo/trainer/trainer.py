@@ -28,7 +28,17 @@ from copy import copy
 from functools import wraps
 from logging import Logger as PythonLogger
 from pathlib import Path
-from typing import Any, Callable, Dict, Generator, List, Optional, Union, final
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Generator,
+    List,
+    Optional,
+    Set,
+    Union,
+    final,
+)
 from warnings import warn
 from weakref import finalize
 
@@ -38,18 +48,22 @@ import cerebras.pytorch as cstorch
 from cerebras.modelzoo.trainer.callbacks import (
     GLOBAL_CALLBACK_REGISTRY,
     ArtifactDirCallback,
+    AutoRestart,
     BackendCallback,
     Callback,
     Checkpoint,
     CoreCallback,
     DataLoaderCallback,
+    EarlyExit,
     GradientAccumulationCallback,
     Logging,
     LoopCallback,
+    LossAccumulationCallback,
     ModelCallback,
     OptimizerCallback,
     Precision,
     Reproducibility,
+    RunSchedule,
     SchedulersCallback,
     SchedulersInput,
     SparsityCallback,
@@ -90,6 +104,7 @@ class Trainer:
         callbacks: Optional[List[Callback]] = None,
         loggers: Optional[List[Logger]] = None,
         seed: Optional[int] = None,
+        autorestart: Optional[AutoRestart] = None,
     ):
         """
         Args:
@@ -159,6 +174,12 @@ class Trainer:
 
             seed: Initial seed for the torch random number generator.
 
+            autorestart: The autorestart callback to automatically restart the run if it fails.
+                NOTE: If the trainer is constructed manually with this callback, the run will not
+                be automatically restarted. Rather, this callback provides a way to configure
+                autorestart only when specified via the YAML config, since autorestart is
+                implemented in wrapper class around that spawns subprocesses to run the trainer.
+
         """
         super().__init__()
 
@@ -220,9 +241,18 @@ class Trainer:
                 f"Got: {type(logging)}"
             )
 
+        if autorestart is None:
+            autorestart = AutoRestart(max_num_restarts=None)
+        elif not isinstance(autorestart, AutoRestart):
+            raise TypeError(
+                f"Expected autorestart to be an instance of AutoRestart. "
+                f"Got: {type(autorestart)}"
+            )
+
         # Order of the core callbacks is important and should not be changed
         self.callbacks = OrderedDict(
             {
+                "autorestart": autorestart,
                 "artifact_dir": ArtifactDirCallback(),
                 "reproducibility": Reproducibility(seed),
                 "backend": BackendCallback(backend, device),
@@ -234,8 +264,11 @@ class Trainer:
                 "sparsity": SparsityCallback(sparsity),
                 "loop": loop,
                 "logging": logging,
+                "loss_accum": LossAccumulationCallback(),
                 "grad_accum": GradientAccumulationCallback(),
+                "run_schedule": RunSchedule(),
                 "checkpoint": checkpoint,
+                "early_exit": EarlyExit(),
             }
         )
         # This is a sanity check, all callbacks in the above list should be core
@@ -265,6 +298,9 @@ class Trainer:
                     f"logger must be an instance of Logger. Got: {type(logger)}"
                 )
 
+        # Default set of logger destinations to log to
+        self._logger_destinations = {logger.name for logger in self.loggers}
+
         counter = Counter(self.callbacks.keys())
 
         def get_name(callback):
@@ -274,7 +310,8 @@ class Trainer:
                 return f"{name}_{counter[name]}"
             return name
 
-        for callback in self.loggers + user_callbacks:
+        # Call all user callbacks before loggers in case they need to log metrics
+        for callback in user_callbacks + self.loggers:
             if isinstance(callback, CoreCallback):
                 raise ValueError(
                     f"Callback {type(callback).__name__} is a core callback "
@@ -282,6 +319,11 @@ class Trainer:
                 )
 
             self.callbacks[get_name(callback)] = callback
+
+        # RunSchedule should run after other callbacks for any given hook
+        # so that the schedule can read any state that's been updated by
+        # other callbacks (e.g. loop callback updating global step).
+        self.callbacks.move_to_end("run_schedule")
 
         # Checkpoint should be the last callback as saving a checkpoint is slow
         self.callbacks.move_to_end("checkpoint")
@@ -296,6 +338,7 @@ class Trainer:
 
         self.call("pre_setup")
         self.call("setup")
+        self.call("post_setup")
 
         def callback_finalize(callbacks):
             for callback in callbacks:
@@ -304,6 +347,16 @@ class Trainer:
 
         self._finalizer = finalize(
             self, callback_finalize, self.callbacks.values()
+        )
+
+    def get_callback_name(self, callback) -> str:
+        """Get the unique name of the given callback instance."""
+        for name, cb in self.callbacks.items():
+            if cb == callback:
+                return name
+
+        raise ValueError(
+            f"Callback {type(callback).__name__} not found in the callback list"
         )
 
     @property
@@ -398,6 +451,21 @@ class Trainer:
         return self.grad_accum.should_run_optimizer_step
 
     @property
+    def autorestart(self) -> AutoRestart:
+        """Returns the autorestart callback."""
+        return self.callbacks["autorestart"]
+
+    @property
+    def early_exit(self) -> EarlyExit:
+        """Returns the early exit callback."""
+        return self.callbacks["early_exit"]
+
+    @property
+    def schedule(self) -> RunSchedule:
+        """Returns the run schedule callback."""
+        return self.callbacks["run_schedule"]
+
+    @property
     def loop(self) -> LoopCallback:
         """Returns the default loop settings."""
         return self.callbacks["loop"]
@@ -408,7 +476,7 @@ class Trainer:
         return self.callbacks["checkpoint"]
 
     @property
-    def logging(self) -> Checkpoint:
+    def logging(self) -> Logging:
         """Returns the logging callback."""
         return self.callbacks["logging"]
 
@@ -439,12 +507,22 @@ class Trainer:
         return self.backend.is_tracing
 
     @final
+    def remove_logger_destination(self, name: str):
+        """
+        Remove the given logger destination from the default set.
+
+        This is useful when a logger does need to log all the basic
+        metrics such as the loss value.
+        """
+        self._logger_destinations -= {name}
+
+    @final
     @cstorch.step_closure
     def log_metrics_in_step_closure(self, **kwargs):
         """Log the given kwargs inside a step closure."""
         # This is a sanity check and should never assert
         assert not self.is_tracing
-        self.log_metrics(**kwargs)
+        self.log_metrics_dict(**kwargs)
 
     @final
     def log_metrics(self, **kwargs):
@@ -460,41 +538,88 @@ class Trainer:
         Args:
             kwargs: The key-value pairs to log.
         """
+        self.log_metrics_dict(metrics=kwargs)
+
+    @final
+    def log_metrics_dict(
+        self,
+        metrics,
+        step: Optional[int] = None,
+        dest: Union[str, Set[str], None] = None,
+    ):
+        """
+        Log the given metrics to associated loggers in <dest> set,
+        else to default loggers within self._logger_destinations.
+
+        Args:
+            metrics: The dictionary containing the metrics to log.
+            step: The step to log the metrics at. If not provided,
+                the global step is used.
+            dest: A singular string or set of logger destinations to
+                log the metrics to. If not provided, trainer's
+                default set of logger destinations is used.
+        """
         if self.is_tracing:
-            # If we are tracing, log the kwargs inside a step closure
-            self.log_metrics_in_step_closure(**kwargs)
+            # If we are tracing, log the metrics inside a step closure
+            self.log_metrics_in_step_closure(
+                metrics=metrics, step=step, dest=dest
+            )
+            return
+
+        # If we're not inside a logging step and an executor is not
+        # active, don't send to loggers. The executor check is to
+        # handle the case where a user wants to log something after
+        # execution.
+        if self.executor is not None and not self.is_log_step:
+            return
+
+        if not self.loggers:
+            warn(
+                "No loggers are attached to the trainer. "
+                "Call to trainer.log_metrics() will be a no-op."
+            )
+            return
+
+        from cerebras.modelzoo.trainer.loggers import TensorBoardLogger
+
+        # Don't add prefixes to metric names if the tensorboard logger
+        # is configured to output logs to legacy event directories
+        if any(
+            logger.legacy_event_dirs
+            for logger in self.get_callbacks(TensorBoardLogger)
+        ):
+            prefix = ""
         else:
-            # If we're not inside a logging step and an executor is not
-            # active, don't send to loggers. The executor check is to
-            # handle the case where a user wants to log something after
-            # execution.
-            if self.executor is not None and not self.is_log_step:
-                return
+            prefix = self.name_scope_path
 
-            if not self.loggers:
-                warn(
-                    "No loggers are attached to the trainer. "
-                    "Call to trainer.log_metrics() will be a no-op."
+        step = step if step is not None else self.global_step
+        if dest is not None:
+            if isinstance(dest, str):
+                dest = {dest}
+            elif isinstance(dest, (list, tuple)):
+                dest = set(dest)
+            elif not isinstance(dest, set):
+                raise TypeError(
+                    f"`dest` must be a string or a set of strings, "
+                    f"got {type(dest)}"
                 )
 
-            from cerebras.modelzoo.trainer.loggers import TensorBoardLogger
+            if not all(isinstance(item, str) for item in dest):
+                raise TypeError("All elements in `dest` must be strings.")
+        else:
+            dest = self._logger_destinations
 
-            # Don't add prefixes to metric names if the tensorboard logger
-            # is configured to output logs to legacy event directories
-            if any(
-                logger.legacy_event_dirs
-                for logger in self.get_callbacks(TensorBoardLogger)
-            ):
-                prefix = ""
-            else:
-                prefix = self.name_scope_path
-
-            # Otherwise, log the kwargs directly
-            for logger in self.loggers:
+        logger_matched = False
+        for logger in self.loggers:
+            if logger.name in dest:
+                logger_matched = True
                 logger.log_metrics(
-                    {f"{prefix}{k}": v for k, v in kwargs.items()},
-                    step=self.global_step,
+                    {f"{prefix}{k}": v for k, v in metrics.items()},
+                    step=step,
                 )
+
+        if not logger_matched:
+            warn(f"None of the loggers matched the given destinations: {dest}")
 
     @final
     @contextmanager
@@ -548,6 +673,8 @@ class Trainer:
             A dictionary containing the loss and any other outputs.
         """
 
+        self.call("on_train_step_start", self.model, batch)
+
         outputs = self.forward(batch)
         self.backward(outputs)
 
@@ -557,6 +684,8 @@ class Trainer:
             self.optimizer_step()
             self.optimizer_zero_grad()
             self.schedulers_step()
+
+        self.call("on_train_step_end", self.model, outputs, batch)
 
         return outputs
 
@@ -704,6 +833,13 @@ class Trainer:
                 f"Got: {type(loop)}"
             )
 
+        schedule = self.schedule
+        if not isinstance(schedule, RunSchedule):
+            raise TypeError(
+                f"Expected schedule to be an instance of RunSchedule. "
+                f"Got: {type(schedule)}"
+            )
+
         with ExitStack() as fit_stack:
             self.call(
                 "on_enter_fit",
@@ -717,7 +853,10 @@ class Trainer:
 
             self.call("on_fit_start", train_dataloader, val_dataloader, loop)
 
-            for loop_idx in range(loop.num_trains):
+            for loop_idx in range(schedule.epochs):
+                if self.early_exit.should_exit:
+                    break
+
                 self._run_train(train_dataloader, loop, loop_idx)
 
                 if loop.eval_frequency is not None and loop.eval_frequency != 0:
@@ -730,7 +869,7 @@ class Trainer:
                         run_validation=lambda: self.call(
                             "run_validation",
                             loop_idx=loop_idx,
-                            is_last=loop_idx == loop.num_trains - 1,
+                            is_last=loop_idx == schedule.epochs - 1,
                         ),
                     )
 
@@ -753,13 +892,16 @@ class Trainer:
 
             self.executor = cstorch.utils.data.DataExecutor(
                 train_dataloader,
-                num_steps=loop.train_steps,
-                checkpoint_steps=loop.checkpoint_steps,
+                num_steps=self.schedule.train_steps,
+                checkpoint_steps=self.schedule.checkpoint_steps,
                 activation_steps=self.activation_steps,
                 profiler_activities=[],  # Don't use data executor's profiler
             )
 
             for batch_idx, batch in enumerate(self.executor):
+                if self.early_exit.should_exit:
+                    break
+
                 self.call("on_train_batch_start", self.model, batch, batch_idx)
 
                 outputs = self.training_step(batch)
@@ -775,7 +917,9 @@ class Trainer:
     @final
     @cstorch.trace
     @torch.no_grad()
-    def validation_step(self, batch: Any) -> Dict[str, Any]:
+    def validation_step(
+        self, batch: Any, loop: ValidationLoop
+    ) -> Dict[str, Any]:
         """Run a single validation step on the given batch and batch index.
 
         Note that if retrace is off, content of this method will only run on
@@ -784,11 +928,16 @@ class Trainer:
 
         Args:
             batch: The batch of data to validate on.
+            loop: The validation loop object.
 
         Returns:
             A dictionary containing the loss and any other outputs.
         """
-        return self.forward(batch)
+        self.call(loop.on_step_start_hook, self.model, batch)
+        outputs = self.forward(batch)
+        self.call(loop.on_step_end_hook, self.model, outputs, batch)
+
+        return outputs
 
     @final
     def validate(
@@ -855,11 +1004,14 @@ class Trainer:
             )
 
             for batch_idx, batch in enumerate(self.executor):
+                if self.early_exit.should_exit:
+                    break
+
                 self.call(
                     loop.on_batch_start_hook, self.model, batch, batch_idx
                 )
 
-                outputs = self.validation_step(batch)
+                outputs = self.validation_step(batch, loop)
 
                 self.call(
                     loop.on_batch_end_hook,
@@ -933,6 +1085,10 @@ class Trainer:
                     f"Got {type(val_dataloader)} for element {i}"
                 )
 
+        # Early exit if the training loop from the call to fit triggers an early exit
+        if self.early_exit.should_exit:
+            return
+
         if ckpt_paths is Ellipsis or ckpt_paths is None:
             ckpt_paths = [ckpt_paths]
         else:
@@ -953,14 +1109,20 @@ class Trainer:
                     )
 
             # Flatten all ckpt paths into a list
-            ckpt_paths = (
+            ckpt_paths = [
                 checkpoint_file
                 for ckpt_path in map(Path, ckpt_paths)
                 for checkpoint_file in ckpt_path.parent.glob(ckpt_path.name)
-            )
+            ]
 
         with ExitStack() as stack:
-            self.call("on_enter_validate_all", stack, val_dataloaders, loop)
+            self.call(
+                "on_enter_validate_all",
+                stack,
+                val_dataloaders,
+                loop,
+                ckpt_paths,
+            )
 
             for ckpt_path in ckpt_paths:
                 # Load the checkpoint
@@ -968,6 +1130,9 @@ class Trainer:
 
                 # Run upstream validation
                 for val_dataloader in val_dataloaders:
+                    if self.early_exit.should_exit:
+                        return
+
                     self.validate(val_dataloader, ckpt_path=None, loop=loop)
 
                 # Run downstream validation
@@ -987,16 +1152,30 @@ class Trainer:
         self.call("on_save_checkpoint", state_dict)
         self.call("postprocess_checkpoint", state_dict)
 
-        ckpt_path = self.checkpoint.get_checkpoint_path(
-            self.model_dir, self.global_step
-        )
+        ckpt_path = self.checkpoint.get_checkpoint_path(self.global_step)
 
-        # atomic checkpoint save by first writing to a temp file, then renaming
-        tmp_ckpt_path = Path(f"{ckpt_path}.{str(uuid.uuid4())[:8]}.tmp")
-        cstorch.save(state_dict, tmp_ckpt_path)
-        tmp_ckpt_path.rename(ckpt_path)
+        cstorch.save(state_dict, ckpt_path)
 
         self.call("on_after_save_checkpoint", ckpt_path)
+
+        # Save trainer state to a checkpoint if autorestart is enabled
+        if self.autorestart.enabled:
+            state_dict = cstorch.load(ckpt_path)
+            state_dict["__trainer_state__"] = {}
+            self.call("on_save_trainer_state", state_dict["__trainer_state__"])
+
+            # atomic ckpt saving
+            with cstorch.saver.storage.use_external_link(True):
+                tmp_filepath = Path(
+                    f"{self.autorestart.trainer_state_file}.{str(uuid.uuid4())[:8]}.tmp"
+                )
+                cstorch.save(state_dict, tmp_filepath)
+                tmp_filepath.rename(self.autorestart.trainer_state_file)
+
+            self.call(
+                "on_after_save_trainer_state",
+                self.autorestart.trainer_state_file,
+            )
 
     @final
     def load_checkpoint(self, ckpt_path: Optional[str] = None):
@@ -1023,5 +1202,11 @@ class Trainer:
 
         state_dict = cstorch.load(ckpt_path)
 
+        if "__trainer_state__" in state_dict:
+            self.call(
+                "on_load_trainer_state", state_dict.pop("__trainer_state__")
+            )
+
         self.call("preprocess_checkpoint", state_dict)
+
         self.call("on_load_checkpoint", state_dict)

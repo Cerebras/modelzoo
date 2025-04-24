@@ -36,8 +36,6 @@ trainer:
       max_position_embeddings: 512
       mlm_loss_weight: 0.019  # should be 0.058 if training with max seq length 128, 0.019 with 512
       layer_norm_epsilon: 1.0e-05
-      fp16_type: cbfloat16
-      mixed_precision: true
     optimizer:
       AdamW:
         correct_bias: true
@@ -69,10 +67,8 @@ trainer:
   fit:
     train_dataloader:
       data_processor: BertCSVDynamicMaskDataProcessor
-      data_dir: 
-        ./language/datasets/wikicorpus_csv/train_cased_msl512_mlm_only_unmasked
-      vocab_file: 
-        ./language/models/bert/pretrained/google-research/cased_L-12_H-768_A-12/vocab.txt
+      data_dir: ./language/datasets/wikicorpus_csv/train_cased_msl512_mlm_only_unmasked
+      vocab_file: ./language/models/bert/pretrained/google-research/cased_L-12_H-768_A-12/vocab.txt
       max_sequence_length: 512
       max_predictions_per_seq: 80
       shuffle: true
@@ -85,8 +81,7 @@ trainer:
     val_dataloader: &val_dataloader
       data_processor: BertCSVDynamicMaskDataProcessor
       data_dir: ./language/datasets/wikicorpus_csv/val_cased_msl512_mlm_only_unmasked
-      vocab_file: 
-        ./language/models/bert/pretrained/google-research/cased_L-12_H-768_A-12/vocab.txt
+      vocab_file: ./language/models/bert/pretrained/google-research/cased_L-12_H-768_A-12/vocab.txt
       max_sequence_length: 512
       max_predictions_per_seq: 80
       shuffle: false

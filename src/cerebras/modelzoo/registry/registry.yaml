@@ -51,6 +51,7 @@ models:
   path: cerebras.modelzoo.models.nlp.dpr.embedding_generation.model.DPRWrapperModelForEmbeddingGeneration
   data_processor_paths:
   - cerebras.modelzoo.models.nlp.dpr.embedding_generation.input.DPREmbedGenHDF5DataProcessor.DPREmbedGenHDF5DataProcessor
+  - cerebras.modelzoo.models.nlp.dpr.embedding_generation.input.DPREmbedGenHDF5MapDataProcessor.DPREmbedGenHDF5MapDataProcessor
 
 - name: esm2/classification
   path: cerebras.modelzoo.models.nlp.esm2.classification.model.ESM2ForSequenceClassificationModel
@@ -94,9 +95,14 @@ models:
   path: cerebras.modelzoo.models.nlp.mistral.model.MistralModel
   data_processor_paths: *gpt2_data_processor_paths
 
+- name: qwen2
+  path: cerebras.modelzoo.models.nlp.qwen2.model.Qwen2Model
+  data_processor_paths: *gpt2_data_processor_paths
+
 - name: mixtral
   path: cerebras.modelzoo.models.nlp.mixtral.model.MixtralModel
   data_processor_paths: *gpt2_data_processor_paths
+
 
 - name: santacoder
   path: cerebras.modelzoo.models.nlp.santacoder.model.SantaCoderModel
@@ -155,17 +161,13 @@ models:
 - name: dino
   path: cerebras.modelzoo.models.vision.dino.model.DinoModel
   data_processor_paths:
-  - cerebras.modelzoo.models.vision.dino.DinoImageDataProcessor.DinoImageDataProcessor
+  - cerebras.modelzoo.models.vision.dino.DinoImageDataProcessor
 
 - name: vision_transformer
   path: cerebras.modelzoo.models.vision.vision_transformer.model.ViTClassificationWrapperModel
   data_processor_paths:
   - cerebras.modelzoo.data.vision.classification.data.imagenet.ImageNet1KProcessor
 
-- name: layers_api_demo
-  path: cerebras.modelzoo.models.nlp.layers_api_demo.model.TransformerBaseModel
-  data_processor_paths:
-  - cerebras.modelzoo.models.nlp.layers_api_demo.data.AlphabetDataProcessor
 
 
 

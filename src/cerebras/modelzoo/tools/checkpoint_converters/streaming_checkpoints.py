@@ -17,10 +17,15 @@ import logging
 import math
 import os
 import re
+from pathlib import Path
+from shutil import rmtree
 from typing import Union
+from weakref import finalize
 
 import safetensors.torch as safetensors_torch
 import torch
+
+import cerebras.pytorch as cstorch
 
 
 def convert_file_size_to_int(size: Union[int, str]):
@@ -423,6 +428,23 @@ class StreamingCSLeaf:
     their iterable nature.
     """
 
+    def __init__(self, dir=None) -> None:
+        from tempfile import mkstemp
+
+        _, self.path = mkstemp(dir=dir)
+
+        def cleanup(path):
+            Path(path).unlink(missing_ok=True)
+
+        self._f = finalize(self, cleanup, self.path)
+
+    def read(self):
+        return cstorch.load(self.path)[0]
+
+    def write(self, val):
+        Path(self.path).unlink(missing_ok=True)
+        cstorch.save([val], self.path)
+
     def __str__(self) -> str:
         return "*"
 
@@ -449,10 +471,35 @@ class StreamingCSWriterView:
 
     """
 
-    def __init__(self, checkpoint_file, state, prefix=None) -> None:
+    def __init__(self, checkpoint_file, state, prefix=None, dir=None) -> None:
         self.checkpoint_file = checkpoint_file
         self.state = state
         self.prefix = prefix or []
+
+        if dir is None:
+            import tempfile
+
+            from cerebras.appliance.storage.s3_storage import S3Deleter
+
+            if S3Deleter.is_valid_path(self.checkpoint_file):
+                # Doesn't actually create a temp file, only generates a name
+                self.checkpoint_dir = tempfile.mktemp(
+                    dir=os.path.dirname(self.checkpoint_file)
+                )
+            else:
+                self.checkpoint_dir = tempfile.mkdtemp(
+                    dir=os.path.dirname(self.checkpoint_file)
+                )
+
+            def cleanup(path):
+                if S3Deleter.is_valid_path(path):
+                    S3Deleter(path).delete()
+                else:
+                    rmtree(path)
+
+            self._f = finalize(self, cleanup, self.checkpoint_dir)
+        else:
+            self.checkpoint_dir = dir
 
     def __str__(self):
         return str(self.state)
@@ -491,20 +538,19 @@ class StreamingCSWriterView:
         return item in self.state
 
     def __getitem__(self, key):
-        from cerebras.pytorch.saver.pt_h5_saver import PyTorchH5Saver
-
         value = self.state[key]
 
         if isinstance(value, StreamingCSLeaf):
-            saver = PyTorchH5Saver()
-            name = ".".join(self.prefix + [str(key)])
-            return saver.load_tensor(self.checkpoint_file, name)
+            return value.read()
 
         if isinstance(value, StreamingCSWriterView):
             return value
         if isinstance(value, (dict, list, tuple)):
             subview = StreamingCSWriterView(
-                self.checkpoint_file, value, self.prefix + [str(key)]
+                self.checkpoint_file,
+                value,
+                self.prefix + [str(key)],
+                self.checkpoint_dir,
             )
             return subview
 
@@ -523,8 +569,7 @@ class StreamingCSWriterView:
         return default
 
     def __setitem__(self, key, value):
-        from cerebras.pytorch.saver.pt_h5_saver import PyTorchH5Saver
-        from cerebras.pytorch.utils.nest import recurse_spec
+        # from cerebras.pytorch.saver.pt_h5_saver import PyTorchH5Saver
 
         if key in self.state and not isinstance(
             self.state[key], StreamingCSLeaf
@@ -542,22 +587,16 @@ class StreamingCSWriterView:
                 )
 
             flattened, spec = torch.utils._pytree.tree_flatten(value)
+            leaves = []
 
-            for scope, v in zip(recurse_spec(spec), flattened):
-                name = ".".join(self.prefix + [key] + scope)
-                saver = PyTorchH5Saver()
-                saver.save_tensor(self.checkpoint_file, name, v)
+            for v in flattened:
+                leaves.append(StreamingCSLeaf(self.checkpoint_dir))
+                leaves[-1].write(v)
 
-            substate = torch.utils._pytree.tree_unflatten(
-                [StreamingCSLeaf() for i in range(len(flattened))],
-                spec,
-            )
-            self.state[key] = substate
+            self.state[key] = torch.utils._pytree.tree_unflatten(leaves, spec)
         else:
-            name = ".".join(self.prefix + [key])
-            saver = PyTorchH5Saver()
-            saver.save_tensor(self.checkpoint_file, name, value)
-            self.state[key] = StreamingCSLeaf()
+            self.state[key] = StreamingCSLeaf(self.checkpoint_dir)
+            self.state[key].write(value)
 
 
 class StreamingCSWriter(StreamingCSWriterView):
@@ -590,11 +629,12 @@ class StreamingCSWriter(StreamingCSWriterView):
         super().__init__(checkpoint_file, {})
 
     def save(self):
-        from cerebras.pytorch.saver.pt_h5_saver import PyTorchH5Saver
+        vals, spec = torch.utils._pytree.tree_flatten(self.state)
+        state_dict = torch.utils._pytree.tree_unflatten(
+            (v.read() for v in vals), spec
+        )
 
-        saver = PyTorchH5Saver()
-        _, spec = saver.flatten_state_dict(self.state)
-        saver.save_spec(self.checkpoint_file, spec)
+        cstorch.save(state_dict, self.checkpoint_file)
 
     def __str__(self):
         return f"{self.checkpoint_file}:\n{self.state}"

@@ -87,15 +87,23 @@ class TensorBoardLogger(Logger):
 
             self.writer = SummaryWriter(log_dir=str(self.summary_dir.resolve()))
 
+            # Use absolute path since TB event file write will resolve symlinks too
+            summary_dir = trainer.summary_dir.resolve()
+
             # pylint: disable=protected-access
-            (trainer.summary_dir / "tf_events").symlink_to(
+            (summary_dir / "tf_events").symlink_to(
                 os.path.relpath(
-                    self.writer._get_file_writer().event_writer._file_name,
-                    trainer.summary_dir,
+                    os.path.realpath(
+                        self.writer._get_file_writer().event_writer._file_name
+                    ),
+                    summary_dir,
                 )
             )
-            (trainer.summary_dir / "cs_events").symlink_to(
-                os.path.relpath(self.writer.cs_events_dir, trainer.summary_dir)
+            (summary_dir / "cs_events").symlink_to(
+                os.path.relpath(
+                    os.path.realpath(self.writer.cs_events_dir),
+                    summary_dir,
+                )
             )
 
     def setup(self, trainer):

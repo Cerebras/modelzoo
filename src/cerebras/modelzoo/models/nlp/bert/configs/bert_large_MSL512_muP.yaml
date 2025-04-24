@@ -34,8 +34,6 @@ trainer:
       max_position_embeddings: 512
       layer_norm_epsilon: 1.0e-05
       mlm_loss_weight: 0.019
-      mixed_precision: true
-      fp16_type: cbfloat16
       # muP
       mup_base_hidden_size: 512
       mup_base_filter_size: 2048
@@ -90,8 +88,7 @@ trainer:
     val_dataloader: &val_dataloader
       data_processor: BertCSVDynamicMaskDataProcessor
       data_dir: ./language/datasets/owt_pretraining_csv/val_uncased_msl512/
-      vocab_file: 
-        ./language/models/bert/pretrained/google-research/uncased_L-12_H-768_A-12/vocab.txt
+      vocab_file: ./language/models/bert/pretrained/google-research/uncased_L-12_H-768_A-12/vocab.txt
       max_sequence_length: 512
       max_predictions_per_seq: 80
       batch_size: 256

@@ -17,6 +17,8 @@ This module contains the BackendCallback class which is used to set the backend
 for the trainer.
 """
 
+from contextlib import contextmanager
+
 import cerebras.pytorch as cstorch
 from cerebras.modelzoo.trainer.callbacks import CoreCallback
 
@@ -35,6 +37,8 @@ class BackendCallback(CoreCallback):
         """
         self.backend = backend
         self.device = device
+
+        self._workflow_started = False
 
     def pre_setup(self, trainer):
         if self.backend is None:
@@ -79,7 +83,65 @@ class BackendCallback(CoreCallback):
                     "Please only provide one or the other"
                 )
 
+            if self.backend.is_csx:
+                self._workflow_started = (
+                    self.backend.cluster.workflow_id is not None
+                )
+
             trainer.backend = self.backend
             # Set the backend's artifact directory to be the same as the
             # trainer's artifact directory
             trainer.backend.artifact_dir = trainer.artifact_dir
+
+    @contextmanager
+    def workflow_context(self, trainer, lock_resources=True):
+        """Context manager to start and stop the workflow for the trainer.
+        Args:
+            trainer (Trainer): The trainer object.
+            lock_resources (bool): Whether to reserve CSX cluster resources for the entire run.
+        """
+        if (
+            not self._workflow_started
+            and trainer.backend.is_csx
+            and trainer.backend.is_e2e_execution
+        ):
+            self._workflow_started = trainer.backend.cluster.start_workflow(
+                lock_resources=lock_resources,
+            )
+
+            yield
+
+            if self._workflow_started:
+                trainer.backend.cluster.stop_workflow()
+                self._workflow_started = False
+        else:
+            yield
+
+    def on_enter_fit(
+        self, trainer, stack, train_dataloader, val_dataloader, loop
+    ):
+        # Disable resource locking for train-only runs (no validation)
+        stack.enter_context(
+            self.workflow_context(trainer, lock_resources=loop.train_only)
+        )
+
+    def on_enter_validate(self, trainer, stack, val_dataloader, loop):
+        # Disable resource locking for standalone `validate`
+        # No-op if `trainer.fit` was called or if running in
+        # auto-restart mode (workflow already started)
+        stack.enter_context(
+            self.workflow_context(trainer, lock_resources=False)
+        )
+
+    def on_enter_validate_all(
+        self, trainer, stack, val_dataloaders, loop, ckpt_paths
+    ):
+        # Disable resource locking for standalone `validate_all`
+        # if no custom downstream validation logic is specified
+        # No-op if called from within `trainer.fit`or if running
+        # in auto-restart mode (workflow already started)
+        stack.enter_context(
+            self.workflow_context(
+                trainer, lock_resources=bool(trainer.validation_callbacks)
+            )
+        )

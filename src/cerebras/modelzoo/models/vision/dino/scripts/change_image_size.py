@@ -129,7 +129,7 @@ def parse_image_size(values: List[str]) -> List[int]:
         ValueError: If the number of values is not 1 or 2.
     """
     if len(values) == 1:
-        val = int(values[0])
+        val = [int(values[0])] * 2
         return [val, val]
     elif len(values) == 2:
         return [int(values[0]), int(values[1])]
@@ -274,6 +274,8 @@ def update_config(
         and local_size[0] == local_size[1]
     ):
         for section in config["trainer"].keys():
+            if config["trainer"][section] is None:
+                continue
             for data_loader_cfg in config["trainer"][section]:
                 update_image_sizes_in_dict(
                     config["trainer"][section][data_loader_cfg],
@@ -286,139 +288,8 @@ def update_config(
     return config
 
 
-def compute_new_interpolation_matrix(
-    global_size: List[int],
-    patch_size: List[int],
-    model_config: dict,
-) -> torch.Tensor:
-    """
-    Creates a bicubic interpolation matrix for position embeddings when
-    resizing the image. Numerically matches the original implementation.
-    The code is adapted from ViTEmbeddingLayer.create_bicubic_interpolation_matrix
-
-    Args:
-        global_size (list[int]): Global image size [W, H].
-        patch_size (list[int]): Patch size [W, H].
-        model_config (dict): Configuration for the image model.
-
-    Returns:
-        torch.Tensor: Computed interpolation matrix.
-
-    Raises:
-        ValueError: If the position_embedding_type is not "learned".
-    """
-    if model_config["position_embedding_type"] != "learned":
-        raise ValueError("Only 'learned' position embeddings are supported.")
-
-    interp_cfg = model_config["interpolate_position_embedding"]
-    local_patch_dims = interp_cfg["local_patch_dims"]
-    interpolate_offset = interp_cfg.get("interpolate_offset", 0.1)
-    antialias = interp_cfg.get("antialias", False)
-
-    gw, gh = [g // p for g, p in zip(global_size, patch_size)]
-    num_global_patches = gw * gh
-
-    def get_kernel(position):
-        lw, lh = local_patch_dims  # local patch dims
-        sx = (lw + interpolate_offset) / gw
-        sy = (lh + interpolate_offset) / gh
-        return F.interpolate(
-            position,
-            mode="bicubic",
-            antialias=antialias,
-            scale_factor=(sx, sy),
-        )
-
-    T = torch.eye(num_global_patches, device="cpu").reshape(
-        num_global_patches, 1, 1, gw, gh
-    )
-    interp_matrix = (
-        torch.vmap(get_kernel, in_dims=0)(T)
-        .reshape(num_global_patches, -1)
-        .transpose(1, 0)
-    )
-
-    # If model prepends CLS token, expand interpolation matrix
-    if model_config.get("prepend_cls_token", False):
-        # Expand interpolation matrix to accommodate for CLS token
-        interp_matrix = F.pad(
-            interp_matrix, pad=(0, 1, 1, 0), mode='constant', value=0
-        )
-        interp_matrix[0, -1] = 1
-
-    return interp_matrix
-
-
-def verify_checkpoint_with_config(input_ckpt: str, config: dict):
-    """
-    Verifies that the checkpoint's interpolation matrix dimensions match
-    the config's expected image size and patch layout for the first trunk.
-
-    Args:
-        input_ckpt (str): Path to the input checkpoint file.
-        config (dict): Parsed configuration dictionary.
-
-    Raises:
-        ValueError: If the interpolation matrix shape does not match
-            the expected dimensions or if none is found.
-        FileNotFoundError: If input_ckpt does not exist.
-    """
-    if not os.path.isfile(input_ckpt):
-        raise FileNotFoundError(f"Checkpoint not found: {input_ckpt}")
-
-    checkpoint = cstorch.load(input_ckpt)
-
-    # Grab the model config from the first trunk
-    model_cfg = config["trainer"]["init"]["model"]["image_model_trunks"][0][
-        "image_model"
-    ]
-    patch_size = model_cfg["patch_size"]
-
-    # Get the global image size from config (assuming it's already properly set or is an int)
-    global_size = model_cfg.get("image_size", None)
-    if global_size is None:
-        raise ValueError("Model config does not have an 'image_size' key.")
-
-    if isinstance(global_size, int):
-        global_size = [global_size, global_size]
-
-    # Number of global patches
-    gw, gh = [g // p for g, p in zip(global_size, patch_size)]
-    num_global_patches = gw * gh
-
-    # Number of local patches
-    local_patches = model_cfg["interpolate_position_embedding"][
-        "local_patch_dims"
-    ]
-    num_local_patches = local_patches[0] * local_patches[1]
-
-    # Account for CLS token
-    prepend_cls = model_cfg.get("prepend_cls_token", False)
-    expected_local_dim = num_local_patches + (1 if prepend_cls else 0)
-    expected_global_dim = num_global_patches + (1 if prepend_cls else 0)
-
-    found_any = False
-    for key, value in checkpoint["model"].items():
-        if key.endswith("embedding_layer.interpolation_matrix"):
-            found_any = True
-            if value.shape != (expected_local_dim, expected_global_dim):
-                raise ValueError(
-                    f"Checkpoint interpolation matrix '{key}' has shape "
-                    f"{value.shape} but expected {(expected_local_dim, expected_global_dim)} "
-                    f"based on the config."
-                )
-
-    if not found_any:
-        raise ValueError(
-            "No 'embedding_layer.interpolation_matrix' found in checkpoint to verify."
-        )
-
-    logger.info("Checkpoint interpolation matrix dimensions match the config.")
-
-
 def update_checkpoint(
     input_ckpt: str,
-    new_interp_matrix: torch.Tensor,
     old_image_size: Tuple[int, int],
     patch_size: Tuple[int, int],
     new_image_size: Tuple[int, int],
@@ -430,7 +301,6 @@ def update_checkpoint(
 
     Args:
         input_ckpt (str): Path to the input checkpoint.
-        new_interp_matrix (torch.Tensor): New interpolation matrix to insert.
         old_image_size (tuple[int, int]): Original image size.
         patch_size (tuple[int, int]): Patch size.
         new_image_size (tuple[int, int]): New image size.
@@ -446,14 +316,6 @@ def update_checkpoint(
         raise FileNotFoundError(f"Checkpoint not found: {input_ckpt}")
 
     checkpoint = cstorch.load(input_ckpt)
-
-    # Replace any key ending in 'embedding_layer.interpolation_matrix'
-    replaced = 0
-    for key in checkpoint["model"].keys():
-        if key.endswith("embedding_layer.interpolation_matrix"):
-            checkpoint["model"][key] = new_interp_matrix
-            replaced += 1
-    logger.info(f"Replaced {replaced} interpolation matrices")
 
     replaced = 0
     new_patch_dims = (
@@ -479,32 +341,25 @@ def update_checkpoint(
     return checkpoint
 
 
-def main():
+def change_image_size(
+    input_config: str,
+    input_ckpt: str,
+    output_config: str,
+    output_ckpt: str,
+    global_size: List[int],
+    local_size: List[int],
+):
     """
     Main function to convert DINO config & checkpoint to new image sizes.
 
-    1. Parse command-line arguments.
-    2. Load original config.
-    3. Verify checkpoint compatibility with the existing config.
-    4. Perform sanity checks on global/local sizes.
-    5. Update config with new sizes.
-    6. Save the updated config.
-    7. Compute new interpolation matrix.
-    8. Update checkpoint with the new matrix and new position embeddings.
+    1. Load original config.
+    2. Perform sanity checks on global/local sizes.
+    3. Update config with new sizes.
+    4. Save the updated config.
+    5. Update checkpoint with the new position embeddings.
     """
-    parser = argparse.ArgumentParser(
-        "Convert DINO config & checkpoint to new image sizes."
-    )
-    parser.add_argument("--input_config", required=True)
-    parser.add_argument("--input_ckpt", required=True)
-    parser.add_argument("--output_config", required=True)
-    parser.add_argument("--output_ckpt", required=True)
-    parser.add_argument("--global_size", nargs="+", required=True)
-    parser.add_argument("--local_size", nargs="+", required=True)
-    args = parser.parse_args()
-
     # 1. Load original config
-    config = load_yaml_config(args.input_config)
+    config = load_yaml_config(input_config)
     try:
         model_cfg = config["trainer"]["init"]["model"]["image_model_trunks"][0][
             "image_model"
@@ -527,15 +382,7 @@ def main():
             "Invalid config format. Please make sure the input config is in cszoo v2 format."
         )
 
-    # 2. Verify that the checkpoint matches the *current* config dimensions
-    #    (before we modify the config).
-    verify_checkpoint_with_config(args.input_ckpt, config)
-
-    # 3. Parse the user-specified global/local sizes
-    global_size = parse_image_size(args.global_size)
-    local_size = parse_image_size(args.local_size)
-
-    # 4. Sanity checks
+    # 2. Perform sanity checks
     for size_ in (global_size, local_size):
         for s, p in zip(size_, patch_size):
             if s % p != 0:
@@ -543,34 +390,49 @@ def main():
                     f"Size {size_} must be a multiple of patch size {patch_size}."
                 )
 
-    # 5. Update config
+    # 3. Update config
     config = update_config(config, global_size, local_size, patch_size)
 
-    # 6. Save updated config
-    save_yaml_config(config, args.output_config, args.input_config)
-    logger.info(f"Saved updated config to {args.output_config}")
+    # 4. Save updated config
+    save_yaml_config(config, output_config, input_config)
+    logger.info(f"Saved updated config to {output_config}")
 
-    # 7. Compute new interpolation matrix
+    # 5. Update checkpoint
     has_cls_token = model_cfg.get("prepend_cls_token", False)
     antialias = model_cfg.get("interpolate_position_embedding", {}).get(
         "antialias", False
     )
-    new_interp_mat = compute_new_interpolation_matrix(
-        global_size, patch_size, model_cfg
-    )
-
-    # 8. Update checkpoint
     checkpoint = update_checkpoint(
-        args.input_ckpt,
-        new_interp_mat,
+        input_ckpt,
         old_image_size,
         patch_size,
         global_size,
         has_cls_token,
         antialias,
     )
-    cstorch.save(checkpoint, args.output_ckpt)
-    logger.info(f"Saved checkpoint to {args.output_ckpt}")
+    cstorch.save(checkpoint, output_ckpt)
+    logger.info(f"Saved checkpoint to {output_ckpt}")
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        "Convert DINO config & checkpoint to new image sizes."
+    )
+    parser.add_argument("--input_config", required=True)
+    parser.add_argument("--input_ckpt", required=True)
+    parser.add_argument("--output_config", required=True)
+    parser.add_argument("--output_ckpt", required=True)
+    parser.add_argument("--global_size", nargs="+", required=True)
+    parser.add_argument("--local_size", nargs="+", required=True)
+    args = parser.parse_args()
+    change_image_size(
+        args.input_config,
+        args.input_ckpt,
+        args.output_config,
+        args.output_ckpt,
+        parse_image_size(args.global_size),
+        parse_image_size(args.local_size),
+    )
 
 
 if __name__ == "__main__":

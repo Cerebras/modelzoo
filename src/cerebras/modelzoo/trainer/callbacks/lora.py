@@ -53,3 +53,9 @@ class Lora(Callback):
                 return make_model_lora(model(), self.lora_params)
 
         trainer.callbacks["model"].model = model_fn
+
+    def on_save_trainer_state(self, trainer, state_dict):
+        pass
+
+    def on_load_trainer_state(self, trainer, state_dict):
+        pass

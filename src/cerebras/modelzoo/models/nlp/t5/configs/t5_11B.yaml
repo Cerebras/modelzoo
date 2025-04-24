@@ -33,9 +33,6 @@ trainer:
       decoder_num_hidden_layers: 24
       # Loss scaling weight, 1/{average_number_valid_tokens}
       lm_loss_weight: 0.015
-      # Cerebras configs.
-      mixed_precision: true
-      fp16_type: cbfloat16
     optimizer:
       AdaFactor: {}
     schedulers:
@@ -57,7 +54,7 @@ trainer:
       log_steps: 100
     callbacks:
     - GlobalFlags:
-        csx.debug.compile_crd_memory_gi: 60
+        csx.debug.compile_crd_memory_gi: 67
   fit:
     train_dataloader:
       data_processor: T5DynamicDataProcessor

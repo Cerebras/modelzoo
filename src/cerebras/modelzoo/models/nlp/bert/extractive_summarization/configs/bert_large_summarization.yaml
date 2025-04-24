@@ -18,17 +18,11 @@ trainer:
       pooler_nonlinearity: tanh
       max_position_embeddings: 768
       use_cls_bias: true
-      mixed_precision: true
       dropout_rate: 0.1
       attention_dropout_rate: 0.1
       compute_eval_metrics: false
       layer_norm_epsilon: 1.0e-05
       loss_weight: 0.0539
-      # `loss_weight` allows us to apply scaling of the loss
-      # across number of CLS tokens with this formula
-      # `loss_weight` = 1 / {average number of CLS tokens per sequence}
-      # as we dynamically scale by the batch dimension.
-      fp16_type: cbfloat16
     optimizer:
       Adam: # {"SGD", "AdamW", "Adam"}
         eps: 1.0e-06

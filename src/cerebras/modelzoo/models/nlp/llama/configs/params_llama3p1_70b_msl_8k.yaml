@@ -50,14 +50,12 @@ trainer:
       extra_attention_params:
         num_kv_groups: 8
       filter_size: 28672
-      fp16_type: cbfloat16
       hidden_size: 8192
       initializer_range: 0.02
       layer_norm_epsilon: 1.0e-05
       loss_scaling: num_tokens
       loss_weight: 1.0
       max_position_embeddings: 8192
-      mixed_precision: true
       nonlinearity: swiglu
       norm_type: rmsnorm
       num_heads: 64

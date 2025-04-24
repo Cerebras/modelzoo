@@ -301,7 +301,7 @@ def original_split_qkv(
       blocks.<L>.attn.qkv.(weight|bias) => self_attn.proj_{q,k,v}_dense_layer.(weight|bias)
     """
     new_sd = {}
-    pattern = rf"{old_prefix}\.(\d+)\.attn\.qkv\.(weight|bias)"
+    pattern = rf"{old_prefix}(?:\.\d+)?\.(\d+)\.attn\.qkv\.(weight|bias)"
 
     for k, v in list(state_dict.items()):
         match_obj = re.match(pattern, k)
@@ -337,7 +337,7 @@ def original_rename_attn_proj(
       blocks.<L>.attn.proj.(weight|bias) => .self_attn.proj_output_dense_layer.(weight|bias)
     """
     new_sd = {}
-    pattern = rf"{old_prefix}\.(\d+)\.attn\.proj\.(weight|bias)"
+    pattern = rf"{old_prefix}(?:\.\d+)?\.(\d+)\.attn\.proj\.(weight|bias)"
     for k, v in state_dict.items():
         match_obj = re.match(pattern, k)
         if match_obj:
@@ -361,8 +361,8 @@ def original_rename_mlp(
       blocks.<L>.mlp.fc2.(weight|bias) => .ffn.ffn.1.linear_layer.(weight|bias)
     """
     new_sd = {}
-    fc1_pat = rf"{old_prefix}\.(\d+)\.mlp\.fc1\.(weight|bias)"
-    fc2_pat = rf"{old_prefix}\.(\d+)\.mlp\.fc2\.(weight|bias)"
+    fc1_pat = rf"{old_prefix}(?:\.\d+)?\.(\d+)\.mlp\.fc1\.(weight|bias)"
+    fc2_pat = rf"{old_prefix}(?:\.\d+)?\.(\d+)\.mlp\.fc2\.(weight|bias)"
 
     for k, v in state_dict.items():
         m1 = re.match(fc1_pat, k)
@@ -390,10 +390,10 @@ def original_rename_norms_and_scales(
     blocks.<L>.ls1.gamma => .layer_scale1
     """
     new_sd = {}
-    norm1_pat = rf"{old_prefix}\.(\d+)\.norm1\.(weight|bias)"
-    norm2_pat = rf"{old_prefix}\.(\d+)\.norm2\.(weight|bias)"
-    ls1_pat = rf"{old_prefix}\.(\d+)\.ls1\.gamma"
-    ls2_pat = rf"{old_prefix}\.(\d+)\.ls2\.gamma"
+    norm1_pat = rf"{old_prefix}(?:\.\d+)?\.(\d+)\.norm1\.(weight|bias)"
+    norm2_pat = rf"{old_prefix}(?:\.\d+)?\.(\d+)\.norm2\.(weight|bias)"
+    ls1_pat = rf"{old_prefix}(?:\.\d+)?\.(\d+)\.ls1\.gamma"
+    ls2_pat = rf"{old_prefix}(?:\.\d+)?\.(\d+)\.ls2\.gamma"
 
     for k, v in state_dict.items():
         n1 = re.match(norm1_pat, k)
@@ -780,7 +780,9 @@ def convert_checkpoint(
     """
     logger.info(f"Loading input checkpoint: {input_ckpt_path}")
     if convert_to == "cerebras":
-        loaded_ckpt = torch.load(input_ckpt_path, weights_only=True)
+        loaded_ckpt = torch.load(
+            input_ckpt_path, weights_only=True, map_location="cpu"
+        )
     else:
         loaded_ckpt = cstorch.load(input_ckpt_path)
 

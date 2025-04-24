@@ -23,7 +23,7 @@ from collections.abc import Iterable
 from copy import deepcopy
 from functools import lru_cache
 from math import prod
-from typing import Any, Callable, Dict, List, Literal, Optional
+from typing import Any, Callable, Dict, List, Literal, Optional, Union
 from warnings import warn
 
 import torch
@@ -39,7 +39,19 @@ from cerebras.pytorch.backend import get_backend_args
 ModeT = Literal["train", "train_and_eval", "eval", "eval_all"]
 
 
-def run_trainer(mode: ModeT, params: Dict[str, Any]):
+def mode_to_cmd(mode: ModeT):
+    """Convert from ModeT semantics to Trainer semantics."""
+    if mode in ("train", "train_and_eval"):
+        return "fit"
+    elif mode == "eval":
+        return "validate"
+    elif mode == "eval_all":
+        return "validate_all"
+    else:
+        raise ValueError(f"Invalid mode {mode}.")
+
+
+def run_trainer(mode: ModeT, params: Union[Dict[str, Any], BaseConfig]):
     """Runs training and/or validation using the Trainer with the given params.
 
     Args:
@@ -55,7 +67,9 @@ def run_trainer(mode: ModeT, params: Dict[str, Any]):
     if isinstance(params, dict) and is_legacy_params(params):
         warn(
             f"Detected that legacy params are being used. "
-            f"Automatically converting params to new format."
+            f"Automatically converting params to new format. "
+            f"To see how the legacy params map to the new format, see: "
+            f"https://docs.cerebras.net/en/latest/wsc/Model-zoo/yaml/table.html"
         )
 
         params = convert_legacy_params_to_trainer_params(
@@ -78,6 +92,12 @@ def run_trainer(mode: ModeT, params: Dict[str, Any]):
             raise
 
         if mode == "eval":
+            if not config.validate:
+                raise RuntimeError(
+                    "Validation requested but config is missing `validate` section. "
+                    "Please add a `validate` section to your trainer configuration."
+                )
+
             trainer.validate(
                 val_dataloader=create_dataloader_from_config(
                     config.validate.val_dataloader
@@ -86,6 +106,12 @@ def run_trainer(mode: ModeT, params: Dict[str, Any]):
             )
 
         elif mode == "eval_all":
+            if not config.validate_all:
+                raise RuntimeError(
+                    "Validation requested but config is missing `validate_all` section. "
+                    "Please add a `validate_all` section to your trainer configuration."
+                )
+
             val_dataloaders = list(
                 map(
                     create_dataloader_from_config,
@@ -118,6 +144,12 @@ def run_trainer(mode: ModeT, params: Dict[str, Any]):
             )
 
         elif mode in ("train", "train_and_eval"):
+            if not config.fit:
+                raise RuntimeError(
+                    "Fit requested but config is missing `fit` section. "
+                    "Please add a `fit` section to your trainer configuration."
+                )
+
             train_dataloader = create_dataloader_from_config(
                 config.fit.train_dataloader
             )
@@ -188,7 +220,7 @@ def cached_cstorch_backend(backend_type, **kwargs):
     backend = current_backend_impl(raise_exception=False)
     if backend is not None and backend.is_csx and backend_type.is_csx:
         if "cluster_config" in kwargs:
-            backend.cluster_config = kwargs.pop("cluster_config")
+            backend.cluster.config = kwargs.pop("cluster_config")
 
         mismatching = "\n".join(
             f"\t{name}: {getattr(backend, name)} != {kwargs[name]}"
@@ -215,6 +247,37 @@ def cached_cstorch_backend(backend_type, **kwargs):
     return cstorch.backend(backend_type, **kwargs)
 
 
+def create_backend_from_config(init_config):
+    backend_params = init_config.backend
+    if device := init_config.device:
+        backend_params.setdefault("backend_type", device)
+
+    backend_type = backend_params.get("backend_type", None)
+    if backend_type is None:
+        raise ValueError(
+            "No device specified. Please specify a device using the 'device' key "
+            "inside the 'init' key of the trainer params or through the cszoo CLI "
+            "with the target_device flag (e.g. --target_device=CSX)."
+        )
+
+    backend_type = backend_type.upper()
+
+    backend_args = {
+        name: backend_params.get(name)
+        for name, _ in get_backend_args(backend_type).items()
+        if name not in ("self", "backend_type") and name in backend_params
+    }
+
+    if backend_type == "CSX":
+        # Special handling for cluster config as dicts are not hashable
+        cluster_config = backend_args.get("cluster_config", {})
+        if isinstance(cluster_config, dict):
+            cluster_config = cstorch.distributed.ClusterConfig(**cluster_config)
+        backend_args["cluster_config"] = cluster_config
+
+    return cached_cstorch_backend(backend_type, **backend_args)
+
+
 def configure_trainer_from_config(
     trainer_config: BaseConfig, mode: Optional[ModeT] = None
 ):
@@ -233,35 +296,7 @@ def configure_trainer_from_config(
     init_config = trainer_config.init
 
     def backend_fn():
-        backend_params = init_config.backend
-        if device := init_config.device:
-            backend_params.setdefault("backend_type", device)
-
-        backend_type = backend_params.get("backend_type", None)
-        if backend_type is None:
-            raise ValueError(
-                f"No device specified. Please specify a device using the 'device' key "
-                f"inside the 'init' key of the trainer params"
-            )
-
-        backend_type = backend_type.upper()
-
-        backend_args = {
-            name: backend_params.get(name)
-            for name, _ in get_backend_args(backend_type).items()
-            if name not in ("self", "backend_type") and name in backend_params
-        }
-
-        if backend_type == "CSX":
-            # Special handling for cluster config as dicts are not hashable
-            cluster_config = backend_args.get("cluster_config", {})
-            if isinstance(cluster_config, dict):
-                cluster_config = cstorch.distributed.ClusterConfig(
-                    **cluster_config
-                )
-            backend_args["cluster_config"] = cluster_config
-
-        return cached_cstorch_backend(backend_type, **backend_args)
+        return create_backend_from_config(init_config)
 
     def model_fn():
         return init_config.model()
@@ -380,6 +415,12 @@ def configure_trainer_from_config(
 
                 yaml.dump({"trainer": params}, f, sort_keys=False)
 
+        def on_save_trainer_state(self, trainer, state_dict):
+            pass
+
+        def on_load_trainer_state(self, trainer, state_dict):
+            pass
+
     with SaveTrainerParams():
         return Trainer(
             backend=backend_fn(),
@@ -395,6 +436,7 @@ def configure_trainer_from_config(
             callbacks=callbacks_fn(),
             loggers=loggers_fn(),
             seed=init_config.seed,
+            autorestart=construct_callback(init_config.autorestart),
         )
 
 
@@ -497,12 +539,18 @@ TRAINER_PARAMS_TO_LEGACY = {
             },
             {
                 "ScopedTrainFlags": {
-                    "csx.performance.micro_batch_size": "train_input.micro_batch_size",
+                    "csx.performance.micro_batch_size": {
+                        "*": "train_input.micro_batch_size.*",
+                        "csx.performance.micro_batch_size": "train_input.micro_batch_size",
+                    },
                 }
             },
             {
                 "ScopedValidateFlags": {
-                    "csx.performance.micro_batch_size": "eval_input.micro_batch_size",
+                    "csx.performance.micro_batch_size": {
+                        "*": "eval_input.micro_batch_size.*",
+                        "csx.performance.micro_batch_size": "eval_input.micro_batch_size",
+                    },
                 }
             },
             {
@@ -573,10 +621,69 @@ TRAINER_PARAMS_TO_LEGACY = {
 }
 
 
+EEH_TRAINER_PARAMS_TO_LEGACY = {
+    "EleutherEvalHarness": {
+        "eeh_args": {
+            "tasks": "runconfig.tasks",
+            "num_fewshot": "runconfig.num_fewshot",
+            "output_path": "runconfig.output_path",
+            "limit": "runconfig.limit",
+            "use_cache": "runconfig.use_cache",
+            "cache_requests": "runconfig.cache_requests",
+            "check_integrity": "runconfig.check_integrity",
+            "write_out": "runconfig.write_out",
+            "log_samples": "runconfig.log_samples",
+            "system_instruction": "runconfig.system_instruction",
+            "apply_chat_template": "runconfig.apply_chat_template",
+            "fewshot_as_multiturn": "runconfig.fewshot_as_multiturn",
+            "show_config": "runconfig.show_config",
+            "include_path": "runconfig.include_path",
+            "predict_only": "runconfig.predict_only",
+            "trust_remote_code": "runconfig.trust_remote_code",
+            "max_tokens": "runconfig.max_tokens",
+            "temperature": "runconfig.temperature",
+            "top_k": "runconfig.top_k",
+            "top_p": "runconfig.top_p",
+        },
+        "keep_data_dir": "runconfig.keep_data_dir",
+    }
+}
+
+
+BCEH_TRAINER_PARAMS_TO_LEGACY = {
+    "BigCodeEvalHarness": {
+        "bigcode_args": {
+            "prefix": "runconfig.prefix",
+            "n_samples": "runconfig.n_samples",
+            "tasks": "runconfig.tasks",
+            "instruction_tokens": "runconfig.instruction_tokens",
+            "limit": "runconfig.limit",
+            "limit_start": "runconfig.limit_start",
+            "save_every_k_tasks": "runconfig.save_every_k_tasks",
+            "load_generations_path": "runconfig.load_generations_path",
+            "load_data_path": "runconfig.load_data_path",
+            "metric_output_path": "runconfig.metric_output_path",
+            "load_generations_intermediate_paths": "runconfig.load_generations_intermediate_paths",
+            "save_generations_path": "runconfig.save_generations_path",
+            "save_references_path": "runconfig.save_references_path",
+            "prompt": "runconfig.prompt",
+            "check_references": "runconfig.check_references",
+            "max_tokens": "runconfig.max_tokens",
+            "temperature": "runconfig.temperature",
+            "top_k": "runconfig.top_k",
+            "top_p": "runconfig.top_p",
+        },
+        "keep_data_dir": "runconfig.keep_data_dir",
+    }
+}
+
+
 # List of V2 keys to pop after conversion from V1 to V2
 TRAINER_POST_CONVERSION_PRUNE_LIST = [
     "init.model.compression",
     "init.model.lora_params",
+    "init.model.mixed_precision",
+    "init.model.fp16_type",
     "init.model.selective_grad",
     "init.optimizer.loss_scaling_factor",
     "init.optimizer.initial_loss_scale",
@@ -600,7 +707,9 @@ IGNORE_LEGACY_KEYS = [
 ]
 
 
-def convert_legacy_params_to_trainer_params(params, obj_filter=None):
+def convert_legacy_params_to_trainer_params(
+    params, obj_filter=None, extra_legacy_mapping_fn=None
+):
     """Converts params from the V1 structure to the V2 structure.
 
     If params are already in V2 structure, return as-is.
@@ -659,6 +768,9 @@ def convert_legacy_params_to_trainer_params(params, obj_filter=None):
         return params
 
     params = deepcopy(params)
+
+    if extra_legacy_mapping_fn is not None:
+        extra_legacy_mapping_fn(TRAINER_PARAMS_TO_LEGACY)
 
     # Flatten the mapping of trainer params to legacy params
     legacy_keys, trainer_spec = tree_flatten(TRAINER_PARAMS_TO_LEGACY)
@@ -882,30 +994,20 @@ def convert_legacy_params_to_trainer_params(params, obj_filter=None):
                     )
                 listener_type = listener_config.pop("listener_type")
                 callbacks.append({listener_type: listener_config})
+        elif class_name in ["ScopedTrainFlags", "ScopedValidateFlags"]:
+            k = "csx.performance.micro_batch_size"
+            if k in callback[class_name] and list(
+                callback[class_name][k].keys()
+            ) == [k]:
+                callbacks.append({class_name: {k: callback[class_name][k][k]}})
+            else:
+                callbacks.append(callback)
         else:
             callbacks.append(callback)
 
     # Assign back the new callbacks to the params
     if callbacks:
         trainer_params["init"]["callbacks"] = callbacks
-
-    # Continue to allow mixed_precision in model params
-    # TODO: Deprecate this
-    if (
-        mixed_precision := trainer_params["init"]
-        .get("precision", {})
-        .get("enabled")
-    ) is not None:
-        trainer_params["init"]["model"]["mixed_precision"] = mixed_precision
-
-    # Continue to allow fp16_type in model params
-    # TODO: Deprecate this
-    if (
-        fp16_type := trainer_params["init"]
-        .get("precision", {})
-        .get("fp16_type")
-    ) is not None:
-        trainer_params["init"]["model"]["fp16_type"] = fp16_type
 
     for full_key in TRAINER_POST_CONVERSION_PRUNE_LIST:
         keys = full_key.split(".")
@@ -927,9 +1029,10 @@ def convert_legacy_params_to_trainer_params(params, obj_filter=None):
     return {"trainer": trainer_params}
 
 
-def inject_cli_args_to_trainer_params(runconfig, params):
+def inject_cli_args_to_trainer_params(
+    runconfig, params, extra_legacy_mapping_fn=None
+):
     """Inject CLI arguments into a trainer config."""
-
     runconfig = deepcopy(runconfig)
     params = deepcopy(params)
 
@@ -946,7 +1049,7 @@ def inject_cli_args_to_trainer_params(runconfig, params):
                 ("validate", "ckpt_path"),
                 ("validate_all", "ckpt_paths"),
             ]:
-                if method in p["trainer"]:
+                if method in p["trainer"] and p["trainer"][method] is not None:
                     p["trainer"][method][key] = ckpt_path
 
     else:
@@ -956,7 +1059,8 @@ def inject_cli_args_to_trainer_params(runconfig, params):
 
     # Add a dummy model input so we always have an "init" key, but pop it later
     cli_args = convert_legacy_params_to_trainer_params(
-        {"runconfig": runconfig, "model": {"dummy": 1}}
+        {"runconfig": runconfig, "model": {"dummy": 1}},
+        extra_legacy_mapping_fn=extra_legacy_mapping_fn,
     )
     del cli_args["trainer"]["init"]["model"]
 

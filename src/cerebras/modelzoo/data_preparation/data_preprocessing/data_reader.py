@@ -28,13 +28,18 @@ Classes:
 """
 
 import copy
+import functools
 import gzip
+import inspect
 import io
 import json
 import logging
 import numbers
+import os
 import sys
 import tarfile
+import traceback
+from bisect import bisect_left
 from collections import defaultdict
 from contextlib import contextmanager
 from typing import Any, Callable, Dict, Iterator, List, Optional
@@ -52,24 +57,6 @@ from cerebras.modelzoo.data_preparation.data_preprocessing.vsl_pretraining_token
 
 logger = logging.getLogger("data_reader")
 logger.setLevel(logging.INFO)
-
-
-def set_doc_idx(df, file_idx, start_doc_idx, end_doc_idx) -> None:
-    """
-    This is used to set metadata for a given dataframe
-
-    Args:
-        file_idx: The file index of the current dataframe
-        start_doc_idx: The starting doc index of the current dataframe
-        end_doc_idx: The ending doc index of the current dataframe
-
-    """
-    df.file_idx = file_idx
-    df.start_doc_idx = start_doc_idx
-    df.end_doc_idx = end_doc_idx
-    assert (
-        df.end_doc_idx >= df.start_doc_idx
-    ), "Dataframe's  ending document idx must not be less than it's starting document idx"
 
 
 def get_data_size(data: Any) -> int:
@@ -171,7 +158,14 @@ def split_entry_by_paragraph_or_sentence(
 
 
 class DataFrame:
-    def __init__(self, keys: Optional[Dict] = None, read_hook_fn=None):
+    def __init__(
+        self,
+        keys: Optional[Dict] = None,
+        read_hook_fn=None,
+        file_index=0,
+        df_index_in_file=0,
+        global_df_index=0,
+    ):
         """
         Initialize the DataFrame object.
 
@@ -182,12 +176,24 @@ class DataFrame:
         self.data_keys = keys
         self.read_hook_fn = read_hook_fn
         self.raw_data = []  ## Stores a list of dictionaries
+        self.stats_checkpoint_list = []
         self.tokenized_data = defaultdict(list)
-        self.file_idx = None  ##  stores the file idx from the list of files to which current dataframe belongs
-        self.start_doc_idx = None  ## stores the starting doc index of the current df in the current file
-        self.end_doc_idx = None  ## stores the ending doc index of the current df in the current file
         self.size = 0
         self.data_stats = defaultdict(int)
+        self.file_index = file_index
+        self.df_index_in_file = df_index_in_file
+        self.global_df_index = global_df_index
+
+    def set_df_indices(self, file_index, df_index_in_file, global_df_index):
+        """
+        Set dataframe indices from checkpoint arguments
+
+        Args:
+            checkpoint_args (dict): Dict containing (file_index, df_index_in_file, global_df_index)
+        """
+        self.file_index = file_index
+        self.df_index_in_file = df_index_in_file
+        self.global_df_index = global_df_index
 
     def add(self, value: Dict[str, Any]) -> None:
         """
@@ -208,6 +214,38 @@ class DataFrame:
         """
         self.raw_data.clear()
 
+    def enforce_token_limit(self, max_tokens: int, cum_num_tokens: int):
+        """
+        Enforce max_tokens by finding the closest index in stats_list_checkpoint
+        where num_tokens + cum_num_tokens >= max_tokens using binary search.
+        Trim tokenized_data accordingly.
+
+        Args:
+            max_tokens (int): Maximum allowed number of tokens.
+            cum_num_tokens (int): Cumulative token count before this chunk.
+        """
+        # Create cumulative num_tokens list
+        num_tokens_list = [
+            stats["num_tokens"] + cum_num_tokens
+            for stats in self.stats_checkpoint_list
+        ]
+
+        # Perform binary search for the first index where num_tokens >= max_tokens
+        closest_index = bisect_left(num_tokens_list, max_tokens)
+
+        # Update data_stats with the selected checkpoint
+        for key in self.stats_checkpoint_list[closest_index]:
+            if key in self.data_stats:
+                self.data_stats[key] = self.stats_checkpoint_list[
+                    closest_index
+                ][key]
+
+        # Trim tokenized_data for all keys
+        for key in self.tokenized_data:
+            self.tokenized_data[key] = self.tokenized_data[key][
+                : closest_index + 1
+            ]
+
     def tokenize(self, token_generator: Any) -> None:
         """
         Tokenize the data values.
@@ -215,9 +253,9 @@ class DataFrame:
         Args:
             token_generator: Token generator to be used for processing the data.
         """
-
         for doc in self.raw_data:
             tokenized_doc, data_stats = token_generator.encode(doc)
+
             for key in data_stats:
                 self.data_stats[key] += data_stats[key]
             if not tokenized_doc:
@@ -225,6 +263,8 @@ class DataFrame:
             else:
                 for key, value in tokenized_doc.items():
                     self.tokenized_data[key].append(value)
+
+            self.stats_checkpoint_list.append(copy.deepcopy(self.data_stats))
         self.clear()
 
         if self.tokenized_data and isinstance(
@@ -234,11 +274,20 @@ class DataFrame:
             self.tokenized_data = token_generator.append_within_max_length(
                 self.tokenized_data
             )
-            self.tokenized_data, data_stats = token_generator.process_chunks(
-                self.tokenized_data
+            self.tokenized_data, stats_checkpoint_list = (
+                token_generator.process_chunks(self.tokenized_data)
             )
+
+            data_stats = stats_checkpoint_list[-1]
             for key in data_stats:
-                self.data_stats[key] += data_stats[key]
+                self.data_stats[key] = data_stats[key]
+
+            self.stats_checkpoint_list = self.stats_checkpoint_list[
+                : len(stats_checkpoint_list)
+            ]
+            for i, stats in enumerate(stats_checkpoint_list):
+                for key, value in stats.items():
+                    self.stats_checkpoint_list[i][key] = stats[key]
 
     def __repr__(self) -> str:
         """
@@ -276,9 +325,10 @@ class Reader:
     def __init__(
         self,
         file_list: List[str],
-        max_chunk_size: int,
-        keys: Optional[Dict],
+        read_chunk_size: int,
+        keys: Dict,
         read_hook_fn: Callable,
+        checkpoint_args: Dict,
         **kwargs: Optional[Dict],
     ) -> None:
         """
@@ -286,22 +336,22 @@ class Reader:
 
         Args:
             file_list (List[str]): List of file paths to be read.
-            max_chunk_size (int): Maximum chunk size for accumulated data.
-            keys (Optional[Dict]): Dictionary containing the type of key and it's name.
+            read_chunk_size (int): Maximum read chunk size for accumulated data.
+            keys (Dict): Dictionary containing the type of key and it's name.
         """
         self.file_list = file_list
-        self.max_chunk_size = max_chunk_size
+        self.read_chunk_size = read_chunk_size
         self.keys = keys
         self.read_hook_fn = read_hook_fn
         self.prefix_df = DataFrame(self.keys, self.read_hook_fn)
         self.skip_jsonl_decoding_error = (
             kwargs.get("skip_jsonl_decoding_error", False) if kwargs else False
         )
+        self.checkpoint_args = checkpoint_args
 
     def handle_jsonl(
         self,
         jsonl_reader: Any,
-        start_doc_idx: int,
         get_meta: bool,
         autojoin_paragraphs: bool,
         para_joiner: str,
@@ -311,7 +361,6 @@ class Reader:
 
         Args:
             jsonl_reader (Any): The JSONL reader object.
-            start_doc_idx (int): Contains the current document starting index
             get_meta (bool): Flag to determine if meta data should be extracted.
             autojoin_paragraphs (bool): Flag to auto join paragraphs.
             para_joiner (str): Paragraph joiner string.
@@ -324,10 +373,6 @@ class Reader:
                 type=dict, skip_invalid=self.skip_jsonl_decoding_error
             )
         ):
-            if (
-                idx < start_doc_idx
-            ):  ## resume streaming data from the current document starting index
-                continue
             if isinstance(ob, str):
                 assert not get_meta
                 yield {"text": ob, "doc_idx": idx}
@@ -349,119 +394,119 @@ class Reader:
 
             if get_meta and "meta" in ob:
                 entry["meta"] = ob["meta"]
-            entry["doc_idx"] = idx
 
             yield entry
 
     def accumulate_and_yield(
-        self, data_gen: Iterator[Dict[str, Any]], file_idx
+        self,
+        data_gen: Iterator[Dict[str, Any]],
     ) -> Iterator[Any]:
         """
         Accumulate data and yield in chunks.
 
         Args:
             data_gen (Iterator[Dict[str, Any]]): Generator yielding data entries.
-            file_idx (int): Current file index
         Returns:
             Iterator[Any]: Yields accumulated data chunks.
         """
         df = copy.deepcopy(self.prefix_df)
-        start_doc_idx = None
-        previous_doc_idx = None
+
+        file_index = self.checkpoint_args.get("file_index", 0)
+        curr_df_global_index = self.checkpoint_args.get("global_df_index", 0)
+        df_index_in_file = 0
+        df.set_df_indices(file_index, df_index_in_file, curr_df_global_index)
 
         for entry in data_gen:
-            doc_idx = entry.pop("doc_idx", 0)
             entry.pop("meta", None)
-            if start_doc_idx is None:
-                start_doc_idx = doc_idx
-                previous_doc_idx = doc_idx
 
             entry_size = sum(get_data_size(val) for val in entry.values())
             # If there's only one key and its size exceeds the chunk size
-            if len(entry) == 1 and entry_size > self.max_chunk_size:
+            if len(entry) == 1 and entry_size > self.read_chunk_size:
                 if df.size > 0:
-                    set_doc_idx(df, file_idx, start_doc_idx, previous_doc_idx)
                     yield df
                     self.prefix_df.clear()
-                    df = DataFrame(self.keys, self.read_hook_fn)
-                    start_doc_idx = doc_idx
-
+                    df_index_in_file += 1
+                    curr_df_global_index += 1
+                    df = DataFrame(
+                        self.keys,
+                        self.read_hook_fn,
+                        file_index,
+                        df_index_in_file,
+                        curr_df_global_index,
+                    )
                 key = next(iter(entry))
                 for chunk in split_entry_by_paragraph_or_sentence(
-                    entry[key], entry_size, self.max_chunk_size
+                    entry[key], entry_size, self.read_chunk_size
                 ):
                     new_entry = {key: chunk}
                     df.add(new_entry)
-                    set_doc_idx(df, file_idx, start_doc_idx, start_doc_idx)
                     yield df
                     self.prefix_df.clear()
-                    df = DataFrame(self.keys, self.read_hook_fn)
+                    df_index_in_file += 1
+                    curr_df_global_index += 1
+                    df = DataFrame(
+                        self.keys,
+                        self.read_hook_fn,
+                        file_index,
+                        df_index_in_file,
+                        curr_df_global_index,
+                    )
 
-                start_doc_idx = None
                 continue
-            elif df.size + entry_size > self.max_chunk_size and df.size != 0:
-                set_doc_idx(
-                    df,
-                    file_idx,
-                    start_doc_idx,
-                    (
-                        previous_doc_idx
-                        if previous_doc_idx != None
-                        else start_doc_idx
-                    ),
-                )
+            elif df.size + entry_size > self.read_chunk_size and df.size != 0:
                 yield df
                 self.prefix_df.clear()
-                start_doc_idx = doc_idx
-                df = DataFrame(self.keys, self.read_hook_fn)
+                df_index_in_file += 1
+                curr_df_global_index += 1
+                df = DataFrame(
+                    self.keys,
+                    self.read_hook_fn,
+                    file_index,
+                    df_index_in_file,
+                    curr_df_global_index,
+                )
+
             df.add(entry)
-            previous_doc_idx = doc_idx
 
         if df.size > 0:
 
-            set_doc_idx(df, file_idx, start_doc_idx, previous_doc_idx)
             self.prefix_df = copy.deepcopy(df)
 
-    def read_txt(self, file: str, checkpoint_args: tuple) -> Iterator[Any]:
+    def read_txt(self, file: str) -> Iterator[Any]:
         """
         Read and process text file.
 
         Args:
-            file (str): Path to the .txt file.
+            file (str): Path of the current file
             checkpoint_args (tuple): Contains the current file starting index , current document starting index
         Returns:
             Iterator[Any]: Yields processed data lines.
 
         """
 
-        current_file_idx, start_doc_idx = checkpoint_args
-
-        def entry_gen(start_doc_idx):
+        def entry_gen():
             with open(file, "r") as fh:
                 text = fh.read()
                 entry = {self.keys["text_key"]: text}
-                entry["doc_idx"] = start_doc_idx
                 yield entry
 
         yield from self.accumulate_and_yield(
-            entry_gen(start_doc_idx), current_file_idx
+            entry_gen(),
         )
 
     def read_jsongz(
         self,
         file: str,
-        checkpoint_args: tuple,
     ) -> Iterator[Any]:
         """
         Read and process gzipped JSON file.
 
         Args:
-            file (str): Path to the .json.gz file.
+            file (str): Path of the current file
             checkpoint_args (tuple): Contains the current file starting index , current document starting index
         Returns:
             Iterator[Any]: Yields processed data entries.
         """
-        current_file_idx, start_doc_idx = checkpoint_args
         with gzip.open(file, "rb") as f:
             text_key = self.keys["text_key"]
             data_gen = (
@@ -469,17 +514,14 @@ class Reader:
                     text_key: json.loads(line.decode("utf-8").strip())[
                         text_key
                     ],
-                    "doc_idx": idx,
                 }
                 for idx, line in enumerate(f)
-                if idx >= start_doc_idx
             )
-            yield from self.accumulate_and_yield(data_gen, current_file_idx)
+            yield from self.accumulate_and_yield(data_gen)
 
     def read_jsonl(
         self,
         file: str,
-        checkpoint_args: tuple,
         get_meta: bool = False,
         autojoin_paragraphs: bool = True,
         para_joiner: str = "\n\n",
@@ -488,7 +530,7 @@ class Reader:
         Read and process JSONL file.
 
         Args:
-            file (str): Path to the .jsonl file.
+            file (str): Path of the current file
             checkpoint_args (tuple): Contains the current file starting index , current document starting index
             get_meta (bool): Flag to determine if meta data should be extracted.
             autojoin_paragraphs (bool): Flag to auto join paragraphs.
@@ -497,13 +539,13 @@ class Reader:
         Returns:
             Iterator[Any]: Yields processed data entries.
         """
-        current_file_idx, start_doc_idx = checkpoint_args
+
         with open(file, "r", errors='ignore') as fh:
             rdr = jsonlines.Reader(fh)
             data_gen = self.handle_jsonl(
-                rdr, start_doc_idx, get_meta, autojoin_paragraphs, para_joiner
+                rdr, get_meta, autojoin_paragraphs, para_joiner
             )
-            yield from self.accumulate_and_yield(data_gen, current_file_idx)
+            yield from self.accumulate_and_yield(data_gen)
 
     def read_jsonl_zst(
         self,
@@ -517,7 +559,7 @@ class Reader:
         Read and process ZST compressed JSONL file.
 
         Args:
-            file (str): Path to the .jsonl.zst file.
+            file (str): Path of the current file
             checkpoint_args (tuple): Contains the current file starting index , current document starting index
             get_meta (bool): Flag to determine if meta data should be extracted.
             autojoin_paragraphs (bool): Flag to auto join paragraphs.
@@ -526,21 +568,19 @@ class Reader:
         Returns:
             Iterator[Any]: Yields processed data entries.
         """
-        current_file_idx, start_doc_idx = checkpoint_args
 
         with open(file, "rb") as fh:
             cctx = zstandard.ZstdDecompressor()
             reader = io.BufferedReader(cctx.stream_reader(fh))
             rdr = jsonlines.Reader(reader)
             data_gen = self.handle_jsonl(
-                rdr, start_doc_idx, get_meta, autojoin_paragraphs, para_joiner
+                rdr, get_meta, autojoin_paragraphs, para_joiner
             )
-            yield from self.accumulate_and_yield(data_gen, current_file_idx)
+            yield from self.accumulate_and_yield(data_gen)
 
     def read_jsonl_tar(
         self,
         file: str,
-        checkpoint_args: tuple,
         get_meta: bool = False,
         autojoin_paragraphs: bool = True,
         para_joiner: str = "\n\n",
@@ -549,7 +589,7 @@ class Reader:
         Read and process TAR archive containing ZST compressed JSONL files.
 
         Args:
-            file (str): Path to the .jsonl.zst.tar file.
+            file (str): Path of the current file
             checkpoint_args (tuple): Contains the current file starting index , current document starting index
             get_meta (bool): Flag to determine if meta data should be extracted.
             autojoin_paragraphs (bool): Flag to auto join paragraphs.
@@ -558,7 +598,7 @@ class Reader:
         Returns:
             Iterator[Any]: Yields processed data entries.
         """
-        current_file_idx, start_doc_idx = checkpoint_args
+
         with tarfile.open(file, "r") as archive:
             for member in archive:
                 with archive.extractfile(member) as f:
@@ -567,30 +607,28 @@ class Reader:
                     rdr = jsonlines.Reader(reader)
                     data_gen = self.handle_jsonl(
                         rdr,
-                        start_doc_idx,
                         get_meta,
                         autojoin_paragraphs,
                         para_joiner,
                     )
                     yield from self.accumulate_and_yield(
-                        data_gen, current_file_idx
+                        data_gen,
                     )
 
-    def read_parquet(self, file: str, checkpoint_args: tuple) -> Iterator[Any]:
+    def read_parquet(self, file: str) -> Iterator[Any]:
         """
         Read and process Parquet file.
 
         Args:
-            file (str): Path to the .parquet file.
-            checkpoint_args (tuple): Contains the current file starting index , current document starting index
+            file (str): Path of the current file
+
         Returns:
             Iterator[Any]: Yields processed data rows.
         """
-        current_file_idx, start_doc_idx = checkpoint_args
+
         parquet_file = pq.ParquetFile(file)
 
-        def entry_gen(start_doc_idx) -> Iterator[Dict[str, Any]]:
-            global_doc_idx = 0
+        def entry_gen() -> Iterator[Dict[str, Any]]:
             for row_group_index in range(parquet_file.num_row_groups):
                 table = parquet_file.read_row_group(row_group_index)
                 columns = {
@@ -600,40 +638,32 @@ class Reader:
                 }
 
                 for i in range(table.num_rows):
-                    if global_doc_idx < start_doc_idx:
-                        global_doc_idx += 1
-                        continue
-                    else:
-                        entry = {
-                            key: (
-                                str(col[i].as_py())
-                                if isinstance(col[i].as_py(), numbers.Number)
-                                else col[i].as_py()
-                            )
-                            for key, col in columns.items()
-                        }
-                        entry["doc_idx"] = global_doc_idx
-                        yield entry
-                        global_doc_idx += 1
 
-        yield from self.accumulate_and_yield(
-            entry_gen(start_doc_idx), current_file_idx
-        )
+                    entry = {
+                        key: (
+                            str(col[i].as_py())
+                            if isinstance(col[i].as_py(), numbers.Number)
+                            else col[i].as_py()
+                        )
+                        for key, col in columns.items()
+                    }
+                    yield entry
+
+        yield from self.accumulate_and_yield(entry_gen())
 
     def read_fasta(
-        self, file: str, checkpoint_args: tuple
+        self,
+        file: str,
     ) -> Iterator[Dict[str, Any]]:
         """
         Read and process Fasta file without using BioPython.
         Args:
-            file (str): Path to the .fasta file.
-            checkpoint_args (tuple): Contains the current file starting index, current document starting index
+            file (str): Path of the current file
         Returns:
             Iterator[Dict[str, Any]]: Yields processed data rows.
         """
-        current_file_idx, start_doc_idx = checkpoint_args
 
-        def entry_gen(start_doc_idx):
+        def entry_gen():
             with open(file, 'r') as fasta_file:
                 record_id = None
                 sequence_lines = []
@@ -643,11 +673,10 @@ class Reader:
                     if not line:
                         continue  # Skip empty lines
                     if line.startswith(">"):
-                        if record_id is not None and idx >= start_doc_idx:
+                        if record_id is not None:
                             # Yield the previous record
                             yield {
                                 "text": ''.join(sequence_lines),
-                                "doc_idx": idx,
                             }
                         record_id = line[
                             1:
@@ -659,57 +688,77 @@ class Reader:
                     else:
                         sequence_lines.append(line)
                 # Don't forget to yield the last record in the file
-                if record_id is not None and idx >= start_doc_idx:
+                if record_id is not None:
                     yield {"text": ''.join(sequence_lines), "doc_idx": idx}
 
         yield from self.accumulate_and_yield(
-            entry_gen(start_doc_idx), current_file_idx
+            entry_gen(),
         )
 
     def stream_data(
-        self, checkpoint_args, get_meta: bool = False
+        self, get_meta: bool = False, output_dir: str = None
     ) -> Iterator[Any]:
         """
         Stream and process data from multiple file formats.
 
         Args:
             get_meta (bool): Flag to determine if meta data should be extracted.
-            checkpoint_args (tuple): Contains the current file starting index, current document starting index.
+            output_dir (str, optional): Directory to save error logs. Logs to console if None.
         Returns:
             Iterator[Any]: Yields processed data chunks.
         """
-        file_idx, start_doc_idx = checkpoint_args
-        zipped_file_list = list(zip(range(len(self.file_list)), self.file_list))
-        file_list = zipped_file_list[file_idx:]
 
-        for idx, f in file_list:
-            checkpoint_args = (idx, start_doc_idx)
+        # Dump the read hook code
+        if output_dir:
+            hook_dump = os.path.join(output_dir, "hook.py")
+            with open(hook_dump, "w") as f:
+                if isinstance(self.read_hook_fn, functools.partial):
+                    # If it's a partial, get the underlying function.
+                    # This will only capture the code of the wrapped function,
+                    # not the partial arguments.
+                    f.write(inspect.getsource(self.read_hook_fn.func))
+                else:
+                    # Directly a function or other inspect-able object
+                    f.write(inspect.getsource(self.read_hook_fn))
 
+        file_list = self.file_list[self.checkpoint_args["file_index"] :]
+        for f in file_list:
             try:
                 if f.endswith(".jsonl"):
-                    yield from self.read_jsonl(f, checkpoint_args, get_meta)
+                    yield from self.read_jsonl(f, get_meta)
                 elif f.endswith(".jsonl.zst"):
-                    yield from self.read_jsonl_zst(f, checkpoint_args, get_meta)
+                    yield from self.read_jsonl_zst(f, get_meta)
                 elif f.endswith(".jsonl.zst.tar"):
-                    yield from self.read_jsonl_tar(f, checkpoint_args, get_meta)
+                    yield from self.read_jsonl_tar(f, get_meta)
                 elif f.endswith(".txt"):
                     assert not get_meta
-                    yield from self.read_txt(f, checkpoint_args)
+                    yield from self.read_txt(f)
                 elif f.endswith(".json.gz"):
                     assert not get_meta
-                    yield from self.read_jsongz(f, checkpoint_args)
+                    yield from self.read_jsongz(f)
                 elif f.endswith(".parquet"):
                     assert not get_meta
-                    yield from self.read_parquet(f, checkpoint_args)
+                    yield from self.read_parquet(f)
                 elif f.endswith(".fasta"):
                     assert not get_meta
-                    yield from self.read_fasta(f, checkpoint_args)
+                    yield from self.read_fasta(f)
                 else:
                     logger.warning(
                         f"Skipping {f} as streaming for that filetype is not implemented"
                     )
             except Exception as e:
                 logger.error(f"Error reading file {f}: {e}. Skipping this file")
+                # Log error details with line number and traceback
+                error_details = (
+                    f"Error reading file {f} at line {sys.exc_info()[2].tb_lineno}: {e}\n"
+                    f"Traceback: {traceback.format_exc()}"
+                )
+                if output_dir:
+                    error_log_path = os.path.join(output_dir, "error_log.txt")
+                    with open(error_log_path, "a") as error_log:
+                        error_log.write(error_details + "\n")
+                else:
+                    logger.error(error_details)
 
         # If there is anything pending in the prefix_df, we need to yield that as well
         if self.prefix_df.size > 0:

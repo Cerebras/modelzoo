@@ -13,16 +13,17 @@
 # limitations under the License.
 
 import logging
-from typing import Any, List, Literal, Optional, Union
+from typing import List, Literal, Optional, Union
 
 import matplotlib.pyplot as plt
 import torch
-from pydantic import Field, field_validator
+from pydantic import field_validator
 from torchvision import transforms
 
 import cerebras.pytorch as cstorch
 from cerebras.modelzoo.common.input_utils import get_streaming_batch_size
 from cerebras.modelzoo.config import DataConfig
+from cerebras.modelzoo.config.types import ValidatedPath
 from cerebras.modelzoo.data.vision.segmentation.preprocessing_utils import (
     adjust_brightness_transform,
     normalize_tensor_transform,
@@ -40,7 +41,7 @@ from cerebras.modelzoo.data.vision.utils import (
 class UNetDataProcessorConfig(DataConfig):
     data_processor: Literal["UNetDataProcessor"]
 
-    data_dir: Union[str, List[str]] = ...
+    data_dir: Union[ValidatedPath, List[ValidatedPath]] = ...
 
     num_classes: Optional[int] = None
 
@@ -73,9 +74,6 @@ class UNetDataProcessorConfig(DataConfig):
     duplicate_act_worker_data: bool = False
 
     convert_to_onehot: Optional[bool] = None
-
-    fp16_type: Optional[Any] = Field(default=None, deprecated=True)
-    mixed_precision: Optional[Any] = Field(default=None, deprecated=True)
 
     @field_validator("convert_to_onehot")
     @classmethod

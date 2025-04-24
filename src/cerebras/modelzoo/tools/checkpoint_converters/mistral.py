@@ -32,7 +32,7 @@ class Converter_MistralModel_HF_CS21(Converter_LlamaModel_HF_CS21):
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4", "cs-2.5"),
         )
 
     @staticmethod
@@ -55,7 +55,7 @@ class Converter_MistralForCausalLM_HF_CS21(Converter_LlamaForCausalLM_HF_CS21):
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4", "cs-2.5"),
         )
 
     @staticmethod
@@ -93,5 +93,5 @@ class ConfigConverter_Mistral_HF_CS21(ConfigConverter_LLaMa_HF_CS21):
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4", "cs-2.5"),
         )

@@ -42,6 +42,12 @@ class GlobalFlags(Callback):
         for k, v in self.flags.items():
             _set_flag(k, v)
 
+    def on_save_trainer_state(self, trainer, state_dict):
+        pass
+
+    def on_load_trainer_state(self, trainer, state_dict):
+        pass
+
 
 class _ScopedFlags(Callback):
     """
@@ -112,6 +118,12 @@ class _ScopedFlags(Callback):
 
         self.original_flags.clear()
 
+    def on_save_trainer_state(self, trainer, state_dict):
+        pass
+
+    def on_load_trainer_state(self, trainer, state_dict):
+        pass
+
 
 class ScopedTrainFlags(_ScopedFlags):
     """
@@ -156,6 +168,12 @@ class DebugArgsPath(Callback):
     def setup(self, trainer):
         debug_args = get_debug_args(self.debug_args_path)
         cstorch.backends.csx.debug.debug_args.MergeFrom(debug_args)
+
+    def on_save_trainer_state(self, trainer, state_dict):
+        pass
+
+    def on_load_trainer_state(self, trainer, state_dict):
+        pass
 
 
 def _get_flag(flag):

@@ -168,6 +168,11 @@ from cerebras.modelzoo.tools.checkpoint_converters.gpt_backbone import (  # noqa
     Converter_GPT2LMHeadModel_GPTBackboneLMHeadModel_CS24,
 )
 
+from cerebras.modelzoo.tools.checkpoint_converters.qwen2 import (  # noqa
+    Converter_Qwen2Model_HF_CS25,
+    Converter_Qwen2ForCausalLM_HF_CS25,
+)
+
 converters: Dict[str, List[BaseCheckpointConverter]] = {
     "bert": [
         Converter_BertPretrainModel_HF_CS21,
@@ -311,6 +316,7 @@ converters: Dict[str, List[BaseCheckpointConverter]] = {
         Converter_T5_HF_CS21,
         Converter_T5_HF_CS23,
     ],
+    "qwen2": [Converter_Qwen2ForCausalLM_HF_CS25],
 }
 
 # Add some model aliases
@@ -357,6 +363,7 @@ _model_aliases = {
     "llama-headless": "llama",
     "mistral-headless": "mistral",
     "mmsimple-llava": "multimodal_simple",
+    "decoder-only-with-moe": "moe",
     "roberta": "bert",
     "swin": "swin/classifier",
     "swin-headless": "swin/classifier",

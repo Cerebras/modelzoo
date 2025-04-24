@@ -33,7 +33,7 @@ class _LogSummaries(Callback):
 
     @property
     def trainer(self):
-        """Return the current trainer instance"""
+        """Return the current trainer instance."""
         if self._trainer_stack:
             return self._trainer_stack[-1]
         return None
@@ -51,7 +51,9 @@ class _LogSummaries(Callback):
     def on_enter_validate(self, trainer, stack, val_dataloader, loop):
         stack.enter_context(self._cache_trainer(trainer))
 
-    def on_enter_validate_all(self, trainer, stack, val_dataloaders, loop):
+    def on_enter_validate_all(
+        self, trainer, stack, val_dataloaders, loop, ckpt_paths
+    ):
         stack.enter_context(self._cache_trainer(trainer))
 
     @contextmanager
@@ -61,6 +63,12 @@ class _LogSummaries(Callback):
             yield
         finally:
             self._trainer_stack.pop()
+
+    def on_save_trainer_state(self, trainer, state_dict):
+        pass
+
+    def on_load_trainer_state(self, trainer, state_dict):
+        pass
 
 
 _GLOBAL_SUMMARIES = _LogSummaries()
@@ -80,11 +88,9 @@ def summarize_scalar(name: str, value: torch.Tensor):
             "\"Trainer\" class."
         )
 
-    if not isinstance(value, torch.Tensor):
-        raise ValueError(
-            f"Expected a scalar tensor for metric '{name}', but got '{type(value)}'."
-        )
-    if value.numel() > 1:
+    if isinstance(value, torch.Tensor) and (
+        value.numel() > 1 or value.ndim > 0
+    ):
         raise ValueError(
             f"Expected a scalar tensor for metric '{name}', "
             f"but got tensor with shape {value.shape}.\n"

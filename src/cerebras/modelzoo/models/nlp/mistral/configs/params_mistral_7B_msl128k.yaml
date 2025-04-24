@@ -38,9 +38,6 @@ trainer:
       use_ffn_bias: false
       # Task-specific
       use_bias_in_output: false
-      # Cerebras parameters
-      fp16_type: cbfloat16
-      mixed_precision: true
     optimizer:
       AdamW:
         betas:

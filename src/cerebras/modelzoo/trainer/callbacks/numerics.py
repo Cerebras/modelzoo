@@ -31,7 +31,7 @@ import numpy as np
 import torch
 
 import cerebras.pytorch as cstorch
-from cerebras.modelzoo.trainer.callbacks import Callback
+from cerebras.modelzoo.trainer.callbacks import Callback, MixedPrecision
 from cerebras.pytorch.utils.nest import visit_torch_tensors
 
 
@@ -87,6 +87,12 @@ class DumpActivations(Callback):
 
     def on_validate_end(self, trainer, model, loop):
         self._dump_ctx.flush()
+
+    def on_save_trainer_state(self, trainer, state_dict):
+        pass
+
+    def on_load_trainer_state(self, trainer, state_dict):
+        pass
 
 
 class DumpContext(ContextDecorator):
@@ -272,3 +278,91 @@ class DumpContext(ContextDecorator):
         )
         self._buffer.clear()
         self._flush_count += 1
+
+
+class NaNChecker(Callback):
+    """Callback to enable the Cerebras NaN Checker for a given run.
+
+    The NaN Checker is a debugging tool specific to the CSX hardware that injects breakpoints in
+    the kernels where NaN values are encountered. This tool should only be enabled to determine
+    the source of NaN values, after these have already been detected for a given run, i.e. if
+    the run raises an `ApplianceNanError` exception. Thus, this callback should purely be used as
+    as debugging utility; enabling the NaN Checker in general will result in performance degradation
+    on CSX.
+
+    Note that this tool is different from the PyTorch operation `torch.isnan` that simply checks
+    for NaN values in a tensor.
+    """
+
+    def __init__(self, num_steps: Optional[int] = None):
+        """Callback to enable the Cerebras NaN Checker for a given run.
+
+        Args:
+            num_steps: The number of steps for the NaN Checker-enabled run. If specified,
+                the run will early exit after this many steps.
+        """
+        self.num_steps = num_steps
+
+        self.dls_enabled = False
+        self.original_inis = {}
+        self._nan_checker_inis = [
+            "ws_rt_run_nancheck",
+            "ws_rt_enable_stall_check",
+        ]
+        self._missing = object()
+
+    def setup(self, trainer):
+        self.dls_enabled = (
+            trainer.precision is not None
+            and isinstance(trainer.precision, MixedPrecision)
+            and trainer.precision.loss_scaling_factor == "dynamic"
+        )
+        if self.dls_enabled:
+            self._nan_checker_inis.append("ws_rt_skip_bwd_pass_nancheck")
+
+        if self.num_steps is not None:
+
+            def early_exit_fn():
+                return (
+                    trainer.schedule.batch_idx is not None
+                    and trainer.schedule.batch_idx + 1 >= self.num_steps
+                )
+
+            trainer.early_exit.register(early_exit_fn)
+
+    def _set_nan_checker_flags(self):
+        """Set the debug flags for NaN checker."""
+        for ini in self._nan_checker_inis:
+            self.original_inis[ini] = getattr(
+                cstorch.backends.csx.debug.ini, ini, self._missing
+            )
+
+            setattr(cstorch.backends.csx.debug.ini, ini, True)
+
+    def _unset_nan_checker_flags(self):
+        """Unset the debug flags for NaN checker."""
+        for ini, value in self.original_inis.items():
+            if value is self._missing:
+                delattr(cstorch.backends.csx.debug.ini, ini)
+            else:
+                setattr(cstorch.backends.csx.debug.ini, ini, value)
+
+        self.original_inis.clear()
+
+    def on_train_start(self, trainer, model, train_dataloader, loop, loop_idx):
+        self._set_nan_checker_flags()
+
+    def on_train_end(self, trainer, model, loop, loop_idx):
+        self._unset_nan_checker_flags()
+
+    def on_validate_start(self, trainer, model, val_dataloader, loop):
+        self._set_nan_checker_flags()
+
+    def on_validate_end(self, trainer, model, loop):
+        self._unset_nan_checker_flags()
+
+    def on_save_trainer_state(self, trainer, state_dict):
+        pass
+
+    def on_load_trainer_state(self, trainer, state_dict):
+        pass

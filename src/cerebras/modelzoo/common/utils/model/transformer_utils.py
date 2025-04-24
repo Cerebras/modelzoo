@@ -12,11 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Optional, Tuple
+import logging
+from dataclasses import dataclass
+from functools import cached_property
+from typing import Callable, Optional, Tuple
 
 import torch
+from typing_extensions import Self
 
 import cerebras.pytorch as cstorch
+from cerebras.modelzoo.common.half_dtype import maybe_to_half_dtype
 
 
 def _extend_mask_to_shape_of_4(mask: torch.Tensor):
@@ -94,6 +99,244 @@ def make_key_padding_mask_broadcastable(
     return extended_key_padding_mask
 
 
+# Experimental FlexAttention-like API.
+from cerebras.modelzoo.common.utils.model.attn_mask_ranges import (
+    AttentionMaskRangesInfo,
+)
+
+
+@dataclass(frozen=True)
+class SparseAttentionMask:
+    '''
+    A mask value of `True` means the token should be atteneded to, `False` should be masked.
+    In the end, the mask will be converted to a float representation which, exponentiated,
+    will yield the correct probability score. For instance, the float value for `True`
+    will be 0 - generating probability 1 - and the value for `False` will be -inf -
+    genenerating probability 0.
+    '''
+
+    mask_mod: Callable[[torch.Tensor, torch.Tensor], torch.Tensor]
+    batch_size: int = 0
+    num_heads: int = 0
+    tgt_seq_length: int = 0
+    max_num_ranges: int = 256
+    device: Optional[torch.device] = None
+    dtype: torch.dtype = torch.float32
+    use_neg_inf: bool = True
+
+    def gen_qk(self) -> Tuple[torch.Tensor, torch.Tensor]:
+        mask_shape = (
+            self.batch_size,
+            self.num_heads,
+            self.tgt_seq_length,
+            self.tgt_seq_length,
+        )
+        seq_range = torch.arange(
+            self.tgt_seq_length, device=self.device, dtype=torch.float32
+        )
+        q_range = seq_range[:, None].broadcast_to(mask_shape)
+        k_range = seq_range[None, :].broadcast_to(mask_shape)
+        return q_range, k_range
+
+    def get_mask(self, use_probabilities=True) -> torch.Tensor:
+        mask = self.mask_mod(*self.gen_qk())
+        if not use_probabilities:
+            return mask.to(self.dtype)
+        if 'lazy' in str(self.device):
+            return torch.where(
+                mask != 0.0,
+                0.0,
+                torch.tensor(
+                    float('-inf') if self.use_neg_inf else -1,
+                    dtype=self.dtype,
+                    device=self.device,
+                ),
+            )
+        else:
+            return torch.where(
+                mask,
+                0.0,
+                torch.tensor(
+                    float('-inf') if self.use_neg_inf else -1,
+                    dtype=self.dtype,
+                    device=self.device,
+                ),
+            )
+
+    @cached_property
+    def mask_tensor(self):
+        return self.get_mask()
+
+    @cached_property
+    def sparsity_annotation(self):
+        return self.get_ranges()
+
+    def and_mask(self, other: Self) -> Self:
+        def and_mask_mod(q, k):
+            if 'lazy' in str(q.device):
+                # We first flip the representation from (0->False, 1->True) to (0->True, 1->False),
+                # then AND using float addition (which can happen on wafer), then flip back.
+                one = torch.tensor(1.0, dtype=self.dtype)
+                float_mask_a = -(
+                    self.mask_mod(q, k).to(self.dtype) - one
+                )  # invert
+                float_mask_b = -(
+                    other.mask_mod(q, k).to(self.dtype) - one
+                )  # invert
+                float_and_mask = -torch.maximum(
+                    -(float_mask_a + float_mask_b), -one
+                )  # take the minimum (i.e., clamp to [0,1]), still inverted
+                return -(
+                    float_and_mask - one
+                )  # flip back to (0->False, 1->True)
+            else:
+                return torch.bitwise_and(
+                    self.mask_mod(q, k), other.mask_mod(q, k)
+                )
+
+        return SparseAttentionMask(
+            and_mask_mod,
+            **{i: d for i, d in self.__dict__.items() if i != 'mask_mod'},
+        )
+
+    def or_mask(self, other: Self) -> Self:
+        def or_mask_mod(q, k):
+            if 'lazy' in str(q.device):
+                # here we OR in the regular (non-inverted) representation using + and clamp to [0,1]
+                one = torch.tensor(1.0, dtype=self.dtype)
+                float_mask_a = self.mask_mod(q, k).to(self.dtype)
+                float_mask_b = other.mask_mod(q, k).to(self.dtype)
+                return -torch.maximum(-(float_mask_a + float_mask_b), -one)
+            else:
+                return torch.bitwise_or(
+                    self.mask_mod(q, k), other.mask_mod(q, k)
+                )
+
+        return SparseAttentionMask(
+            or_mask_mod,
+            **{i: d for i, d in self.__dict__.items() if i != 'mask_mod'},
+        )
+
+    def not_mask(self) -> Self:
+        def not_mask_mod(q, k):
+            if 'lazy' in str(q.device):
+                one = torch.tensor(1.0, dtype=self.dtype)
+                return -(self.mask_mod(q, k).to(self.dtype) - one)
+            else:
+                return torch.bitwise_not(self.mask_mod(q, k))
+
+        return SparseAttentionMask(
+            not_mask_mod,
+            **{i: d for i, d in self.__dict__.items() if i != 'mask_mod'},
+        )
+
+    # This generates the mask range annotation iteratively by materializing
+    # `range_size` tiles of it at a time on CPU.
+    def get_ranges(self, override_max_num_ranges_with=None):
+        max_num_ranges = self.max_num_ranges
+        if override_max_num_ranges_with is not None:
+            max_num_ranges = override_max_num_ranges_with
+        start_ranges = []
+        end_ranges = []
+        sin_begin = 0
+        sout_begin = 0
+        sin_end = self.tgt_seq_length
+        sout_end = self.tgt_seq_length
+        range_size = max(-(self.tgt_seq_length // -max_num_ranges), 1)
+        q_range = torch.arange(range_size)[:, None].broadcast_to(
+            [range_size, range_size]
+        )
+        k_range = q_range.T
+        for q in range(0, self.tgt_seq_length + 1, range_size):
+            active = False
+            start_range = []
+            end_range = []
+            _q_range = q + q_range
+            _q_in_range = q + range_size <= self.tgt_seq_length
+            for k in range(0, self.tgt_seq_length + 1, range_size):
+                if torch.any(self.mask_mod(_q_range, k + k_range)):
+                    if not active:
+                        active = True
+                        sin_begin = k
+                        sout_begin = q
+                else:
+                    if active and _q_in_range:
+                        active = False
+                        start_range += [[sin_begin, sout_begin]]
+                        end_range += [[k, q + range_size]]
+            if len(start_range) > 0 and len(end_range) > 0:
+                start_ranges += [start_range]
+                end_ranges += [end_range]
+        assert len(end_ranges) == len(start_ranges)
+        logging.info("Attention mask auto-sparsifier finished analysis.")
+        return AttentionMaskRangesInfo(
+            start_ranges, end_ranges, self.tgt_seq_length
+        )
+
+
+def create_mask_using_flex_api(
+    batch_size: int,
+    num_heads: int,
+    tgt_seq_length: int,
+    attention_span: Optional[torch.Tensor] = None,
+    sliding_window_length: Optional[int] = None,
+    num_sink_tokens: Optional[int] = None,
+    attention_vertical_column_spacing: Optional[int] = None,
+    attention_vertical_column_width: Optional[int] = None,
+    attention_chunk_size: Optional[int] = None,
+    device: Optional[torch.device] = None,
+    dtype: torch.dtype = torch.float16,
+    use_neg_inf: bool = True,
+):
+    causal_mask = SparseAttentionMask(
+        lambda q, k: q >= k,
+        batch_size=batch_size,
+        num_heads=num_heads,
+        tgt_seq_length=tgt_seq_length,
+        device=device,
+        dtype=dtype,
+        use_neg_inf=use_neg_inf,
+    )
+    attn_mask = causal_mask
+
+    if attention_chunk_size is not None:
+
+        def attn_chunk(q, k):
+            return k < float(attention_chunk_size) * maybe_to_half_dtype(
+                (q / attention_chunk_size).short()
+            )
+
+        attn_mask = attn_mask.and_mask(
+            SparseAttentionMask(attn_chunk).not_mask()
+        )
+
+    if sliding_window_length is not None:
+
+        def sliding_window(q, k):
+            return q - k < sliding_window_length
+
+        attn_mask = attn_mask.and_mask(SparseAttentionMask(sliding_window))
+        if num_sink_tokens:
+            attn_mask = attn_mask.or_mask(
+                SparseAttentionMask(lambda q, k: k < num_sink_tokens)
+            ).and_mask(causal_mask)
+
+    if attention_vertical_column_spacing is not None:
+        for i in range(
+            attention_vertical_column_spacing - 1,
+            tgt_seq_length,
+            attention_vertical_column_spacing,
+        ):
+            left_span = SparseAttentionMask(lambda q, k, i=i: i - 1 < k)
+            right_span = SparseAttentionMask(
+                lambda q, k, i=i: k < i + attention_vertical_column_width
+            )
+            attn_mask = attn_mask.or_mask(
+                causal_mask.and_mask(left_span.and_mask(right_span))
+            )
+    return attn_mask
+
+
 def create_broadcasted_autoregressive_mask(
     batch_size: int,
     num_heads: int,
@@ -107,11 +350,14 @@ def create_broadcasted_autoregressive_mask(
     device: Optional[torch.device] = None,
     dtype: torch.dtype = torch.float16,
     use_neg_inf: bool = True,
+    use_experimental_flex_api: bool = False,
 ):
     """Create broadcasted causal attention mask optionally with VSL masking.
 
     For VSL, `attention_span` is required and past tokens out of the current sequence
     are additionally masked.
+
+    For sliding window, `attention_sliding_window_length` is required and cannot be used along with VSL.
 
     Args:
         batch_size (int): Batch size.
@@ -125,6 +371,8 @@ def create_broadcasted_autoregressive_mask(
         device (torch.device): The device of the input to the model, used for causal mask creation.
         dtype (torch.dtype): Dtype of the resulting mask, default to torch.float16.
         use_neg_inf (bool): Use negative infinity instead of one in the resulting mask, default to True.
+        use_experimental_flex_api (bool): Use a FlexAttention-like API for mask construction (experimental).
+
 
     Returns:
         The attention mask of shape [batch_size, num_heads, tgt_seq_len, tgt_seq_len].
@@ -151,11 +399,32 @@ def create_broadcasted_autoregressive_mask(
             f"got {attention_sink_tokens=} but {attention_sliding_window_length=}"
         )
 
+    if (attention_vertical_column_spacing is None) ^ (
+        attention_vertical_column_width is None
+    ):
+        raise ValueError("column spacing and width must both be specified")
+
     if attention_span is not None:
         return create_vsl_mask(
             attention_span=attention_span,
             num_heads=num_heads,
             is_causal=True,
+            device=device,
+            dtype=dtype,
+            use_neg_inf=use_neg_inf,
+        )
+
+    if use_experimental_flex_api:
+        return create_mask_using_flex_api(
+            batch_size,
+            num_heads,
+            tgt_seq_length,
+            attention_span=attention_span,
+            sliding_window_length=attention_sliding_window_length,
+            num_sink_tokens=attention_sink_tokens,
+            attention_vertical_column_spacing=attention_vertical_column_spacing,
+            attention_vertical_column_width=attention_vertical_column_width,
+            attention_chunk_size=attention_chunk_size,
             device=device,
             dtype=dtype,
             use_neg_inf=use_neg_inf,
@@ -213,11 +482,7 @@ def create_broadcasted_autoregressive_mask(
             )
         attention_mask += torch.maximum(diff - window_span, zero)
 
-    if (attention_vertical_column_spacing is None) ^ (
-        attention_vertical_column_width is None
-    ):
-        raise ValueError("column spacing and width must both be specified")
-    elif attention_vertical_column_spacing is not None:
+    if attention_vertical_column_spacing is not None:
         zero = torch.tensor(0, dtype=torch.float32)
         attention_mask = torch.maximum(attention_mask, zero)
         for i in range(

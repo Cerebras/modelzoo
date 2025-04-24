@@ -22,6 +22,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
+from lm_eval.models.utils import handle_stop_sequences
 from tqdm import tqdm
 from transformers import PreTrainedTokenizerBase
 
@@ -625,14 +626,12 @@ class InferenceDataProcessorGU(InferenceDataProcessor):
                 np.zeros(1, dtype=np.float32),
             ], ()
 
-        context, until = request
-        until = until["until"]
-
-        if isinstance(until, str):
-            until = [until]
+        context, kwargs = request
 
         # Add eos token str to until (stop words)
-        until.append(tokenizer.eos_token)
+        until = handle_stop_sequences(
+            kwargs.pop("until", None), eos=tokenizer.eos_token
+        )
 
         # 1. Encode input sample
         context_enc = get_token_ids(context, tokenizer)

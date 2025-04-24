@@ -37,11 +37,6 @@ trainer:
       loss_scaling: num_tokens
       loss_weight: 1.0
       initializer_range: 0.02
-      mixed_precision: true
-      fp16_type: cbfloat16
-      
-      # Enables RoPE sin/cos computation on wafer
-      fold_rope_consts: False 
     optimizer:
       AdamW:
         betas:

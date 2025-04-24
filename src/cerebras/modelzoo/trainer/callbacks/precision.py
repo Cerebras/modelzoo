@@ -23,6 +23,7 @@ from warnings import warn
 import torch
 
 import cerebras.pytorch as cstorch
+from cerebras.appliance.errors import ApplianceNanError
 from cerebras.modelzoo.trainer.callbacks import CoreCallback
 
 
@@ -79,7 +80,7 @@ class MixedPrecision(Precision):
         max_loss_scale: Optional[float] = None,
         max_gradient_norm: Optional[float] = None,
         max_gradient_value: Optional[float] = None,
-        log_loss_scale: bool = False,
+        log_loss_scale: Optional[bool] = None,
     ):
         """
         Args:
@@ -94,7 +95,9 @@ class MixedPrecision(Precision):
             max_loss_scale: Maximum loss scale.
             max_gradient_norm: Maximum gradient norm for gradient clipping.
             max_gradient_value: Maximum gradient value for gradient clipping.
-            log_loss_scale: If True, log the gradient scaler's loss scale.
+            log_loss_scale: If True, log the gradient scaler's loss scale. If None, loss
+                scale is logged when `loss_scaling_factor` is "dynamic", otherwise it
+                is not logged.
         """
         if not (
             isinstance(loss_scaling_factor, Number)
@@ -120,6 +123,8 @@ class MixedPrecision(Precision):
         self.max_gradient_norm = max_gradient_norm
         self.max_gradient_value = max_gradient_value
         self.log_loss_scale = log_loss_scale
+        if self.log_loss_scale is None:
+            self.log_loss_scale = loss_scaling_factor == "dynamic"
 
         if precision_opt_level is not None:
             cstorch.backends.csx.precision.optimization_level = (
@@ -171,9 +176,12 @@ class MixedPrecision(Precision):
 
     def setup(self, trainer):
         if self.fp16_type == "bfloat16":
-            if self.loss_scaling_factor == "dynamic":
+            if (
+                self.loss_scaling_factor == "dynamic"
+                or float(self.loss_scaling_factor) != 1.0
+            ):
                 trainer.logger.info(
-                    f"No need to use DLS for loss when half dtype is bfloat16. "
+                    f"No need to use loss scaling when half dtype is bfloat16. "
                     f"Disabling gradient scaling."
                 )
             self.scaler = None
@@ -260,9 +268,25 @@ class MixedPrecision(Precision):
         else:
             optimizer.step()
 
+    @cstorch.step_closure
+    def check_non_recoverable_nan(self, loss_scale, non_clamped_loss_scale):
+        if non_clamped_loss_scale < loss_scale:
+            raise ApplianceNanError(
+                "Minimum loss scale threshold was reached but gradient norms are still "
+                "encountering NaN or inf values. Dynamic loss scaling does not seem to be "
+                "recovering NaN's in gradients and training is not progressing. Please "
+                "check the model's hyperparameters and input data."
+            )
+
     def on_train_batch_end(self, trainer, model, outputs, batch, batch_idx):
-        if self.scaler and self.log_loss_scale:
-            trainer.log_metrics(loss_scale=self.scaler.get_scale())
+        if self.scaler:
+            if self.log_loss_scale:
+                trainer.log_metrics(loss_scale=self.scaler.get_scale())
+
+            if self.backend.is_csx and self.loss_scaling_factor == "dynamic":
+                self.check_non_recoverable_nan(
+                    self.scaler.get_scale(), self.scaler.get_non_clamped_scale()
+                )
 
     def on_save_checkpoint(self, trainer, state_dict):
         if self.scaler:

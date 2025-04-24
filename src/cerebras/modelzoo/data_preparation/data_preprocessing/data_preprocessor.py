@@ -19,16 +19,14 @@ It internally uses `DataFrame` and `DataReader` to read and process data.
 
 import glob
 import importlib
-import json
 import logging
 import math
 import os
-import shutil
 import sys
 import time
 import traceback
-from collections import OrderedDict, defaultdict
-from functools import partial
+from collections import defaultdict
+from multiprocessing import Event as MEvent
 from multiprocessing import Lock, Pool, Process, Queue, Value, cpu_count
 from threading import Event, Thread
 from typing import Any, Dict, List, Optional, Tuple
@@ -36,11 +34,8 @@ from typing import Any, Dict, List, Optional, Tuple
 import h5py
 import numpy as np
 import psutil
-from datasets import load_dataset
-from PIL import Image
 from tqdm import tqdm
 
-from cerebras.modelzoo.common.utils.utils import check_and_create_output_dirs
 from cerebras.modelzoo.data_preparation.data_preprocessing.data_reader import (
     DataFrame,
     Reader,
@@ -50,14 +45,26 @@ from cerebras.modelzoo.data_preparation.data_preprocessing.pretraining_token_gen
     PretrainingTokenGenerator,
 )
 from cerebras.modelzoo.data_preparation.data_preprocessing.utils import (
+    calculate_total_size,
+    check_and_create_output_dirs,
     dump_args,
+    dump_result,
+    format_time,
     get_files,
     get_size,
+    load_dataset_wrapper,
     update_args,
+    update_progress,
 )
 
 from cerebras.modelzoo.data_preparation.data_preprocessing.dpo_token_generator import (  # noqa
     DPOTokenGenerator,
+)
+from cerebras.modelzoo.data_preparation.data_preprocessing.embedding_generation_token_generator import (  # noqa
+    EmbeddingGenerationTokenGenerator,
+)
+from cerebras.modelzoo.data_preparation.data_preprocessing.embedding_training_token_generator import (  # noqa
+    EmbeddingTrainingTokenGenerator,
 )
 from cerebras.modelzoo.data_preparation.data_preprocessing.fim_token_generator import (  # noqa
     FIMTokenGenerator,
@@ -76,279 +83,25 @@ from cerebras.modelzoo.data_preparation.data_preprocessing.vsl_pretraining_token
 )
 
 logging.basicConfig()
-logger = logging.getLogger(__file__)
+logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 
-def get_available_memory():
-    """
-    Returns available memory in bytes.
-    """
-    mem = psutil.virtual_memory()
-    return mem.available
-
-
-def get_compression_factor(filename: str) -> int:
-    """
-    Calculate and return the compression factor based on a file's extension.
-
-    Args:
-        filename (str): The name of the file.
-
-    Returns:
-        int: Compression factor. Returns 3 for all compressed and parquet formats,
-             otherwise returns 1 for uncompressed formats.
-    """
-    compressed_formats = [
-        ".jsonl.zst",
-        ".jsonl.zst.tar",
-        ".json.gz",
-        ".parquet",
-    ]
-
-    for format in compressed_formats:
-        if filename.endswith(format):
-            return 3  # compression factor for compressed/parquet formats
-
-    return 1  # default factor for uncompressed formats
-
-
-def format_time(seconds):
-    """
-    Format seconds into a human-readable string showing hours:minutes:seconds,
-    minutes:seconds, or seconds.
-    """
-    hours, remainder = divmod(int(seconds), 3600)
-    minutes, seconds = divmod(remainder, 60)
-    if hours:
-        return f"{hours}h:{minutes:02d}m:{seconds:02d}s"
-    elif minutes:
-        return f"{minutes}m:{seconds:02d}s"
-    else:
-        return f"{seconds}s"
-
-
-def update_progress(
-    pbar: tqdm,
-    progress_counter: Value,
-    total_chunks: int,
-    data_stats: dict,
-    start_time: float,
-    stop_event: Event,
-) -> None:
-    """
-    Update the progress bar based on the current progress.
-
-    Args:
-        pbar (tqdm): The progress bar instance.
-        progress_counter (Value): A shared counter to track progress across processes.
-        total_chunks (int): Total chunks to process.
-        start_time (float): The start time of the process.
-        stop_event (Event): Event to signal when to stop updating progress.
-
-    Returns:
-        None
-    """
-    pbar.total = total_chunks
-    while not stop_event.is_set():
-        progress = progress_counter.value
-        # Update total if actual progress exceeds estimated total_chunks
-        if progress >= pbar.total:
-            pbar.total = progress + 1  # Update the progress bar total
-
-        if progress > pbar.n:
-            num_processed = progress - pbar.n
-            pbar.update(num_processed)
-            elapsed_time = time.time() - start_time
-            avg_time_per_chunk = elapsed_time / pbar.n
-            estimated_remaining = avg_time_per_chunk * (pbar.total - pbar.n)
-            formatted_estimated_remaining = format_time(estimated_remaining)
-            # Update progress bar description with processed/total chunks
-            pbar.set_description(f"Processing {pbar.n}/{pbar.total} chunks")
-            # Update the progress bar postfix with avg processing time and estimated time
-            postfix_items = OrderedDict(
-                avg_time=f"{avg_time_per_chunk:.3f}s/chunk",
-                eta=formatted_estimated_remaining,
-                discarded=data_stats["discarded"].value,
-                processed=data_stats["processed"].value,
-            )
-            pbar.set_postfix(
-                postfix_items,
-                refresh=True,
-            )
-        time.sleep(0.5)
-
-
-def check_and_create_dir(dir: Optional[str], split_dir: Optional[str]) -> str:
-    """
-    Ensures a directory exists, optionally handling a subdirectory. It prompts
-    the user for action if the directory already has files.
-
-    Args:
-    dir (Optional[str]): Base directory path. Defaults to 'input_dir' in cwd.
-    split_dir (Optional[str]): Subdirectory to add to the base directory.
-
-    Returns:
-    str: The final directory path ensured to exist.
-    """
-    # Set default directory if none provided
-    if dir is None:
-        dir = os.path.join(os.getcwd(), 'input_dir')
-
-    # Append subdirectory if provided
-    if split_dir:
-        dir = os.path.join(dir, split_dir)
-
-    # Check for existing files and handle existing files
-    if os.path.isdir(dir) and os.listdir(dir):
-        _in = input(
-            "Input directory already contains file(s). Do you want to delete "
-            "the folder and download the dataset again? "
-            "(yes/no): "
-        )
-        if _in.lower() in ["y", "yes"]:
-            shutil.rmtree(dir)
-            os.makedirs(dir)  # Recreate directory after removal
-        elif _in.lower() in ["n", "no"]:
-            return dir
-        else:
-            raise ValueError(
-                f"Inputs can be yes, no, y, or n. Received {_in}!!"
-            )
-    else:
-        # Create directory if it does not exist
-        os.makedirs(dir, exist_ok=True)
-
-    return dir
-
-
-def default_hook(x):
-    return x
-
-
-def save_image_locally(example, idx, image_key, image_dir):
-    image_data = example[image_key]
-
-    if isinstance(image_data, list):
-        image_paths = []
-        for i, img_data in enumerate(image_data):
-            if img_data is None:
-                image_paths.append(None)
-            else:
-                image_path = os.path.join(image_dir, f"{idx}_{i}.png")
-                if img_data is None:
-                    image_paths.append(None)
-                    continue
-                if isinstance(img_data, Image.Image):
-                    img_data.save(image_path)
-                    image_paths.append(f"{idx}_{i}.png")
-                elif isinstance(img_data, str):
-                    image_paths.append(img_data)
-                else:
-                    raise ValueError(
-                        f" Image data format - {type(image_data)} is not supported"
-                    )
-
-        example[image_key] = image_paths
-    else:
-        if image_data is None:
-            example[image_key] = None
-        else:
-            image_path = os.path.join(image_dir, f"{idx}.png")
-            if isinstance(image_data, Image.Image):
-                image_data.save(image_path)
-                example[image_key] = f"{idx}.png"
-            elif isinstance(image_data, str):
-                example[image_key] = image_data
-            else:
-                raise ValueError(
-                    f" Image data format - {type(image_data)} is not supported"
-                )
-    return example
-
-
-def update_data_stats(
-    final_data_stats, data_stats: Dict[str, int], shared_stats=False
-) -> None:
-
-    if shared_stats:
-        for key in data_stats:
-            final_data_stats[key].value += data_stats[key]
-    else:
-        for key in data_stats:
-            final_data_stats[key] += data_stats[key]
-
-
 class DataPreprocessor:
-    def __init__(self, params):
+    def __init__(self, params: Dict, exit_event: Optional[Event] = None):
         """
         Initialize the class with given parameters.
         Args:
             params (dict): Configuration parameters.
+            exit_event (Optional[Event]): Exit event used to gracefully exit the preprocessing pipeline.
         """
         self.params = params
         self.json_params_file = None
         self.running_avg_processing_time = 0
         self.chunks_processed = 0
         self.process_params()
-
-    def load_dataset(self, input_data_params: Dict[str, Optional[str]]) -> str:
-        """
-        Loads a dataset from a specified source and saves it in a specified format
-        in the given directory, potentially within a subdirectory denoted by a 'split'.
-
-        Args:
-        input_data_params (Dict[str, Optional[str]]): Parameters for dataset loading
-            including 'source', 'split' (optional), and 'format'.
-
-        Returns:
-        str: The directory where the dataset has been saved.
-
-        Raises:
-        ValueError: If the specified format is not supported.
-        """
-        split_type = input_data_params.pop('split', None)
-        cache_dir = input_data_params.pop('cache_dir', None)
-        cache_dir = check_and_create_dir(cache_dir, split_type)
-        source_dataset = input_data_params.pop('source')
-        input_data_params = (
-            {} if input_data_params is None else input_data_params
-        )
-        # Load the dataset with or without the split
-        if split_type is not None:
-            dataset = load_dataset(
-                source_dataset,
-                split=split_type,
-                cache_dir=cache_dir,
-                **input_data_params,
-            )
-        else:
-            dataset = load_dataset(
-                source_dataset, cache_dir=cache_dir, **input_data_params
-            )
-        if self.data_keys.get("image_key") in dataset.column_names:
-            process_images_fn = partial(
-                save_image_locally,
-                image_key=self.data_keys.get("image_key"),
-                image_dir=self.image_dir,
-            )
-            dataset = dataset.map(
-                process_images_fn, with_indices=True, num_proc=self.processes
-            )
-        # Determine the file path based on format
-        format_type = input_data_params.get('format', 'parquet')
-        file_path = os.path.join(cache_dir, "data", f"dataset.{format_type}")
-        # Save the dataset in the desired format
-        if format_type == 'parquet':
-            dataset.to_parquet(file_path)
-        elif format_type == 'jsonl':
-            dataset.to_json(file_path, orient='records', lines=True)
-        else:
-            ValueError(
-                f"{format_type} is not supported by the data preprocessor."
-            )
-        logger.info(f"Dataset saved in {format_type} format at {file_path}")
-        return os.path.join(cache_dir, "data")
+        # Exit event is triggered once we get a signal interrupt to premeptively close the pipeline.
+        self.exit_event = exit_event
 
     def process_params(self) -> None:
         """
@@ -362,19 +115,30 @@ class DataPreprocessor:
         self.initialize_miscellaneous_attributes()
         self.check_unused_params()
 
+        # Initialize stop event
+        self.stop_event = MEvent()
+        self.token_counter_lock = Lock()
+        self.total_tokens = Value('i', 0)
+        # Retrieve token_limit from params (False if not set)
+        # If token_limit is False, that means no limit. If it's a number, we enforce that limit.
+        self.token_limit = self.params["processing"].get("token_limit", False)
+        ## Lock to update stats concurrently among different processes
+        self.stats_lock = Lock()
+
     def setup_output_directory(self) -> None:
         """
         Set up the output directory based on provided configuration.
         """
         self.output_dir = self.params["setup"].get("output_dir", "./output/")
-        if not self.params["processing"].get("resume_from_checkpoint", False):
-            check_and_create_output_dirs(self.output_dir, filetype="h5")
         logger.info(f"\nWriting data to {self.output_dir}.\n")
         self.json_params_file = os.path.join(
             self.output_dir, "data_params.json"
         )
         self.checkpoint_path = os.path.join(self.output_dir, "checkpoint.txt")
-        dump_args(self.params, self.json_params_file)
+
+        if not os.path.exists(self.json_params_file):
+            check_and_create_output_dirs(self.output_dir, filetype="h5")
+            dump_args(self.params, self.json_params_file)
 
     def handle_input_files(self) -> None:
         """
@@ -388,7 +152,12 @@ class DataPreprocessor:
         data_source_type = input_data_params.pop("type", None)
         input_dir = None
         if data_source_type == 'huggingface':
-            input_dir = self.load_dataset(input_data_params)
+            kwargs = {
+                "image_key": self.data_keys.get("image_key"),
+                "image_dir": self.image_dir,
+                "processes": self.processes,
+            }
+            input_dir = load_dataset_wrapper(input_data_params, **kwargs)
         elif data_source_type == 'local':
             input_dir = input_data_params.pop("source")
             assert (
@@ -455,6 +224,24 @@ class DataPreprocessor:
         """
         Process dataset specific parameters.
         """
+        self.stats_keys = [
+            "normalized_bytes_count",
+            "normalized_chars_count",
+            "raw_bytes_count",
+            "raw_chars_count",
+            "average_chars_per_sequence",
+            "average_bytes_per_sequence",
+            "discarded_files",
+            "processed_files",
+            "successful_files",
+            "loss_valid_tokens",
+            "num_pad_tokens",
+            "non_pad_tokens",
+            "num_masked_tokens",
+            "num_tokens",
+            "n_examples",
+        ]
+
         dataset_params = self.params.get("dataset", {})
         use_vsl = dataset_params.get("use_vsl", False)
         self.multimodal = dataset_params.get("is_multimodal", False)
@@ -468,6 +255,7 @@ class DataPreprocessor:
                 self.token_generator_name = "FIMTokenGenerator"
             else:
                 if use_vsl:
+                    self.stats_keys.append("num_sequences_before_packing")
                     logger.info(f"Initializing VSL pretraining mode")
                 else:
                     logger.info(f"Initializing pretraining mode")
@@ -477,8 +265,10 @@ class DataPreprocessor:
                     else "PretrainingTokenGenerator"
                 )
         elif self.mode == "finetuning":
+            self.stats_keys.extend(["total_raw_docs", "raw_docs_skipped"])
             if use_vsl:
                 logger.info(f"Initializing VSL finetuning mode")
+                self.stats_keys.append("num_sequences_before_packing")
             else:
                 logger.info(f"Initializing finetuning mode")
             self.token_generator_name = (
@@ -492,32 +282,19 @@ class DataPreprocessor:
         elif self.mode == "nlg":
             logger.info(f"Initializing dpo mode")
             self.token_generator_name = "NLGTokenGenerator"
+        elif self.mode == "embedding_training":
+            logger.info(f"Initializing embedding training mode")
+            self.token_generator_name = "EmbeddingTrainingTokenGenerator"
+        elif self.mode == "embedding_generation":
+            logger.info(f"Initializing embedding generation mode")
+            self.token_generator_name = "EmbeddingGenerationTokenGenerator"
         else:
             if self.mode != "custom":
-                ValueError(
-                    f"Invalid processor mode specified. The modes can be ['pretraining', 'finetuning', 'dpo', 'nlg', 'custom']"
+                raise ValueError(
+                    "Invalid processor mode specified. Modes can be "
+                    "['pretraining', 'finetuning', 'dpo', 'nlg', 'custom', "
+                    "'embedding_training', 'embedding_generation']"
                 )
-
-        ## initialize the final data statistics
-        stats_fields = [
-            "discarded",
-            "processed",
-            "successful",
-            "examples",
-            "total_raw_docs",
-            "raw_docs_skipped",
-            "loss_valid_tokens",
-            "num_pad_tokens",
-            "non_pad_tokens",
-            "num_masked_tokens",
-            "num_tokens",
-            "normalized_bytes_count",
-            "normalized_chars_count",
-            "raw_bytes_count",
-            "raw_chars_count",
-            "num_sequences_before_packing",
-        ]
-        self.final_data_stats = {field: Value("Q", 0) for field in stats_fields}
 
     def estimate_queue_size(self, fraction_of_memory=0.5):
         """
@@ -529,7 +306,7 @@ class DataPreprocessor:
         Returns:
         - An integer representing the optimal queue size.
         """
-        available_memory = get_available_memory()
+        available_memory = psutil.virtual_memory().available
         memory_for_queues = available_memory * fraction_of_memory
         queue_size = int(
             memory_for_queues
@@ -552,14 +329,21 @@ class DataPreprocessor:
         self.write_chunk_size = (
             processing_params.pop("write_chunk_size", 1024) * 1024
         )  # write_chunk_size is given in KB.
-        formatted_max_chunk_size = self.human_readable_size(
+        formatted_read_chunk_size = self.human_readable_size(
             self.read_chunk_size
         )
 
-        logger.info(f"\nChunk size : {formatted_max_chunk_size}.\n")
+        logger.info(f"\nChunk size : {formatted_read_chunk_size}.\n")
         self.write_in_batch = processing_params.pop("write_in_batch", False)
         self.read_hook_path = processing_params.pop("read_hook", None)
         self.read_hook_kwargs = processing_params.pop("read_hook_kwargs", None)
+        if self.resume_from_checkpoint and not os.path.exists(
+            self.json_params_file
+        ):
+            logger.warning(
+                "Resume from checkpoint flag is set to true but the output directory doesn't contain any files. Setting the flag to false."
+            )
+            self.resume_from_checkpoint = False
         if not self.read_hook_path:
             raise ValueError("Read hook path is missing.")
         if not self.read_hook_kwargs:
@@ -605,8 +389,8 @@ class DataPreprocessor:
             if queue_size == 0:
                 raise ValueError(
                     """
-                The max_chunk_size set at present exceeds what can be allocated in memory.
-                To carry out this preprocessing task, it's necessary to reduce the max_chunk_size.
+                The read_chunk_size set at present exceeds what can be allocated in memory.
+                To carry out this preprocessing task, it's necessary to reduce the read_chunk_size.
                 """
                 )
             self.tokenizer_queues = [
@@ -719,6 +503,7 @@ class DataPreprocessor:
         updated_args = {
             "pad_id": self.pad_id,
             "eos_id": self.eos_id,
+            "vocab_size": self.get_vocab_size(),
             "features": getattr(self.token_generator, 'features', []),
         }
         update_args(updated_args, self.json_params_file)
@@ -862,20 +647,6 @@ class DataPreprocessor:
         """
         return self.output_dir
 
-    def calculate_total_size(self) -> int:
-        """
-        Calculate the total size of all input files, taking compression
-        factors into consideration.
-
-        Returns:
-            int: The total size of all input files in bytes.
-        """
-        total_size = sum(
-            os.path.getsize(file) * get_compression_factor(file)
-            for file in self.input_files
-        )
-        return total_size
-
     def human_readable_size(self, size, decimal_places=2):
         """
         Convert a size in bytes to a human-readable format (e.g., KB, MB, GB).
@@ -904,8 +675,7 @@ class DataPreprocessor:
         Returns:
             int: Total number of chunks.
         """
-        max_chunk_size_bytes = self.read_chunk_size
-        return math.ceil(total_size / max_chunk_size_bytes)
+        return math.ceil(total_size / self.read_chunk_size)
 
     def read_checkpoint(self, num_writers) -> List[Tuple[int, int, int]]:
         """
@@ -914,22 +684,7 @@ class DataPreprocessor:
             num_writers: The number of writer processes
         """
 
-        # Collect all the stats from previous processing
-        # Pattern to find checkpoint stats JSON files
-        checkpoint_pattern = os.path.join(
-            self.output_dir, 'checkpoint_process_stats*.json'
-        )
-        if self.resume_from_checkpoint:
-            # Read and aggregate stats from each file
-            for stats_file in glob.glob(checkpoint_pattern):
-                with open(stats_file, 'r') as file:
-                    stats_data = json.load(file)
-                # Update final_data_stats with aggregated values
-                update_data_stats(self.final_data_stats, stats_data, True)
-
-        process_checkpoints = [
-            (0, 0, 0, 0, 0) for process in range(num_writers)
-        ]
+        process_checkpoints = [(0, 0, 0) for process in range(num_writers)]
         root, extension = os.path.splitext(self.checkpoint_path)
 
         for pid in range(num_writers):
@@ -940,23 +695,17 @@ class DataPreprocessor:
                 try:
                     with open(process_checkpoint_path, "r") as file:
                         (
-                            file_idx,
-                            doc_idx,
-                            start_chunk_number,
-                            num_chunks_written,
-                            num_sequences_written,
+                            file_index,
+                            df_idx_in_file,
+                            dataframes_written,
                         ) = [int(i) for i in file.read().split(", ")]
                     process_checkpoints[pid] = (
-                        file_idx,
-                        doc_idx,
-                        start_chunk_number,
-                        num_chunks_written,
-                        num_sequences_written,
+                        file_index,
+                        df_idx_in_file,
+                        dataframes_written,
                     )
-
                     logger.info(
-                        f"Process {pid} resuming from file number: {file_idx}, "
-                        f"and number of hdf5 files written = {num_chunks_written}"
+                        f"Process {pid} resuming from file = {self.input_files[file_index]} and dataframe index = {dataframes_written}"
                     )
                 except Exception as e:
                     # if checkpoint path is at initialization,
@@ -985,7 +734,7 @@ class DataPreprocessor:
         else:
             output_file_name = os.path.join(
                 self.output_dir,
-                f"output_chunk_{pid}_{0}_{0}_{0}.h5",
+                f"output_chunk_{pid}_prefix.h5",
             )
 
             prefix_stats = {
@@ -1021,14 +770,9 @@ class DataPreprocessor:
                         base_name, extension = os.path.splitext(
                             output_file_name
                         )
-                        chunk_number = int(base_name.split('_')[-1])
                         df_chunk = DataFrame(self.data_keys)
                         for key, value in encoded_prefix.items():
                             df_chunk.tokenized_data[key].append(value)
-                        update_data_stats(
-                            self.final_data_stats, prefix_stats, True
-                        )
-                        chunk_data = chunk_number, df_chunk
                         if not self.shuffle:
                             buffer = {}
                             for (
@@ -1042,19 +786,18 @@ class DataPreprocessor:
                                 self.save_buffer_to_hdf5(
                                     h5f, buffer, self.write_in_batch
                                 )
-                                self.final_data_stats["examples"].value += int(
-                                    h5f.attrs["n_examples"]
-                                )
+
                         else:
-                            n_examples = self.append_df_to_hdf5(
+                            self.append_df_to_hdf5(
                                 df_chunk,
                                 self.output_dir,
                                 chunk_locks,
                             )
-
-                            self.final_data_stats[
-                                "examples"
-                            ].value += n_examples
+                        dump_result(
+                            prefix_stats,
+                            self.json_params_file,
+                            optional_lock(self.stats_lock),
+                        )
                         df_chunk.tokenized_data.clear()
             except Exception as e:
                 logger.error(
@@ -1137,7 +880,7 @@ class DataPreprocessor:
         self,
         file_paths,
         process_idx,
-        checkpoint_args,
+        process_checkpoints,
         progress_counter,
         chunk_locks,
     ) -> None:
@@ -1147,7 +890,7 @@ class DataPreprocessor:
         Parameters:
             file_paths: list of file_paths.
             process_idx: Index of current process among all process spawned for file split
-            checkpoint_args (Tuple[int, int, int]): File index, doc start index, and hdf5 index.
+            process_checkpoints (Tuple[int, int, int]): File index, df_index_in_file, and df_global_index.
             progress_counter (Value[int]): Shared counter tracking number of processed chunks.
             chunk_locks : List of locks for appending to hdf5 files during shuffling
 
@@ -1155,54 +898,75 @@ class DataPreprocessor:
         try:
             if self.shuffle:
                 np.random.seed(self.shuffle_seed + process_idx)
-
+            (
+                checkpoint_file_index,
+                checkpoint_df_index_in_file,
+                checkpoint_df_global_index,
+            ) = process_checkpoints
+            checkpoint_args = {
+                "file_index": checkpoint_file_index,
+                "global_df_index": checkpoint_df_global_index
+                - checkpoint_df_index_in_file,
+            }
             # Initial setup
             reader = Reader(
                 file_paths,
-                max_chunk_size=self.read_chunk_size,
+                read_chunk_size=self.read_chunk_size,
                 keys=self.data_keys,
                 read_hook_fn=self.read_hook_fn,
+                checkpoint_args=checkpoint_args,
                 skip_jsonl_decoding_error=self.skip_jsonl_decoding_error,
             )
 
-            (
-                file_idx,
-                doc_start_idx,
-                start_chunk_number,
-                num_chunks_written,
-                num_sequences_written,
-            ) = checkpoint_args
-            process_chunk_number = start_chunk_number
-            checkpoint_args = (file_idx, doc_start_idx)
+            starting_chunk_number = (
+                checkpoint_df_global_index - checkpoint_df_index_in_file
+            )
+            global_chunk_number = starting_chunk_number
             root, extension = os.path.splitext(self.checkpoint_path)
             process_checkpoint_path = root + f'_process_{process_idx}.txt'
-            process_stats_path = root + f'_process_stats_{process_idx}.json'
 
             buffer = {}
+            data_stats_buffer = (
+                []
+            )  ## List to store data stats of all dataframes in the current buffer.
             cum_size = 0
             process_data_stats = defaultdict(int)
-            for df_chunk in reader.stream_data(checkpoint_args):
+            for df_chunk in reader.stream_data():
+                if self.stop_event.is_set() or (
+                    self.exit_event and self.exit_event.is_set()
+                ):
+                    break
+
+                if (
+                    self.resume_from_checkpoint
+                    and global_chunk_number <= process_checkpoints[2]
+                ):
+                    global_chunk_number += 1
+                    continue
                 # Tokenize chunk
                 df_chunk.tokenize(self.token_generator)
-                update_data_stats(
-                    self.final_data_stats, df_chunk.data_stats, True
-                )
-                update_data_stats(
-                    process_data_stats, df_chunk.data_stats, False
-                )
+                num_tokens = df_chunk.data_stats.get('num_tokens', 0)
+
+                if self.token_limit:
+                    with self.token_counter_lock:
+                        if self.stop_event.is_set():
+                            continue
+
+                        cum_tokens = self.total_tokens.value
+                        self.total_tokens.value += num_tokens
+                        if self.total_tokens.value >= self.token_limit:
+                            self.stop_event.set()
+                            df_chunk.enforce_token_limit(
+                                self.token_limit, cum_tokens
+                            )
+
                 if df_chunk.tokenized_data == {}:
-                    process_chunk_number += 1
+                    global_chunk_number += 1
                     progress_counter.value += 1
                     continue
 
-                checkpoint_doc_idx = df_chunk.end_doc_idx + 1
-                if isinstance(
-                    self.token_generator,
-                    (VSLPretrainingTokenGenerator, VSLFinetuningTokenGenerator),
-                ):
-                    checkpoint_doc_idx = df_chunk.start_doc_idx
-
                 if not self.shuffle:
+                    data_stats_buffer.append(df_chunk.data_stats)
                     for data_label, data in df_chunk.tokenized_data.items():
                         data = np.concatenate(data, axis=0)
                         if data_label not in buffer:
@@ -1211,68 +975,65 @@ class DataPreprocessor:
                     if get_size(buffer) >= self.write_chunk_size:
                         output_file_name = os.path.join(
                             self.output_dir,
-                            f"output_chunk_{process_idx}_{df_chunk.file_idx}_{df_chunk.start_doc_idx}_{process_chunk_number}.h5",
+                            f"output_chunk_{process_idx}_{global_chunk_number}.h5",
                         )
                         with h5py.File(output_file_name, "w") as h5f:
                             self.save_buffer_to_hdf5(
                                 h5f, buffer, self.write_in_batch
                             )
-                            self.final_data_stats["examples"].value += int(
-                                h5f.attrs["n_examples"]
-                            )
-                            process_data_stats["examples"] += int(
-                                h5f.attrs["n_examples"]
-                            )
-                        num_chunks_written += 1
+                        checkpoint_data = (
+                            df_chunk.file_index,
+                            df_chunk.df_index_in_file,
+                            df_chunk.global_df_index,
+                        )
+                        self.update_checkpoint(
+                            process_checkpoint_path,
+                            checkpoint_data,
+                            data_stats_buffer,
+                        )
+                        data_stats_buffer = []
                         buffer = {}
                 else:
-                    n_examples = self.append_df_to_hdf5(
+                    self.append_df_to_hdf5(
                         df_chunk,
                         self.output_dir,
                         chunk_locks,
                     )
-                    self.final_data_stats["examples"].value += n_examples
-                    process_data_stats["examples"] += n_examples
+                    checkpoint_data = (
+                        df_chunk.file_index,
+                        df_chunk.df_index_in_file,
+                        df_chunk.global_df_index,
+                    )
+                    data_stats_buffer = [df_chunk.data_stats]
+                    self.update_checkpoint(
+                        process_checkpoint_path,
+                        checkpoint_data,
+                        data_stats_buffer,
+                    )
                     cum_size += get_size(df_chunk.tokenized_data)
                     if cum_size >= self.write_chunk_size:
-                        num_chunks_written += 1
                         cum_size = 0
-                df_chunk.tokenized_data.clear()
 
                 progress_counter.value += 1
-                process_chunk_number += 1
-                checkpoint_data = [
-                    df_chunk.file_idx,
-                    checkpoint_doc_idx,
-                    process_chunk_number,
-                    num_chunks_written,
-                    0,
-                ]
-                self.update_checkpoint(process_checkpoint_path, checkpoint_data)
+                global_chunk_number += 1
+                df_chunk.tokenized_data.clear()
+
             if len(buffer) > 0:
                 output_file_name = os.path.join(
                     self.output_dir,
-                    f"output_chunk_{process_idx}_{df_chunk.file_idx}_{df_chunk.start_doc_idx}_{process_chunk_number}.h5",
+                    f"output_chunk_{process_idx}_{global_chunk_number}.h5",
                 )
                 with h5py.File(output_file_name, "w") as h5f:
                     self.save_buffer_to_hdf5(h5f, buffer, self.write_in_batch)
-                    self.final_data_stats["examples"].value += int(
-                        h5f.attrs["n_examples"]
-                    )
-                    process_data_stats["examples"] += int(
-                        h5f.attrs["n_examples"]
-                    )
-                num_chunks_written += 1
-                checkpoint_data = [
-                    df_chunk.file_idx,
-                    checkpoint_doc_idx,
-                    process_chunk_number,
-                    num_chunks_written,
-                    0,
-                ]
-                self.update_checkpoint(process_checkpoint_path, checkpoint_data)
-
-            dump_args(process_data_stats, process_stats_path)
+                checkpoint_data = (
+                    df_chunk.file_index,
+                    df_chunk.df_index_in_file,
+                    df_chunk.global_df_index,
+                )
+                self.update_checkpoint(
+                    process_checkpoint_path, checkpoint_data, data_stats_buffer
+                )
+                data_stats_buffer = []
 
             if isinstance(
                 self.token_generator, PretrainingTokenGenerator
@@ -1295,15 +1056,15 @@ class DataPreprocessor:
         """
         start_time = time.time()
         self.tokenize_process_num = self.processes
-        total_size = self.calculate_total_size()
+        total_size = calculate_total_size(self.input_files)
         self.total_chunks = self.calculate_total_chunks(total_size)
         self.total_output_files = math.ceil(total_size / self.write_chunk_size)
 
         # Distribute file paths among the processes
         process_file_lists = [[] for _ in range(self.processes)]
         process_checkpoints = self.read_checkpoint(self.processes)
-        num_chunks_written = sum(
-            [checkpoint_args[-2] for checkpoint_args in process_checkpoints]
+        num_chunks_read = min(
+            [checkpoint_args[-1] for checkpoint_args in process_checkpoints]
         )
 
         # Assign files to each process
@@ -1312,7 +1073,7 @@ class DataPreprocessor:
             process_file_lists[target_process].append(file)
 
         # Setup the shared progress counter
-        progress_counter = Value("i", num_chunks_written)
+        progress_counter = Value("i", num_chunks_read)
         if self.shuffle and self.processes > 1:
             lock_pool_size = cpu_count()
             chunk_locks = [Lock() for _ in range(lock_pool_size)]
@@ -1351,9 +1112,9 @@ class DataPreprocessor:
                     pbar,
                     progress_counter,
                     self.total_chunks,
-                    self.final_data_stats,
                     start_time,
                     stop_event,
+                    self.json_params_file,
                 ),
             )
             progress_thread.start()
@@ -1395,48 +1156,64 @@ class DataPreprocessor:
         Reads data from input files and distributes them to the tokenizer queues.
 
         Args:
-            process_checkpoints (List[Tuple[int, int, int, int, int]]): List of File index, doc start index, start_chunk_number,
-                                                                        num_chunks_written, num_sequences_written
+            process_checkpoints (List[Tuple[int, int, int]]): List of File index, doc start index, start_chunk_number,
+
         """
         try:
             # Initialize reader with necessary parameters
+            sorted_process_checkpoints = sorted(process_checkpoints)
+
+            (
+                checkpoint_file_index,
+                checkpoint_df_index_in_file,
+                checkpoint_df_global_index,
+            ) = sorted_process_checkpoints[0]
+            checkpoint_args = {
+                "file_index": checkpoint_file_index,
+                "global_df_index": checkpoint_df_global_index
+                - checkpoint_df_index_in_file,
+            }
             reader = Reader(
                 self.input_files,
-                max_chunk_size=self.read_chunk_size,
+                read_chunk_size=self.read_chunk_size,
                 keys=self.data_keys,
                 read_hook_fn=self.read_hook_fn,
+                checkpoint_args=checkpoint_args,
                 skip_jsonl_decoding_error=self.skip_jsonl_decoding_error,
             )
-            sorted_process_checkpoints = sorted(
-                process_checkpoints, key=lambda x: x[2]
-            )
-            (
-                file_idx,
-                doc_start_idx,
-                start_chunk_number,
-                num_chunks_written,
-                num_sequences_written,
-            ) = sorted_process_checkpoints[0]
-            checkpoint_args = (file_idx, doc_start_idx)
-            chunk_number = start_chunk_number  # Initialize chunk number counter
 
-            for df_chunk in reader.stream_data(checkpoint_args):
+            starting_chunk_number = (
+                checkpoint_df_global_index - checkpoint_df_index_in_file
+            )
+            global_chunk_number = starting_chunk_number
+            for df_chunk in reader.stream_data(False, self.output_dir):
+                # Check if the stop event is set (We reached max tokens)
+                if self.stop_event.is_set() or (
+                    self.exit_event and self.exit_event.is_set()
+                ):
+                    # We have been signaled to stop: break from reading more data
+                    break
+
                 tokenizer_index = (
-                    chunk_number - start_chunk_number
-                ) % self.tokenize_process_num
+                    global_chunk_number % self.tokenize_process_num
+                )
                 writer_index = tokenizer_index % self.writer_process_num
 
                 # Skip chunks that have already been processed
-                if chunk_number < process_checkpoints[writer_index][2]:
-                    chunk_number += 1
+                if (
+                    self.resume_from_checkpoint
+                    and global_chunk_number
+                    <= process_checkpoints[writer_index][2]
+                ):
+                    global_chunk_number += 1
                     continue
 
                 # Distribute chunks to tokenizer queues in a round-robin fashion
                 tokenizer_queue = self.tokenizer_queues[tokenizer_index]
                 tokenizer_queue.put(
-                    (chunk_number, df_chunk)
+                    (global_chunk_number, df_chunk)
                 )  # Send chunk number with df_chunk
-                chunk_number += 1
+                global_chunk_number += 1
 
         except Exception as e:
             # Log error during initialization or reading
@@ -1458,6 +1235,27 @@ class DataPreprocessor:
         """
         try:
             while True:
+                # Check if a global stop was requested
+                if self.stop_event.is_set() or (
+                    self.exit_event and self.exit_event.is_set()
+                ):
+                    # Drain the tokenizer queue
+                    while True:
+                        chunk_data = self.tokenizer_queues[idx].get()
+                        if chunk_data is None:
+                            # If a sentinel is found, no more data anyway
+                            break
+
+                    if isinstance(
+                        self.token_generator, PretrainingTokenGenerator
+                    ) and not isinstance(
+                        self.token_generator, VSLPretrainingTokenGenerator
+                    ):
+                        self.prefix_queue.put(None)
+
+                    self.writer_queues[idx].put(None)
+                    break
+
                 chunk_data = self.tokenizer_queues[idx].get()
                 if chunk_data is None:  # Sentinel value indicates termination
                     if isinstance(
@@ -1480,7 +1278,35 @@ class DataPreprocessor:
                 ) = chunk_data  # Unpack chunk number and data frame chunk
 
                 df_chunk.tokenize(self.token_generator)
-                self.writer_queues[idx].put((chunk_number, df_chunk))
+                num_tokens = df_chunk.data_stats.get('num_tokens', 0)
+
+                if self.token_limit:
+                    with self.token_counter_lock:
+                        if self.stop_event.is_set():
+                            continue
+
+                        cum_tokens = self.total_tokens.value
+                        self.total_tokens.value += num_tokens
+                        token_limit_reached = (
+                            self.total_tokens.value >= self.token_limit
+                        )
+                        if token_limit_reached:
+                            self.stop_event.set()
+                            df_chunk.enforce_token_limit(
+                                self.token_limit, cum_tokens
+                            )
+                            self.writer_queues[idx].put(
+                                (chunk_number, df_chunk)
+                            )
+                            continue
+                        else:
+                            self.writer_queues[idx].put(
+                                (chunk_number, df_chunk)
+                            )
+                # If we get here, max_tokens not reached or no token limit at all
+                else:
+                    self.writer_queues[idx].put((chunk_number, df_chunk))
+
         except Exception as e:
             # Capture and log the full traceback for debugging
             logger.error(
@@ -1508,131 +1334,128 @@ class DataPreprocessor:
 
         Args:
             progress_counter (Value[int]): Shared counter tracking number of processed chunks.
-            num_sentinels : Number of sentinels to be received for the current writer process
-            writer_idx : The index of the current writer process
-            chunk_locks : List of locks for appending to hdf5 files during shuffling
-            process_checkpoints: Checkpoint for the current process. This is used for resuming from checkpoint.
+            num_sentinels (int): Number of sentinel signals expected to stop the writer.
+            writer_idx (int): The index of the current writer process.
+            chunk_locks (List[Lock]): Locks for appending to hdf5 files during shuffling.
+            process_checkpoints (Tuple): Checkpoint for the current process, used for resuming.
         """
 
         process_data_stats = defaultdict(int)
         sentinels_received = 0
+        sentinels_set = set()
         tokenizer_idx = writer_idx
-        num_chunks_written = process_checkpoints[-2]
         root, extension = os.path.splitext(self.checkpoint_path)
         process_checkpoint_path = root + f'_process_{writer_idx}.txt'
-        process_stats_path = root + f'_process_stats_{writer_idx}.json'
+
         if self.shuffle:
             np.random.seed(self.shuffle_seed + writer_idx)
 
         buffer = {}
+        data_stats_buffer = (
+            []
+        )  ## List to store data stats of all dataframes in the current buffer.
         cum_size = 0
         try:
             while True:
+                if tokenizer_idx in sentinels_set:
+                    tokenizer_idx = tokenizer_idx + self.writer_process_num
+                    if tokenizer_idx >= self.tokenize_process_num:
+                        tokenizer_idx = writer_idx
+                    continue
+
                 chunk_data = self.writer_queues[tokenizer_idx].get()
-                ## We need to allocate the writer queues to writer processes in a round robin fashion.
-                ## When the writer queue index (aka tokenizer_idx) goes beyond the total writer queues(aka self.tokenize_process_num) reset it to the current writer process index(aka writer_idx).
-                tokenizer_idx = tokenizer_idx + self.writer_process_num
-                if tokenizer_idx >= self.tokenize_process_num:
-                    tokenizer_idx = writer_idx
                 if chunk_data is None:
                     sentinels_received += 1
+                    sentinels_set.add(tokenizer_idx)
                     if sentinels_received == num_sentinels:
                         break
                     continue
+
+                tokenizer_idx = tokenizer_idx + self.writer_process_num
+                if tokenizer_idx >= self.tokenize_process_num:
+                    tokenizer_idx = writer_idx
+
                 chunk_number, df_chunk = chunk_data
-                update_data_stats(
-                    self.final_data_stats, df_chunk.data_stats, True
-                )
-                update_data_stats(
-                    process_data_stats, df_chunk.data_stats, False
-                )
 
                 if df_chunk.tokenized_data == {}:
+                    # No tokenized data in this chunk, just increment progress
                     progress_counter.value += 1
                     continue
                 else:
-                    checkpoint_doc_idx = df_chunk.end_doc_idx + 1
-                    if isinstance(
-                        self.token_generator,
-                        (
-                            VSLPretrainingTokenGenerator,
-                            VSLFinetuningTokenGenerator,
-                        ),
-                    ):
-                        checkpoint_doc_idx = df_chunk.start_doc_idx
+                    # If not shuffling, accumulate data in buffer
                     if not self.shuffle:
+                        data_stats_buffer.append(df_chunk.data_stats)
                         for data_label, data in df_chunk.tokenized_data.items():
                             data = np.concatenate(data, axis=0)
                             if data_label not in buffer:
                                 buffer[data_label] = []
                             buffer[data_label].append(data)
+                        # Check if buffer reached write_chunk_size
                         if get_size(buffer) >= self.write_chunk_size:
                             output_file_name = os.path.join(
                                 self.output_dir,
-                                f"output_chunk_{writer_idx}_{df_chunk.file_idx}_{df_chunk.start_doc_idx}_{chunk_number}.h5",
+                                f"output_chunk_{writer_idx}_{chunk_number}.h5",
                             )
-
                             with h5py.File(output_file_name, "w") as h5f:
                                 self.save_buffer_to_hdf5(
                                     h5f, buffer, self.write_in_batch
                                 )
-                                self.final_data_stats["examples"].value += int(
-                                    h5f.attrs["n_examples"]
-                                )
-                                process_data_stats["examples"] += int(
-                                    h5f.attrs["n_examples"]
-                                )
-                            num_chunks_written += 1
+                            checkpoint_data = (
+                                df_chunk.file_index,
+                                df_chunk.df_index_in_file,
+                                df_chunk.global_df_index,
+                            )
+                            self.update_checkpoint(
+                                process_checkpoint_path,
+                                checkpoint_data,
+                                data_stats_buffer,
+                            )
+                            data_stats_buffer = []
                             buffer = {}
                     else:
-                        n_examples = self.append_df_to_hdf5(
+                        # If shuffling, append directly
+                        self.append_df_to_hdf5(
                             df_chunk,
                             self.output_dir,
                             chunk_locks,
                         )
-                        self.final_data_stats["examples"].value += n_examples
-                        process_data_stats["examples"] += n_examples
                         cum_size += get_size(df_chunk.tokenized_data)
                         if cum_size >= self.write_chunk_size:
-                            num_chunks_written += 1
                             cum_size = 0
-                    df_chunk.tokenized_data.clear()
-                    progress_counter.value += 1
-                    checkpoint_data = [
-                        df_chunk.file_idx,
-                        checkpoint_doc_idx,
-                        chunk_number + 1,
-                        num_chunks_written,
-                        0,
-                    ]
-                    self.update_checkpoint(
-                        process_checkpoint_path, checkpoint_data
-                    )
+                        checkpoint_data = (
+                            df_chunk.file_index,
+                            df_chunk.df_index_in_file,
+                            df_chunk.global_df_index,
+                        )
+                        data_stats_buffer = [df_chunk.data_stats]
+                        self.update_checkpoint(
+                            process_checkpoint_path,
+                            checkpoint_data,
+                            data_stats_buffer,
+                        )
 
+                    progress_counter.value += 1
+                    df_chunk.tokenized_data.clear()
+
+            # After loop, if anything remains in buffer, write it out
             if len(buffer) > 0:
                 output_file_name = os.path.join(
                     self.output_dir,
-                    f"output_chunk_remaining_{df_chunk.file_idx}_{df_chunk.start_doc_idx}.h5",
+                    f"output_chunk_{writer_idx}_{chunk_number}.h5",
                 )
                 with h5py.File(output_file_name, "w") as h5f:
                     self.save_buffer_to_hdf5(h5f, buffer, self.write_in_batch)
-                    self.final_data_stats["examples"].value += int(
-                        h5f.attrs["n_examples"]
-                    )
-                    process_data_stats["examples"] += int(
-                        h5f.attrs["n_examples"]
-                    )
-                num_chunks_written += 1
-                checkpoint_data = [
-                    df_chunk.file_idx,
-                    checkpoint_doc_idx,
-                    chunk_number + 1,
-                    num_chunks_written,
-                    0,
-                ]
-                self.update_checkpoint(process_checkpoint_path, checkpoint_data)
+                checkpoint_data = (
+                    df_chunk.file_index,
+                    df_chunk.df_index_in_file,
+                    df_chunk.global_df_index,
+                )
+                self.update_checkpoint(
+                    process_checkpoint_path,
+                    checkpoint_data,
+                    data_stats_buffer,
+                )
 
-            dump_args(process_data_stats, process_stats_path)
         except Exception as e:
             logger.error(
                 f"Exception in writer process {os.getpid()}: \n {traceback.format_exc()}",
@@ -1643,7 +1466,7 @@ class DataPreprocessor:
         Split the dataset processing tasks across multiple processes.
         """
         start_time = time.time()
-        total_size = self.calculate_total_size()
+        total_size = calculate_total_size(self.input_files)
         readable_size = self.human_readable_size(total_size)
         logger.info(f"Total size of dataset: {readable_size}")
         self.total_chunks = self.calculate_total_chunks(total_size)
@@ -1652,10 +1475,10 @@ class DataPreprocessor:
             f"Approximate number of chunks to process: {self.total_chunks}"
         )
         process_checkpoints = self.read_checkpoint(self.writer_process_num)
-        total_num_chunks_written = sum(
-            [checkpoint_args[-2] for checkpoint_args in process_checkpoints]
+        num_chunks_read = min(
+            [checkpoint_args[-1] for checkpoint_args in process_checkpoints]
         )
-        progress_counter = Value("i", total_num_chunks_written)
+        progress_counter = Value("i", num_chunks_read)
         # Log process information
         logger.info(f"Total processes: {self.processes}")
         logger.info(f"Reader processes: 1")
@@ -1713,9 +1536,9 @@ class DataPreprocessor:
                     pbar,
                     progress_counter,
                     self.total_chunks,
-                    self.final_data_stats,
                     start_time,
                     stop_event,
+                    self.json_params_file,
                 ),
             )
             progress_thread.start()
@@ -1729,6 +1552,11 @@ class DataPreprocessor:
             self.write_remaining_prefix(chunk_locks, self.writer_process_num)
             for w in writers:
                 w.join()
+
+            if self.token_limit and not self.stop_event.is_set():
+                logger.warning(
+                    f"The number of tokens is less than the specified token limit."
+                )
 
             # Final update of the progress bar to make sure it reaches `progress_counter.value`
             pbar.n = progress_counter.value
@@ -1756,38 +1584,7 @@ class DataPreprocessor:
         else:
             self.task_split_process_dataset()
 
-        data_stats = defaultdict(int)
-        data_stats["examples"] = 0
-        ## Some statistics are present only for a subset of the tasks. Only include them if not 0
-        optional_keys = [
-            "num_sequences_before_packing",
-            "total_raw_docs",
-            "raw_docs_skipped",
-        ]
-        for key in self.final_data_stats:
-            if key in optional_keys and self.final_data_stats[key].value == 0:
-                continue
-            data_stats[key] = self.final_data_stats[key].value
-
-        if data_stats["examples"] > 0:
-            data_stats["average_chars_per_sequence"] = math.ceil(
-                data_stats["raw_chars_count"] / data_stats["examples"]
-            )
-            data_stats["average_bytes_per_sequence"] = math.ceil(
-                data_stats["raw_bytes_count"] / data_stats["examples"]
-            )
-            if data_stats.get("num_sequences_before_packing") is not None:
-                data_stats["vsl_packing_factor"] = (
-                    data_stats.pop("num_sequences_before_packing")
-                    / data_stats["examples"]
-                )
-        else:
-            data_stats["average_chars_per_sequence"] = data_stats[
-                "average_bytes_per_sequence"
-            ] = 0
-
-        data_stats["features"] = getattr(self.token_generator, 'features', [])
-        return data_stats
+        return
 
     def get_vocab_size(self):
         """Get tokenizer vocabulary size
@@ -1871,7 +1668,6 @@ class DataPreprocessor:
             lock = (
                 chunk_locks[idx_seq % len(chunk_locks)] if chunk_locks else None
             )
-
             with optional_lock(lock):
                 with h5py.File(output_file_name, "a") as h5f:
                     # Initialize or update n_examples attribute
@@ -1923,15 +1719,25 @@ class DataPreprocessor:
                             h5f[data_label].resize(new_shape)
                             h5f[data_label][old_size:] = elements
 
-        return n_examples
+        return
 
     def update_checkpoint(
         self,
         process_checkpoint_path,
         checkpoint_data,
+        stats_list,
     ):
         with open(process_checkpoint_path, "w") as file:
-            file.write(
-                f"{checkpoint_data[0]}, {checkpoint_data[1]}, {checkpoint_data[2]}, {checkpoint_data[3]}, {checkpoint_data[4]}"
-            )
+            file_index, df_index_in_file, global_df_index = checkpoint_data
+            file.write(f"{file_index}, {df_index_in_file}, {global_df_index}")
             file.flush()
+
+        final_stats = {key: 0 for key in self.stats_keys}
+        for stats in stats_list:
+            for key, value in stats.items():
+                final_stats[key] += value
+        dump_result(
+            final_stats,
+            self.json_params_file,
+            optional_lock(self.stats_lock),
+        )

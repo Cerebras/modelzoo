@@ -92,7 +92,7 @@ class EmbeddingLayer(nn.Module):
         # Rotary PE:
         rotary_dim=None,
         rope_theta=10000,
-        fold_rope_consts=True,
+        fold_rope_consts=False,
         # Alibi PE:
         alibi_slopes=None,
         alibi_trainable_slopes=False,
@@ -107,7 +107,7 @@ class EmbeddingLayer(nn.Module):
         segment_embedding_size=None,
         segment_embeddings_initializer='uniform',
         # Memory tokens
-        use_memory_tokens=False,
+        memory_tokens_config=False,
     ):
         super(EmbeddingLayer, self).__init__()
 
@@ -143,9 +143,8 @@ class EmbeddingLayer(nn.Module):
         )
 
         self.memory_token_embedding = None
-        self.use_memory_tokens = False
-        if use_memory_tokens:
-            self.use_memory_tokens = True
+        self.memory_tokens_config = memory_tokens_config
+        if memory_tokens_config and memory_tokens_config.add_extra_embedding:
             self.memory_token_embedding = nn.Embedding(
                 1,
                 embedding_size,
@@ -346,7 +345,7 @@ class EmbeddingLayer(nn.Module):
         position_ids=None,
         segment_ids=None,
         past_length=0,
-        special_token_indices=None,
+        special_token_meta=None,
     ):
         """Convert input_ids to token embeddings according to the embedding type.
             Word embeddings (required), segment embeddings (optional) and position embeddings (optional).
@@ -360,9 +359,12 @@ class EmbeddingLayer(nn.Module):
             Token embedding output with shape ``[batch_size, seq_length, embedding_size]``.
         """
         embeddings = self.compute_token_embeddings(input_ids)
-        if special_token_indices is not None and self.use_memory_tokens:
+        if (
+            self.memory_tokens_config
+            and self.memory_tokens_config.add_extra_embedding
+        ):
             embeddings = self.insert_memory_token_embeddings(
-                embeddings, special_token_indices
+                embeddings, special_token_meta
             )
 
         if self.position_embeddings is not None:
@@ -398,30 +400,31 @@ class EmbeddingLayer(nn.Module):
         input_ids = input_ids.view(-1, input_shape[-1])
         return self.word_embeddings(input_ids)
 
-    def insert_memory_token_embeddings(self, embeddings, special_token_indices):
+    def insert_memory_token_embeddings(self, embeddings, special_token_meta):
         """
         Insert the memory token embedding vector in certain
         positions of the embeddings tensor according to memory_token_mask
         """
-        batch_size, _, embedding_size = embeddings.shape
-        memory_indices = special_token_indices['memory_tokens']
-        regular_indices = special_token_indices['regular_tokens']
+        if special_token_meta is None:
+            raise ValueError(
+                "Expected memory tokens location mask in special_token_meta dict, got None"
+            )
 
-        full_embeddings = self.memory_token_embedding(
+        batch_size = embeddings.shape[0]
+        memtok_mask = special_token_meta["memory_token_mask"].unsqueeze(-1)
+
+        memtok_embeddings = self.memory_token_embedding(
             torch.zeros(
                 [
                     batch_size,
-                    regular_indices.shape[1] + memory_indices.shape[1],
+                    memtok_mask.shape[-1],
                 ],
                 dtype=torch.int,
                 device=embeddings.device,
             )
         )
-        full_embeddings = torch.scatter(
-            full_embeddings,
-            1,
-            regular_indices[..., None].broadcast_to([-1, -1, embedding_size]),
-            embeddings,
+        full_embeddings = memtok_embeddings * memtok_mask + embeddings * (
+            ~memtok_mask
         )
         return full_embeddings
 

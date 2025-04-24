@@ -101,6 +101,7 @@ def main(
         return None
 
     from cerebras.modelzoo.common.pytorch_utils import RunConfigParamsValidator
+    from cerebras.modelzoo.trainer.restartable_trainer import RestartableTrainer
     from cerebras.modelzoo.trainer.utils import (
         inject_cli_args_to_trainer_params,
         run_trainer,
@@ -115,5 +116,7 @@ def main(
         params = inject_cli_args_to_trainer_params(
             params.pop("runconfig"), params
         )
+        if RestartableTrainer.is_restart_config(params):
+            return RestartableTrainer(params).run_trainer(mode)
 
     return run_trainer(mode, params)

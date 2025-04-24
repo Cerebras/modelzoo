@@ -21,6 +21,7 @@ and optimizing the representation of tokenized data by merging shorter sequences
 within a specified maximum sequence length.
 """
 
+import copy
 import os
 from collections import defaultdict
 from typing import Any, Dict, List, Tuple
@@ -51,10 +52,8 @@ class VSLFinetuningTokenGenerator(FinetuningTokenGenerator):
             params, tokenizer, eos_id, pad_id
         )
         setup_params = params["setup"]
-        warning_log_dir = (
-            os.path.join(setup_params.get("output_dir"), "logs")
-            if setup_params.get("output_dir")
-            else "./data_preprocessing_logs"
+        warning_log_dir = os.path.join(
+            setup_params.get("output_dir", "./output")
         )
         self.logger = setup_warning_logging(warning_log_dir, __name__)
         self.position_ids_dtype = params["dataset"].pop(
@@ -161,6 +160,7 @@ class VSLFinetuningTokenGenerator(FinetuningTokenGenerator):
         """
         results = defaultdict(list)  # List to store processed results
         data_stats = defaultdict(int)
+        stats_checkpoint_list = []
 
         for vsl_list in tokenized_data:
             processed = self.create_features_finetuning_vsl(vsl_list)
@@ -178,8 +178,9 @@ class VSLFinetuningTokenGenerator(FinetuningTokenGenerator):
                 for key in stats:
                     data_stats[key] += stats[key]
                 data_stats["num_sequences_before_packing"] += len(vsl_list)
+                stats_checkpoint_list.append(copy.deepcopy(data_stats))
 
-        return results, data_stats
+        return results, stats_checkpoint_list
 
     def create_features_finetuning_vsl(self, bin):
         """Given a list of VSL sequences, generate input features and labels.
@@ -300,9 +301,8 @@ class VSLFinetuningTokenGenerator(FinetuningTokenGenerator):
             discarded_files += 1
             data = {}
 
-        # print(f'token_ids {data.get("data")}')
-        raw_data_stats["discarded"] = discarded_files
-        raw_data_stats["successful"] = 1 - discarded_files
+        raw_data_stats["discarded_files"] = discarded_files
+        raw_data_stats["successful_files"] = 1 - discarded_files
 
         return data, raw_data_stats
 

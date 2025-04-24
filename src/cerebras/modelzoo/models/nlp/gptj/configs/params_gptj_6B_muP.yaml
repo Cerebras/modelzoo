@@ -58,7 +58,6 @@ trainer:
         std: 0.00446068668 # 1 / sqrt(vocab_size)
       embeddings_scale: 14.6
       filter_size: 16384 # 4 * hidden_size
-      fp16_type: cbfloat16
       hidden_size: 4096
       initializer:
         a: -2.0
@@ -71,7 +70,6 @@ trainer:
       loss_scaling: num_tokens
       loss_weight: 1.0
       max_position_embeddings: 2048
-      mixed_precision: true
       mup_base_filter_size: 8192
       mup_base_hidden_size: 2048
       nonlinearity: gelu

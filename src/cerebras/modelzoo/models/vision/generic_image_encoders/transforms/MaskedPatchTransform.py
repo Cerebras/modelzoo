@@ -16,12 +16,12 @@ import logging
 import math
 import os
 import random
-from typing import Any, List, Literal, Optional, Tuple, Union
+from typing import List, Literal, Optional, Tuple, Union
 
 import numpy as np
 import torch
 from annotated_types import Ge, Le
-from pydantic import Field, field_validator, model_validator
+from pydantic import field_validator, model_validator
 from torchvision.transforms import transforms
 from torchvision.utils import save_image
 from typing_extensions import Annotated
@@ -78,8 +78,6 @@ class MaskedPatchTransformConfig(BaseSSLImageTransformConfig):
     None. If composed_transform is True the transforms are assumed to be
     performed in the other transform.
     """
-
-    mixed_precision: Optional[Any] = Field(None, deprecated=True)
 
     @property
     def output_keys(self):
@@ -166,7 +164,7 @@ class MaskedPatchTransform(BaseSSLImageTransform):
         final_transform = _transforms + [self.addnl_transform]
         final_transform = transforms.Compose(final_transform)
 
-        logging.info(
+        logging.debug(
             f"The following sequence is used to transform data:\n{final_transform}"
         )
 

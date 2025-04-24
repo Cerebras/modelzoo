@@ -27,7 +27,7 @@ from pydantic import PositiveInt, field_validator
 
 from cerebras.modelzoo.common.input_utils import get_streaming_batch_size
 from cerebras.modelzoo.config import DataConfig
-from cerebras.modelzoo.config.types import AliasedPath
+from cerebras.modelzoo.config.types import AliasedPath, ValidatedPath
 from cerebras.modelzoo.data.common.input_utils import ShardedSampler
 from cerebras.modelzoo.data.nlp.bert.bert_utils import build_vocab
 from cerebras.modelzoo.data_preparation.nlp.tokenizers.Tokenization import (
@@ -41,7 +41,7 @@ class ClassifierDataProcessorConfig(DataConfig):
     is_training: bool = ...
     "Whether the data processor is used for training or validation."
 
-    data_dir: Union[str, List[str]] = ...
+    data_dir: Union[ValidatedPath, List[ValidatedPath]] = ...
     "Path to the data files to use."
 
     batch_size: PositiveInt = ...

@@ -16,15 +16,26 @@ import argparse
 import copy
 import json
 import logging
+import math
 import os
 import re
+import shutil
 import sys
+import time
 from collections import OrderedDict, defaultdict
+from fractions import Fraction
+from multiprocessing import Event, Value
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, List, Literal, Optional, Union
 
 import numpy as np
 import yaml
+from PIL import Image
+from pydantic import model_validator
+from tqdm import tqdm
+from typing_extensions import Self
+
+from cerebras.modelzoo.config import BaseConfig
 
 logger = logging.getLogger("utils")
 logger.setLevel(logging.INFO)
@@ -64,6 +75,48 @@ SYSTEM_PROMPT_REGISTRY = {
 }
 
 
+def convert_fractions_or_floats(values):
+    """
+    Convert a fraction or float value, or a flat list of fraction/float values, into a float or a list of normalized floats.
+
+    - If input is a single value, returns a single float.
+    - If input is a list, returns a list of floats, normalized to sum to 1.
+
+    Args:
+        values (str, float, int, list of str/float/int): Input value(s).
+
+    Returns:
+        float or list: A single float if input is a single value, or a normalized list of floats if input is a list.
+
+    Raises:
+        ValueError: If any value cannot be converted to a float.
+    """
+    try:
+        # If it's a single value, convert and return it directly
+        if not isinstance(values, list):
+            return (
+                float(Fraction(values))
+                if isinstance(values, str) and '/' in values
+                else float(values)
+            )
+
+        # Convert list elements to floats
+        float_values = [
+            float(Fraction(v)) if isinstance(v, str) and '/' in v else float(v)
+            for v in values
+        ]
+
+        # Normalize the list so it sums to 1
+        total = sum(float_values)
+        if total > 0:
+            float_values = [v / total for v in float_values]
+
+        return float_values
+
+    except Exception as e:
+        raise ValueError(f"Error converting values to floats: {e}")
+
+
 def has_valid_extension(file):
     return any([file.endswith(ext) for ext in VALID_EXTENSIONS])
 
@@ -83,41 +136,57 @@ def listdir_or_file(x):
     return list(filter(has_valid_extension, _listdir_or_file(x)))
 
 
-def dump_result(
-    results,
-    json_params_file,
-    eos_id=None,
-    pad_id=None,
-    vocab_size=None,
-):
+def dump_result(results, json_params_file, lock):
     """
-    Write outputs of execution
+    Write outputs of execution directly to a JSON file.
+
+    Parameters:
+    - results (dict): Dictionary containing the results to append/update in the JSON file.
+    - json_params_file (str): Path to the JSON file.
+    - lock (multiprocessing.Lock): Lock object for process safety.
     """
-    with open(json_params_file, "r") as _fin:
-        data = json.load(_fin)
+    with lock:
+        with open(json_params_file, "r+") as f:
+            data = json.load(f)
 
-    post_process = {}
-    post_process["discarded_files"] = results.pop("discarded", 0)
-    post_process["processed_files"] = results.pop("processed", 0)
-    post_process["successful_files"] = results.pop("successful", 0)
-    post_process["n_examples"] = results.pop("examples", 0)
-    post_process["raw_chars_count"] = results.pop("raw_chars_count", 0)
-    post_process["raw_bytes_count"] = results.pop("raw_bytes_count", 0)
-    results.pop("features")
-    ## put remaining key,value pairs in post process
-    for key, value in results.items():
-        post_process[key] = value
+            if not data.get("post-process"):
+                data["post-process"] = {}
 
-    if eos_id is not None:
-        post_process["eos_id"] = eos_id
-    if pad_id is not None:
-        post_process["pad_id"] = pad_id
-    if vocab_size is not None:
-        post_process["vocab_size"] = vocab_size
+            # Update or append new results
+            for key, value in results.items():
+                data["post-process"][key] = (
+                    data["post-process"].get(key, 0) + value
+                )
 
-    data["post-process"] = post_process
-    with open(json_params_file, "w") as _fout:
-        json.dump(data, _fout, indent=4, sort_keys=True)
+            # Calculate averages if necessary
+            if data["post-process"].get("n_examples", 0) > 0:
+                data["post-process"]["average_chars_per_sequence"] = math.ceil(
+                    data["post-process"]["raw_chars_count"]
+                    / data["post-process"]["n_examples"]
+                )
+                data["post-process"]["average_bytes_per_sequence"] = math.ceil(
+                    data["post-process"]["raw_bytes_count"]
+                    / data["post-process"]["n_examples"]
+                )
+            else:
+                data["post-process"]["average_chars_per_sequence"] = 0
+                data["post-process"]["average_bytes_per_sequence"] = 0
+
+            # Calculate packing factor if applicable
+            num_sequences_before_packing = data["post-process"].get(
+                "num_sequences_before_packing", None
+            )
+            if num_sequences_before_packing:
+                data["post-process"]["vsl_packing_factor"] = round(
+                    num_sequences_before_packing
+                    / data["post-process"]["n_examples"],
+                    2,
+                )
+
+            # Write updated data back to the file
+            f.seek(0)  # Move to the beginning of the file
+            json.dump(data, f, indent=4, sort_keys=True)
+            f.truncate()  # Truncate any remaining content if file size reduces
 
 
 def dump_args(args, json_params_file):
@@ -158,6 +227,9 @@ def update_args(args, json_params_file):
     )
     data['processing']['eos_id'] = args.get(
         'eos_id', data['processing'].get('eos_id')
+    )
+    data['processing']['vocab_size'] = args.get(
+        'vocab_size', data['processing'].get('vocab_size')
     )
     data['features'] = args.get('features', None)
 
@@ -348,7 +420,12 @@ def setup_warning_logging(output_dir, module_name):
     Args:
         output_dir (str): The directory where the warnings log file should be stored.
     """
+
     logger = logging.getLogger(module_name)
+
+    if logger.hasHandlers():
+        logger.handlers.clear()
+
     logger.setLevel(logging.INFO)
     os.makedirs(output_dir, exist_ok=True)
     # Create a file handler that logs to 'output_dir/warnings.log'
@@ -520,7 +597,7 @@ def get_data_stats(
             - "num_masked_tokens": Number of masked tokens based on the maximum sequence length.
     """
     stats = defaultdict(int)
-    if sample == []:
+    if len(sample) == 0:
         return stats
     stats["num_pad_tokens"] = int((sample[0, :] == pad_id).sum())
     stats["non_pad_tokens"] = int(
@@ -533,8 +610,37 @@ def get_data_stats(
     else:
         stats["loss_valid_tokens"] = int(sample[1, :].sum())
     stats["num_masked_tokens"] = max_seq_length - stats["loss_valid_tokens"]
-
+    stats["n_examples"] = 1
     return stats
+
+
+def check_and_create_output_dirs(output_dir, filetype):
+    contains_filetype = False
+    if os.path.isdir(output_dir):
+        for dirpath, dirnames, filenames in os.walk(output_dir):
+            for file in filenames:
+                if file.endswith(filetype):
+                    contains_filetype = True
+                    break
+            if contains_filetype:
+                break
+
+    if contains_filetype:
+        _in = input(
+            f"Output directory already contains {filetype} file(s)."
+            + " Do you want to delete the folder to write"
+            + " new records in the same output folder name? (yes/no): "
+        )
+        if _in.lower() in ["y", "yes"]:
+            shutil.rmtree(output_dir)
+        elif _in.lower() in ["n", "no"]:
+            raise IsADirectoryError(
+                "Create a new folder for the files you want to write!!"
+            )
+        else:
+            raise ValueError(f"Inputs can be yes, no, y or n. Received {_in}!!")
+
+    os.makedirs(output_dir, exist_ok=True)
 
 
 # routine to split the text into smaller sequences
@@ -1549,3 +1655,557 @@ def truncate_sequence(
         raise ValueError(
             "Truncation is only supported for 'prompt'/'completion' or 'user'/'assistant'."
         )
+
+
+def default_chat_template():
+    """
+    This template formats inputs in the standard ChatML format. See
+    https://github.com/openai/openai-python/blob/main/chatml.md
+    """
+    return (
+        "{% for message in messages %}"
+        "{{'<|im_start|>' + message['role'] + '\n' + message['content'] + '<|im_end|>' + '\n'}}"
+        "{% endfor %}"
+        "{% if add_generation_prompt %}"
+        "{{ '<|im_start|>assistant\n' }}"
+        "{% endif %}"
+    )
+
+
+class EmbeddingStatCollector:
+    def __init__(
+        self,
+        use_ftfy: bool,
+        ftfy_normalizer: str,
+        wikitext_detokenize: bool,
+        eos_id: int,
+        pad_id: int,
+    ):
+        '''
+        Statistics Collector class , contains methods to calculate statistics of raw data and tokenized data
+        '''
+        self.use_ftfy = use_ftfy
+        self.ftfy_normalizer = ftfy_normalizer
+        self.wikitext_detokenize = wikitext_detokenize
+        self.pad_id = pad_id
+        self.eos_id = eos_id
+
+    def get_raw_stats(self, content: str) -> Dict[str, int]:
+        '''
+        Args:
+            content: the string whose raw statistics will be calculated
+
+        Returns:
+            Dict[str, int]: The dictionary which will contain raw data statistics
+        '''
+        stats = {
+            "raw_chars_count": 0,
+            "raw_bytes_count": 0,
+            "normalized_chars_count": 0,
+            "normalized_bytes_count": 0,
+        }
+
+        stats['raw_chars_count'] = len(content)
+        stats["raw_bytes_count"] += len(content.encode("utf-8"))
+        cleaned_content = clean_text(
+            content,
+            self.use_ftfy,
+            self.wikitext_detokenize,
+            self.ftfy_normalizer,
+        )
+        stats["normalized_chars_count"] += len(cleaned_content)
+        stats["normalized_bytes_count"] += len(cleaned_content.encode("utf-8"))
+
+        return cleaned_content, stats
+
+    def get_tokenized_stats(self, tokens: List) -> Dict[str, int]:
+        """
+        Get tokenized data statistics from the sample.
+
+        Args:
+            tokens (List): Tokenized sample.
+
+        Returns:
+            Dict[str, int]: Tokenized Data statistics.
+        """
+        stats = defaultdict(int)
+        if tokens == []:
+            return stats
+        stats["num_pad_tokens"] = sum(
+            ele == self.pad_id for ele in tokens['input_ids']
+        )
+        stats["non_pad_tokens"] = sum(
+            ele != self.eos_id and ele != self.pad_id
+            for ele in tokens['input_ids']
+        )
+
+        stats["num_tokens"] = len(tokens['input_ids'])
+        stats["n_examples"] = 1
+
+        return stats
+
+    def combine_stats(
+        self,
+        stat_dict: Dict[str, int],
+        raw_dict: Dict[str, int],
+        tokenized_dict: Dict[str, int],
+    ) -> Dict[str, int]:
+        '''
+        Args:
+            stat_dict: Main dictionary which contains previous stats
+            raw_dict: dictionary which contains raw data stats of current string
+            tokenized_dict: dictionary which contains tokenized data stats of current string
+
+        Returns:
+            combined dictionary of all the data encountered so far.
+        '''
+        for key, val in raw_dict.items():
+            stat_dict[key] += val
+
+        for key, val in tokenized_dict.items():
+            stat_dict[key] += val
+
+        return stat_dict
+
+
+class EmbedGenElement(BaseConfig):
+    '''
+    Class responsible for validating each element of the embed generation sda
+    '''
+
+    type: Literal['embedding', 'id']
+    content: Union[str, int]
+
+    @model_validator(mode='after')
+    def check_type(self) -> Self:
+
+        if self.type == 'id':
+            if not isinstance(self.content, int):
+                raise ValueError('Content for type id should be a digit')
+
+        if self.type == 'embedding':
+            if not isinstance(self.content, str):
+                raise ValueError(
+                    'Content for type embedding should be a string'
+                )
+        return self
+
+
+class EmbedGenList(BaseConfig):
+    '''
+    Class responsible for validating the embed generation sda
+    '''
+
+    sda: List[EmbedGenElement]
+
+    @model_validator(mode='after')
+    def check_count_of_sda(self) -> Self:
+        '''
+        Num of embedding type entry in the list == 1
+        Num of id type entry in the list == 1
+        '''
+
+        emb_count = 0
+        id_count = 0
+
+        for item in self.sda:
+            if item.type == 'id':
+                id_count += 1
+            if item.type == 'embedding':
+                emb_count += 1
+
+        if emb_count != 1:
+            raise ValueError(
+                f'There should be exactly 1 embedding type entry in the list but found {emb_count}'
+            )
+        if id_count != 1:
+            raise ValueError(
+                f'There should be exactly 1 id type entry in the list but found {id_count}'
+            )
+
+        return self
+
+
+class EmbedTrainElement(BaseConfig):
+    '''
+    Class responsible for validating each element of the embed training sda
+    '''
+
+    type: Literal['question', 'context_positive', 'context_negative']
+    content: str
+
+
+class EmbedTrainList(BaseConfig):
+    '''
+    Class responsible for validating the embed training sda
+    '''
+
+    sda: List[EmbedTrainElement]
+
+    @model_validator(mode='after')
+    def check_list(self) -> Self:
+
+        question_count = 0
+        ctx_positive_count = 0
+        ctx_negative_count = 0
+
+        for item in self.sda:
+            if item.type == 'question':
+                question_count += 1
+            elif item.type == 'context_positive':
+                ctx_positive_count += 1
+            elif item.type == 'context_negative':
+                ctx_negative_count += 1
+
+        if question_count != 1:
+            raise ValueError(
+                f'There should be exactly 1 question type entry in the list but found {question_count}'
+            )
+        if ctx_positive_count != 1:
+            raise ValueError(
+                f'There should be exactly 1 positive context type entry in the list but found {ctx_positive_count}'
+            )
+        if ctx_negative_count < 1:
+            raise ValueError(
+                f'There should be more than 0 negative contexts type entry in the list but found {ctx_negative_count}'
+            )
+
+        return self
+
+
+def normalize_msl(msl_value):
+    if isinstance(msl_value, str):
+        # Check if 'k' or 'K' is present
+        if re.search(r'k', msl_value, flags=re.IGNORECASE):
+            msl_value = re.sub(r'k', '', msl_value, flags=re.IGNORECASE)
+            return int(float(msl_value) * 1024)
+        # If no 'k' is found, treat it as a numeric string and return as an int
+        return int(msl_value)
+
+    # For numeric inputs (int/float)
+    if not isinstance(msl_value, (int, float)):
+        raise ValueError(f"Invalid msl value type: {type(msl_value)}")
+    if int(msl_value) != msl_value:
+        raise ValueError("Fractional msl values are not allowed.")
+    return int(msl_value)
+
+
+def check_and_create_dir(dir: Optional[str], split_dir: Optional[str]) -> str:
+    """
+    Ensures a directory exists, optionally handling a subdirectory. It prompts
+    the user for action if the directory already has files.
+
+    Args:
+    dir (Optional[str]): Base directory path. Defaults to 'input_dir' in cwd.
+    split_dir (Optional[str]): Subdirectory to add to the base directory.
+
+    Returns:
+    str: The final directory path ensured to exist.
+    """
+    # Set default directory if none provided
+    if dir is None:
+        dir = os.path.join(os.getcwd(), 'input_dir')
+
+    # Append subdirectory if provided
+    if split_dir:
+        dir = os.path.join(dir, split_dir)
+
+    # Check for existing files and handle existing files
+    if os.path.isdir(dir) and os.listdir(dir):
+        _in = input(
+            "Input directory already contains file(s). Do you want to delete "
+            "the folder and download the dataset again? "
+            "(yes/no): "
+        )
+        if _in.lower() in ["y", "yes"]:
+            shutil.rmtree(dir)
+            os.makedirs(dir)  # Recreate directory after removal
+        elif _in.lower() in ["n", "no"]:
+            return dir
+        else:
+            raise ValueError(
+                f"Inputs can be yes, no, y, or n. Received {_in}!!"
+            )
+    else:
+        # Create directory if it does not exist
+        os.makedirs(dir, exist_ok=True)
+
+    return dir
+
+
+def save_image_locally(example, idx, image_key, image_dir):
+    """
+    Saves image data locally to a specified directory, processing both individual
+    and batched image data. Updates the dataset example with the relative paths
+    of the saved images.
+
+    Args:
+    example (dict): A single dataset example containing the image data.
+    idx (int): The index of the current example in the dataset.
+    image_key (str): The key in the dataset example that contains the image data.
+    image_dir (str): The directory where the images should be saved.
+
+    Returns:
+    dict: The updated dataset example with the `image_key` field containing
+          the relative paths of saved images or their original paths if already a string.
+
+    Raises:
+    ValueError: If the image data is of an unsupported format.
+
+    Notes:
+    - If the image data is a list, it processes each element in the list and saves
+      the images with filenames in the format `{idx}_{i}.png`, where `i` is the
+      position of the image in the list.
+    - If the image data is a single image, it saves the image with the filename
+      `{idx}.png`.
+    - If the image data is a string (e.g., an existing image path), it is retained as is.
+    - Supports image data in `PIL.Image.Image` format for saving locally.
+    """
+    image_data = example[image_key]
+
+    if isinstance(image_data, list):
+        image_paths = []
+        for i, img_data in enumerate(image_data):
+            if img_data is None:
+                image_paths.append(None)
+            else:
+                image_path = os.path.join(image_dir, f"{idx}_{i}.png")
+                if img_data is None:
+                    image_paths.append(None)
+                    continue
+                if isinstance(img_data, Image.Image):
+                    img_data.save(image_path)
+                    image_paths.append(f"{idx}_{i}.png")
+                elif isinstance(img_data, str):
+                    image_paths.append(img_data)
+                else:
+                    raise ValueError(
+                        f" Image data format - {type(image_data)} is not supported"
+                    )
+
+        example[image_key] = image_paths
+    else:
+        if image_data is None:
+            example[image_key] = None
+        else:
+            image_path = os.path.join(image_dir, f"{idx}.png")
+            if isinstance(image_data, Image.Image):
+                image_data.save(image_path)
+                example[image_key] = f"{idx}.png"
+            elif isinstance(image_data, str):
+                example[image_key] = image_data
+            else:
+                raise ValueError(
+                    f" Image data format - {type(image_data)} is not supported"
+                )
+    return example
+
+
+def load_dataset_wrapper(
+    input_data_params: Dict[str, Optional[str]], **kwargs
+) -> str:
+    """
+    Loads a dataset from a specified source and saves it in a specified format
+    in the given directory, potentially within a subdirectory denoted by a 'split'.
+
+    Args:
+    input_data_params (Dict[str, Optional[str]]): Parameters for dataset loading
+        including 'source', 'split' (optional), and 'format'.
+    **kwargs: Additional parameters.
+        - image_key (str): Column name in the dataset that contains image paths.
+        - image_dir (str): Directory to save processed images.
+        - processes (int): Number of processes to use for parallel image processing.
+
+    Returns:
+    str: The directory where the dataset has been saved.
+
+    Raises:
+    ValueError: If the specified format is not supported or required parameters are missing.
+    """
+    from datasets import load_dataset
+
+    split_type = input_data_params.pop('split', None)
+    cache_dir = input_data_params.pop('cache_dir', None)
+    cache_dir = check_and_create_dir(cache_dir, split_type)
+    source_dataset = input_data_params.pop('source')
+
+    # Validate split_type
+    if split_type is None:
+        raise ValueError(
+            "A dataset split is required. Specify it in the 'split' key of input_data_params."
+        )
+    # Load the dataset
+    dataset = load_dataset(
+        source_dataset,
+        split=split_type,
+        cache_dir=cache_dir,
+        **input_data_params,
+    )
+
+    # Handle image processing
+    image_key = kwargs.get("image_key")
+    if image_key and image_key in dataset.column_names:
+        process_images_fn = partial(
+            save_image_locally,
+            image_key=image_key,
+            image_dir=kwargs.get("image_dir"),
+        )
+        dataset = dataset.map(
+            process_images_fn,
+            with_indices=True,
+            num_proc=kwargs.get("processes", 1),
+        )
+
+    # Determine and validate file format
+    format_type = input_data_params.get('format', 'parquet')
+    file_path = os.path.join(cache_dir, "data", f"dataset.{format_type}")
+    if format_type == 'parquet':
+        dataset.to_parquet(file_path)
+    elif format_type == 'jsonl':
+        dataset.to_json(file_path, orient='records', lines=True)
+    else:
+        raise ValueError(f"Unsupported format: {format_type}.")
+
+    logger.info(f"Dataset saved in {format_type} format at {file_path}")
+    return os.path.join(cache_dir, "data")
+
+
+def get_compression_factor(filename: str) -> int:
+    """
+    Calculate and return the compression factor based on a file's extension.
+
+    Args:
+        filename (str): The name of the file.
+
+    Returns:
+        int: Compression factor. Returns 3 for all compressed and parquet formats,
+             otherwise returns 1 for uncompressed formats.
+    """
+    compressed_formats = [
+        ".jsonl.zst",
+        ".jsonl.zst.tar",
+        ".json.gz",
+        ".parquet",
+    ]
+
+    for format in compressed_formats:
+        if filename.endswith(format):
+            return 3  # compression factor for compressed/parquet formats
+
+    return 1  # default factor for uncompressed formats
+
+
+def format_time(seconds):
+    """
+    Format seconds into a human-readable string showing hours:minutes:seconds,
+    minutes:seconds, or seconds.
+    """
+    hours, remainder = divmod(int(seconds), 3600)
+    minutes, seconds = divmod(remainder, 60)
+    if hours:
+        return f"{hours}h:{minutes:02d}m:{seconds:02d}s"
+    elif minutes:
+        return f"{minutes}m:{seconds:02d}s"
+    else:
+        return f"{seconds}s"
+
+
+def update_progress(
+    pbar: tqdm,
+    progress_counter: Value,
+    total_chunks: int,
+    start_time: float,
+    stop_event: Event,
+    json_params_file: str = None,
+    task: str = "preprocessing",
+    data_stats: dict = None,
+) -> None:
+    """
+    Update the progress bar based on the current progress.
+
+    Args:
+        pbar (tqdm): The progress bar instance.
+        progress_counter (Value): A shared counter to track progress across processes.
+        data_stats (dict): A dictionary of dataset statistics to diplay while execution of task.
+        total_chunks (int): Total chunks to process.
+        start_time (float): The start time of the process.
+        stop_event (Event): Event to signal when to stop updating progress.
+        task (str): The task for which the progress bar is being displayed for. Can be either `preprocessing` or `splitting`.
+
+    Returns:
+        None
+    """
+
+    pbar.total = total_chunks
+    last_mtime = None
+    while not stop_event.is_set():
+        progress = progress_counter.value
+        # Update total if actual progress exceeds estimated total_chunks
+        if progress >= pbar.total:
+            pbar.total = progress + 1  # Update the progress bar total
+
+        if progress > pbar.n:
+            num_processed = progress - pbar.n
+            pbar.update(num_processed)
+            elapsed_time = time.time() - start_time
+            avg_time_per_chunk = elapsed_time / pbar.n
+            remaining_chunks = pbar.total - pbar.n
+            estimated_remaining = avg_time_per_chunk * remaining_chunks
+            formatted_estimated_remaining = format_time(estimated_remaining)
+
+            if task == "preprocessing":
+                # Update the progress bar postfix with avg processing time and estimated time
+                # Check if the file has been modified before reading
+                current_mtime = os.path.getmtime(json_params_file)
+                if last_mtime is None or current_mtime != last_mtime:
+                    with open(json_params_file, "r") as _fin:
+                        data = json.load(_fin)
+                    last_mtime = current_mtime  # Update the last modified time
+                postfix_items = OrderedDict(
+                    avg_time=f"{avg_time_per_chunk:.3f}s/chunk",
+                    eta=formatted_estimated_remaining,
+                    discarded=data.get("post-process", {}).get(
+                        "discarded_files", 0
+                    ),
+                    processed=data.get("post-process", {}).get(
+                        "processed_files", 0
+                    ),
+                )
+                # Update progress bar description with processed/total chunks
+                pbar.set_description(f"Processing {pbar.n}/{pbar.total} chunks")
+            else:
+
+                ##Calculate remaining number of docs to split by estimating average number of docs per chunk.
+                avg_docs_per_chunk = data_stats["split_docs"].value / progress
+                remaining_docs = math.ceil(
+                    remaining_chunks * avg_docs_per_chunk
+                )
+                # Update the progress bar postfix with avg processing time and estimated time
+                postfix_items = OrderedDict(
+                    avg_time=f"{avg_time_per_chunk:.3f}s/chunk",
+                    eta=formatted_estimated_remaining,
+                    split_docs=data_stats["split_docs"].value,
+                    est_remaining_docs=remaining_docs,
+                )
+                # Update progress bar description with processed/total chunks
+                pbar.set_description(f"Splitting")
+            pbar.set_postfix(
+                postfix_items,
+                refresh=True,
+            )
+        time.sleep(0.5)
+
+
+def calculate_total_size(input_files) -> int:
+    """
+    Calculate the total size of all input files, taking compression
+    factors into consideration.
+
+    Returns:
+        int: The total size of all input files in bytes.
+    """
+    total_size = sum(
+        os.path.getsize(file) * get_compression_factor(file)
+        for file in input_files
+    )
+    return total_size

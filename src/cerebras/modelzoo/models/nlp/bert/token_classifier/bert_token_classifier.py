@@ -82,8 +82,6 @@ class BertForTokenClassificationModelConfig(BertModelConfig):
 
     # The following fields are deprecated and unused.
     # They will be removed in the future once all configs have been fixed
-    fp16_type: Optional[Any] = Field(default=None, deprecated=True)
-    mixed_precision: Optional[Any] = Field(default=None, deprecated=True)
     # These are required because the checkpoint converter doesn't distinguish between bert model types
     mlm_loss_weight: Optional[Any] = Field(default=None, deprecated=True)
     mlm_nonlinearity: Optional[Any] = Field(default=None, deprecated=True)

@@ -21,7 +21,6 @@ trainer:
       layer_norm_epsilon: 1.0e-05
       mask_token_id: 32
       max_position_embeddings: 1026
-      mixed_precision: true
       mlm_nonlinearity: gelu
       mlm_loss_weight: 0.0256 # = 1/(0.15/4 * 1026). The synthetic data processor
       # masks 15% /4 of the sequence on average.
@@ -33,7 +32,6 @@ trainer:
       share_embedding_weights: true
       token_dropout: true
       use_final_layer_norm: true
-      fp16_type: cbfloat16
       vocab_size: 33
     optimizer:
       # The paper uses warmup of 2000 steps to learning rate of 4e-4, with GBS=2048. 
@@ -49,11 +47,11 @@ trainer:
         schedulers:
         - LinearLR:
             initial_learning_rate: 0.0
-            end_learning_rate: 4.0e-04
+            end_learning_rate: 1.0e-04
             total_iters: 2000
         - LinearLR:
-            initial_learning_rate: 4.0e-04
-            end_learning_rate: 4.0e-05
+            initial_learning_rate: 1.0e-04
+            end_learning_rate: 1.0e-05
             total_iters: 453280
     precision:
       enabled: true

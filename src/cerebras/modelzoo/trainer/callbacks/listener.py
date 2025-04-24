@@ -17,6 +17,7 @@ This module contains various listeners for automatically summarizing tensors.
 """
 
 import fnmatch
+from abc import ABC, abstractmethod
 from contextlib import contextmanager
 from pathlib import Path
 from typing import List, Union
@@ -25,27 +26,18 @@ import torch
 
 import cerebras.pytorch as cstorch
 from cerebras.modelzoo.trainer.callbacks import Callback
-from cerebras.pytorch.core.compile import (
-    register_trace_fn_post_hook,
-    register_trace_fn_pre_hook,
-)
 from cerebras.pytorch.experimental.listener import register_traced_tensor_hook
 
 
-class _ListenerCallback(Callback):
+class _ListenerCallback(Callback, ABC):
     """Base class that handles registering listeners for traced tensors."""
 
     def __init__(self):
         self.trainer = None
 
+    @abstractmethod
     def traced_tensor_hook(self, tensor: torch.Tensor, name: str):
         """Hook that's called when a tensor is created during tracing."""
-
-    def trace_fn_pre_hook(self):
-        """Hook that's called before tracing begins every iteration."""
-
-    def trace_fn_post_hook(self):
-        """Hook that's called after tracing ends every iteration."""
 
     def on_enter_train(self, trainer, stack, train_dataloader, loop, loop_idx):
         stack.enter_context(self._register_listener(trainer))
@@ -55,11 +47,7 @@ class _ListenerCallback(Callback):
 
     @contextmanager
     def _register_listener(self, trainer):
-        handles = [
-            register_trace_fn_pre_hook(self.trace_fn_pre_hook),
-            register_trace_fn_post_hook(self.trace_fn_post_hook),
-            register_traced_tensor_hook(self.traced_tensor_hook),
-        ]
+        handles = [register_traced_tensor_hook(self.traced_tensor_hook)]
         self.trainer = trainer
 
         try:
@@ -69,39 +57,46 @@ class _ListenerCallback(Callback):
             for handle in handles:
                 handle.remove()
 
+    def on_save_trainer_state(self, trainer, state_dict):
+        pass
+
+    def on_load_trainer_state(self, trainer, state_dict):
+        pass
+
 
 class DumpAvailableTensorNames(_ListenerCallback):
     def __init__(self):
         super().__init__()
-
         self.tensors = []
 
     def traced_tensor_hook(self, tensor: torch.Tensor, name: str):
         self.tensors.append((name, tensor.shape, tensor.dtype))
 
-    def trace_fn_pre_hook(self):
+    def on_train_batch_start(self, trainer, model, batch, batch_idx):
         self.tensors = []
 
-    @cstorch.step_closure
-    def trace_fn_post_hook(self):
+    def on_train_batch_end(self, trainer, model, outputs, batch, batch_idx):
+        if batch_idx == 0:
+            self._dump_names_to_file()
+
+    def on_validate_batch_start(self, trainer, model, batch, batch_idx):
+        self.tensors = []
+
+    def on_validate_batch_end(self, trainer, model, outputs, batch, batch_idx):
+        if batch_idx == 0:
+            self._dump_names_to_file()
+
+    def _dump_names_to_file(self):
         executor = cstorch.current_executor()
-
-        if executor.is_initial_step:
-            outfile = (
-                Path(executor.artifact_dir) / f"available_tensor_names.txt"
+        outfile = Path(executor.artifact_dir) / f"available_tensor_names.txt"
+        outfile.write_text(
+            '\n'.join(
+                [
+                    ", ".join(str(x) for x in items)
+                    for items in sorted(self.tensors, key=lambda item: item[0])
+                ]
             )
-
-            with open(outfile, "w") as f:
-                f.write(
-                    '\n'.join(
-                        [
-                            ", ".join(str(x) for x in items)
-                            for items in sorted(
-                                self.tensors, key=lambda item: item[0]
-                            )
-                        ]
-                    )
-                )
+        )
 
 
 class SummaryTensorListener(_ListenerCallback):
@@ -169,10 +164,19 @@ class NormTensorListener(_ListenerCallback):
             else:
                 self.total_norm += torch.pow(norm, 2.0)
 
-    def trace_fn_pre_hook(self):
+    def on_train_batch_start(self, trainer, model, batch, batch_idx):
         self.total_norm = None
 
-    def trace_fn_post_hook(self):
+    def on_train_batch_end(self, trainer, model, outputs, batch, batch_idx):
+        if self.total_norm is not None:
+            self.trainer.log_metrics(
+                **{f"{self.listener_name}/__all__": torch.sqrt(self.total_norm)}
+            )
+
+    def on_validate_batch_start(self, trainer, model, batch, batch_idx):
+        self.total_norm = None
+
+    def on_validate_batch_end(self, trainer, model, outputs, batch, batch_idx):
         if self.total_norm is not None:
             self.trainer.log_metrics(
                 **{f"{self.listener_name}/__all__": torch.sqrt(self.total_norm)}

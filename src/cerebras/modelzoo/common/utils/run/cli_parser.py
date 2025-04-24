@@ -24,12 +24,13 @@ from typing import Callable, List, Optional, Set, Union
 import yaml
 
 from cerebras.modelzoo.common.utils.run.utils import DeviceType
+from cerebras.modelzoo.common.utils.utils import UniqueKeyLoader
 
 
 def read_params_file(params_file: str) -> dict:
     """Helper for loading params file."""
     with open(params_file, 'r') as stream:
-        params = yaml.safe_load(stream)
+        params = yaml.load(stream, Loader=UniqueKeyLoader)
     return params
 
 
@@ -334,21 +335,23 @@ def add_csx_arguments(
         "--num_csx",
         default=1,
         type=int,
-        help="Number of CS nodes. Defaults to 1",
+        help="Number of CSX nodes to use. Defaults to 1",
     )
     optional_arguments.add_argument(
         "--num_wgt_servers",
-        default=24,
+        default=0,
         type=int,
         help="Maximum number of weight servers to use in weight streaming "
-        "execution strategy. Defaults to 24.",
+        "execution strategy. If not specified, an appropriate default is chosen "
+        "based on cluster architecture.",
     )
     optional_arguments.add_argument(
         "--num_act_servers",
-        default=60,
+        default=0,
         type=int,
         help="Maximum number of activation servers to use per device. "
-        "Defaults to 60",
+        "If not specified, an appropriate default is chosen "
+        "based on cluster architecture.",
     )
 
     def parse_value(value: str) -> Union[bool, int, float, str]:

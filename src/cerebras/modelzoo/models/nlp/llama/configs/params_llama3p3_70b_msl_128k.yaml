@@ -45,11 +45,6 @@ trainer:
       loss_weight: 1.0
       # Initializer
       initializer_range: 0.02
-      # Cerebras parameters
-      mixed_precision: true
-      fp16_type: cbfloat16
-      # Enables RoPE sin/cos computation on wafer
-      fold_rope_consts: false
     optimizer:
       AdamW:
         betas:
@@ -70,8 +65,6 @@ trainer:
             total_iters: 240
     precision:
       # Cerebras parameters
-      enabled: true
-      fp16_type: cbfloat16
       precision_opt_level: 1
       loss_scaling_factor: dynamic
       max_gradient_norm: 1.0

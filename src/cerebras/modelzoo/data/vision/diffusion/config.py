@@ -22,10 +22,11 @@ from typing import List, Literal, Optional, Union
 from pydantic import PositiveInt, field_validator
 
 from cerebras.modelzoo.config import DataConfig
+from cerebras.modelzoo.config.types import ValidatedPath
 
 
 class DiffusionBaseProcessorConfig(DataConfig):
-    data_dir: Union[str, List[str]] = ...
+    data_dir: Union[ValidatedPath, List[ValidatedPath]] = ...
     use_worker_cache: bool = False
     num_classes: int = ...
     noaugment: bool = False
@@ -118,7 +119,7 @@ class DiffusionLatentImageNet1KProcessorConfig(DiffusionBaseProcessorConfig):
 
 class DiffusionSyntheticDataProcessorConfig(DiffusionBaseProcessorConfig):
     data_processor: Literal["DiffusionSyntheticDataProcessor"]
-    data_dir: Optional[str] = None
+    data_dir: Optional[ValidatedPath] = None
     num_samples: Optional[PositiveInt] = None
     num_examples: Optional[PositiveInt] = None
     use_vae_encoder: Optional[bool] = None

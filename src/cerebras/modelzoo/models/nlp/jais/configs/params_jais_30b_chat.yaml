@@ -19,7 +19,6 @@ trainer:
         std: 0.073
       embeddings_scale: 14.6
       filter_size: 19114
-      fp16_type: cbfloat16
       hidden_size: 7168
       initializer:
         a: -0.146
@@ -31,7 +30,6 @@ trainer:
       loss_scaling: batch_size
       loss_weight: 0.000589014090626433
       max_position_embeddings: 8192
-      mixed_precision: true
       nonlinearity: swiglu
       num_heads: 56
       num_hidden_layers: 48

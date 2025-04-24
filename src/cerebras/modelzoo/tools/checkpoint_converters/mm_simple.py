@@ -159,7 +159,7 @@ class Converter_MMSimple_LLaVA_WithoutModel_HF_CS24(
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-2.4"))
+        return (FormatVersions("hf"), FormatVersions("cs-2.4", "cs-2.5"))
 
     @staticmethod
     def get_config_converter_class() -> BaseConfigConverter:
@@ -288,7 +288,7 @@ class ConfigConverter_MMSimple_LLaVA_HF_CS24(ConfigConverter_LLaVA_HF_CS22):
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.4"),
+            FormatVersions("cs-2.4", "cs-2.5"),
         )
 
     @staticmethod

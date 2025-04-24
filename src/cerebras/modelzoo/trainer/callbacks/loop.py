@@ -18,10 +18,8 @@ TrainingLoop and ValidationLoop, which are used to manage the
 training and validation loops in the Trainer.
 """
 
-import logging
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
-from math import ceil
 from typing import Optional, Union
 from warnings import warn
 
@@ -106,16 +104,15 @@ class TrainingLoop(LoopCallback):
         self.eval_frequency = eval_frequency
         self.grad_accum_steps = grad_accum_steps
 
+        self.schedule = None
         self.val_loop = ValidationLoop(eval_steps)
-
-        self.train_steps = None
-        self.checkpoint_steps = None
 
     def on_enter_fit(
         self, trainer, stack, train_dataloader, val_dataloader, loop
     ):
         if loop is self:
             stack.enter_context(trainer.on_exception("fit"))
+        self.schedule = trainer.schedule
 
     def on_fit_start(self, trainer, train_dataloader, val_dataloader, loop):
         if loop is not self:
@@ -130,117 +127,66 @@ class TrainingLoop(LoopCallback):
         # pylint: disable=attribute-defined-outside-init
         if not trainer.backend.is_e2e_execution:
             self.total_steps = 1
-        else:
-            self.total_steps = cstorch.utils.data.compute_num_steps(
-                train_dataloader,
-                initial_step=trainer.global_step,
-                num_steps=self.num_steps,
-                max_steps=self.max_steps,
-                num_epochs=self.num_epochs,
-                steps_per_epoch=self.steps_per_epoch,
-                grad_accum_steps=self.grad_accum_steps,
-            )
-
-        if (
-            self.eval_frequency is None
-            or self.eval_frequency == 0
-            or (val_dataloader is None and not trainer.validation_callbacks)
-        ):
-            if val_dataloader is not None:
-                warn(
-                    f"A validation dataloader was provided but `eval_frequency` "
-                    f"is {self.eval_frequency}. The trainer will not run "
-                    f"validation during training."
-                )
-            elif trainer.validation_callbacks:
-                warn(
-                    f"A validation callback was provided but `eval_frequency` "
-                    f"is {self.eval_frequency}. The trainer will not run "
-                    f"validation during training."
-                )
-
-            self.num_trains = 1
-            self.train_steps = self.total_steps
             return
 
-        error_msg = (
-            f"`eval_frequency` must be a positive integer "
-            f"or a float in the range (0.0, 1.0]. "
-            f"Got {self.eval_frequency} with type {type(self.eval_frequency)}. "
-            f"To disable validation during training, set `eval_frequency` to None"
+        self.total_steps = cstorch.utils.data.compute_num_steps(
+            train_dataloader,
+            initial_step=trainer.global_step,
+            num_steps=self.num_steps,
+            max_steps=self.max_steps,
+            num_epochs=self.num_epochs,
+            steps_per_epoch=self.steps_per_epoch,
+            grad_accum_steps=self.grad_accum_steps,
         )
 
-        if isinstance(self.eval_frequency, float):
-            if not 0.0 < self.eval_frequency <= 1.0:
-                raise ValueError(error_msg)
-
-            self.train_steps = ceil(self.eval_frequency * self.total_steps)
-
-        elif isinstance(self.eval_frequency, int):
-            if self.eval_frequency <= 0:
-                raise ValueError(error_msg)
-
-            self.train_steps = min(self.eval_frequency, self.total_steps)
-
-        else:
-            raise TypeError(error_msg)
-
-        self.num_trains = ceil(self.total_steps / self.train_steps)
+        if trainer.autorestart.enabled:
+            self.max_steps = trainer.global_step + self.total_steps
 
     def on_enter_train(self, trainer, stack, train_dataloader, loop, loop_idx):
         if loop is self:
             stack.enter_context(trainer.on_exception("train"))
 
-    def on_train_start(self, trainer, model, train_dataloader, loop, loop_idx):
-        if loop is not self:
-            return
-
-        if self.train_steps is None:
-            raise RuntimeError(
-                "Detected that TrainingLoop.on_fit_start was called "
-                "before TrainingLoop.on_train_start."
-            )
-
-        curr_step = self.train_steps * loop_idx
-
-        if loop_idx == self.num_trains - 1:
-            self.train_steps = self.total_steps - self.train_steps * loop_idx
-        elif loop_idx >= self.num_trains:
-            raise RuntimeError(
-                "Number of training runs exceeds the number of expected runs."
-            )
-
-        if trainer.checkpoint and (ckpt_steps := trainer.checkpoint.steps):
-            ckpt_steps = min(ckpt_steps, self.total_steps)
-
-            start = (ckpt_steps - curr_step % ckpt_steps) - 1
-            end = self.train_steps
-            final_loop = loop_idx == self.num_trains - 1
-
-            if start < end:
-                self.checkpoint_steps = cstorch.utils.data.Schedule(
-                    [
-                        cstorch.utils.data.Schedule.Range(
-                            start=start,
-                            step=ckpt_steps,
-                            end=end,
-                            include_last=final_loop,
-                        )
-                    ]
-                )
-            elif final_loop:
-                # If checkpointing is enabled, we always want a checkpoint at
-                # the final step regardless.
-                self.checkpoint_steps = end
-            else:
-                self.checkpoint_steps = None
-        else:
-            self.checkpoint_steps = None
-
-        logging.info(
-            f"Starting training loop {loop_idx + 1}, from global step {trainer.global_step} to "
-            f"{trainer.global_step + self.train_steps}"
+    @property
+    def train_steps(self):
+        warn(
+            "TrainingLoop.train_steps is deprecated and will be removed in "
+            "future releases. Please use trainer.schedule.train_steps instead.",
+            category=FutureWarning,
         )
+        return self.schedule.train_steps
+
+    @property
+    def num_trains(self):
+        warn(
+            "TrainingLoop.num_trains is deprecated and will be removed in "
+            "future releases. Please use trainer.schedule.epochs instead.",
+            category=FutureWarning,
+        )
+        return self.schedule.epochs
+
+    @property
+    def checkpoint_steps(self):
+        warn(
+            "TrainingLoop.checkpoint_steps is deprecated and will be removed "
+            "in future releases. Please use trainer.schedule.checkpoint_steps "
+            "instead.",
+            category=FutureWarning,
+        )
+        return self.schedule.checkpoint_steps
+
+    @property
+    def train_only(self):
+        """Returns True if no validations are scheduled during training (train-only)."""
+        return not bool(self.eval_frequency)
+
+    def on_save_trainer_state(self, trainer, state_dict):
+        key = trainer.get_callback_name(self)
+        state_dict[key] = {"max_steps": self.max_steps}
+
+    def on_load_trainer_state(self, trainer, state_dict):
+        key = trainer.get_callback_name(self)
+        if key in state_dict:
+            self.max_steps = state_dict[key]["max_steps"]
 
 
 class ValidationLoop(LoopCallback):
@@ -259,6 +205,8 @@ class ValidationLoop(LoopCallback):
 
         self.on_start_hook = f"on_{hook}_start"
         self.on_end_hook = f"on_{hook}_end"
+        self.on_step_start_hook = f"on_{hook}_step_start"
+        self.on_step_end_hook = f"on_{hook}_step_end"
         self.on_batch_start_hook = f"on_{hook}_batch_start"
         self.on_batch_end_hook = f"on_{hook}_batch_end"
 
@@ -274,6 +222,8 @@ class ValidationLoop(LoopCallback):
             non_standard_hooks = {
                 self.on_start_hook,
                 self.on_end_hook,
+                self.on_step_start_hook,
+                self.on_step_end_hook,
                 self.on_batch_start_hook,
                 self.on_batch_end_hook,
             } - trainer.non_standard_hooks_whitelist

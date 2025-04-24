@@ -67,9 +67,9 @@ class NLGTokenGenerator:
 
         files_processed += 1
         data_stats = {
-            "discarded": discarded_files,
-            "processed": files_processed,
-            "successful": files_processed - discarded_files,
+            "discarded_files": discarded_files,
+            "processed_files": files_processed,
+            "successful_files": files_processed - discarded_files,
             "raw_chars_count": raw_chars_count,
             "raw_bytes_count": raw_bytes_count,
             "num_pad_tokens": num_pad_tokens,
@@ -78,6 +78,7 @@ class NLGTokenGenerator:
             "num_tokens": num_tokens,
             "normalized_chars_count": normalized_chars_count,
             "normalized_bytes_count": normalized_bytes_count,
+            "n_examples": successful,
         }
         data = {"data": sample}
 

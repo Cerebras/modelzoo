@@ -44,6 +44,7 @@ DEFAULT_CALLBACKS = {
     "ComputeNorm": {},
     "ModelEvalMetrics": {},
     "RateProfiler": {},
+    "DurationProfiler": {},
     "FlopUtilization": {},
     "SavePerformanceData": {},
     "DumpAvailableTensorNames": {},
@@ -53,6 +54,7 @@ DEFAULT_LOGGERS = {
     # pylint: disable=unnecessary-lambda
     "ProgressLogger": {},
     "TensorBoardLogger": {},
+    "TelemetryLogger": {},
 }
 
 
@@ -349,6 +351,7 @@ def construct_trainer_config(model_name: str):
 
     import cerebras.modelzoo.trainer.extensions  # noqa # pylint: disable=unused-import
     from cerebras.modelzoo.trainer.callbacks import (
+        AutoRestart,
         Callback,
         Checkpoint,
         CoreCallback,
@@ -502,6 +505,7 @@ def construct_trainer_config(model_name: str):
         callbacks: callback_annotation = []
         loggers: logger_annotation = []
         seed: Optional[int] = None
+        autorestart: Optional[create_config_class(AutoRestart)] = None
 
     class TrainerFitConfig(BaseConfig):
         train_dataloader: dataprocessor_annotation = ...

@@ -414,13 +414,12 @@ class ConfigConverter_SantacoderModel_HF_CS21(
     def __init__(self) -> None:
         super().__init__()
         del self.post_convert_defaults[1]["use_bfloat16"]
-        self.post_convert_defaults[1].update({"fp16_type": "bfloat16"})
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4", "cs-2.5"),
         )
 
     def supports_mup_conversion(self):
@@ -449,7 +448,7 @@ class Converter_SantacoderModel_WithoutOptionalModel_HF_CS21(
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4", "cs-2.5"),
         )
 
     @staticmethod
@@ -498,7 +497,7 @@ class Converter_SantacoderLMHeadModel_WithoutOptionalModel_HF_CS21(
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4"),
+            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4", "cs-2.5"),
         )
 
     @staticmethod

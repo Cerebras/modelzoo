@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import logging
 import os
 
 
@@ -34,7 +33,6 @@ def set_defaults(params):
     for model_key in (
         "disable_nsp",
         "vocab_size",
-        "mixed_precision",
     ):
         for input_key in ("train_input", "eval_input"):
             params[input_key][model_key] = model_params.get(model_key)
@@ -60,20 +58,3 @@ def set_defaults(params):
         and params["runconfig"].get("precision_opt_level", 1) == 1
     ):
         params["model"]["attention_softmax_fp32"] = False
-
-
-# models/internal use this utility so cant remove it as of now. Will clean up in future PR
-def check_unused_model_params(model_params):
-    """
-    While setting up the model, we pop used settings from model_params.
-    This function sends a warning about any unused parameters.
-    """
-    model_params.pop("to_float16", None)
-    model_params.pop("mixed_precision", None)
-    unused_params = [
-        key for key in model_params.keys() if key not in ["fp16_type"]
-    ]
-    if unused_params:
-        logging.warning(
-            "The following model params are unused: " + ", ".join(unused_params)
-        )

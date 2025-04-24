@@ -41,10 +41,16 @@ no_rope_modification_pos_id = NoRopeModification
 
 
 def rotate_every_two(x):
-    x1 = x[:, :, :, ::2]
-    x2 = x[:, :, :, 1::2]
+    head_dim = x.shape[-1]
+    odd_dim = head_dim % 2
+    x1 = x[..., ::2]
+    x2 = x[..., 1::2]
+    x_odd_or_null = x[..., :0]
+    if odd_dim:
+        x_odd_or_null = x1[..., -1:]
+        x1 = x1[..., :-1]
     x = torch.stack((-x2, x1), dim=-1)
-    return x.flatten(-2)
+    return torch.cat((x.flatten(-2), x_odd_or_null), dim=-1)
 
 
 class RotaryPosEmb(torch.autograd.Function):
@@ -52,7 +58,7 @@ class RotaryPosEmb(torch.autograd.Function):
     def forward(ctx, x, sin, cos):
         ctx.save_for_backward(x, sin, cos)
         x_dtype = x.dtype
-        if cstorch.backends.csx.precision.optimization_level >= 1:
+        if cstorch.current_pol() >= 1:
             x, sin, cos = maybe_to_half_dtype((x, sin, cos))
         return (x * cos + rotate_every_two(x) * sin).to(x_dtype)
 
@@ -60,7 +66,7 @@ class RotaryPosEmb(torch.autograd.Function):
     def backward(ctx, grad_output):
         x, sin, cos = ctx.saved_tensors
         x_dtype = x.dtype
-        if cstorch.backends.csx.precision.optimization_level >= 1:
+        if cstorch.current_pol() >= 1:
             grad_output, sin, cos = maybe_to_half_dtype((grad_output, sin, cos))
         grad_x = grad_output * cos - rotate_every_two(grad_output * sin)
         return grad_x.to(x_dtype), None, None
@@ -190,7 +196,7 @@ class RotaryPositionEmbeddingHelper:
         scaling_extra_args=None,
         rel_distance_mode=RopeRelDistanceMode.default,
         rel_distance_extra_args=None,
-        fold_rope_consts=True,
+        fold_rope_consts=False,
         constant_pos_embedding=None,
     ):
         super(RotaryPositionEmbeddingHelper, self).__init__()
@@ -204,9 +210,10 @@ class RotaryPositionEmbeddingHelper:
 
         self.fold_rope_consts = fold_rope_consts
         self.constant_pos_embedding = constant_pos_embedding
-        # force fold_rope_consts to False when constant_pos_embedding is enabled.
-        if constant_pos_embedding is not None:
-            self.fold_rope_consts = False
+        if constant_pos_embedding is not None and fold_rope_consts:
+            raise ValueError(
+                "fold_rope_consts should be False when constant_pos_embedding is enabled."
+            )
 
         self._rope_cache = {}
         self.swa_mask, self.swa_complement_mask = None, None
@@ -296,7 +303,7 @@ class RotaryPositionEmbeddingHelper:
 
         import cerebras.pytorch as cstorch
 
-        device = "cpu" if fold_const else x.device
+        device = "cpu" if fold_const and cstorch.use_cs() else x.device
 
         x_shape = x.shape
         if fold_const:
@@ -316,16 +323,26 @@ class RotaryPositionEmbeddingHelper:
             )
         else:
             if (
-                position_ids.dim() != 1
-                or len(position_ids) != self.max_position_embeddings
+                position_ids.dim() not in (1, 2)
+                or position_ids.shape[-1] != self.max_position_embeddings
+                or position_ids.dim() == 2
+                and position_ids.shape[0] != x.shape[0]
             ):
                 raise ValueError(
                     f"position_ids tensor passed to 'rotate_tensor' method of RoPE helper "
-                    f"should be 1-dimensional of length {self.max_position_embeddings} "
+                    f"should be 1- or 2-dimensional with last dim size {self.max_position_embeddings} "
                     f"but got shape {position_ids.shape}"
                 )
+            if fold_const:
+                if (
+                    torch.max(position_ids) >= self.max_position_embeddings
+                    or torch.min(position_ids) < 0
+                ):
+                    raise ValueError(
+                        f"Cannot use `position_ids` with values out of [0, {self.max_position_embeddings}) range with `fold_rope_consts: true` in RoPE"
+                    )
             t = position_ids
-        t = t[:, None, None].broadcast_to(x_shape)
+        t = t[..., None, None].broadcast_to(x_shape)
 
         if (
             constant_pos_mask is not None
@@ -391,47 +408,6 @@ class RotaryPositionEmbeddingHelper:
 
         return sin, cos
 
-    def _apply_rotary_pos_emb(
-        self,
-        x,
-        offset=0,
-        fold_rope_consts=True,
-        constant_pos_mask=None,
-        position_ids=None,
-        rope_cache_tag=None,
-    ):
-        head_dim = x.shape[-1]
-        odd_dim = head_dim % 2
-        if not fold_rope_consts and odd_dim:
-            raise RuntimeError(
-                f"Generating RoPE constants on the fly is not supported for odd {head_dim=}."
-            )
-
-        if (
-            not fold_rope_consts
-            and cstorch.backends.csx.precision.optimization_level == 0
-        ):
-            raise RuntimeError(
-                "Generating RoPE constants on the fly is not supported for precision_opt_level=0"
-            )
-
-        x_full = x[..., :]
-        x_odd_or_null = x[..., :0]
-        if odd_dim:
-            x_full = x[..., :-1]
-            x_odd_or_null = x[..., -1:]
-
-        sin, cos = self._create_fixed_pos_emb(
-            x_full,
-            offset,
-            position_ids,
-            rope_cache_tag,
-            constant_pos_mask=constant_pos_mask,
-            fold_const=fold_rope_consts,
-        )
-        x_rotated = rotary_pos_emb(x_full, sin, cos)
-        return torch.cat([x_rotated, x_odd_or_null], dim=-1)
-
     def rotate_tensor(
         self,
         x,
@@ -445,14 +421,16 @@ class RotaryPositionEmbeddingHelper:
         ), "Tensor should be of shape [batch_size, seq_length, num_heads, head_dim] !"
         if position_ids is no_rope_modification_pos_id:
             return x
-        return self._apply_rotary_pos_emb(
+
+        sin, cos = self._create_fixed_pos_emb(
             x,
-            offset=offset,
-            fold_rope_consts=self.fold_rope_consts,
+            offset,
+            position_ids,
+            rope_cache_tag,
             constant_pos_mask=constant_pos_mask,
-            position_ids=position_ids,
-            rope_cache_tag=rope_cache_tag,
+            fold_const=self.fold_rope_consts,
         )
+        return rotary_pos_emb(x, sin, cos)
 
     def _longrope_computations(
         self, x_shape, rope_kwargs, device
@@ -488,7 +466,7 @@ class RotaryPositionEmbeddingHelper:
             ), "LongRope needs long_factor scaling params in config"
             rescale_factors = rope_kwargs["long_factor"]
             if "long_mscale" in rope_kwargs:
-                self.mscale = rope_kwargs["short_mscale"]
+                self.mscale = rope_kwargs["long_mscale"]
 
         else:
             assert (
@@ -500,9 +478,15 @@ class RotaryPositionEmbeddingHelper:
 
         rescale_factors = [v for v in rescale_factors for _ in (0, 1)]  # repeat
         rescale_factors += [0] * (head_dim - dim)  # pad zeros, masked out later
-        ext_factors = torch.tensor(
-            rescale_factors, dtype=torch.float32, device=device
-        )
+        if cstorch.use_cs() and self.fold_rope_consts is False:
+            ext_factors = torch.tensor(
+                rescale_factors, dtype=torch.float32, device="cpu"
+            )
+            ext_factors = cstorch.make_constant(ext_factors)
+        else:
+            ext_factors = torch.tensor(
+                rescale_factors, dtype=torch.float32, device=device
+            )
 
         # Sets the attention factor as suggested in the paper
         if self.mscale is None:
@@ -571,7 +555,7 @@ class RotaryPositionEmbeddingHelper:
 
         import cerebras.pytorch as cstorch
 
-        device = "cpu" if cstorch.use_cs() else device
+        device = "cpu" if cstorch.use_cs() and self.fold_rope_consts else device
 
         if self.rel_distance_mode == RopeRelDistanceMode.capped:
             if "rope_local_window_size" not in self.rel_distance_extra_args:
@@ -580,7 +564,11 @@ class RotaryPositionEmbeddingHelper:
                 )
 
             q_pos_id = (
-                torch.ones(self.max_position_embeddings, device=device)
+                torch.ones(
+                    self.max_position_embeddings,
+                    device=device,
+                    dtype=torch.float32,
+                )
                 * self.rel_distance_extra_args["rope_local_window_size"]
             )
             k_pos_id = no_rope_modification_pos_id
@@ -600,7 +588,11 @@ class RotaryPositionEmbeddingHelper:
             group_size = self.rel_distance_extra_args["rope_group_size"]
             constant_dist = max_rel_distance - max_rel_distance // group_size
             k_pos_id = (
-                torch.arange(self.max_position_embeddings, device=device)
+                torch.arange(
+                    self.max_position_embeddings,
+                    device=device,
+                    dtype=torch.float32,
+                )
                 // group_size
             )
             q_pos_id = k_pos_id + constant_dist

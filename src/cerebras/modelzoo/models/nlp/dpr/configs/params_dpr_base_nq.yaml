@@ -23,8 +23,6 @@ trainer:
         layer_norm_epsilon: 1.0e-12
       ctx_encoder:
         <<: *base_model
-      mixed_precision: true
-      fp16_type: cbfloat16
     optimizer:
       Adam:
         weight_decay: 0.0

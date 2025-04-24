@@ -21,9 +21,6 @@ _model_to_input_map = [
     "label_dropout_rate",
     "latent_size",
     "latent_channels",
-    # Other params
-    "mixed_precision",
-    "fp16_type",
     # diffusion & related params for performing gd
     "schedule_name",
 ]
@@ -52,7 +49,7 @@ def set_defaults(params):
     """
     Update any missing parameters in the params dictionary with default values
     Args:
-        params: The dictionary/object containing the params
+        params: The dictionary/object containing the params.
     """
     runconfig = params["runconfig"]
 

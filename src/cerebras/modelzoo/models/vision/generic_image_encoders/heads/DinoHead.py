@@ -18,13 +18,13 @@ import torch
 import torch.nn as nn
 from torch.nn.utils import weight_norm
 
+from cerebras.modelzoo.common.utils.model.recompute_api import recompute_region
 from cerebras.modelzoo.config import ModelConfig
 from cerebras.modelzoo.layers.init import (
     InitializerConfig,
     TruncatedNormalInitializer,
     ZerosInitializer,
 )
-from cerebras.modelzoo.layers.utils import named_matmul
 
 
 class DinoHeadConfig(ModelConfig):
@@ -161,13 +161,15 @@ class DinoHead(nn.Module):
         data = nn.functional.normalize(data, dim=-1, p=2, eps=eps)
 
         # annotate last_layer for specialized recompute schedule
-        @named_matmul("ibot_patch_opt")
-        def named_last_layer(data):
-            return self.last_layer(data)
+        @recompute_region("ibot_patch_opt")
+        def recompute_last_layer(data):
+            res = self.last_layer(data)
+            res = torch.reshape(res, output_shape)
+            return res
 
         # only annotate head that has sequence dimension
         if data_dim == 4:
-            data = named_last_layer(data)
+            return recompute_last_layer(data)
         else:
             data = self.last_layer(data)
         data = torch.reshape(data, output_shape)

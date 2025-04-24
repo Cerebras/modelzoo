@@ -29,6 +29,7 @@ from PIL import Image
 from torch.utils.data import DataLoader, default_collate
 
 from cerebras.modelzoo.config import DataConfig
+from cerebras.modelzoo.config.types import ValidatedPath
 from cerebras.modelzoo.data.common.input_utils import (
     num_tasks,
     shard_list_contiguous,
@@ -49,20 +50,41 @@ class RawDatasetProcessorConfig(DataConfig):
     """Configuration class for RawDatasetProcessor."""
 
     data_processor: Literal["RawDatasetProcessor"]
+    "The name of the dataprocessor. Must be set to `RawDatasetProcessor`."
+
     batch_size: int = ...
+    """
+    Indicates global batch size of the model. This differs from `micro_batch_size`.
+    Global batch size refers to the number of samples 
+    fed to the model in total for forward and backward pass before
+    weights are updated. A global batch size exceeding
+    device memory is split into smaller `micro_batch_sizes` and 
+    forward and backward pass are executed and accummulated before final update.
+    """
 
     """ The dataset preprocessing configuration. """
 
     ##TODO: Create a config class for preprocessing as well
     preprocessing: dict = ...
+    "Dict of params to be passed to DataPreprocessor class."
 
     shuffle: bool = True
+    "Shuffle samples if True."
+
     shuffle_seed: int = 0
+    "Seed to use for shuffling to ensure reproducibility."
+
     num_workers: int = 0
+    "The number of PyTorch processes used in the dataloader."
+
     prefetch_factor: Optional[int] = 10
+    "The number of batches to prefetch in the dataloader."
+
     persistent_workers: bool = True
+    "Whether or not to keep workers persistent between epochs."
+
     drop_last: bool = True
-    seed: Optional[int] = None
+    "Whether to drop the last incomplete batch."
 
     def post_init(self, context):
         if not self.num_workers:
@@ -74,14 +96,16 @@ class MultimodalRawDatasetProcessorConfig(RawDatasetProcessorConfig):
     """Multimodal Configuration class for RawDatasetProcessor."""
 
     data_processor: Literal["MultimodalRawDatasetProcessor"]
+    "The name of the dataprocessor. Must be set to `MultimodalRawDatasetProcessor`."
+
     image_data_size: List[int] = ...
-    """ The final C x H x W shape of the image. """
+    "The final C x H x W shape of the image."
 
     transforms: List[dict] = ...
-    """ List of transformations to apply to images. """
+    "List of transformations to apply to images."
 
-    img_data_dir: str = ...
-    """ The directory containing the image data. """
+    img_data_dir: ValidatedPath = ...
+    "The directory containing the image data."
 
 
 class RawDatasetProcessor(torch.utils.data.IterableDataset):
@@ -106,8 +130,8 @@ class RawDatasetProcessor(torch.utils.data.IterableDataset):
             read_hook_fn=self.dataset_processor.read_hook_fn,
         )
 
-        self.seed = self.config.seed
-        self.rng = random.Random(self.seed)
+        self.shuffle_seed = self.config.shuffle_seed
+        self.rng = random.Random(self.shuffle_seed)
         self.input_files_in_this_task = shard_list_contiguous(
             self.dataset_processor.input_files, task_id(), num_tasks()
         )
@@ -128,9 +152,9 @@ class RawDatasetProcessor(torch.utils.data.IterableDataset):
             worker_id = 0
             num_workers = 1
 
-        if self.seed is not None:
+        if self.shuffle_seed is not None:
             # Use a unique seed for each worker.
-            random.seed(self.seed + worker_id)
+            random.seed(self.shuffle_seed + worker_id)
 
         # Shard the data files between workers
         self.input_files_in_this_worker = shard_list_contiguous(
@@ -211,7 +235,7 @@ class RawDatasetProcessor(torch.utils.data.IterableDataset):
             ),  # Keep worker processes alive after they finish their tasks
             worker_init_fn=(
                 self._worker_init_fn
-                if self.num_workers > 0 and self.seed is not None
+                if self.num_workers > 0 and self.shuffle_seed is not None
                 else None
             ),  # Function to initialize the worker process
         )

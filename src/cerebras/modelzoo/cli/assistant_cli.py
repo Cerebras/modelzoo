@@ -39,7 +39,7 @@ class AssistantCLI:
         parser.add_argument(
             '--model',
             type=str,
-            default="llama3.1-70b",
+            default="llama-3.3-70b",
             help="The name of the model to use with Cerebras inference.",
         )
         parser.add_argument(

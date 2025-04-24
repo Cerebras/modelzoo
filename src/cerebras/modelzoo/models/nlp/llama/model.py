@@ -15,7 +15,7 @@
 from typing import Literal
 from warnings import warn
 
-from pydantic import field_validator, model_validator
+from pydantic import field_validator
 
 from cerebras.modelzoo.models.nlp.gpt2.gpt2_model import (
     GPT2LMHeadModel,
@@ -26,27 +26,6 @@ from cerebras.modelzoo.models.nlp.gpt2.model import Gpt2Model, GPT2ModelConfig
 
 class LlamaModelConfig(GPT2ModelConfig):
     name: Literal["LlamaModel", "llama"]
-
-    def needs_on_the_fly_rope(self):
-        return (
-            self.num_hidden_layers == 126
-            and self.max_position_embeddings == 2**16
-        ) or (
-            self.num_hidden_layers == 80
-            and self.max_position_embeddings == 2**17
-        )
-
-    @model_validator(mode="after")
-    def validate_rope_compile_setting_for_large_configs(self):
-        if self.needs_on_the_fly_rope() and self.fold_rope_consts:
-            raise ValueError(
-                "This LLaMa requires `fold_rope_consts=False`, please adjust this config setting accordingly."
-            )
-        if not self.needs_on_the_fly_rope() and not self.fold_rope_consts:
-            raise ValueError(
-                "This LLaMa does not require `fold_rope_consts=False`, please remove it from the config."
-            )
-        return self
 
     @field_validator("name", mode="after")
     def validate_name(cls, name):
@@ -79,27 +58,6 @@ class LlamaLMHeadModelConfig(GPT2LMHeadModelConfig):
                 category=FutureWarning,
             )
         return "llama"
-
-    def needs_on_the_fly_rope(self):
-        return (
-            self.num_hidden_layers == 126
-            and self.max_position_embeddings == 2**16
-        ) or (
-            self.num_hidden_layers == 80
-            and self.max_position_embeddings == 2**17
-        )
-
-    @model_validator(mode="after")
-    def validate_rope_compile_setting_for_large_configs(self):
-        if self.needs_on_the_fly_rope() and self.fold_rope_consts:
-            raise ValueError(
-                "This LLaMa requires `fold_rope_consts=False`, please adjust this config setting accordingly."
-            )
-        if not self.needs_on_the_fly_rope() and not self.fold_rope_consts:
-            raise ValueError(
-                "This LLaMa does not require `fold_rope_consts=False`, please remove it from this config."
-            )
-        return self
 
     @property
     def __model_cls__(self):

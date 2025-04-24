@@ -18,7 +18,6 @@ import glob
 import json
 import os
 import re
-import sys
 from collections import defaultdict
 from copy import deepcopy
 from dataclasses import dataclass
@@ -184,13 +183,6 @@ class EvalHarnessRunner(ClassLogger):
 
         if self.args.tasks is None:
             raise ValueError("Need to specify task to evaluate.")
-        elif self.args.tasks == "list":
-            self.logger.info(
-                "Available Tasks:\n - {}".format(
-                    "\n - ".join(task_manager.all_tasks)
-                )
-            )
-            sys.exit()
         else:
             if os.path.isdir(self.args.tasks):
                 task_names = []
@@ -218,9 +210,11 @@ class EvalHarnessRunner(ClassLogger):
                     missing = ", ".join(task_missing)
                     raise ValueError(
                         f"Tasks not found: {missing}.\n"
-                        f"{utils.SPACING}Try `lm-eval --tasks list` for list "
-                        "of available tasks, or '--verbosity DEBUG' to "
-                        "troubleshoot task registration issues."
+                        f"{utils.SPACING} Try `lm-eval --tasks "
+                        f"{{list_groups,list_subtasks,list_tags,list}}` to "
+                        f"list out all available names for task groupings; "
+                        f"only (sub)tasks; tags; or all of the above, or pass "
+                        f"'--verbosity DEBUG' to troubleshoot task registration issues."
                     )
 
         # Validate tasks and cache task related properties.

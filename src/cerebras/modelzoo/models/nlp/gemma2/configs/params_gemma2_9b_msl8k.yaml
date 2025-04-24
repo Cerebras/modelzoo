@@ -49,7 +49,6 @@ trainer:
       hidden_size: 3584
       layer_norm_epsilon: 1.0e-06
       max_position_embeddings: 8192
-      mixed_precision: true
       nonlinearity: geglu
       norm_first_sandwich: true
       norm_type: rmsnorm

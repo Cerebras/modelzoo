@@ -73,7 +73,8 @@ class GPTJDecoderLayer(TransformerDecoderLayer):
         cross_attn_position_bias: Optional[Tensor] = None,
         layer_idx: Optional[int] = None,
         expert_hash_idx: Optional[Tensor] = None,
-        special_token_indices: Dict[str, Tensor] = None,
+        position_ids: Optional[Tensor] = None,
+        special_token_meta: Dict[str, Tensor] = None,
     ) -> Tensor:
         """GPTJ layer with rotary position embeddings and parallel decoder architecture
 
@@ -116,6 +117,7 @@ class GPTJDecoderLayer(TransformerDecoderLayer):
             cache_present_kv=cache_present_kv,
             self_attn_position_bias=self_attn_position_bias,
             layer_idx=layer_idx,
+            position_ids=position_ids,
         )
 
         # Apply untied layernorm in neox

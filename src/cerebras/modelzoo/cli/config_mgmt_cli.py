@@ -25,7 +25,7 @@ from pathlib import Path
 
 import yaml
 
-from cerebras.modelzoo.cli.utils import MZ_CLI_NAME
+from cerebras.modelzoo.cli.utils import MZ_CLI_NAME, append_source_basename
 
 
 class ConfigMgmtCLI:
@@ -48,6 +48,8 @@ class ConfigMgmtCLI:
             f"  $ {MZ_CLI_NAME} config convert_legacy my_old_params.yaml -o my_new_params.yaml\n\n"
             f"Validate a config file:\n"
             f"  $ {MZ_CLI_NAME} config validate my_new_params.yaml\n\n"
+            f"Diff two config files:\n"
+            f"  $ {MZ_CLI_NAME} config diff my_new_params.yaml some_other_params.yaml\n\n"
             f"Get statistics on a config file including number of params:\n"
             f"  $ {MZ_CLI_NAME} config stats my_new_params.yaml\n\n"
             f"For more information on YAML configuration files, see: "
@@ -106,6 +108,21 @@ class ConfigMgmtCLI:
         )
         convert_parser.set_defaults(func=ConfigMgmtCLI.config_convert)
 
+        diff_parser = subparsers.add_parser(
+            "diff", help="Find the difference between two config files."
+        )
+        diff_parser.add_argument("left", help="Left config file to diff.")
+        diff_parser.add_argument("right", help="Right config file to diff.")
+        diff_parser.add_argument(
+            "-v",
+            "--verbose_level",
+            default=2,
+            type=int,
+            choices=[0, 1, 2],
+            help="Set verbose level for diff. Defaults to 2.",
+        )
+        diff_parser.set_defaults(func=ConfigMgmtCLI.config_diff)
+
         stats_parser = subparsers.add_parser(
             "stats",
             help="Get relevant statistics for a model based on an input config file.",
@@ -114,19 +131,42 @@ class ConfigMgmtCLI:
             "params",
             help="Path to .yaml file with model parameters.",
         )
+        stats_parser.add_argument(
+            "--order_by",
+            help="Name or comma-separated list of names of columns to sort the table by.",
+        )
+        stats_parser.add_argument(
+            "--descending",
+            action="store_true",
+            help="Whether to sort in descending order when `order_by` is provided.",
+        )
         stats_parser.set_defaults(
             func=ConfigMgmtCLI.config_stats, seen_args=set("params")
         )
 
     @staticmethod
+    def _load_config(config_file):
+        config_path = Path(config_file)
+
+        if not config_path.exists():
+            raise FileNotFoundError(
+                f"Config file {config_path} does not exist."
+            )
+
+        with config_path.open("r") as f:
+            params = yaml.safe_load(f)
+
+        return params
+
+    @staticmethod
     def config_pull(args):
         variant_path = ConfigMgmtCLI._find_variant(args.variant)
-        out_path = Path(args.out if args.out else os.getcwd())
-        if out_path.is_dir():
-            filepath = out_path / variant_path.name
-        else:
-            filepath = out_path
-
+        filepath = Path(
+            append_source_basename(
+                variant_path,
+                args.out if args.out else os.getcwd(),
+            )
+        )
         print(f"Saving config {args.variant} to {filepath}.")
 
         filepath.parent.mkdir(parents=True, exist_ok=True)
@@ -146,20 +186,16 @@ class ConfigMgmtCLI:
         )
 
         config_path = Path(args.config)
-
-        if not config_path.exists():
-            raise ValueError(f"Config file path {config_path} does not exist.")
-
-        with config_path.open("r") as f:
-            params = yaml.safe_load(f)
+        params = ConfigMgmtCLI._load_config(config_path)
 
         if is_legacy_params(params):
             params = convert_legacy_params_to_trainer_params(params)
-            out_path = Path(args.out if args.out else os.getcwd())
-            if out_path.is_dir():
-                filepath = out_path / f"{config_path.stem}_v2.yaml"
-            else:
-                filepath = out_path
+            filepath = Path(
+                append_source_basename(
+                    f"./{config_path.stem}_v2.yaml",
+                    args.out if args.out else os.getcwd(),
+                )
+            )
 
             # injecting default device to config
             params["trainer"]["init"].setdefault("device", "CSX")
@@ -250,7 +286,19 @@ class ConfigMgmtCLI:
             for p in init_params:
                 p["model_dir"] = tempdir
                 p["callbacks"] = merge_callbacks(
-                    p.get("callbacks", []), [{"CountParams": {}}]
+                    p.get("callbacks", []),
+                    [
+                        {
+                            "CountParams": {
+                                "order_by": (
+                                    args.order_by.split(",")
+                                    if args.order_by
+                                    else None
+                                ),
+                                "descending": args.descending,
+                            }
+                        }
+                    ],
                 )
 
             configs = validate_trainer_params(params)
@@ -265,6 +313,45 @@ class ConfigMgmtCLI:
                 out, _ = count_params.get_table(trainer.model)
 
                 print(out)
+
+    @staticmethod
+    def config_diff(args):
+        from deepdiff import DeepDiff
+        from deepdiff.serialization import pretty_print_diff
+
+        left_params = ConfigMgmtCLI._load_config(args.left)
+        right_params = ConfigMgmtCLI._load_config(args.right)
+
+        diff = DeepDiff(
+            left_params,
+            right_params,
+            verbose_level=args.verbose_level,
+        )
+
+        if not diff:
+            print("Configs are identical.")
+            return
+
+        _mapping = {
+            "dictionary_item_added": "Added:",
+            "dictionary_item_removed": "Removed:",
+            "type_changes": "Changed:",
+            "values_changed": "Changed:",
+        }
+
+        # modified version of DeepDiff.pretty()
+        def _pretty():
+            result = []
+            keys = sorted(diff.tree.keys())
+            for key in keys:
+                if _mapping[key] not in result:
+                    result += [_mapping[key]]
+                for item_key in diff.tree[key]:
+                    result += [f" {pretty_print_diff(item_key)}"]
+
+            return '\n'.join(result)
+
+        print(_pretty())
 
 
 if __name__ == '__main__':

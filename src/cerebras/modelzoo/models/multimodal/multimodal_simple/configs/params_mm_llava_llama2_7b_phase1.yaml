@@ -81,8 +81,6 @@ trainer:
       - ^text_model
       loss_scaling: num_tokens
       loss_weight: 1.0
-      mixed_precision: true
-      fp16_type: cbfloat16
     optimizer:
       AdamW:
         betas:
@@ -132,13 +130,10 @@ trainer:
       data_processor: MultimodalSimpleHDF5MapDataProcessor
       data_dir: ./cmm_format_llava_phase_1
       img_data_dir: ./LLaVA/LLaVA-Pretrain/images
-      bos_token_id: 1
-      pad_token_id: 0
       image_data_size:
       - 3
       - 336
       - 336
-      mixed_precision: true
       transforms:
       - name: expand_to_square
         background_color: # [int(255 * 0.48145466), int(255 * 0.4578275], int(255 * 0.40821073)]
@@ -171,13 +166,10 @@ trainer:
       data_processor: MultimodalSimpleHDF5MapDataProcessor
       data_dir: ./cmm_format_llava_phase_1
       img_data_dir: ./LLaVA/LLaVA-Pretrain/images
-      bos_token_id: 1
-      pad_token_id: 0
       image_data_size:
       - 3
       - 336
       - 336
-      mixed_precision: true
       transforms:
       - name: expand_to_square
         background_color: # [int(255 * 0.48145466), int(255 * 0.4578275], int(255 * 0.40821073)]

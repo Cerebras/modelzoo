@@ -34,8 +34,6 @@ trainer:
       max_position_embeddings: 512
       layer_norm_epsilon: 1.0e-05
       mlm_loss_weight: 0.019
-      mixed_precision: true
-      fp16_type: cbfloat16
     optimizer:
       AdamW:
         weight_decay: 0.01
