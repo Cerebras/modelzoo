@@ -1,0 +1,26 @@
+# Configuration file for semdantic dedup
+cache_dir: "semdedup_cache"
+num_files: -1
+
+# Embeddings configuration
+embeddings_save_loc: "embeddings"
+embedding_model_name_or_path: "sentence-transformers/all-MiniLM-L6-v2"
+embedding_batch_size: 128
+embedding_column: "embeddings"
+write_embeddings_to_disk: true
+write_to_filename: false
+
+# Clustering configuration
+clustering_save_loc: "clustering_results"
+n_clusters: 10
+random_state: 1234
+max_iter: 100
+
+# Semdedup configuration
+which_to_keep: "hard"
+batched_cosine_similarity: 1024
+clustering_input_partition_size: "2gb"
+sim_metric: "cosine"
+
+# Which threshold to use for extracting deduped data
+eps_to_extract: 0.01

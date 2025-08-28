@@ -569,8 +569,6 @@ class StreamingCSWriterView:
         return default
 
     def __setitem__(self, key, value):
-        # from cerebras.pytorch.saver.pt_h5_saver import PyTorchH5Saver
-
         if key in self.state and not isinstance(
             self.state[key], StreamingCSLeaf
         ):

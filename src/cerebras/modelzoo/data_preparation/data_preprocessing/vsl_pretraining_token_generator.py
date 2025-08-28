@@ -260,7 +260,7 @@ class VSLPretrainingTokenGenerator(PretrainingTokenGenerator):
             stats["num_sequences_before_packing"] += len(tokenized_text_chunks)
             stats_checkpoint_list.append(copy.deepcopy(stats))
 
-        if results["data"] == []:
+        if len(results["data"]) == 0:
             data = {}
         else:
             data = results
@@ -307,7 +307,7 @@ class VSLPretrainingTokenGenerator(PretrainingTokenGenerator):
                 results["data"].append(processed)
                 stats_checkpoint_list.append(copy.deepcopy(stats))
 
-        if results["data"] == []:
+        if len(results["data"]) == 0:
             data = {}
         else:
             data = results
@@ -357,7 +357,7 @@ class VSLPretrainingTokenGenerator(PretrainingTokenGenerator):
 
             raw_data_stats["processed_files"] = 1
             raw_data_stats["discarded_files"] = 0
-            if input_ids == []:
+            if len(input_ids) == 0:
                 raw_data_stats["discarded_files"] = 1
             else:
                 raw_data_stats["successful_files"] = 1

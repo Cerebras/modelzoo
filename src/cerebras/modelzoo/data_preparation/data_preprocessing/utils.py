@@ -20,13 +20,14 @@ import math
 import os
 import re
 import shutil
+import signal
 import sys
 import time
 from collections import OrderedDict, defaultdict
 from fractions import Fraction
 from multiprocessing import Event, Value
 from pathlib import Path
-from typing import Dict, List, Literal, Optional, Union
+from typing import Any, Callable, Dict, List, Literal, Optional, Union
 
 import numpy as np
 import yaml
@@ -614,7 +615,7 @@ def get_data_stats(
     return stats
 
 
-def check_and_create_output_dirs(output_dir, filetype):
+def check_and_create_output_dirs(output_dir, filetype, overwrite=False):
     contains_filetype = False
     if os.path.isdir(output_dir):
         for dirpath, dirnames, filenames in os.walk(output_dir):
@@ -625,7 +626,7 @@ def check_and_create_output_dirs(output_dir, filetype):
             if contains_filetype:
                 break
 
-    if contains_filetype:
+    if contains_filetype and not overwrite:
         _in = input(
             f"Output directory already contains {filetype} file(s)."
             + " Do you want to delete the folder to write"
@@ -2209,3 +2210,356 @@ def calculate_total_size(input_files) -> int:
         for file in input_files
     )
     return total_size
+
+
+class YamlReader:
+    def __init__(self, yaml_source: Union[str, dict]):
+        self._yaml_path = None
+        self.logger = logging.getLogger(f"YamlReader[{id(self)}]")
+        self.logger.setLevel(logging.INFO)
+        handler = logging.StreamHandler()
+        if not self.logger.handlers:
+            formatter = logging.Formatter(
+                "[%(asctime)s] [%(levelname)s] - %(message)s"
+            )
+            handler.setFormatter(formatter)
+            self.logger.addHandler(handler)
+
+        if isinstance(yaml_source, str):
+            self._yaml_path = yaml_source
+            self.config = self._load_yaml()
+        elif isinstance(yaml_source, dict):
+            self.config = yaml_source
+
+    def _load_yaml(self) -> dict:
+        try:
+            with open(self._yaml_path, "r") as f:
+                return yaml.safe_load(f)
+        except Exception as e:
+            self.logger.error(f"Failed to load YAML: {e}")
+            raise
+
+    def get(
+        self,
+        dotted_key: str,
+        default: Optional[Any] = None,
+        strict: bool = False,
+    ) -> Any:
+        keys = dotted_key.split(".")
+        value = self.config
+        for key in keys:
+            try:
+                value = value[key]
+            except (KeyError, TypeError):
+                if strict:
+                    raise KeyError(f"Key '{dotted_key}' not found")
+                if default is None:
+                    self.logger.warning(
+                        f"Missing key '{dotted_key}', returning default=None"
+                    )
+                return default
+        return value
+
+    def set(self, dotted_key: str, value: Any) -> Dict[str, Any]:
+        keys = dotted_key.split(".")
+        d = self.config
+        for key in keys[:-1]:
+            if key not in d or not isinstance(d[key], dict):
+                d[key] = {}
+            d = d[key]
+        d[keys[-1]] = value
+        self.logger.info(f"Set '{dotted_key}' = {value}")
+        return self.config
+
+    @property
+    def params(self) -> dict:
+        return self.config
+
+
+class SLURMPipe:
+    def __init__(
+        self,
+        partition: str,
+        log_dir: str = "slurm_logs",
+        timeout_min: int = 30,
+        cpus_per_task: int = 2,
+        mem_gb: int = 4,
+        # Additional SLURM configurations
+        nodes: int = 1,
+        ntasks_per_node: int = 1,
+        array_parallelism: Optional[int] = None,
+        # Job management
+        max_retries: int = 3,
+        retry_delay: int = 60,
+    ):
+        import submitit
+
+        self.submitit = submitit
+        self.log_dir = Path(log_dir)
+        self.log_dir.mkdir(exist_ok=True, parents=True)
+
+        # Initialize executor with comprehensive parameters
+        self.executor = submitit.AutoExecutor(folder=self.log_dir)
+
+        # Build parameters dictionary
+        params = {
+            "timeout_min": timeout_min,
+            "cpus_per_task": cpus_per_task,
+            "mem_gb": mem_gb,
+            "slurm_partition": partition,
+            "nodes": nodes,
+            "slurm_ntasks_per_node": ntasks_per_node,
+        }
+
+        # Add optional parameters
+        if array_parallelism:
+            params["slurm_array_parallelism"] = array_parallelism
+
+        self.executor.update_parameters(**params)
+
+        # Job management
+        self.jobs = []
+        self.max_retries = max_retries
+        self.retry_delay = retry_delay
+
+        # Set up comprehensive logging
+        self._setup_logging()
+
+        # Job status tracking
+        self.completed_jobs = []
+        self.failed_jobs = []
+        self.retried_jobs = {}
+
+    def _setup_logging(self):
+        self.logger = logging.getLogger("SLURMPipe")
+        self.logger.setLevel(logging.INFO)
+
+        if not self.logger.handlers:
+            # Main log file
+            main_handler = logging.FileHandler(self.log_dir / "slurm_pipe.log")
+            main_handler.setFormatter(
+                logging.Formatter(
+                    '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+                )
+            )
+            self.logger.addHandler(main_handler)
+
+            # Console handler for real-time feedback
+            console_handler = logging.StreamHandler()
+            console_handler.setFormatter(
+                logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+            )
+            self.logger.addHandler(console_handler)
+
+    def launch(self, fn: Callable, *args, **kwargs) -> object:
+        for attempt in range(self.max_retries + 1):
+            try:
+                job = self.executor.submit(fn, *args, **kwargs)
+                self.logger.info(
+                    f"Launched job {job.job_id} for function {fn.__name__} "
+                    f"(attempt {attempt + 1}/{self.max_retries + 1})"
+                )
+                self.jobs.append(job)
+                return job
+
+            except Exception as e:
+                if attempt < self.max_retries:
+                    self.logger.warning(
+                        f"Job launch failed (attempt {attempt + 1}): {e}. "
+                        f"Retrying in {self.retry_delay} seconds..."
+                    )
+                    time.sleep(self.retry_delay)
+                else:
+                    self.logger.error(
+                        f"Job launch failed after {self.max_retries + 1} attempts: {e}"
+                    )
+                    raise
+
+    def launch_batch(
+        self, fn: Callable, param_list: List[tuple]
+    ) -> List[object]:
+        jobs = []
+        for i, params in enumerate(param_list):
+            args, kwargs = (
+                params
+                if isinstance(params, tuple) and len(params) == 2
+                else (params, {})
+            )
+            try:
+                job = self.launch(fn, *args, **kwargs)
+                jobs.append(job)
+                time.sleep(5)
+            except Exception as e:
+                self.logger.error(f"Failed to launch job {i}: {e}")
+
+        return jobs
+
+    def track_jobs(
+        self, poll_interval: int = 30, detailed_status: bool = True
+    ) -> Dict[str, List]:
+        if not self.jobs:
+            self.logger.warning("No jobs to track")
+            return {"completed": [], "failed": []}
+
+        self.logger.info(f"Tracking {len(self.jobs)} jobs...")
+
+        # Set up signal handlers for graceful shutdown
+        def signal_handler(signum, frame):
+            self.logger.info(
+                f"Received signal {signum}. Attempting to cancel running jobs..."
+            )
+            self.cancel_all_jobs()
+            sys.exit(1)
+
+        # Register handlers for all signals that might terminate the process
+        for sig in [
+            signal.SIGINT,
+            signal.SIGTERM,
+            signal.SIGHUP,
+            signal.SIGQUIT,
+        ]:
+            signal.signal(sig, signal_handler)
+
+        completed_jobs = []
+        failed_jobs = []
+
+        try:
+            while self.jobs:
+                running_jobs = []
+
+                for job in self.jobs:
+                    try:
+                        if job.done():
+                            if job.exception() is None:
+                                result = job.result()
+                                self.logger.info(
+                                    f"Job {job.job_id} completed successfully"
+                                )
+                                if detailed_status:
+                                    self.logger.info(
+                                        f"Result: {str(result)[:200]}..."
+                                    )
+                                completed_jobs.append(job)
+                                self.completed_jobs.append(job)
+                            else:
+                                error = job.exception()
+                                self.logger.error(
+                                    f"Job {job.job_id} failed with exception: {error}"
+                                )
+                                failed_jobs.append(job)
+                                self.failed_jobs.append(job)
+                        else:
+                            running_jobs.append(job)
+                            if detailed_status:
+                                self.logger.info(
+                                    f"Job {job.job_id} status: {job.state}"
+                                )
+                    except Exception as e:
+                        self.logger.error(
+                            f"Error checking job {job.job_id}: {e}"
+                        )
+                        failed_jobs.append(job)
+
+                self.jobs = running_jobs
+
+                if self.jobs:
+                    self.logger.info(
+                        f"Jobs remaining: {len(self.jobs)}, "
+                        f"Completed: {len(completed_jobs)}, "
+                        f"Failed: {len(failed_jobs)}"
+                    )
+                    time.sleep(poll_interval)
+
+        except KeyboardInterrupt:
+            self.logger.info("Job tracking interrupted by user")
+            self.cancel_all_jobs()
+
+        # Final summary
+        self.logger.info(
+            f"Job tracking complete. "
+            f"Completed: {len(completed_jobs)}, Failed: {len(failed_jobs)}"
+        )
+
+        return {"completed": completed_jobs, "failed": failed_jobs}
+
+    def cancel_all_jobs(self):
+        """Cancel all running jobs"""
+        cancelled_count = 0
+        for job in self.jobs:
+            try:
+                if not job.done():
+                    job.cancel()
+                    cancelled_count += 1
+                    self.logger.info(f"Cancelled job {job.job_id}")
+            except Exception as e:
+                self.logger.error(f"Failed to cancel job {job.job_id}: {e}")
+
+        self.logger.info(f"Cancelled {cancelled_count} jobs")
+
+    def get_job_status_summary(self) -> Dict[str, int]:
+        """Get summary of job statuses"""
+        status_counts = {
+            "running": 0,
+            "completed": 0,
+            "failed": 0,
+            "pending": 0,
+        }
+
+        for job in self.jobs:
+            try:
+                if job.done():
+                    if job.exception() is None:
+                        status_counts["completed"] += 1
+                    else:
+                        status_counts["failed"] += 1
+                else:
+                    state = job.state.lower()
+                    if "running" in state:
+                        status_counts["running"] += 1
+                    else:
+                        status_counts["pending"] += 1
+            except Exception:
+                status_counts["failed"] += 1
+
+        return status_counts
+
+    def wait_for_completion(self, timeout: Optional[int] = None) -> bool:
+        """Wait for all jobs to complete with optional timeout"""
+        start_time = time.time()
+
+        while self.jobs:
+            if timeout and (time.time() - start_time) > timeout:
+                self.logger.warning(
+                    f"Timeout reached ({timeout}s). Some jobs may still be running."
+                )
+                return False
+
+            self.track_jobs(poll_interval=30, detailed_status=False)
+
+        return True
+
+
+from multiprocessing import Event as MEvent
+
+
+class MultiprocessingExitEvent:
+    """
+    A simple wrapper around multiprocessing.Event environments.
+    """
+
+    def __init__(self, name=None):
+        self._event = MEvent()
+        self.name = name or "exit-event"
+
+    def set(self):
+        """Set the exit flag"""
+        logger.info(f"Setting local multiprocessing exit event: {self.name}")
+        self._event.set()
+
+    def is_set(self):
+        """Check if the exit flag is set"""
+        return self._event.is_set()
+
+    def clear(self):
+        """Clear the exit flag"""
+        self._event.clear()

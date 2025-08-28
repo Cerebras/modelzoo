@@ -179,6 +179,17 @@ class Converter_RobertaPretrainModel_HF_CS18(
                 ] = torch.zeros(
                     configs[0]["type_vocab_size"], configs[0]["hidden_size"]
                 )
+        else:
+            # HF -> CS
+            # sometimes HF checkpoints are missing the MLM classifier bias
+            # which we need to manually initialize
+            if (
+                "bert_mlm_head.classifier.ffn.0.linear_layer.bias"
+                not in new_state_dict
+            ):
+                new_state_dict[
+                    "bert_mlm_head.classifier.ffn.0.linear_layer.bias"
+                ] = torch.zeros(configs[0]["vocab_size"])
         super().post_model_convert(
             old_state_dict,
             new_state_dict,
@@ -349,6 +360,15 @@ class Converter_RobertaPretrainModel_WithoutOptionalModel_HF_CS21(
     def __init__(self):
         super().__init__()
         self.rules = [
+            # Roberta HF implementation does not have an NSP head. It also
+            # shouldn't have a pooler head. However, some open source
+            # checkpoints have these weights which need to be ignored.
+            ConversionRule(
+                [r"roberta.pooler.dense\.(?:weight|bias)"],
+                exists="left",
+                action=None,
+            ),
+            # Proceed with conversion rules as normal:
             ConversionRule(
                 [
                     EquivalentSubkey("roberta.", "bert_encoder."),

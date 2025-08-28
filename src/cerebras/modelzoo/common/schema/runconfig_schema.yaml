@@ -243,6 +243,10 @@ properties:
     type:
     - integer
     - 'null'
+  chf_memory_gi:
+    type:
+    - integer
+    - 'null'
   experimental:
     listeners:
       type:

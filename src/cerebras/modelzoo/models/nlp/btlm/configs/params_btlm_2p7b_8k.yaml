@@ -93,6 +93,10 @@ trainer:
     logging:
       log_steps: 1
     callbacks:
+    - ScopedTrainFlags:
+        csx.performance.micro_batch_size: 40
+    - ScopedValidateFlags:
+        csx.performance.micro_batch_size: 15
     - ComputeNorm: {}
   fit:
     train_dataloader:
@@ -102,14 +106,14 @@ trainer:
       shuffle_seed: 1
       batch_size: 480
       use_worker_cache: false
-      num_workers: 8
+      num_workers: 16
     val_dataloader: &val_dataloader
       data_processor: GptHDF5MapDataProcessor
       data_dir: ./language/datasets/SlimPajama/val_msl8192/
       batch_size: 15
       shuffle: false
       use_worker_cache: false
-      num_workers: 8
+      num_workers: 16
   validate:
     val_dataloader: *val_dataloader
   validate_all:

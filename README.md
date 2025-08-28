@@ -1,4 +1,4 @@
-# Cerebras ModelZoo
+# Cerebras Model Zoo
 
 <picture>
   <source srcset="images/dark-image-nb.png" media="(prefers-color-scheme: dark)">
@@ -8,7 +8,7 @@
 
 ## Introduction
 
-The Cerebras ModelZoo is a collection of deep learning models and utilities optimized to run on Cerebras hardware. The repository provides reference implementations, configuration files, and utilities that demonstrate best practices for training and deploying models using Cerebras systems. 
+The Cerebras Model Zoo is a collection of deep learning models and utilities optimized to run on Cerebras hardware. The repository provides reference implementations, configuration files, and utilities that demonstrate best practices for training and deploying models using Cerebras systems. 
 
 ### Key Features and Components
 

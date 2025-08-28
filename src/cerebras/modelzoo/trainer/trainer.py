@@ -1165,7 +1165,7 @@ class Trainer:
             self.call("on_save_trainer_state", state_dict["__trainer_state__"])
 
             # atomic ckpt saving
-            with cstorch.saver.storage.use_external_link(True):
+            with cstorch.storage.serializers.use_external_link(True):
                 tmp_filepath = Path(
                     f"{self.autorestart.trainer_state_file}.{str(uuid.uuid4())[:8]}.tmp"
                 )

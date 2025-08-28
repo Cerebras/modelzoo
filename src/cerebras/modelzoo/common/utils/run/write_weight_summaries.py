@@ -18,8 +18,9 @@ import argparse
 
 import numpy as np
 import pandas as pd
+import torch
 
-from cerebras.pytorch.saver import PyTorchH5Saver
+import cerebras.pytorch as cstorch
 
 
 def parse_args():
@@ -35,21 +36,10 @@ def parse_args():
 
 def read_checkpoint(input_path, framework):
     assert framework in ("pt"), f"Unsupported framework {framework}"
-    if PyTorchH5Saver.is_valid_checkpoint(input_path):
-        saver = PyTorchH5Saver()
-        for name in saver.tensor_names(input_path):
-            yield name, saver.load_tensor(input_path, name)
-    else:
-        try:
-            state_dict = torch.load(input_path)
-        except Exception as e:
-            raise RuntimeError(
-                f"{input_path} is not a valid H5 checkpoint or "
-                f"a valid torch serialized checkpoint"
-            ) from e
-        state_dict = PyTorchH5Saver().flatten_state_dict(state_dict)
-        for name, weight in state_dict:
-            yield name, weight
+    state_dict = cstorch.load(input_path)
+    flattened_vals, spec = torch.utils._pytree.tree_flatten(state_dict)
+    flattened_keys = map(".".join, cstorch.utils.nest.recurse_spec(spec))
+    yield from zip(flattened_keys, flattened_vals)
 
 
 def main():

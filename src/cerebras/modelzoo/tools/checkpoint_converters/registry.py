@@ -168,7 +168,7 @@ from cerebras.modelzoo.tools.checkpoint_converters.gpt_backbone import (  # noqa
     Converter_GPT2LMHeadModel_GPTBackboneLMHeadModel_CS24,
 )
 
-from cerebras.modelzoo.tools.checkpoint_converters.qwen2 import (  # noqa
+from cerebras.modelzoo.tools.checkpoint_converters.internal.qwen2 import (  # noqa
     Converter_Qwen2Model_HF_CS25,
     Converter_Qwen2ForCausalLM_HF_CS25,
 )

@@ -705,6 +705,7 @@ class RestartableTrainer(ClassLogger):
         run_num: int = 0,
     ) -> None:
         """Push the run information to Grafana via the telemetry client.
+
         Args:
             workflow_id: The workflow ID of the current autorestart job.
             run_instance: The RunInstance object containing information about the current run.

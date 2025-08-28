@@ -22,6 +22,13 @@ def set_defaults(params):
     Args:
         params: An dict/object containing the parameters
     """
+    if "trainer" not in params:
+        _set_defaults(params)
+    else:
+        _set_defaults_v2(params)
+
+
+def _set_defaults(params):
     for section in ["train_input", "eval_input"]:
         for key in ["vocab_file"]:
             if params.get(section, {}).get(key):
@@ -58,3 +65,45 @@ def set_defaults(params):
         and params["runconfig"].get("precision_opt_level", 1) == 1
     ):
         params["model"]["attention_softmax_fp32"] = False
+
+
+def _set_defaults_v2(params):
+    if "base" in params:
+        params = params["base"]
+    fit = params.get("trainer", {}).get("fit", {})
+    for section in ["train_dataloader", "val_dataloader"]:
+        for key in ["vocab_file"]:
+            if fit.get(section, {}).get(key):
+                fit[section][key] = os.path.abspath(fit[section][key])
+
+    model_params = params.get("trainer", {}).get("init", {}).get("model", {})
+    model_params.setdefault("disable_nsp", False)
+    # Pass settings into data loader.
+    for model_key in (
+        "disable_nsp",
+        "vocab_size",
+    ):
+        for input_key in ("train_dataloader", "val_dataloader"):
+            fit[input_key][model_key] = model_params.get(model_key)
+
+    model_params.setdefault(
+        "max_position_embeddings",
+        fit["train_dataloader"]["max_sequence_length"],
+    )
+    precision_params = (
+        params.get("trainer", {}).get("init", {}).get("precision", {})
+    )
+    precision_params.setdefault("fp16_type", "float16")
+    precision_params.setdefault("log_loss_scale", False)
+
+    # Attention softmax is fp32 by default.
+    model_params["attention_softmax_fp32"] = True
+    # Attention softmax is bf16 for precision_opt_level: 2
+    if precision_params.get("precision_opt_level", 1) == 2:
+        model_params["attention_softmax_fp32"] = False
+
+    if (
+        precision_params.get("fp16_type", "bfloat16") == "cbfloat16"
+        and precision_params.get("precision_opt_level", 1) == 1
+    ):
+        model_params["attention_softmax_fp32"] = False

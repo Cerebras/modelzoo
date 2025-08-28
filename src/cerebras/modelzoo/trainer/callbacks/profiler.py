@@ -569,8 +569,19 @@ class DurationProfiler(Callback):
 
         stages_missing_duration = set()
         for stage in self.schedule.stages_remaining:
-            if not stage.steps or not batch_duration.get(stage.name, None):
+            if (
+                not stage.steps
+                or not batch_duration.get(stage.name, None)
+                or "duration" not in self.setup_times[stage.name]
+                or "duration" not in self.teardown_times[stage.name]
+            ):
+                # We mark a stage as missing duration if it's missing any of:
+                # number of steps, batch duration, or setup/teardown duration.
                 stages_missing_duration.add(stage.name)
+            if not stage.steps or not batch_duration.get(stage.name, None):
+                # We can estimate a lower bound time for future stages as long
+                # as we have the number of steps and the batch duration. If we
+                # don't have those, there's nothing for us to do.
                 continue
             if "duration" in (setup_time := self.setup_times[stage.name]):
                 time_remaining += setup_time["duration"]
