@@ -29,25 +29,22 @@ Classes:
 
 import copy
 import functools
-import gzip
 import inspect
-import io
-import json
 import logging
 import numbers
 import os
 import sys
-import tarfile
 import traceback
 from bisect import bisect_left
 from collections import defaultdict
 from contextlib import contextmanager
 from typing import Any, Callable, Dict, Iterator, List, Optional
 
-import jsonlines
-import pyarrow.parquet as pq
-import zstandard
+from datasets import IterableDataset, IterableDatasetDict, load_dataset
 
+from cerebras.modelzoo.data_preparation.data_preprocessing.custom_dataset_loader.custom_dataset_loader import (
+    DatasetLoader,
+)
 from cerebras.modelzoo.data_preparation.data_preprocessing.vsl_finetuning_token_generator import (
     VSLFinetuningTokenGenerator,
 )
@@ -329,6 +326,8 @@ class Reader:
         keys: Dict,
         read_hook_fn: Callable,
         checkpoint_args: Dict,
+        num_nodes: int = 1,
+        rank: int = 0,
         **kwargs: Optional[Dict],
     ) -> None:
         """
@@ -348,58 +347,12 @@ class Reader:
             kwargs.get("skip_jsonl_decoding_error", False) if kwargs else False
         )
         self.checkpoint_args = checkpoint_args
-
-    def handle_jsonl(
-        self,
-        jsonl_reader: Any,
-        get_meta: bool,
-        autojoin_paragraphs: bool,
-        para_joiner: str,
-    ) -> Iterator[Dict[str, Any]]:
-        """
-        Handle JSONL data and yield processed entries.
-
-        Args:
-            jsonl_reader (Any): The JSONL reader object.
-            get_meta (bool): Flag to determine if meta data should be extracted.
-            autojoin_paragraphs (bool): Flag to auto join paragraphs.
-            para_joiner (str): Paragraph joiner string.
-
-        Returns:
-            Iterator[Dict[str, Any]]: Yields processed data entries.
-        """
-        for idx, ob in enumerate(
-            jsonl_reader.iter(
-                type=dict, skip_invalid=self.skip_jsonl_decoding_error
-            )
-        ):
-            if isinstance(ob, str):
-                assert not get_meta
-                yield {"text": ob, "doc_idx": idx}
-                continue
-
-            entry = {}
-            # Check if all required keys are missing from ob
-            if all(value not in ob for value in self.keys.values()):
-                raise ValueError(
-                    f"Fields {list(self.keys.values())} do not exist in the input entry"
-                )
-
-            for key, value in self.keys.items():
-                entry[value] = (
-                    str(ob[value])
-                    if isinstance(ob.get(value), numbers.Number)
-                    else ob.get(value)
-                )
-
-            if get_meta and "meta" in ob:
-                entry["meta"] = ob["meta"]
-
-            yield entry
+        self.num_nodes = num_nodes
+        self.rank = rank
 
     def accumulate_and_yield(
         self,
-        data_gen: Iterator[Dict[str, Any]],
+        data_gen: IterableDataset,
     ) -> Iterator[Any]:
         """
         Accumulate data and yield in chunks.
@@ -417,8 +370,6 @@ class Reader:
         df.set_df_indices(file_index, df_index_in_file, curr_df_global_index)
 
         for entry in data_gen:
-            entry.pop("meta", None)
-
             entry_size = sum(get_data_size(val) for val in entry.values())
             # If there's only one key and its size exceeds the chunk size
             if len(entry) == 1 and entry_size > self.read_chunk_size:
@@ -472,228 +423,72 @@ class Reader:
 
             self.prefix_df = copy.deepcopy(df)
 
-    def read_txt(self, file: str) -> Iterator[Any]:
-        """
-        Read and process text file.
-
-        Args:
-            file (str): Path of the current file
-            checkpoint_args (tuple): Contains the current file starting index , current document starting index
-        Returns:
-            Iterator[Any]: Yields processed data lines.
-
-        """
-
-        def entry_gen():
-            with open(file, "r") as fh:
-                text = fh.read()
-                entry = {self.keys["text_key"]: text}
-                yield entry
-
-        yield from self.accumulate_and_yield(
-            entry_gen(),
+    def number_to_string_ds(self, filtered_dataset):
+        return filtered_dataset.map(
+            lambda x: {
+                k: str(x[k]) if isinstance(x[k], numbers.Number) else x[k]
+                for k in self.keys.values()
+            }
         )
 
-    def read_jsongz(
-        self,
-        file: str,
-    ) -> Iterator[Any]:
-        """
-        Read and process gzipped JSON file.
+    def parse_jsonl_zst_tar(self, filepath, fmt, num_nodes=1, rank=0):
+        import io
+        import tarfile
 
-        Args:
-            file (str): Path of the current file
-            checkpoint_args (tuple): Contains the current file starting index , current document starting index
-        Returns:
-            Iterator[Any]: Yields processed data entries.
-        """
-        with gzip.open(file, "rb") as f:
-            text_key = self.keys["text_key"]
-            data_gen = (
-                {
-                    text_key: json.loads(line.decode("utf-8").strip())[
-                        text_key
-                    ],
-                }
-                for idx, line in enumerate(f)
-            )
-            yield from self.accumulate_and_yield(data_gen)
+        import jsonlines
+        import zstandard
+        from datasets import IterableDataset
 
-    def read_jsonl(
-        self,
-        file: str,
-        get_meta: bool = False,
-        autojoin_paragraphs: bool = True,
-        para_joiner: str = "\n\n",
-    ) -> Iterator[Any]:
-        """
-        Read and process JSONL file.
+        # Step 1: Open the .tar and find the .jsonl.zst file automatically
+        def stream_jsonl_from_tar_zst(
+            tar_path, selected_features, num_nodes, rank
+        ):
+            with tarfile.open(tar_path, "r") as archive:
+                for member in archive:
+                    if member.name.endswith(".jsonl.zst"):
+                        with archive.extractfile(member) as f:
+                            cctx = zstandard.ZstdDecompressor()
+                            reader = io.BufferedReader(cctx.stream_reader(f))
+                            rdr = jsonlines.Reader(reader)
+                            for idx, obj in enumerate(rdr.iter(type=dict)):
+                                # Filter only selected keys
+                                if idx % num_nodes == rank:
+                                    record = {
+                                        k: obj.get(k, None)
+                                        for k in selected_features
+                                    }
+                                    yield record
 
-        Args:
-            file (str): Path of the current file
-            checkpoint_args (tuple): Contains the current file starting index , current document starting index
-            get_meta (bool): Flag to determine if meta data should be extracted.
-            autojoin_paragraphs (bool): Flag to auto join paragraphs.
-            para_joiner (str): Paragraph joiner string.
-
-        Returns:
-            Iterator[Any]: Yields processed data entries.
-        """
-
-        with open(file, "r", errors='ignore') as fh:
-            rdr = jsonlines.Reader(fh)
-            data_gen = self.handle_jsonl(
-                rdr, get_meta, autojoin_paragraphs, para_joiner
-            )
-            yield from self.accumulate_and_yield(data_gen)
-
-    def read_jsonl_zst(
-        self,
-        file: str,
-        checkpoint_args: tuple,
-        get_meta: bool = False,
-        autojoin_paragraphs: bool = True,
-        para_joiner: str = "\n\n",
-    ) -> Iterator[Any]:
-        """
-        Read and process ZST compressed JSONL file.
-
-        Args:
-            file (str): Path of the current file
-            checkpoint_args (tuple): Contains the current file starting index , current document starting index
-            get_meta (bool): Flag to determine if meta data should be extracted.
-            autojoin_paragraphs (bool): Flag to auto join paragraphs.
-            para_joiner (str): Paragraph joiner string.
-
-        Returns:
-            Iterator[Any]: Yields processed data entries.
-        """
-
-        with open(file, "rb") as fh:
-            cctx = zstandard.ZstdDecompressor()
-            reader = io.BufferedReader(cctx.stream_reader(fh))
-            rdr = jsonlines.Reader(reader)
-            data_gen = self.handle_jsonl(
-                rdr, get_meta, autojoin_paragraphs, para_joiner
-            )
-            yield from self.accumulate_and_yield(data_gen)
-
-    def read_jsonl_tar(
-        self,
-        file: str,
-        get_meta: bool = False,
-        autojoin_paragraphs: bool = True,
-        para_joiner: str = "\n\n",
-    ) -> Iterator[Any]:
-        """
-        Read and process TAR archive containing ZST compressed JSONL files.
-
-        Args:
-            file (str): Path of the current file
-            checkpoint_args (tuple): Contains the current file starting index , current document starting index
-            get_meta (bool): Flag to determine if meta data should be extracted.
-            autojoin_paragraphs (bool): Flag to auto join paragraphs.
-            para_joiner (str): Paragraph joiner string.
-
-        Returns:
-            Iterator[Any]: Yields processed data entries.
-        """
-
-        with tarfile.open(file, "r") as archive:
-            for member in archive:
-                with archive.extractfile(member) as f:
-                    cctx = zstandard.ZstdDecompressor()
-                    reader = io.BufferedReader(cctx.stream_reader(f))
-                    rdr = jsonlines.Reader(reader)
-                    data_gen = self.handle_jsonl(
-                        rdr,
-                        get_meta,
-                        autojoin_paragraphs,
-                        para_joiner,
-                    )
-                    yield from self.accumulate_and_yield(
-                        data_gen,
-                    )
-
-    def read_parquet(self, file: str) -> Iterator[Any]:
-        """
-        Read and process Parquet file.
-
-        Args:
-            file (str): Path of the current file
-
-        Returns:
-            Iterator[Any]: Yields processed data rows.
-        """
-
-        parquet_file = pq.ParquetFile(file)
-
-        def entry_gen() -> Iterator[Dict[str, Any]]:
-            for row_group_index in range(parquet_file.num_row_groups):
-                table = parquet_file.read_row_group(row_group_index)
-                columns = {
-                    value: table.column(value)
-                    for key, value in self.keys.items()
-                    if value != None
-                }
-
-                for i in range(table.num_rows):
-
-                    entry = {
-                        key: (
-                            str(col[i].as_py())
-                            if isinstance(col[i].as_py(), numbers.Number)
-                            else col[i].as_py()
-                        )
-                        for key, col in columns.items()
-                    }
-                    yield entry
-
-        yield from self.accumulate_and_yield(entry_gen())
-
-    def read_fasta(
-        self,
-        file: str,
-    ) -> Iterator[Dict[str, Any]]:
-        """
-        Read and process Fasta file without using BioPython.
-        Args:
-            file (str): Path of the current file
-        Returns:
-            Iterator[Dict[str, Any]]: Yields processed data rows.
-        """
-
-        def entry_gen():
-            with open(file, 'r') as fasta_file:
-                record_id = None
-                sequence_lines = []
-                idx = -1  # Initialize sequence index
-                for line in fasta_file:
-                    line = line.strip()
-                    if not line:
-                        continue  # Skip empty lines
-                    if line.startswith(">"):
-                        if record_id is not None:
-                            # Yield the previous record
-                            yield {
-                                "text": ''.join(sequence_lines),
-                            }
-                        record_id = line[
-                            1:
-                        ]  # Remove the ">" symbol and store the record ID
-                        sequence_lines = (
-                            []
-                        )  # Reset the sequence for a new record
-                        idx += 1  # Increment sequence index when a new record is found
-                    else:
-                        sequence_lines.append(line)
-                # Don't forget to yield the last record in the file
-                if record_id is not None:
-                    yield {"text": ''.join(sequence_lines), "doc_idx": idx}
-
-        yield from self.accumulate_and_yield(
-            entry_gen(),
+        generator = lambda: stream_jsonl_from_tar_zst(
+            filepath, self.keys.values(), num_nodes, rank
         )
+        ds = IterableDataset.from_generator(generator)
+        return IterableDatasetDict({"train": self.number_to_string_ds(ds)})
+
+    def load_supported_format(self, filepath, fmt):
+        ds = load_dataset(fmt, data_files={"train": [filepath]}, streaming=True)
+
+        filtered_dataset = ds.map(
+            lambda x: {k: x.get(k, None) for k in self.keys.values()}
+        )
+        return self.number_to_string_ds(filtered_dataset)
+
+    def load_fasta_dataset(self, path, data_files, selected_features):
+        ds = load_dataset(
+            path=path,
+            data_files=data_files,
+            streaming=True,
+            trust_remote_code=True,
+            selected_features=selected_features,
+            num_nodes=self.num_nodes,
+            rank=self.rank,
+        )
+        return self.number_to_string_ds(ds)
+
+    def shard_dataset(self, dataset):
+        for i, sample in enumerate(dataset):
+            if i % self.num_nodes == self.rank:
+                yield sample
 
     def stream_data(
         self, get_meta: bool = False, output_dir: str = None
@@ -722,29 +517,80 @@ class Reader:
                     f.write(inspect.getsource(self.read_hook_fn))
 
         file_list = self.file_list[self.checkpoint_args["file_index"] :]
+
+        custom_loader_path = os.path.abspath(inspect.getfile(DatasetLoader))
+
+        def build_load_supported_format_args(filepath, fmt):
+            return dict(
+                filepath=filepath,
+                fmt=fmt,
+            )
+
+        def build_load_fasta_dataset_args(filepath, fmt):
+            return dict(
+                path=custom_loader_path,
+                data_files={"train": [filepath]},
+                selected_features=list(self.keys.values()),
+            )
+
+        format_map = {
+            ".jsonl": (
+                self.load_supported_format,
+                "json",
+                build_load_supported_format_args,
+            ),
+            ".jsonl.zst": (
+                self.load_supported_format,
+                "json",
+                build_load_supported_format_args,
+            ),
+            ".json.gz": (
+                self.load_supported_format,
+                "json",
+                build_load_supported_format_args,
+            ),
+            ".parquet": (
+                self.load_supported_format,
+                "parquet",
+                build_load_supported_format_args,
+            ),
+            ".txt": (
+                self.load_supported_format,
+                "text",
+                build_load_supported_format_args,
+            ),
+            ".jsonl.zst.tar": (
+                self.parse_jsonl_zst_tar,
+                "dummy_arg",
+                build_load_supported_format_args,
+            ),
+            ".fasta": (
+                self.load_fasta_dataset,
+                "dummy_arg",
+                build_load_fasta_dataset_args,
+            ),
+        }
+
         for f in file_list:
             try:
-                if f.endswith(".jsonl"):
-                    yield from self.read_jsonl(f, get_meta)
-                elif f.endswith(".jsonl.zst"):
-                    yield from self.read_jsonl_zst(f, get_meta)
-                elif f.endswith(".jsonl.zst.tar"):
-                    yield from self.read_jsonl_tar(f, get_meta)
-                elif f.endswith(".txt"):
-                    assert not get_meta
-                    yield from self.read_txt(f)
-                elif f.endswith(".json.gz"):
-                    assert not get_meta
-                    yield from self.read_jsongz(f)
-                elif f.endswith(".parquet"):
-                    assert not get_meta
-                    yield from self.read_parquet(f)
-                elif f.endswith(".fasta"):
-                    assert not get_meta
-                    yield from self.read_fasta(f)
-                else:
+                match_found = False
+                for suffix, (func, fmt, kwargs_fn) in format_map.items():
+                    if f.endswith(suffix):
+                        match_found = True
+                        # enforce one-feature rule on text files
+                        if suffix == ".txt" or suffix == ".fasta":
+                            assert (
+                                len(self.keys.values()) == 1
+                            ), f"{suffix} inputs require exactly one selected_feature"
+                        kwargs = kwargs_fn(f, fmt)
+                        ds = func(**kwargs)
+                        yield from self.accumulate_and_yield(
+                            self.shard_dataset(ds['train'])
+                        )
+                        break
+                if not match_found:
                     logger.warning(
-                        f"Skipping {f} as streaming for that filetype is not implemented"
+                        f"Unsupported file format for {f}. Skipping this file"
                     )
             except Exception as e:
                 logger.error(f"Error reading file {f}: {e}. Skipping this file")

@@ -132,7 +132,7 @@ class Reader:
                 }
                 for idx, line in enumerate(f)
             )
-            yield data_gen
+            yield from data_gen
 
     def read_jsonl(
         self,

@@ -29,7 +29,7 @@ from collections import defaultdict
 from multiprocessing import Event as MEvent
 from multiprocessing import Lock, Pool, Process, Queue, Value, cpu_count
 from threading import Event, Thread
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
 import h5py
 import numpy as np
@@ -45,6 +45,7 @@ from cerebras.modelzoo.data_preparation.data_preprocessing.pretraining_token_gen
     PretrainingTokenGenerator,
 )
 from cerebras.modelzoo.data_preparation.data_preprocessing.utils import (
+    MultiprocessingExitEvent,
     calculate_total_size,
     check_and_create_output_dirs,
     dump_args,
@@ -88,7 +89,11 @@ logger.setLevel(logging.INFO)
 
 
 class DataPreprocessor:
-    def __init__(self, params: Dict, exit_event: Optional[Event] = None):
+    def __init__(
+        self,
+        params: Dict,
+        exit_event: MultiprocessingExitEvent = None,
+    ):
         """
         Initialize the class with given parameters.
         Args:
@@ -99,8 +104,12 @@ class DataPreprocessor:
         self.json_params_file = None
         self.running_avg_processing_time = 0
         self.chunks_processed = 0
-        self.process_params()
+        self.multi_node_enabled = (
+            self.params["setup"].get("slurm") is not None
+            and self.params["setup"].get("num_nodes", 1) > 1
+        )
         # Exit event is triggered once we get a signal interrupt to premeptively close the pipeline.
+        self.process_params()
         self.exit_event = exit_event
 
     def process_params(self) -> None:
@@ -131,13 +140,24 @@ class DataPreprocessor:
         """
         self.output_dir = self.params["setup"].get("output_dir", "./output/")
         logger.info(f"\nWriting data to {self.output_dir}.\n")
-        self.json_params_file = os.path.join(
-            self.output_dir, "data_params.json"
-        )
+        json_file_name = "data_params.json"
+        if self.multi_node_enabled:
+            rank = self.params["setup"].get("rank", 0)
+            json_file_name = f"data_params_{rank}.json"
+
+        self.json_params_file = os.path.join(self.output_dir, json_file_name)
         self.checkpoint_path = os.path.join(self.output_dir, "checkpoint.txt")
 
         if not os.path.exists(self.json_params_file):
-            check_and_create_output_dirs(self.output_dir, filetype="h5")
+            if self.multi_node_enabled:
+                logger.warning(
+                    f"Override mode set to True for multi node setup. Over riding files in: {self.output_dir}"
+                )
+            check_and_create_output_dirs(
+                self.output_dir,
+                filetype="h5",
+                overwrite=self.multi_node_enabled,
+            )
             dump_args(self.params, self.json_params_file)
 
     def handle_input_files(self) -> None:
@@ -194,8 +214,9 @@ class DataPreprocessor:
                 self.token_generator_name = self.token_generator_name.split(
                     ":"
                 )[1]
-
         self.image_dir = self.params["setup"].get("image_dir")
+        self.num_nodes = self.params["setup"].get("num_nodes", 1)
+        self.rank = self.params["setup"].get("rank", 0)
 
     def check_unused_params(self) -> None:
         """
@@ -506,6 +527,9 @@ class DataPreprocessor:
             "vocab_size": self.get_vocab_size(),
             "features": getattr(self.token_generator, 'features', []),
         }
+        logger.info(
+            f"Updated args: {updated_args}, file name: {self.json_params_file}"
+        )
         update_args(updated_args, self.json_params_file)
 
     def initialize_gpt2tokenizer(
@@ -689,6 +713,11 @@ class DataPreprocessor:
 
         for pid in range(num_writers):
             process_checkpoint_path = root + f'_process_{pid}.txt'
+            if self.multi_node_enabled:
+                process_checkpoint_path = (
+                    root + f'_process_{pid}_{self.rank}.txt'
+                )
+
             if self.resume_from_checkpoint and os.path.isfile(
                 process_checkpoint_path
             ):
@@ -725,6 +754,10 @@ class DataPreprocessor:
 
         root, _ = os.path.splitext(self.checkpoint_path)
         process_checkpoint_path = root + f'_process_{pid}.txt'
+
+        if self.multi_node_enabled:
+            process_checkpoint_path = root + f'_process_{pid}_{self.rank}.txt'
+
         ## write remaining prefix from all processes for LMData tasks when pack sequences is set to true
         if not (
             self.token_generator_name == "PretrainingTokenGenerator"
@@ -733,9 +766,13 @@ class DataPreprocessor:
             return
         else:
             output_file_name = os.path.join(
-                self.output_dir,
-                f"output_chunk_{pid}_prefix.h5",
+                self.output_dir, f"output_chunk_{pid}_prefix.h5"
             )
+            if self.multi_node_enabled:
+                output_file_name = os.path.join(
+                    self.output_dir,
+                    f"output_chunk_{pid}_{self.rank}_prefix.h5",
+                )
 
             prefix_stats = {
                 "num_pad_tokens": 0,
@@ -890,7 +927,7 @@ class DataPreprocessor:
         Parameters:
             file_paths: list of file_paths.
             process_idx: Index of current process among all process spawned for file split
-            process_checkpoints (Tuple[int, int, int]): File index, df_index_in_file, and df_global_index.
+            process_checkpoints (Tuple[int, int, int]): File index, df_index_in_file and df_global_index.
             progress_counter (Value[int]): Shared counter tracking number of processed chunks.
             chunk_locks : List of locks for appending to hdf5 files during shuffling
 
@@ -916,6 +953,8 @@ class DataPreprocessor:
                 read_hook_fn=self.read_hook_fn,
                 checkpoint_args=checkpoint_args,
                 skip_jsonl_decoding_error=self.skip_jsonl_decoding_error,
+                num_nodes=self.num_nodes,
+                rank=self.rank,
             )
 
             starting_chunk_number = (
@@ -924,6 +963,11 @@ class DataPreprocessor:
             global_chunk_number = starting_chunk_number
             root, extension = os.path.splitext(self.checkpoint_path)
             process_checkpoint_path = root + f'_process_{process_idx}.txt'
+
+            if self.multi_node_enabled:
+                process_checkpoint_path = (
+                    root + f'_process_{process_idx}_{self.rank}.txt'
+                )
 
             buffer = {}
             data_stats_buffer = (
@@ -936,7 +980,6 @@ class DataPreprocessor:
                     self.exit_event and self.exit_event.is_set()
                 ):
                     break
-
                 if (
                     self.resume_from_checkpoint
                     and global_chunk_number <= process_checkpoints[2]
@@ -977,6 +1020,12 @@ class DataPreprocessor:
                             self.output_dir,
                             f"output_chunk_{process_idx}_{global_chunk_number}.h5",
                         )
+                        if self.multi_node_enabled:
+                            output_file_name = os.path.join(
+                                self.output_dir,
+                                f"output_chunk_{process_idx}_{global_chunk_number}_{self.rank}.h5",
+                            )
+
                         with h5py.File(output_file_name, "w") as h5f:
                             self.save_buffer_to_hdf5(
                                 h5f, buffer, self.write_in_batch
@@ -1023,6 +1072,12 @@ class DataPreprocessor:
                     self.output_dir,
                     f"output_chunk_{process_idx}_{global_chunk_number}.h5",
                 )
+                if self.multi_node_enabled:
+                    output_file_name = os.path.join(
+                        self.output_dir,
+                        f"output_chunk_{process_idx}_{global_chunk_number}_{self.rank}.h5",
+                    )
+
                 with h5py.File(output_file_name, "w") as h5f:
                     self.save_buffer_to_hdf5(h5f, buffer, self.write_in_batch)
                 checkpoint_data = (
@@ -1064,7 +1119,7 @@ class DataPreprocessor:
         process_file_lists = [[] for _ in range(self.processes)]
         process_checkpoints = self.read_checkpoint(self.processes)
         num_chunks_read = min(
-            [checkpoint_args[-1] for checkpoint_args in process_checkpoints]
+            [checkpoint_args[2] for checkpoint_args in process_checkpoints]
         )
 
         # Assign files to each process
@@ -1156,7 +1211,7 @@ class DataPreprocessor:
         Reads data from input files and distributes them to the tokenizer queues.
 
         Args:
-            process_checkpoints (List[Tuple[int, int, int]]): List of File index, doc start index, start_chunk_number,
+            process_checkpoints (List[Tuple[int, int, int]]): List of File index, doc start index, start_chunk_number
 
         """
         try:
@@ -1180,6 +1235,8 @@ class DataPreprocessor:
                 read_hook_fn=self.read_hook_fn,
                 checkpoint_args=checkpoint_args,
                 skip_jsonl_decoding_error=self.skip_jsonl_decoding_error,
+                num_nodes=self.num_nodes,
+                rank=self.rank,
             )
 
             starting_chunk_number = (
@@ -1347,6 +1404,11 @@ class DataPreprocessor:
         root, extension = os.path.splitext(self.checkpoint_path)
         process_checkpoint_path = root + f'_process_{writer_idx}.txt'
 
+        if self.multi_node_enabled:
+            process_checkpoint_path = (
+                root + f'_process_{writer_idx}_{self.rank}.txt'
+            )
+
         if self.shuffle:
             np.random.seed(self.shuffle_seed + writer_idx)
 
@@ -1396,6 +1458,12 @@ class DataPreprocessor:
                                 self.output_dir,
                                 f"output_chunk_{writer_idx}_{chunk_number}.h5",
                             )
+                            if self.multi_node_enabled:
+                                output_file_name = os.path.join(
+                                    self.output_dir,
+                                    f"output_chunk_{writer_idx}_{chunk_number}_{self.rank}.h5",
+                                )
+
                             with h5py.File(output_file_name, "w") as h5f:
                                 self.save_buffer_to_hdf5(
                                     h5f, buffer, self.write_in_batch
@@ -1443,6 +1511,12 @@ class DataPreprocessor:
                     self.output_dir,
                     f"output_chunk_{writer_idx}_{chunk_number}.h5",
                 )
+                if self.multi_node_enabled:
+                    output_file_name = os.path.join(
+                        self.output_dir,
+                        f"output_chunk_{writer_idx}_{chunk_number}_{self.rank}.h5",
+                    )
+
                 with h5py.File(output_file_name, "w") as h5f:
                     self.save_buffer_to_hdf5(h5f, buffer, self.write_in_batch)
                 checkpoint_data = (
@@ -1665,6 +1739,11 @@ class DataPreprocessor:
             output_file_name = os.path.join(
                 output_dir, f"output_chunk_{idx_seq}.h5"
             )
+            if self.multi_node_enabled:
+                output_file_name = os.path.join(
+                    output_dir, f"output_chunk_{idx_seq}_{self.rank}.h5"
+                )
+
             lock = (
                 chunk_locks[idx_seq % len(chunk_locks)] if chunk_locks else None
             )

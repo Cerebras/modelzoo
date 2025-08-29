@@ -14,7 +14,6 @@
 
 import copy
 import math
-from dataclasses import dataclass
 from typing import Callable, List, Optional, Union
 
 import torch
@@ -23,6 +22,9 @@ from torch import Tensor, nn
 import cerebras.pytorch as cstorch
 import cerebras.pytorch.nn.functional as F
 from cerebras.modelzoo.common.half_dtype import maybe_to_half_dtype
+from cerebras.modelzoo.common.utils.model.mixture_of_experts_api import (
+    expert_annotation,
+)
 from cerebras.modelzoo.layers.activations import (
     get_activation,
     is_glu_activation,
@@ -32,61 +34,6 @@ from cerebras.modelzoo.layers.FeedForwardNetwork import (
     FeedForwardNetwork,
     FeedForwardNetworkConfig,
 )
-from cerebras.pytorch.backend import use_cs
-from cerebras.pytorch.core.annotation import AnnotationMode, create_annotation
-
-
-@dataclass
-class ExpertsConfig(AnnotationMode.Config):
-    num_experts: int = 0
-    top_k: int = 0
-    expert_block_id: int = 0
-
-    def __post_init__(self):
-        if not isinstance(self.num_experts, (int, type(None))):
-            raise TypeError(
-                f"Expected `num_experts` to be {int}, got {type(self.num_experts)}."
-            )
-        if not isinstance(self.top_k, (int, type(None))):
-            raise TypeError(
-                f"Expected `top_k` to be {int}, got {type(self.top_k)}."
-            )
-        if not isinstance(self.expert_block_id, (int, type(None))):
-            raise TypeError(
-                f"Expected `expert_block_id` to be {int}, got {type(self.expert_block_id)}."
-            )
-
-
-def get_attribute(config: ExpertsConfig, is_backward: bool):
-    """Returns expert_block attribute"""
-    return AnnotationMode.Attribute(
-        'expert_block_info',
-        {
-            "num_experts": config.num_experts,
-            "top_k": config.top_k,
-            "expert_block_id": config.expert_block_id,
-        },
-    )
-
-
-# Define function decorator.
-def expert_annotation(num_experts: int, top_k: int, expert_block_id: int):
-    """
-    Returns an annotating function which wraps the given function.
-    """
-    if not use_cs():
-        return lambda fn: fn
-
-    return create_annotation(
-        ExpertsConfig,
-        get_attribute,
-        num_experts=num_experts,
-        top_k=top_k,
-        expert_block_id=expert_block_id,
-        enable_fwd=True,
-        enable_bwd=True,
-    )
-
 
 INVALID_INDEX = -1
 
@@ -376,7 +323,7 @@ class SparseActLinear(nn.Module):
         input = maybe_to_half_dtype(input)
         weight = maybe_to_half_dtype(self.weight)
 
-        output = F.sparse_act_matmul(input, act_mask.to(torch.int64), weight)
+        output = F.sparse_act_matmul(input, act_mask.to(torch.int16), weight)
 
         B, S, H = output.shape
         if self.bias is not None:

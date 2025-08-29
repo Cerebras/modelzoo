@@ -535,6 +535,7 @@ TRAINER_PARAMS_TO_LEGACY = {
                     "csx.debug.act_memory_gi": "runconfig.act_memory_gi",
                     "csx.debug.cmd_memory_gi": "runconfig.cmd_memory_gi",
                     "csx.debug.wgt_memory_gi": "runconfig.wgt_memory_gi",
+                    "csx.debug.chf_memory_gi": "runconfig.chf_memory_gi",
                 }
             },
             {

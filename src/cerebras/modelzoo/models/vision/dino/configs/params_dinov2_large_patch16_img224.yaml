@@ -229,11 +229,11 @@ trainer:
   fit:
     train_dataloader:
       data_processor: DinoImageDataProcessor
-      batch_size: 1024
+      batch_size: 2048
       shuffle: true
       shuffle_seed: 1456354
-      num_workers: 2
-      prefetch_factor: 2
+      num_workers: 4
+      prefetch_factor: 4
       dataset:
         name: Imagenet
         root: ./computer_vision/datasets/imagenet/imagenet1k_ilsvrc2012

@@ -95,10 +95,6 @@ models:
   path: cerebras.modelzoo.models.nlp.mistral.model.MistralModel
   data_processor_paths: *gpt2_data_processor_paths
 
-- name: qwen2
-  path: cerebras.modelzoo.models.nlp.qwen2.model.Qwen2Model
-  data_processor_paths: *gpt2_data_processor_paths
-
 - name: mixtral
   path: cerebras.modelzoo.models.nlp.mixtral.model.MixtralModel
   data_processor_paths: *gpt2_data_processor_paths

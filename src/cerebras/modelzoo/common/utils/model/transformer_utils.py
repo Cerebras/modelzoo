@@ -17,6 +17,9 @@ from dataclasses import dataclass
 from functools import cached_property
 from typing import Callable, Optional, Tuple
 
+# Doesn't work with `multiprocessing`, because Pickle cannot handle closures.
+# `multiprocess` uses Dill instead, which works for closures.
+import multiprocess as mp
 import torch
 from typing_extensions import Self
 
@@ -140,12 +143,13 @@ class SparseAttentionMask:
 
     def get_mask(self, use_probabilities=True) -> torch.Tensor:
         mask = self.mask_mod(*self.gen_qk())
+        zero = torch.tensor(0, dtype=torch.float32)
         if not use_probabilities:
             return mask.to(self.dtype)
         if 'lazy' in str(self.device):
             return torch.where(
-                mask != 0.0,
-                0.0,
+                mask != zero,
+                zero,
                 torch.tensor(
                     float('-inf') if self.use_neg_inf else -1,
                     dtype=self.dtype,
@@ -232,7 +236,9 @@ class SparseAttentionMask:
 
     # This generates the mask range annotation iteratively by materializing
     # `range_size` tiles of it at a time on CPU.
-    def get_ranges(self, override_max_num_ranges_with=None):
+    def get_ranges(
+        self, override_max_num_ranges_with=None, do_not_parallelize=False
+    ):
         max_num_ranges = self.max_num_ranges
         if override_max_num_ranges_with is not None:
             max_num_ranges = override_max_num_ranges_with
@@ -247,26 +253,56 @@ class SparseAttentionMask:
             [range_size, range_size]
         )
         k_range = q_range.T
-        for q in range(0, self.tgt_seq_length + 1, range_size):
-            active = False
-            start_range = []
-            end_range = []
-            _q_range = q + q_range
-            _q_in_range = q + range_size <= self.tgt_seq_length
-            for k in range(0, self.tgt_seq_length + 1, range_size):
-                if torch.any(self.mask_mod(_q_range, k + k_range)):
-                    if not active:
-                        active = True
-                        sin_begin = k
-                        sout_begin = q
-                else:
-                    if active and _q_in_range:
-                        active = False
-                        start_range += [[sin_begin, sout_begin]]
-                        end_range += [[k, q + range_size]]
-            if len(start_range) > 0 and len(end_range) > 0:
-                start_ranges += [start_range]
-                end_ranges += [end_range]
+        k_values = torch.arange(0, self.tgt_seq_length + 1, range_size)
+        _k_values = k_values[:, None]
+        use_parallelization = (
+            False if do_not_parallelize else self.tgt_seq_length >= 2**15
+        )  # 32k and up
+
+        def analyze_tile(_q):
+            tmp = _k_values.broadcast_to([k_values.shape[0], range_size])[
+                :, None
+            ].broadcast_to([k_values.shape[0], range_size, range_size])
+            active = self.mask_mod(_q + q_range, tmp + k_range)
+            begins = torch.nn.functional.pad(
+                _k_values, (0, 1), mode='constant', value=_q
+            )
+            ends = torch.nn.functional.pad(
+                _k_values, (0, 1), mode='constant', value=_q + range_size
+            )
+            mask = active.any(dim=(1, 2))
+            padded = torch.nn.functional.pad(
+                mask, (1, 0), mode='constant', value=False
+            )
+            i_begins = (mask & ~padded[:-1]).nonzero(as_tuple=False).squeeze()
+            i_ends = ((~mask) & padded[:-1]).nonzero(as_tuple=False).squeeze()
+            return begins[i_begins], ends[i_ends]
+
+        def is_in_range(start, end):
+            return (start_range < self.tgt_seq_length).all() and (
+                end_range <= self.tgt_seq_length
+            ).all()
+
+        wrap = lambda x: x.tolist() if len(x.shape) > 1 else [x.tolist()]
+        logging.info(
+            f"Attention mask auto-sparsifier will run analysis "
+            + (f"in parallel" if use_parallelization else "sequentially")
+            + f" with tile size {range_size} for MSL {self.tgt_seq_length}."
+        )
+        if use_parallelization:
+            with mp.Pool() as pool:
+                for start_range, end_range in pool.map(
+                    analyze_tile, range(0, self.tgt_seq_length + 1, range_size)
+                ):
+                    if is_in_range(start_range, end_range):
+                        start_ranges += [wrap(start_range)]
+                        end_ranges += [wrap(end_range)]
+        else:
+            for q in range(0, self.tgt_seq_length + 1, range_size):
+                start_range, end_range = analyze_tile(q)
+                if is_in_range(start_range, end_range):
+                    start_ranges += [wrap(start_range)]
+                    end_ranges += [wrap(end_range)]
         assert len(end_ranges) == len(start_ranges)
         logging.info("Attention mask auto-sparsifier finished analysis.")
         return AttentionMaskRangesInfo(

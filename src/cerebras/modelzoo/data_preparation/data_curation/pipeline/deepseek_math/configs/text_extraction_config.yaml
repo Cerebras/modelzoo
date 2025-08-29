@@ -1,0 +1,42 @@
+# Pipeline Configuration
+pipeline:
+  dump: "CC-MAIN-2025-13"
+  input_warc_folder: ${INPUT_WARC_FOLDER:-./input/CC-MAIN-2025-13/mini_cc_50/}
+  extracted_english_path: ${OUTPUT_DIR:-./output}/eng_extracted
+  extracted_math_path: ${OUTPUT_DIR:-./output}/math_extracted
+  extracted_false_positives_path: ${OUTPUT_DIR:-./output}/false_positives_math
+  logging_dir: ${LOGS_DIR:-./logs}/mini_cc_50_extracted_improved_latex_filter
+  cache_dir: ${CACHE_DIR:-./cache}
+
+# Model Paths
+models:
+  english_fasttext_model_path: ${MODELS_DIR:-./models}/model.bin
+  math_fasttext_model_path: ${MODELS_DIR:-./models}/math_classifier_randomized_text_preprocessed.bin
+
+# Filter Settings
+filters:
+  math_threshold: 0.5
+  english_threshold: 0.65
+  labels:
+    math: "__label__MATH"
+    english: "__label__eng_Latn"
+
+# Executor Configuration
+executor:
+  type: "slurm"  # Options: "slurm" or "local"
+
+# local:   ## local executor config
+#   tasks: 15
+#   workers: 15
+
+slurm:   ## slurm config
+  container_path: ${CONTAINER_PATH:-./containers}/data_curation.sif
+  tasks: 49
+  job_name: "curation_job"
+  time: "24:00:00"
+  partition: "cpu-spot" # To be provided at runtime
+  logging_dir: ${LOGS_DIR:-./logs}/mini_cc_50_extracted_improved_latex_filter
+  slurm_logs_folder: ${SLURM_LOGS_DIR:-./slurm_logs}/mini_cc_50_extracted_improved_latex_filter
+  qos: "normal"
+  mem_per_cpu_gb: 8
+  cpus_per_task: 2

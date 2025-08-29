@@ -110,10 +110,6 @@ class BackendCallback(CoreCallback):
             )
 
             yield
-
-            if self._workflow_started:
-                trainer.backend.cluster.stop_workflow()
-                self._workflow_started = False
         else:
             yield
 

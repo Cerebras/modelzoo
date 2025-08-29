@@ -105,7 +105,7 @@ class FIMTokenGenerator(PretrainingTokenGenerator):
         num_tokens = 0
         tokenized_data_stats = defaultdict(int)
         for i, sample in enumerate(tokenized_data):
-            if sample != []:
+            if len(sample) != 0:
                 sample = fim(
                     sample,
                     i,

@@ -787,7 +787,7 @@ class PretrainingTokenGenerator:
 
         tokenized_data_stats["processed_files"] = 1
         tokenized_data_stats["discarded_files"] = 0
-        if input_ids == []:
+        if len(input_ids) == 0:
             tokenized_data_stats["discarded_files"] = 1
             return {"data": [], "labels": []}, tokenized_data_stats
 
@@ -870,7 +870,7 @@ class PretrainingTokenGenerator:
         results, tokenized_data_stats = self.process_chunks(
             tokenized_text_chunks
         )
-        if results["data"] == [] and self.prefix == []:
+        if len(results["data"]) == 0 and len(self.prefix) == 0:
             discarded_files += 1
         tokenized_data_stats["discarded_files"] = discarded_files
         tokenized_data_stats["processed_files"] = 1
@@ -1126,7 +1126,7 @@ class PretrainingTokenGenerator:
         results = defaultdict(list)
         tokenized_data_stats = defaultdict(int)
         tokenized_data_stats["discarded_files"] = 0
-        if doc_list == []:
+        if len(doc_list) == 0:
             tokenized_data_stats["processed_files"] += 1
             if self.prefix_doc is None:
                 tokenized_data_stats["discarded_files"] += 1
@@ -1137,7 +1137,7 @@ class PretrainingTokenGenerator:
         # Add eos at the end.
         # TODO: Find a better way to handle this?
         last_doc = doc_list[-1]
-        if last_doc.get("input_ids", []) != [] and self.eos_id != None:
+        if len(last_doc.get("input_ids", [])) != 0 and self.eos_id != None:
             if last_doc['input_ids'][-1] != self.eos_id:
                 if len(last_doc['input_ids']) < self.max_seq_length + 1:
                     last_doc['input_ids'].append(self.eos_id)
@@ -1150,7 +1150,7 @@ class PretrainingTokenGenerator:
 
         for doc_idx, doc in enumerate(doc_list):
             has_img = False
-            if doc.get("input_ids", []) == []:
+            if len(doc.get("input_ids", [])) == 0:
                 continue
 
             token_modality_idx = (
@@ -1219,7 +1219,7 @@ class PretrainingTokenGenerator:
                 results[key].append(value)
 
         tokenized_data_stats["processed_files"] += 1
-        if results.get("data", []) == []:
+        if len(results.get("data", [])) == 0:
             tokenized_data_stats["discarded_files"] += 1
         else:
             tokenized_data_stats["successful_files"] += 1
@@ -1239,7 +1239,7 @@ class PretrainingTokenGenerator:
             Tuple[Dict[str, Any], Dict[str, int]]: Tuple of encoded features for auto-regressive language modeling and dataset stats.
         """
         tokenized_data, data_stats = self.tokenize_data(semantic_data_array)
-        if tokenized_data.get("data", []) == []:
+        if len(tokenized_data.get("data", [])) == 0:
             return {}, data_stats
         else:
             if self.is_multimodal:
@@ -1292,7 +1292,7 @@ class PretrainingTokenGenerator:
                 _ = tokenized_text_chunks.pop(-1)
 
             results, stats = self.process_chunks(tokenized_text_chunks)
-            if results["data"] == []:
+            if len(results["data"]) == 0:
                 return {}, stats
             data = results
 
