@@ -44,7 +44,7 @@ class MoEConfig(BaseConfig):
     null_expert_bias: Optional[float] = 0.0
     "Optional bias to add null expert prob to the routing"
     moe_implementation: Literal["functional", "optimized", "experimental"] = (
-        "optimized"
+        "experimental"
     )
     "Whether to use the functional or Optimized implementation of MoE"
     router_fp32: bool = True

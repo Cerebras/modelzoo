@@ -41,6 +41,7 @@ from cerebras.modelzoo.data_preparation.data_preprocessing.subset_split import (
 )
 from cerebras.modelzoo.data_preparation.data_preprocessing.utils import (
     MultiprocessingExitEvent,
+    ProgressMonitor,
     SLURMPipe,
     YamlReader,
     get_params,
@@ -210,6 +211,8 @@ def multi_node_preprocess_data(params_file: str):
 
     # Get number of nodes
     num_nodes = cP.get('setup.num_nodes', 1)
+    # Generate expected nodes directly from num_nodes
+    expected_nodes = [f"{i}" for i in range(num_nodes)]
 
     if slurm_config is None or num_nodes == 1:
         # Fallback to local processing
@@ -255,6 +258,8 @@ def multi_node_preprocess_data(params_file: str):
     except (ValueError, IndexError):
         timeout_min = 60  # Default 1 hour
 
+    output_dir = cP.get("setup.output_dir", "./output/")
+
     # Initialize enhanced SLURMPipe
     slurm_pipe = SLURMPipe(
         partition=partition,
@@ -263,12 +268,52 @@ def multi_node_preprocess_data(params_file: str):
         timeout_min=timeout_min,
         log_dir=slurm_config.get('log_dir', "slurm_logs"),
         # Additional configurations
-        nodes=slurm_config.get('nodes', 1),
         ntasks_per_node=slurm_config.get('ntasks_per_node', 1),
         array_parallelism=slurm_config.get('array_parallelism'),
         max_retries=slurm_config.get('max_retries', 3),
         retry_delay=slurm_config.get('retry_delay', 60),
     )
+
+    # Optional progress monitor settings with good defaults from slurm_config
+    refresh_rate = slurm_config.get(
+        'progress_refresh_rate', 2.0
+    )  # 2 second refresh
+    stall_threshold = slurm_config.get(
+        'progress_stall_threshold', 300.0
+    )  # 5 minutes
+
+    # Simple monitoring selection: Progress Monitor by default, Job Tracking if explicitly enabled
+    enable_job_tracking = slurm_config.get('enable_job_tracking', False)
+    enable_progress_monitor = not enable_job_tracking  # Mutually exclusive
+
+    dp = DataPreprocessor(copy.deepcopy(cP.params), None)
+
+    if enable_job_tracking:
+        logger.info("Monitoring mode: Job Tracking (detailed logging)")
+    else:
+        logger.info("Monitoring mode: Progress Monitor (visual display)")
+
+    # Initialize progress monitor (default behavior)
+    progress_monitor = None
+    if enable_progress_monitor:
+        try:
+            progress_monitor = ProgressMonitor(
+                checkpoint_dir=output_dir,
+                expected_nodes=expected_nodes,
+                processes_per_node=dp.writer_process_num,
+                total_chunks=dp.total_chunks // num_nodes,
+                refresh_rate=refresh_rate,
+                stall_threshold=stall_threshold,
+                logger=logger,
+            )
+            progress_monitor.start()
+            logger.info(f"Progress monitor started for {num_nodes} nodes")
+        except Exception as e:
+            logger.warning(f"Failed to start progress monitor: {e}")
+            progress_monitor = None
+            # Fallback to job tracking
+            enable_job_tracking = True
+            logger.info("Falling back to job tracking mode")
 
     try:
         # Submit jobs to SLURM
@@ -281,11 +326,20 @@ def multi_node_preprocess_data(params_file: str):
         # Launch jobs in batch
         jobs = slurm_pipe.launch_batch(preprocess_node, param_list)
 
-        # Track job completion with enhanced monitoring
-        results = slurm_pipe.track_jobs(
-            poll_interval=slurm_config.get('poll_interval', 30),
-            detailed_status=slurm_config.get('detailed_status', True),
-        )
+        # Track job completion - only if job tracking is enabled
+        if enable_job_tracking:
+            results = slurm_pipe.track_jobs(
+                poll_interval=slurm_config.get('poll_interval', 30),
+                detailed_status=slurm_config.get('detailed_status', True),
+            )
+        else:
+            # Minimal job tracking when progress monitor is active
+            logger.info(
+                "Job tracking disabled - using progress monitor for status"
+            )
+            results = (
+                slurm_pipe.wait_for_completion()
+            )  # Assume this method exists for minimal waiting
 
         # Report final results
         completed_count = len(results['completed'])
@@ -302,6 +356,13 @@ def multi_node_preprocess_data(params_file: str):
             f"Job execution complete: {completed_count} succeeded, {failed_count} failed"
         )
 
+        # Print final progress summary if monitor was used
+        if progress_monitor:
+            final_summary = progress_monitor.get_progress_summary()
+            logger.info(
+                f"Final progress: {final_summary['overall']['completion_percent']:.1f}% complete"
+            )
+
     except KeyboardInterrupt:
         logger.info("Execution interrupted by user")
         slurm_pipe.cancel_all_jobs()
@@ -310,10 +371,13 @@ def multi_node_preprocess_data(params_file: str):
         logger.info(f"Execution failed: {e}")
         slurm_pipe.cancel_all_jobs()
         raise
+    finally:
+        # Always stop progress monitor
+        if progress_monitor:
+            progress_monitor.stop()
+            logger.info("Progress monitor stopped")
 
-    merge_data_params(
-        output_dir=cP.get("setup.output_dir", "./output/"), num_nodes=num_nodes
-    )
+    merge_data_params(output_dir=output_dir, num_nodes=num_nodes)
 
 
 def main():

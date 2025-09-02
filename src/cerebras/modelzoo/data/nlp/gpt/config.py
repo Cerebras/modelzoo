@@ -13,7 +13,7 @@
 # limitations under the License.
 
 """
-Config classes of T5 data Configs.
+Config classes of GPT data Configs.
 
 """
 
