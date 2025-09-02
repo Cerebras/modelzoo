@@ -97,6 +97,7 @@ def main():
         EnglishFastTextFilter,
         LatexSymbolFilter,
         MathFastTextFilter,
+        PerplexityScorer,
     )
     from data_curation.pipeline.deepseek_math.writers import (
         ConditionalJsonlWriter,
@@ -145,6 +146,10 @@ def main():
             filename_template="${cc_path}.jsonl.gz",
         ),
     ]
+
+    perplexity_model_path = config["models"].get("perplexity_model_path")
+    if perplexity_model_path:
+        pipeline.append(PerplexityScorer(model_path=perplexity_model_path))
 
     if config['executor']['type'] == 'local':
         executor = LocalPipelineExecutor(

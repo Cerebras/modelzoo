@@ -321,6 +321,12 @@ def add_csx_arguments(
         "a pre-configured location will be used if available. Defaults to None.",
     )
     optional_arguments.add_argument(
+        "--cbcore_image",
+        default=None,
+        help="Image to use for the appliance job. If None, a default image "
+        "will be used if available. Defaults to None.",
+    )
+    optional_arguments.add_argument(
         "--job_time_sec",
         type=int,
         help="time limit in seconds for the appliance jobs. When the time limit "

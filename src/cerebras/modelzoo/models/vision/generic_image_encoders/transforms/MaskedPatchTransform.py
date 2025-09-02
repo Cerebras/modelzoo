@@ -16,98 +16,21 @@ import logging
 import math
 import os
 import random
-from typing import List, Literal, Optional, Tuple, Union
 
 import numpy as np
 import torch
-from annotated_types import Ge, Le
-from pydantic import field_validator, model_validator
 from torchvision.transforms import transforms
 from torchvision.utils import save_image
-from typing_extensions import Annotated
 
 import cerebras.pytorch as cstorch
 from cerebras.modelzoo.data.vision.transforms import create_transform
 from cerebras.modelzoo.layers.utils import patchify_helper, unpatchify_helper
 from cerebras.modelzoo.models.vision.generic_image_encoders.base.BaseSSLImageTransform import (
     BaseSSLImageTransform,
-    BaseSSLImageTransformConfig,
 )
-
-
-class MaskedPatchTransformConfig(BaseSSLImageTransformConfig):
-    name: Literal["MaskedPatchTransform"]
-    "Name of the data transform. Must be set to `MaskedPatchTransform`."
-
-    image_size: Union[int, List[int]] = ...
-    "The size of the input image. When provided as a single int, the image is assumed to be square."
-
-    patch_size: Union[int, List[int]] = ...
-    "The size of each patch to be masked. When provided as a single int, the patch is assumed to be square."
-
-    mask_probability: Annotated[float, Ge(0), Le(1)] = ...
-    "Probability of applying masking to image. When the value is 0, the image is left unmasked."
-
-    mask_ratio_tuple: Tuple[float, float] = ...
-    """
-    When `mask_probability` is nonzero, this field specifies the proportion of patches to mask. 
-    The two fields represent the lower and upper bounds of a uniform distribution that is used to sample the masks.
-    """
-
-    min_num_patches: int = 4
-    """
-    Minimum number of patches to be masked in images that have masked patches.
-    Default is 4 (from DinoV2 repo).
-    """
-
-    min_aspect: float = 0.3
-    "Minimum aspect ratio for the patches."
-
-    max_aspect: Optional[float] = None
-    """
-    Maximum aspect ratio for the patches. When `None`, this is calculated as 
-    `1 / min_aspect`.
-    """
-
-    composed_transform: bool = False
-    "Whether this transform is a sub-class of another transform."
-
-    transform_list: Optional[List[dict]] = None
-    """
-    List of transforms to be applied if composed_transform is False. Default is
-    None. If composed_transform is True the transforms are assumed to be
-    performed in the other transform.
-    """
-
-    @property
-    def output_keys(self):
-        keys = ["collated_masks"]
-        if not self.composed_transform:
-            keys.append("image")
-        return keys
-
-    @field_validator("image_size", "patch_size", mode="after")
-    @classmethod
-    def validate_sizes(cls, size):
-        if isinstance(size, int):
-            return (size, size)
-        return size
-
-    @model_validator(mode="after")
-    def validate_transform_list(self):
-        if self.composed_transform and self.transform_list is not None:
-            raise ValueError(
-                "Cannot specify transform_list if MaskedPatchTransform is a composed_transform"
-            )
-        return self
-
-    def post_init(self, context):
-        if self.max_aspect is None:
-            self.max_aspect = 1 / self.min_aspect
-
-    @property
-    def __transform_cls__(self):
-        return MaskedPatchTransform
+from cerebras.modelzoo.models.vision.generic_image_encoders.transforms.config import (
+    MaskedPatchTransformConfig,
+)
 
 
 class MaskedPatchTransform(BaseSSLImageTransform):

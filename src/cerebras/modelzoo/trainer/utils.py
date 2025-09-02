@@ -465,6 +465,7 @@ TRAINER_PARAMS_TO_LEGACY = {
                 "python_paths": "runconfig.python_paths.*",
                 "num_workers_per_csx": "runconfig.num_workers_per_csx",
                 "max_act_per_csx": "runconfig.num_act_servers",
+                "cbcore_image": "runconfig.cbcore_image",
                 "job_labels": "runconfig.job_labels.*",
                 "job_priority": "runconfig.job_priority",
                 "job_time_sec": "runconfig.job_time_sec",

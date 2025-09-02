@@ -12,46 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Literal
-
 from cerebras.modelzoo.models.vision.generic_image_encoders.base.BaseSSLImageTransform import (
     BaseSSLImageTransform,
-    BaseSSLImageTransformConfig,
 )
-from cerebras.modelzoo.models.vision.generic_image_encoders.transforms.ImageRandomMultiCropTransform import (
-    ImageRandomMultiCropTransformConfig,
+from cerebras.modelzoo.models.vision.generic_image_encoders.transforms.config import (
+    Dinov2TransformConfig,
 )
-from cerebras.modelzoo.models.vision.generic_image_encoders.transforms.MaskedPatchTransform import (
-    MaskedPatchTransformConfig,
-)
-
-
-class Dinov2TransformConfig(BaseSSLImageTransformConfig):
-    name: Literal["Dinov2Transform"]
-    "Name of the data transform. Must be set to `Dinov2Transform`."
-
-    multi_crop_transform: ImageRandomMultiCropTransformConfig = ...
-    "Configuration for the image transformation. See `ImageRandomMultiCropTransformConfig` for more details."
-
-    masked_patch_transform: MaskedPatchTransformConfig = ...
-    "Configuration for the masked patch transformation. See `MaskedPatchTransformConfig` for more details."
-
-    @property
-    def output_keys(self):
-        return (
-            self.multi_crop_transform.output_keys
-            + self.masked_patch_transform.output_keys
-        )
-
-    def post_init(self, context):
-        if not self.masked_patch_transform.composed_transform:
-            self.masked_patch_transform = self.masked_patch_transform.copy(
-                update=dict(composed_transform=True)
-            )
-
-    @property
-    def __transform_cls__(self):
-        return Dinov2Transform
 
 
 class Dinov2Transform(BaseSSLImageTransform):

@@ -11,15 +11,3 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-from cerebras.modelzoo.models.vision.dino.config import (
-    DinoImageDataProcessorConfig,
-)
-from cerebras.modelzoo.models.vision.generic_image_encoders.base.BaseImageDataProcessor import (
-    BaseImageDataProcessor,
-)
-
-
-class DinoImageDataProcessor(BaseImageDataProcessor):
-    def __init__(self, config: DinoImageDataProcessorConfig):
-        super().__init__(config)

@@ -79,6 +79,7 @@ def _get_cluster_config(params):
         max_wgt_servers=runconfig.get("num_wgt_servers"),
         max_act_per_csx=runconfig.get("num_act_servers"),
         num_workers_per_csx=runconfig.get("num_workers_per_csx"),
+        cbcore_image=runconfig.get("cbcore_image"),
         job_labels=runconfig.get("job_labels"),
         job_time_sec=runconfig.get("job_time_sec"),
         mount_dirs=runconfig.get("mount_dirs"),
