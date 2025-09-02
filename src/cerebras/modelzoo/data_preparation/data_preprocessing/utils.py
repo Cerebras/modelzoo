@@ -22,8 +22,10 @@ import re
 import shutil
 import signal
 import sys
+import threading
 import time
 from collections import OrderedDict, defaultdict
+from dataclasses import dataclass
 from fractions import Fraction
 from multiprocessing import Event, Value
 from pathlib import Path
@@ -33,6 +35,10 @@ import numpy as np
 import yaml
 from PIL import Image
 from pydantic import model_validator
+from rich.console import Console
+from rich.layout import Layout
+from rich.live import Live
+from rich.table import Table
 from tqdm import tqdm
 from typing_extensions import Self
 
@@ -74,6 +80,23 @@ SYSTEM_PROMPT_REGISTRY = {
     ),
     "mistral_instruct": "",
 }
+
+
+def get_writer_process_num(shuffle: bool, processes: int) -> int:
+    """
+    Compute writer_process_num based on shuffle and processes.
+
+    Args:
+        shuffle (bool): Whether data shuffling is enabled.
+        processes (int): Total number of processes.
+
+    Returns:
+        int: Computed writer_process_num value.
+    """
+    if shuffle:
+        return (processes - 1) // 2
+    else:
+        return math.ceil((processes - 1) / 10)
 
 
 def convert_fractions_or_floats(values):
@@ -2285,12 +2308,12 @@ class SLURMPipe:
         cpus_per_task: int = 2,
         mem_gb: int = 4,
         # Additional SLURM configurations
-        nodes: int = 1,
         ntasks_per_node: int = 1,
         array_parallelism: Optional[int] = None,
         # Job management
         max_retries: int = 3,
         retry_delay: int = 60,
+        launch_delay: int = 5,
     ):
         import submitit
 
@@ -2307,7 +2330,6 @@ class SLURMPipe:
             "cpus_per_task": cpus_per_task,
             "mem_gb": mem_gb,
             "slurm_partition": partition,
-            "nodes": nodes,
             "slurm_ntasks_per_node": ntasks_per_node,
         }
 
@@ -2321,6 +2343,7 @@ class SLURMPipe:
         self.jobs = []
         self.max_retries = max_retries
         self.retry_delay = retry_delay
+        self.launch_delay = launch_delay
 
         # Set up comprehensive logging
         self._setup_logging()
@@ -2388,7 +2411,7 @@ class SLURMPipe:
             try:
                 job = self.launch(fn, *args, **kwargs)
                 jobs.append(job)
-                time.sleep(5)
+                time.sleep(self.launch_delay)
             except Exception as e:
                 self.logger.error(f"Failed to launch job {i}: {e}")
 
@@ -2463,7 +2486,7 @@ class SLURMPipe:
                 self.jobs = running_jobs
 
                 if self.jobs:
-                    self.logger.info(
+                    self.logger.debug(
                         f"Jobs remaining: {len(self.jobs)}, "
                         f"Completed: {len(completed_jobs)}, "
                         f"Failed: {len(failed_jobs)}"
@@ -2483,7 +2506,6 @@ class SLURMPipe:
         return {"completed": completed_jobs, "failed": failed_jobs}
 
     def cancel_all_jobs(self):
-        """Cancel all running jobs"""
         cancelled_count = 0
         for job in self.jobs:
             try:
@@ -2523,8 +2545,13 @@ class SLURMPipe:
 
         return status_counts
 
-    def wait_for_completion(self, timeout: Optional[int] = None) -> bool:
-        """Wait for all jobs to complete with optional timeout"""
+    def wait_for_completion(
+        self, timeout: Optional[int] = None
+    ) -> Dict[str, List]:
+        if not self.jobs:
+            self.logger.warning("No jobs to wait for")
+            return {"completed": [], "failed": []}
+
         start_time = time.time()
 
         while self.jobs:
@@ -2532,11 +2559,24 @@ class SLURMPipe:
                 self.logger.warning(
                     f"Timeout reached ({timeout}s). Some jobs may still be running."
                 )
-                return False
+                # Return current state of completed and failed jobs
+                return {
+                    "completed": self.completed_jobs.copy(),
+                    "failed": self.failed_jobs.copy(),
+                }
 
-            self.track_jobs(poll_interval=30, detailed_status=False)
+            # Use track_jobs to handle the polling and return results when done
+            result = self.track_jobs(poll_interval=30, detailed_status=False)
 
-        return True
+            # If track_jobs returns (meaning all jobs are done), return the result
+            if not self.jobs:
+                return result
+
+        # This should not be reached, but included for completeness
+        return {
+            "completed": self.completed_jobs.copy(),
+            "failed": self.failed_jobs.copy(),
+        }
 
 
 from multiprocessing import Event as MEvent
@@ -2563,3 +2603,281 @@ class MultiprocessingExitEvent:
     def clear(self):
         """Clear the exit flag"""
         self._event.clear()
+
+
+@dataclass
+class NodeProgress:
+    node_id: str
+    max_step: int = 0
+    total_steps: int = 0
+    last_update: float = 0
+    processes: Dict[int, int] = None
+
+    def __post_init__(self):
+        if self.processes is None:
+            self.processes = {}
+
+    @property
+    def progress_percent(self) -> float:
+        # Calculate based on sum of all process chunks
+        total_processed = sum(self.processes.values())
+        return (
+            (total_processed / self.total_steps * 100)
+            if self.total_steps > 0
+            else 0.0
+        )
+
+    @property
+    def is_stalled(self) -> bool:
+        return (
+            time.time() - self.last_update > 300
+            if self.last_update > 0
+            else False
+        )
+
+
+class ProgressMonitor:
+    """
+    Progress monitor class
+    """
+
+    def __init__(
+        self,
+        checkpoint_dir: str,
+        expected_nodes: List[str],
+        processes_per_node: int,
+        total_chunks: int,
+        refresh_rate: float = 1.0,
+        stall_threshold: float = 300.0,  # 5 minutes
+        logger: Optional[logging.Logger] = None,
+    ):
+        self.checkpoint_dir = Path(checkpoint_dir)
+        self.expected_nodes = expected_nodes
+        self.processes_per_node = processes_per_node
+        self.total_chunks = total_chunks
+        self.refresh_rate = max(0.5, refresh_rate)  # Minimum 0.5s refresh
+        self.stall_threshold = stall_threshold
+        self.logger = logger or logging.getLogger(__name__)
+
+        # Threading and control
+        self._thread = None
+        self._running = False
+        self._lock = threading.RLock()
+
+        # Progress tracking
+        self._node_progress: Dict[str, NodeProgress] = {}
+        self._last_file_checks: Dict[str, float] = {}
+        self._console = Console()
+
+        # Performance optimization
+        self._file_cache_ttl = 2.0  # Cache file reads for 2 seconds
+
+        # Initialize node progress
+        self._init_node_progress()
+
+    def _init_node_progress(self):
+        with self._lock:
+            for node in self.expected_nodes:
+                self._node_progress[node] = NodeProgress(
+                    node_id=node, total_steps=self.total_chunks
+                )
+
+    def _read_checkpoint_file(self, filepath: Path) -> Optional[int]:
+        """
+        Read checkpoint file and return the last value (current chunk being processed).
+        """
+        try:
+            # Simple caching to avoid excessive file I/O
+            current_time = time.time()
+            cache_key = str(filepath)
+
+            if (
+                cache_key in self._last_file_checks
+                and current_time - self._last_file_checks[cache_key]
+                < self._file_cache_ttl
+            ):
+                return None  # Skip read, too recent
+
+            self._last_file_checks[cache_key] = current_time
+
+            if not filepath.exists():
+                return None
+
+            with open(filepath, 'r') as f:
+                line = f.readline().strip()
+                if not line:
+                    return None
+
+                parts = line.split(",")
+                if len(parts) >= 3:
+                    # Return the last value (current chunk being processed)
+                    current_chunk = int(parts[-1].strip())
+                    return current_chunk
+
+        except (IOError, ValueError, IndexError) as e:
+            if self.logger.isEnabledFor(logging.DEBUG):
+                self.logger.debug(f"Error reading checkpoint {filepath}: {e}")
+
+        return None
+
+    def _update_node_progress(self):
+        with self._lock:
+            for node in self.expected_nodes:
+                node_progress = self._node_progress[node]
+                updated = False
+
+                for process_id in range(self.processes_per_node):
+                    filename = f"checkpoint_process_{process_id}_{node}.txt"
+                    filepath = self.checkpoint_dir / filename
+
+                    current_chunk = self._read_checkpoint_file(filepath)
+                    if current_chunk is not None:
+                        # Update process progress with current chunk count
+                        old_chunk = node_progress.processes.get(process_id, 0)
+                        if current_chunk > old_chunk:
+                            node_progress.processes[process_id] = current_chunk
+                            updated = True
+
+                # Update node status if any process was updated
+                if updated:
+                    node_progress.last_update = time.time()
+
+    def _build_summary_table(self) -> Table:
+        table = Table(
+            title="Multi-node Progress Monitor", title_style="bold blue"
+        )
+        table.add_column("Node", style="cyan", no_wrap=True)
+        table.add_column("Progress", justify="right")
+        table.add_column("Completion", justify="right")
+        table.add_column("Status", justify="center")
+
+        with self._lock:
+            total_completed = 0
+            total_expected = len(self.expected_nodes) * self.total_chunks
+
+            for node in self.expected_nodes:
+                progress = self._node_progress[node]
+
+                # Calculate total chunks processed for this node
+                total_chunks_processed = sum(progress.processes.values())
+
+                # Determine status
+                if total_chunks_processed >= self.total_chunks:
+                    status = "[green]✓ Complete[/green]"
+                elif progress.is_stalled:
+                    status = "[yellow]⚠ Stalled[/yellow]"
+                elif total_chunks_processed > 0:
+                    status = "[blue]→ Running[/blue]"
+                else:
+                    status = "[dim]○ Waiting[/dim]"
+
+                table.add_row(
+                    f"Node {node}",
+                    f"{total_chunks_processed:,}/{self.total_chunks:,}",
+                    f"{progress.progress_percent:.1f}%",
+                    status,
+                )
+
+                total_completed += total_chunks_processed
+
+            # Add summary row
+            overall_percent = (
+                (total_completed / total_expected * 100)
+                if total_expected > 0
+                else 0
+            )
+            table.add_section()
+            table.add_row(
+                "[bold]Overall[/bold]",
+                f"[bold]{total_completed:,}/{total_expected:,}[/bold]",
+                f"[bold]{overall_percent:.1f}%[/bold]",
+                (
+                    "[bold green]✓[/bold green]"
+                    if overall_percent >= 100
+                    else "[bold blue]→[/bold blue]"
+                ),
+            )
+
+        return table
+
+    def _create_layout(self) -> Layout:
+        layout = Layout()
+        layout.add_split(Layout(self._build_summary_table(), name="summary"))
+        return layout
+
+    def _run_monitor(self):
+        with Live(
+            self._create_layout(),
+            refresh_per_second=1 / self.refresh_rate,
+            console=self._console,
+        ) as live:
+            while self._running:
+                try:
+                    self._update_node_progress()
+                    live.update(self._create_layout())
+                    time.sleep(self.refresh_rate)
+                except Exception as e:
+                    self.logger.error(f"Error in progress monitor: {e}")
+                    time.sleep(self.refresh_rate)
+
+    def start(self):
+        if self._thread and self._thread.is_alive():
+            self.logger.warning("Progress monitor already running")
+            return
+
+        if self.total_chunks <= 0:
+            raise ValueError("total_chunks must be set to a positive integer")
+
+        self._running = True
+        self._thread = threading.Thread(target=self._run_monitor, daemon=True)
+        self._thread.start()
+        self.logger.info("Progress monitor started")
+
+    def stop(self):
+        if not self._running:
+            return
+
+        self._running = False
+        if self._thread:
+            self._thread.join(timeout=5.0)  # 5 second timeout
+            if self._thread.is_alive():
+                self.logger.warning(
+                    "Progress monitor thread did not stop gracefully"
+                )
+
+        self.logger.info("Progress monitor stopped")
+
+    def get_progress_summary(self) -> Dict:
+        with self._lock:
+            summary = {
+                'nodes': {},
+                'overall': {
+                    'total_completed': 0,
+                    'total_expected': len(self.expected_nodes)
+                    * self.total_chunks,
+                    'completion_percent': 0.0,
+                },
+            }
+
+            total_completed = 0
+            for node in self.expected_nodes:
+                progress = self._node_progress[node]
+                total_chunks_processed = sum(progress.processes.values())
+
+                summary['nodes'][node] = {
+                    'total_chunks_processed': total_chunks_processed,
+                    'total_steps': progress.total_steps,
+                    'completion_percent': progress.progress_percent,
+                    'is_stalled': progress.is_stalled,
+                    'processes': dict(progress.processes),
+                }
+                total_completed += total_chunks_processed
+
+            summary['overall']['total_completed'] = total_completed
+            summary['overall']['completion_percent'] = (
+                total_completed / summary['overall']['total_expected'] * 100
+                if summary['overall']['total_expected'] > 0
+                else 0
+            )
+
+            return summary

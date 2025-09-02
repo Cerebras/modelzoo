@@ -13,3 +13,4 @@ fasteners>=0.19
 tldextract>=5.3.0
 lxml>=5.4.0
 prettytable>=3.16.0
+kenlm @ git+https://github.com/kpu/kenlm.git@master#egg=kenlm

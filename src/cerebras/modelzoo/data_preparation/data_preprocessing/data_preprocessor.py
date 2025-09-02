@@ -53,6 +53,7 @@ from cerebras.modelzoo.data_preparation.data_preprocessing.utils import (
     format_time,
     get_files,
     get_size,
+    get_writer_process_num,
     load_dataset_wrapper,
     update_args,
     update_progress,
@@ -100,6 +101,8 @@ class DataPreprocessor:
             params (dict): Configuration parameters.
             exit_event (Optional[Event]): Exit event used to gracefully exit the preprocessing pipeline.
         """
+        self.total_chunks = None
+        self.writer_process_num = None
         self.params = params
         self.json_params_file = None
         self.running_avg_processing_time = 0
@@ -133,6 +136,9 @@ class DataPreprocessor:
         self.token_limit = self.params["processing"].get("token_limit", False)
         ## Lock to update stats concurrently among different processes
         self.stats_lock = Lock()
+        total_size = calculate_total_size(self.input_files)
+        self.total_chunks = self.calculate_total_chunks(total_size)
+        self.total_output_files = math.ceil(total_size / self.write_chunk_size)
 
     def setup_output_directory(self) -> None:
         """
@@ -381,11 +387,11 @@ class DataPreprocessor:
 
         self.read_hook_fn = self.load_read_hook_fn()
         self.shuffle = processing_params.pop("shuffle", False)
+        self.writer_process_num = get_writer_process_num(
+            self.shuffle, self.processes
+        )
         if self.shuffle:
             self.shuffle_seed = processing_params.get("shuffle_seed", 0)
-            self.writer_process_num = (self.processes - 1) // 2
-        else:
-            self.writer_process_num = math.ceil((self.processes - 1) / 10)
 
         self.skip_jsonl_decoding_error = processing_params.pop(
             "UNSAFE_skip_jsonl_decoding_errors", False
@@ -1111,10 +1117,6 @@ class DataPreprocessor:
         """
         start_time = time.time()
         self.tokenize_process_num = self.processes
-        total_size = calculate_total_size(self.input_files)
-        self.total_chunks = self.calculate_total_chunks(total_size)
-        self.total_output_files = math.ceil(total_size / self.write_chunk_size)
-
         # Distribute file paths among the processes
         process_file_lists = [[] for _ in range(self.processes)]
         process_checkpoints = self.read_checkpoint(self.processes)
@@ -1543,7 +1545,6 @@ class DataPreprocessor:
         total_size = calculate_total_size(self.input_files)
         readable_size = self.human_readable_size(total_size)
         logger.info(f"Total size of dataset: {readable_size}")
-        self.total_chunks = self.calculate_total_chunks(total_size)
         self.total_output_files = math.ceil(total_size / self.write_chunk_size)
         logger.info(
             f"Approximate number of chunks to process: {self.total_chunks}"

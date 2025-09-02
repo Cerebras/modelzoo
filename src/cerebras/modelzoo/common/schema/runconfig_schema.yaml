@@ -88,6 +88,10 @@ properties:
       - "string"
   init_method:
     type: string
+  cbcore_image:
+    type:
+    - string
+    - 'null'
   job_labels:
     type:
     - array

@@ -14,7 +14,6 @@
 
 import logging
 import os
-from typing import List, Literal, Optional, Tuple
 
 import torch
 from PIL import Image
@@ -26,66 +25,10 @@ import cerebras.pytorch as cstorch
 from cerebras.modelzoo.data.vision.transforms import create_transform
 from cerebras.modelzoo.models.vision.generic_image_encoders.base.BaseSSLImageTransform import (
     BaseSSLImageTransform,
-    BaseSSLImageTransformConfig,
 )
-
-
-class ImageRandomMultiCropTransformConfig(BaseSSLImageTransformConfig):
-    name: Literal["ImageRandomMultiCropTransform"]
-    "Name of the data transform. Must be set to `ImageRandomMultiCropTransform`."
-
-    global_num_crops: int = ...
-    "Number of global crops of image."
-
-    global_image_size: int = ...
-    "Image size of global crops."
-
-    global_crops_scale: Tuple[float, float] = ...
-    """
-    The scale (between 0 and 1) of the global crops with respect to the original image size.
-    The two values represent the scales for the width and height of the crop.
-    """
-
-    local_num_crops: int = ...
-    "Number of local crops of image."
-
-    local_image_size: int = ...
-    """
-    Image size of local crops.
-    Local crops are always square, so this value is defined by a single integer.
-    """
-
-    local_crops_scale: Tuple[float, float] = ...
-    """
-    The scale (between 0 and 1) of the local crops with respect to the original image size.
-    The two values represent the scales for the width and height of the crop.
-    """
-
-    interpolation_type: Literal[
-        "bicubic",
-        "bilinear",
-        "nearest",
-        "nearest-exact",
-        "box",
-        "hamming",
-        "lanczos",
-    ] = "bicubic"  # default from DinoV2 repo
-    """
-    Method of interpolation for RandomResizedCropTransform to generate global and local views.
-
-    Default used in DinoV2 is bicubic.
-    """
-
-    multicrop_transform_list: Optional[List[dict]] = None
-    "Optional set of additional transforms to apply on top of local and global crops."
-
-    @property
-    def output_keys(self):
-        return ["local_view", "global_view", "labels"]
-
-    @property
-    def __transform_cls__(self):
-        return ImageRandomMultiCropTransform
+from cerebras.modelzoo.models.vision.generic_image_encoders.transforms.config import (
+    ImageRandomMultiCropTransformConfig,
+)
 
 
 class ImageRandomMultiCropTransform(BaseSSLImageTransform):

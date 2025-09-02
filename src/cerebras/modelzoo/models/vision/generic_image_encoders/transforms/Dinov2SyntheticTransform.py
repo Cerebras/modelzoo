@@ -12,32 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import List, Literal, Tuple
-
 import torch
 
 from cerebras.modelzoo.models.vision.generic_image_encoders.base.BaseSSLImageTransform import (
     BaseSSLImageTransform,
-    BaseSSLImageTransformConfig,
 )
-
-
-class Dinov2SyntheticTransformConfig(BaseSSLImageTransformConfig):
-    name: Literal["Dinov2SyntheticTransform"]
-
-    image_size: List[int] = ...
-    patch_size: List[int] = ...
-    mask_probability: float = ...
-    mask_ratio_tuple: Tuple = ...
-    min_num_patches: int = 4
-
-    @property
-    def output_keys(self):
-        return ["local_view", "global_view", "labels", "collated_masks"]
-
-    @property
-    def __transform_cls__(self):
-        return Dinov2SyntheticTransform
+from cerebras.modelzoo.models.vision.generic_image_encoders.transforms.config import (
+    Dinov2SyntheticTransformConfig,
+)
 
 
 class Dinov2SyntheticTransform(BaseSSLImageTransform):

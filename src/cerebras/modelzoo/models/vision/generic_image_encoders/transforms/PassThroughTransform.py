@@ -12,24 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import List, Literal
-
 import torch
 
 from cerebras.modelzoo.models.vision.generic_image_encoders.base.BaseSSLImageTransform import (
     BaseSSLImageTransform,
-    BaseSSLImageTransformConfig,
 )
-
-
-class PassThroughTransformConfig(BaseSSLImageTransformConfig):
-    name: Literal["PassThroughTransform"]
-
-    output_keys: List[str] = ...
-
-    @property
-    def __transform_cls__(self):
-        return PassThroughTransform
+from cerebras.modelzoo.models.vision.generic_image_encoders.transforms.config import (
+    PassThroughTransformConfig,
+)
 
 
 class PassThroughTransform(BaseSSLImageTransform):

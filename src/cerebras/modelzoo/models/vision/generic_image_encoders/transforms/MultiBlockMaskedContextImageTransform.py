@@ -16,13 +16,11 @@ import logging
 import math
 import os
 from logging import getLogger
-from typing import List, Literal, Optional, Tuple, Union
 
 _GLOBAL_SEED = 0
 logger = getLogger()
 
 import torch
-from pydantic import field_validator
 from torchvision.transforms import transforms
 from torchvision.utils import save_image
 
@@ -31,57 +29,10 @@ from cerebras.modelzoo.data.vision.transforms import create_transform
 from cerebras.modelzoo.layers.utils import patchify_helper, unpatchify_helper
 from cerebras.modelzoo.models.vision.generic_image_encoders.base.BaseSSLImageTransform import (
     BaseSSLImageTransform,
-    BaseSSLImageTransformConfig,
 )
-
-
-class MultiBlockMaskedContextImageTransformConfig(BaseSSLImageTransformConfig):
-    name: Literal["MultiBlockMaskedContextImageTransform"]
-    "Name of the data transform. Must be set to `MultiBlockMaskedContextImageTransform`."
-
-    image_size: Union[int, Tuple[int, int]] = ...  # (H, W)
-    "Size of the input image. If a single integer is provided, the image is assumed to be square."
-
-    transform: Optional[List[dict]] = None
-    "Optional list of sub-transforms to apply to the image."
-
-    patch_size: Tuple[int, int] = [16, 16]
-    "Patch size for the image."
-
-    # Encoder
-    num_encoder_masks: int = 1
-    "How many encoder masks to use."
-    encoder_mask_scale: Tuple[float, float] = [0.2, 0.8]
-    encoder_aspect_ratio: Tuple[float, float] = [1.0, 1.0]
-    # Predictor
-    num_predictor_masks: int = 2
-    predictor_mask_scale: Tuple[float, float] = [0.2, 0.8]
-    predictor_aspect_ratio: Tuple[float, float] = [0.3, 3.0]
-    min_mask_patches: int = 4
-    allow_overlap: bool = False
-
-    @property
-    def output_keys(cls):
-        return [
-            "image",
-            "labels",
-            "encoder_mask_idx",
-            "predictor_mask_idx",
-            "num_valid_mask_encoder",
-            "num_valid_mask_predictor",
-            "loss_mask",
-        ]
-
-    @field_validator("image_size", "patch_size", mode="after")
-    @classmethod
-    def validate_sizes(cls, size):
-        if isinstance(size, int):
-            return (size, size)
-        return size
-
-    @property
-    def __transform_cls__(self):
-        return MultiBlockMaskedContextImageTransform
+from cerebras.modelzoo.models.vision.generic_image_encoders.transforms.config import (
+    MultiBlockMaskedContextImageTransformConfig,
+)
 
 
 # Multiblock masking as in case of I-JEPA
