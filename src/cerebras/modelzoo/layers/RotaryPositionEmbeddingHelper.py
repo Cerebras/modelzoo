@@ -23,6 +23,9 @@ from cerebras.modelzoo.common.half_dtype import maybe_to_half_dtype
 from cerebras.modelzoo.common.utils.model.transformer_utils import (
     create_sliding_window_mask_with_complement,
 )
+from cerebras.modelzoo.common.utils.model.wit_utils import (
+    wafer_instruction_tuning,
+)
 
 
 class RopeRelDistanceMode(Enum):
@@ -422,15 +425,49 @@ class RotaryPositionEmbeddingHelper:
         if position_ids is no_rope_modification_pos_id:
             return x
 
-        sin, cos = self._create_fixed_pos_emb(
-            x,
-            offset,
-            position_ids,
-            rope_cache_tag,
-            constant_pos_mask=constant_pos_mask,
-            fold_const=self.fold_rope_consts,
-        )
-        return rotary_pos_emb(x, sin, cos)
+        @wafer_instruction_tuning(force_recompute_opt=True)
+        def apply_otf_rope(
+            x, offset, position_ids, constant_pos_mask, rope_cache_tag
+        ):
+            sin, cos = self._create_fixed_pos_emb(
+                x,
+                offset,
+                position_ids,
+                rope_cache_tag,
+                constant_pos_mask=constant_pos_mask,
+                fold_const=False,
+            )
+            return rotary_pos_emb(x, sin, cos)
+
+        def apply_folded_rope(
+            x, offset, position_ids, constant_pos_mask, rope_cache_tag
+        ):
+            sin, cos = self._create_fixed_pos_emb(
+                x,
+                offset,
+                position_ids,
+                rope_cache_tag,
+                constant_pos_mask=constant_pos_mask,
+                fold_const=True,
+            )
+            return rotary_pos_emb(x, sin, cos)
+
+        if self.fold_rope_consts:
+            return apply_folded_rope(
+                x,
+                offset,
+                position_ids,
+                constant_pos_mask=constant_pos_mask,
+                rope_cache_tag=rope_cache_tag,
+            )
+        else:
+            return apply_otf_rope(
+                x,
+                offset,
+                position_ids,
+                constant_pos_mask=constant_pos_mask,
+                rope_cache_tag=rope_cache_tag,
+            )
 
     def _longrope_computations(
         self, x_shape, rope_kwargs, device

@@ -46,6 +46,7 @@ class WitConfig(AnnotationMode.Config):
 
     schedule_opt: bool = True
     cse_opt: bool = True
+    force_recompute_opt: bool = False
 
 
 def get_wit_attribute(config: WitConfig, is_backward: bool):
@@ -56,7 +57,9 @@ def get_wit_attribute(config: WitConfig, is_backward: bool):
     return AnnotationMode.Attribute('wit', config_dict)
 
 
-def wafer_instruction_tuning(schedule_opt=True, cse_opt=True):
+def wafer_instruction_tuning(
+    schedule_opt=True, cse_opt=True, force_recompute_opt=False
+):
     """
     Python decorator for annotating checkpoint operation for the recompute algorithm.
     The annotated operation will have the "wit" attribute in "cs.internal"
@@ -67,6 +70,7 @@ def wafer_instruction_tuning(schedule_opt=True, cse_opt=True):
         get_wit_attribute,
         schedule_opt=schedule_opt,
         cse_opt=cse_opt,
+        force_recompute_opt=force_recompute_opt,
         enable_fwd=True,
         enable_bwd=True,
     )

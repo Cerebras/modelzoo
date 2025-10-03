@@ -81,6 +81,7 @@ from .run_schedule import RunSchedule
 from .selective_grad import SelectiveGrad
 from .model_stats import CountParams
 from .notification import EmailNotification, SlackNotification
+from .restartable_dataloader import SamplesStreamedInfo, SkipSamples
 
 
 # isort: on
@@ -101,6 +102,8 @@ __all__ = [
     "KeepNCheckpoints",
     "SaveCheckpointState",
     "DataLoaderCallback",
+    "SamplesStreamedInfo",
+    "SkipSamples",
     "LossAccumulationCallback",
     "GradientAccumulationCallback",
     "LoopCallback",

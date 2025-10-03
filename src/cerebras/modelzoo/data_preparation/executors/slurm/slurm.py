@@ -136,6 +136,7 @@ class SlurmPipelineExecutor(PipelineExecutor):
         requeue: bool = True,
         srun_args: dict = None,
         tasks_per_job: int = 1,
+        use_gpu: bool = False,
     ):
         super().__init__(
             pipeline, logging_dir, skip_completed, randomize_start_duration
@@ -178,6 +179,7 @@ class SlurmPipelineExecutor(PipelineExecutor):
         self.mail_type = mail_type
         self.mail_user = mail_user
         self.srun_args = srun_args
+        self.use_gpu = use_gpu
         self.slurm_logs_folder = (
             slurm_logs_folder
             if slurm_logs_folder
@@ -232,6 +234,12 @@ class SlurmPipelineExecutor(PipelineExecutor):
         Returns:
 
         """
+        nv_arg = "--nv " if self.use_gpu else ""
+        merge_cmd = (
+            f"singularity exec {nv_arg}{self.container_path} merge_stats "
+            f"{self.logging_dir.resolve_paths('stats')} "
+            f"-o {self.logging_dir.resolve_paths('stats.json')}"
+        )
         launch_slurm_job(
             self.get_launch_file_contents(
                 {
@@ -240,8 +248,7 @@ class SlurmPipelineExecutor(PipelineExecutor):
                     "mem-per-cpu": "1G",
                     "dependency": f"afterok:{self.job_id}",
                 },
-                f"merge_stats {self.logging_dir.resolve_paths('stats')} "
-                f"-o {self.logging_dir.resolve_paths('stats.json')}",
+                merge_cmd,
             ),
             self.job_id_retriever,
         )
@@ -317,8 +324,9 @@ class SlurmPipelineExecutor(PipelineExecutor):
             if self.srun_args
             else ""
         )
+        nv_arg = "--nv " if self.use_gpu else ""
         srun_cmd = (
-            f"srun {srun_args_str} -l -n 1 singularity exec "
+            f"srun {srun_args_str} -l -n 1 singularity exec {nv_arg}"
             f"{self.container_path} launch_pickled_pipeline "
             f"{self.logging_dir.resolve_paths('executor.pik')}"
         )

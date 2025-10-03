@@ -204,7 +204,6 @@ class Trainer:
         self.backend: "cstorch.backend.Backend"
         self.model: torch.nn.Module
         self.compiled_model: Callable
-        self.dataloader: cstorch.utils.data.DataLoader
         self.optimizer: Optional[cstorch.optim.Optimizer]
         self.schedulers: Optional[List[cstorch.optim.scheduler.Scheduler]]
         self.executor: Optional[cstorch.utils.data.DataExecutor] = None

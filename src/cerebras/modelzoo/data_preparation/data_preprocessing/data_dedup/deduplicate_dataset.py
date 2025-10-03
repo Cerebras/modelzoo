@@ -36,9 +36,10 @@ def _process_zst(jsonl_file, output_dir):
     input_file_path = os.path.join(output_dir, jsonl_file)
     output_file_path = os.path.join(output_dir, f'{jsonl_file}.zst')
 
-    with open(input_file_path, 'rb') as input_file, open(
-        output_file_path, 'wb'
-    ) as output_file:
+    with (
+        open(input_file_path, 'rb') as input_file,
+        open(output_file_path, 'wb') as output_file,
+    ):
         cctx = zstd.ZstdCompressor()
         with cctx.stream_writer(output_file) as writer:
             for chunk in input_file:

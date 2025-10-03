@@ -86,11 +86,14 @@ class DataSplit:
             self.data_splits_dir = params["setup"].pop(
                 "data_splits_dir",
                 os.path.join(
-                    params["setup"]["data"]["source"], "data_splits_dir"
+                    os.path.dirname(params["setup"]["output_dir"]),
+                    "data_splits_dir",
                 ),
             )
             check_and_create_output_dirs(
-                self.data_splits_dir, filetype="jsonl.zst"
+                self.data_splits_dir,
+                filetype="jsonl.zst",
+                dir_name="Data Splits",
             )
             self.read_chunk_size = (
                 params["processing"].get("read_chunk_size", 1024) * 1024

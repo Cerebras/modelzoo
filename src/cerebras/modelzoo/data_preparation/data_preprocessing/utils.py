@@ -638,7 +638,9 @@ def get_data_stats(
     return stats
 
 
-def check_and_create_output_dirs(output_dir, filetype, overwrite=False):
+def check_and_create_output_dirs(
+    output_dir, filetype, dir_name="Output", overwrite=False
+):
     contains_filetype = False
     if os.path.isdir(output_dir):
         for dirpath, dirnames, filenames in os.walk(output_dir):
@@ -651,7 +653,7 @@ def check_and_create_output_dirs(output_dir, filetype, overwrite=False):
 
     if contains_filetype and not overwrite:
         _in = input(
-            f"Output directory already contains {filetype} file(s)."
+            f"{dir_name} directory already contains {filetype} file(s)."
             + " Do you want to delete the folder to write"
             + " new records in the same output folder name? (yes/no): "
         )
@@ -1321,8 +1323,12 @@ def find_token_range(region, offsets, starting_offset_position):
     token_end = next(
         (
             i
-            for i in range(starting_offset_position, len(offsets))
-            if offsets[i][1] >= string_end and offsets[i][0] < string_end
+            for i in range(token_start, len(offsets))
+            if (offsets[i][1] >= string_end and offsets[i][0] < string_end)
+            or (
+                offsets[i][1] < string_end
+                and ((i + 1) >= len(offsets) or offsets[i + 1][0] >= string_end)
+            )
         ),
         None,
     )

@@ -12,6 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from .pii_redacting_extractor import PIIRedactingExtractor
 from .resiliparse_extractor import ResiliparseExtractor
+from .trafilatura_extractor import TrafilaturaExtractor
 
-__all__ = ["ResiliparseExtractor"]
+__all__ = [
+    "ResiliparseExtractor",
+    "PIIRedactingExtractor",
+    "TrafilaturaExtractor",
+]

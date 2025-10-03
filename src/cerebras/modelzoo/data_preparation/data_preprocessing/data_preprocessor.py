@@ -386,6 +386,23 @@ class DataPreprocessor:
             )
 
         self.read_hook_fn = self.load_read_hook_fn()
+        # Dump the read hook code
+        if self.output_dir:
+            import functools
+            import inspect
+
+            hook_dump = os.path.join(self.output_dir, "hook.py")
+
+            with open(hook_dump, "w") as f:
+                if isinstance(self.read_hook_fn, functools.partial):
+                    # If it's a partial, get the underlying function.
+                    # This will only capture the code of the wrapped function,
+                    # not the partial arguments.
+                    f.write(inspect.getsource(self.read_hook_fn.func))
+                else:
+                    # Directly a function or other inspect-able object
+                    f.write(inspect.getsource(self.read_hook_fn))
+
         self.shuffle = processing_params.pop("shuffle", False)
         self.writer_process_num = get_writer_process_num(
             self.shuffle, self.processes
@@ -981,7 +998,7 @@ class DataPreprocessor:
             )  ## List to store data stats of all dataframes in the current buffer.
             cum_size = 0
             process_data_stats = defaultdict(int)
-            for df_chunk in reader.stream_data():
+            for df_chunk in reader.stream_data(output_dir=self.output_dir):
                 if self.stop_event.is_set() or (
                     self.exit_event and self.exit_event.is_set()
                 ):

@@ -49,6 +49,7 @@ DEFAULT_CALLBACKS = {
     "SavePerformanceData": {},
     "DumpAvailableTensorNames": {},
     "ModelZooParamsMetadata": {},
+    "SamplesStreamedInfo": {},
 }
 DEFAULT_LOGGERS = {
     # pylint: disable=unnecessary-lambda

@@ -13,11 +13,15 @@
 # limitations under the License.
 
 from .english_fasttext_filter import EnglishFastTextFilter
+from .inclusive_latex_symbol_filter import InclusiveLatexSymbolFilter
 from .latex_symbol_filter import LatexSymbolFilter
 from .math_fasttext_filter import MathFastTextFilter
+from .text_quality_fasttext_filter import FastTextQualityFilter
 
 __all__ = [
     "EnglishFastTextFilter",
     "LatexSymbolFilter",
     "MathFastTextFilter",
+    "FastTextQualityFilter",
+    "InclusiveLatexSymbolFilter",
 ]

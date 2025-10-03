@@ -51,9 +51,10 @@ class BertCSVFormatter:
             os.makedirs(self.output_path)
 
     def _json_to_csv(self, json_input_file, csv_output_file, meta_data):
-        with open(json_input_file, "r") as fin, open(
-            csv_output_file, "w", newline=""
-        ) as fout:
+        with (
+            open(json_input_file, "r") as fin,
+            open(csv_output_file, "w", newline="") as fout,
+        ):
             csv_writer = csv.DictWriter(
                 fout,
                 fieldnames=BertInputFeatures._fields,

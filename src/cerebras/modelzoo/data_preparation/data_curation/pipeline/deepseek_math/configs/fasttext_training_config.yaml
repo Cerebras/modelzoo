@@ -1,13 +1,13 @@
 output:
   output_dir: "/output"
-  train_filename: "train_preprocessed"
-  val_filename: "valid_preprocessed"
+  train_filename: "train_preprocessed.txt"
+  val_filename: "valid_preprocessed.txt"
 
 datasets:
   math_dataset_name: "HuggingFaceTB/finemath"
   non_math_dataset_name: "HuggingFaceFW/fineweb"
-  math_configs: ["finemath-4plus", "finemath-3plus", "infiwebmath-4plus"]
-  non_math_configs: ["sample-100BT", "sample-350BT", "sample-10BT"]
+  math_config: "finemath-4plus"
+  non_math_config: "sample-100BT"
   cache_math: "./finemath-4plus-1M-samples"
   cache_non_math: "./sample-100BT-1M-samples"
 

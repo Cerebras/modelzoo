@@ -506,8 +506,8 @@ class SparseActFeedForwardNetwork(nn.Module):
         # Routed Experts
         topk_probs = maybe_to_half_dtype(topk_probs)
 
-        ones = torch.ones_like(topk_indices.float())
-        zeros = torch.zeros_like(topk_indices.float())
+        ones = torch.ones_like(topk_probs)
+        zeros = torch.zeros_like(topk_probs)
 
         for i, expert in enumerate(self.experts):
 
@@ -519,23 +519,28 @@ class SparseActFeedForwardNetwork(nn.Module):
             def add_routed_expert(input, topk_indices, output):
                 # Compute token mask for expert i
                 indices_mask_k = torch.where(
-                    topk_indices.float() - i == 0, ones, zeros
+                    (topk_indices - i).to(topk_probs.dtype) == 0, ones, zeros
                 )
                 indices_mask, _ = indices_mask_k.max(
                     dim=-1
                 )  # returns values, indices. Only care about values
 
-                exp_out = input
-                for ffn in expert:
-                    exp_out = ffn(exp_out, indices_mask)
-
                 # Compute probability mask for expert i
-                probs_mask = topk_probs * indices_mask_k.to(topk_probs.dtype)
+                probs_mask = topk_probs * indices_mask_k
                 probs_mask, _ = probs_mask.max(
                     dim=-1, keepdim=True
                 )  # returns values, indices. Only care about values
-                probs_mask = probs_mask.broadcast_to(exp_out.shape)
-                exp_out = exp_out * probs_mask
+
+                exp_in = input
+                if self.config.moe_params.probability_before_ffn:
+                    exp_in = exp_in * probs_mask.broadcast_to(exp_in.shape)
+
+                exp_out = exp_in
+                for ffn in expert:
+                    exp_out = ffn(exp_out, indices_mask)
+
+                if not self.config.moe_params.probability_before_ffn:
+                    exp_out = exp_out * probs_mask.broadcast_to(exp_out.shape)
 
                 return output + exp_out
 
@@ -659,15 +664,6 @@ class SparseMoEBlock(nn.Module):
         weight_initializer(self.gate.weight.data)
         self.experts.reset_parameters()
 
-    def update_expert_mask(
-        self, x, topk_indices, valid_mask, expert_mask_shape
-    ):
-        expert_mask = torch.zeros(
-            expert_mask_shape, device=x.device, dtype=x.dtype
-        )
-        expert_mask.scatter_(2, topk_indices.to(torch.int64), 1)
-        return expert_mask, topk_indices
-
     def forward(self, x, **extra_args):
         sinkhorn_error = None
 
@@ -700,6 +696,7 @@ class SparseMoEBlock(nn.Module):
                 self.config.moe_params.router_selection_nonlinearity
                 == "softmax"
             ):
+
                 routing_weights_fp32 = nn.functional.softmax(
                     router_logits, dim=-1
                 )
@@ -795,7 +792,16 @@ class SparseMoEBlock(nn.Module):
                     expert_weights, -1, topk_indices.to(torch.int64)
                 )
 
-            valid_mask = None
+            else:
+                num_experts = routing_weights.shape[-1]
+                expert_mask = (
+                    cstorch.nn.functional.one_hot(
+                        topk_indices.to(torch.int64), num_classes=num_experts
+                    )
+                    .to(x.dtype)
+                    .sum(dim=2)
+                )
+
             if self.config.moe_params.expert_weighting_normalization:
                 denom = torch.sum(topk_probs, dim=-1).to(x.dtype)
                 # Add the probability from the null expert
@@ -810,15 +816,6 @@ class SparseMoEBlock(nn.Module):
                     )
                     denom = denom + null_prob
                 topk_probs /= denom[..., None]
-
-            # Expert mask is only for non shared experts
-            expert_mask_shape = (
-                *topk_probs.shape[:-1],
-                self.config.moe_params.num_experts,
-            )
-            expert_mask, topk_indices = self.update_expert_mask(
-                x, topk_indices, valid_mask, expert_mask_shape
-            )
 
             # moe_optimized_impl only:
             # If we have shared experts, add the probability and index to selected experts

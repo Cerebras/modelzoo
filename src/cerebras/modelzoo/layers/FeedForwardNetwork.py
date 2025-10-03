@@ -65,6 +65,8 @@ class MoEConfig(BaseConfig):
     "Number of iterations for sinkhorn nonlinearity"
     gate_initializer: Optional[InitializerConfig] = None
     "Initializer used for router gating network"
+    probability_before_ffn: bool = True
+    "Compute routing probabilities before the FFN layer instead of after"
 
     def post_init(self, context):
         super().post_init(context)

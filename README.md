@@ -12,17 +12,17 @@ The Cerebras Model Zoo is a collection of deep learning models and utilities opt
 
 ### Key Features and Components
 
-* [CLI](https://training-docs.cerebras.ai/rel-2.6.0/model-zoo/cli-overview): The ModelZoo CLI is a comprehensive command-line interface that serves as a single entry point for all ModelZoo-related tasks. It streamlines workflows such as data preprocessing, model training, and validation.
+* [CLI](https://training-docs.cerebras.ai/rel-2.5.0/model-zoo/cli-overview): The ModelZoo CLI is a comprehensive command-line interface that serves as a single entry point for all ModelZoo-related tasks. It streamlines workflows such as data preprocessing, model training, and validation.
 * [Models](./src/cerebras/modelzoo/models): Includes configuration files and reference implementations for a wide range of NLP, vision, and multimodal models, including Llama, Mixtral, DINOv2, and Llava. These are optimized for Cerebras hardware and follow best practices for performance and scalability. 
-* [Data Preprocessing Tools](https://training-docs.cerebras.ai/rel-2.6.0/model-zoo/core-workflows/quickstart-guide-for-data-preprocessing): Scripts and utilities for preparing datasets for training, including tokenization, formatting, and batching for supported models.
-* [Checkpoint Converters and Porting Tools](https://training-docs.cerebras.ai/rel-2.6.0/model-zoo/migration/convert-checkpoints-and-model-configs/convert-checkpoints-and-model-configs): Tools for converting between checkpoint formats (e.g., Cerebras ↔ HuggingFace) and porting PyTorch models to run on Cerebras systems.
+* [Data Preprocessing Tools](https://training-docs.cerebras.ai/rel-2.5.0/model-zoo/core-workflows/quickstart-guide-for-data-preprocessing): Scripts and utilities for preparing datasets for training, including tokenization, formatting, and batching for supported models.
+* [Checkpoint Converters and Porting Tools](https://training-docs.cerebras.ai/rel-2.5.0/model-zoo/migration/convert-checkpoints-and-model-configs/convert-checkpoints-and-model-configs): Tools for converting between checkpoint formats (e.g., Cerebras ↔ HuggingFace) and porting PyTorch models to run on Cerebras systems.
 * Advanced Features: Support for training optimizations such as custom training loops, custom model implementations, µParam (μP) scaling, rotary position embedding (RoPE) scaling for extended sequence lengths, and more.
 
 ### Ready to Get Started?
 
 * Reach out to us [here](https://cerebras.ai/contact) to get access to Cerebras Hardware and ModelZoo!
-* Install Cerebras ModelZoo by following the steps in our [setup guide](https://training-docs.cerebras.ai/rel-2.6.0/getting-started/setup-and-installation). 
-* Once you have ModelZoo installed, get started by [pretraining](https://training-docs.cerebras.ai/rel-2.6.0/getting-started/setup-and-installation) or [finetuning](https://training-docs.cerebras.ai/rel-2.6.0/getting-started/fine-tune-your-first-model) your first model!
+* Install Cerebras ModelZoo by following the steps in our [setup guide](https://training-docs.cerebras.ai/rel-2.5.0/getting-started/setup-and-installation). 
+* Once you have ModelZoo installed, get started by [pretraining](https://training-docs.cerebras.ai/rel-2.5.0/getting-started/setup-and-installation) or [finetuning](https://training-docs.cerebras.ai/rel-2.5.0/getting-started/fine-tune-your-first-model) your first model!
 * Visit our [developer documentation](https://training-docs.cerebras.ai) for comprehensive guides on everything you can do with Cerebras ModelZoo. 
 
 ## Models in this repository
