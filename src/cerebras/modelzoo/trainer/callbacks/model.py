@@ -69,7 +69,10 @@ class ModelCallback(CoreCallback):
             )
 
     def on_save_checkpoint(self, trainer, state_dict):
-        state_dict["model"] = trainer.model.state_dict()
+        if hasattr(trainer.model, "policy_model"):
+            state_dict["model"] = trainer.model.policy_model.model.state_dict()
+        else:
+            state_dict["model"] = trainer.model.state_dict()
 
     def on_load_checkpoint(self, trainer, state_dict):
         if "model" not in state_dict:
@@ -93,9 +96,15 @@ class ModelCallback(CoreCallback):
             # This should be the case that is used for all checkpoints saved
             # post rel-2.0.0
             else:
-                trainer.model.load_state_dict(
-                    state_dict["model"],
-                    strict=not trainer.checkpoint.disable_strict_checkpoint_loading,
+                if hasattr(trainer.model, "policy_model"):
+                    trainer.model.policy_model.model.load_state_dict(
+                        state_dict["model"],
+                        strict=not trainer.checkpoint.disable_strict_checkpoint_loading
+                    )
+                else:    
+                    trainer.model.load_state_dict(
+                        state_dict["model"],
+                        strict=not trainer.checkpoint.disable_strict_checkpoint_loading,
                 )
 
             trainer.logger.info(

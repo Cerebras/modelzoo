@@ -52,7 +52,10 @@ class OptimizerCallback(CoreCallback):
         elif isinstance(self.optimizer, cstorch.optim.Optimizer):
             trainer.optimizer = self.optimizer
         else:
-            trainer.optimizer = self.optimizer(trainer.model)
+            if hasattr(trainer.model, "policy_model"):
+                trainer.optimizer = self.optimizer(trainer.model.policy_model.model)
+            else:    
+                trainer.optimizer = self.optimizer(trainer.model)
 
     def on_fit_start(self, trainer, train_dataloader, val_dataloader, loop):
         if trainer.optimizer is None:

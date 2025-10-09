@@ -68,8 +68,14 @@ models:
   - cerebras.modelzoo.data.nlp.gpt.DummyIterableDataProcessor.DummyIterableDataProcessor
   - cerebras.modelzoo.data.nlp.gpt.GptHDF5DataProcessor.GptHDF5DataProcessor
   - cerebras.modelzoo.data.nlp.gpt.GptHDF5MapDataProcessor.GptHDF5MapDataProcessor
+  - cerebras.modelzoo.data.nlp.gpt.GptNpyRLDataProcessor.GptNpyRLDataProcessor
   - cerebras.modelzoo.data.nlp.gpt.HuggingFaceDataProcessorEli5.HuggingFaceDataProcessorEli5
   - cerebras.modelzoo.data.nlp.gpt.HuggingFaceIterableDataProcessorEli5.HuggingFaceIterableDataProcessorEli5
+
+- name: RL
+  path: cerebras.modelzoo.models.nlp.rl.model.RLModel
+  data_processor_paths: &rl_data_processor_paths
+  - cerebras.modelzoo.data.nlp.gpt.GptNpyRLDataProcessor.GptNpyRLDataProcessor
 
 - name: gpt3
   path: cerebras.modelzoo.models.nlp.gpt3.model.GPT3Model
