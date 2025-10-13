@@ -1,45 +1,35 @@
 from copy import deepcopy
-from typing import Literal
+from typing import Literal, Optional, Union
 
 import torch
 
 import cerebras.pytorch as cstorch
 from cerebras.modelzoo.losses.GRPOLoss import GRPOLoss
-from cerebras.modelzoo.models.nlp.llama.model import LlamaModel, LlamaModelConfig
+from cerebras.modelzoo.models.nlp.llama.model import LlamaModelConfig
+from cerebras.modelzoo.models.nlp.gpt2.model import GPT2ModelConfig
+from cerebras.modelzoo.config import ModelConfig
+from typing_extensions import Annotated
 
 
-class RLModelConfig(LlamaModelConfig):
+class RLModelConfig(ModelConfig):
     name: Literal["RL"]
+    policy_model : Annotated[Union[LlamaModelConfig, GPT2ModelConfig], Field(discriminator="name"),] = ...
 
+    use_kl_loss : Optional[bool] = True
+    kl_loss_coef : Optional[float] = 0.005
+    clip_ratio : Optional[float]
+    clip_ratio_low : Optional[float] = 0.2
+    clip_ratio_high : Optional[float] = 0.28
 
 class RLModel(torch.nn.Module):
     def __init__(self, config: RLModelConfig):
         super().__init__()
 
-        self.policy_model = LlamaModel(config)
+        self.policy_model = config.policy_model()
 
-        #self.ref_model = deepcopy(self.policy_model)
-        #self.ref_model.eval()
-
-        self.loss_fn = GRPOLoss()
+        self.loss_fn = GRPOLoss(config.clip_ratio, config.clip_ratio_low, config.clip_ratio_high, config.use_kl_loss, config.kl_loss_coef)
 
     def forward(self, data):
-        '''with torch.no_grad():
-            _, old_log_probs = self.ref_model(
-                data={
-                    "input_ids": data["input_ids"],
-                    "attention_mask": data["attention_mask"],
-                    "labels": data["input_ids"],
-                },
-                output_logits=True,
-            )
-            old_log_probs = torch.log_softmax(old_log_probs, dim=-1)
-            old_log_probs = torch.gather(
-                input=old_log_probs,
-                dim=-1,
-                index=data["input_ids"].to(torch.int64).unsqueeze(-1),
-            ).squeeze(-1)'''
-
         _, curr_log_probs = self.policy_model(
             data={
                 "input_ids": data["input_ids"],

@@ -1,9 +1,14 @@
 import torch
 import torch.nn as nn
 
-
 class GRPOLoss(nn.Module):
-    def __init__(self, eps_clip: float = 0.2, kl_loss_coeff: float = 0.1):
+    def __init__(
+      self,
+      clip_ratio: Optional[float] = None,
+      clip_ratio_low : float = 0.2,
+      clip_ratio_high : float = 0.28,
+      use_kl_loss : bool = True,
+      kl_loss_coef : float = 0.0)
         """
         GRPO Loss with optional KL regularization.
         Args:
@@ -11,9 +16,11 @@ class GRPOLoss(nn.Module):
             kl_loss_coeff (float): Coefficient for KL loss term.
         """
         super().__init__()
-        self.eps_clip = eps_clip
-        self.kl_loss_coeff = kl_loss_coeff
-        self.epsilon = 1e-6
+        self.epsilon = 1e-8
+        self.use_kl_loss = use_kl_loss
+        self.kl_loss_coef = kl_loss_coef
+        self.clip_ratio_low = clip_ratio_low
+        self.clip_ratio_high  = clip_ratio_high
 
     def forward(
         self,
@@ -33,11 +40,15 @@ class GRPOLoss(nn.Module):
         Returns:
             policy_loss (Tensor): Scalar GRPO loss.
         """
+
+        cliprange=self.clip_ratio
+        cliprange_low=config.clip_ratio_low if config.clip_ratio_low is not None else cliprange
+        cliprange_high=config.clip_ratio_high if config.clip_ratio_high is not None else cliprange
         sampling_ratio = torch.exp(curr_log_probs - old_log_probs)
 
         # Clipping for stability
         clipped_ratio = torch.clamp(
-            sampling_ratio, 1.0 - self.eps_clip, 1.0 + self.eps_clip
+            sampling_ratio, 1.0 - cliprange_low, 1.0 + cliprange_high)
         )
 
         unclipped_loss = sampling_ratio * advantages
@@ -51,12 +62,12 @@ class GRPOLoss(nn.Module):
         )
 
         # Optional KL divergence loss
-        if self.kl_loss_coeff > 0.0 and ref_log_probs is not None:
+        if self.use_kl_loss is True and self.kl_loss_coef > 0.0 and ref_log_probs is not None:
             kl = ref_log_probs - curr_log_probs
             ratio = torch.exp(kl)
             kld = ratio - kl - 1.0
             kl_loss = torch.clamp(kld, min=-10.0, max=10.0)
             masked_kl_loss = (loss_mask * kl_loss).mean()
-            policy_loss += self.kl_loss_coeff * masked_kl_loss
+            policy_loss += self.kl_loss_coef * masked_kl_loss
 
         return policy_loss
