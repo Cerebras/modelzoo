@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+from typing import Optional
 
 class GRPOLoss(nn.Module):
     def __init__(
@@ -8,7 +9,8 @@ class GRPOLoss(nn.Module):
       clip_ratio_low : float = 0.2,
       clip_ratio_high : float = 0.28,
       use_kl_loss : bool = True,
-      kl_loss_coef : float = 0.0)
+      kl_loss_coef : float = 0.0
+    ):
         """
         GRPO Loss with optional KL regularization.
         Args:
@@ -21,6 +23,7 @@ class GRPOLoss(nn.Module):
         self.kl_loss_coef = kl_loss_coef
         self.clip_ratio_low = clip_ratio_low
         self.clip_ratio_high  = clip_ratio_high
+        self.clip_ratio = clip_ratio
 
     def forward(
         self,
@@ -42,13 +45,13 @@ class GRPOLoss(nn.Module):
         """
 
         cliprange=self.clip_ratio
-        cliprange_low=config.clip_ratio_low if config.clip_ratio_low is not None else cliprange
-        cliprange_high=config.clip_ratio_high if config.clip_ratio_high is not None else cliprange
+        cliprange_low=self.clip_ratio_low if self.clip_ratio_low is not None else cliprange
+        cliprange_high=self.clip_ratio_high if self.clip_ratio_high is not None else cliprange
         sampling_ratio = torch.exp(curr_log_probs - old_log_probs)
 
         # Clipping for stability
         clipped_ratio = torch.clamp(
-            sampling_ratio, 1.0 - cliprange_low, 1.0 + cliprange_high)
+            sampling_ratio, 1.0 - cliprange_low, 1.0 + cliprange_high
         )
 
         unclipped_loss = sampling_ratio * advantages

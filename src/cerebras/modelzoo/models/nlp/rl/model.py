@@ -1,5 +1,6 @@
 from copy import deepcopy
 from typing import Literal, Optional, Union
+from pydantic import Field
 
 import torch
 
@@ -17,7 +18,7 @@ class RLModelConfig(ModelConfig):
 
     use_kl_loss : Optional[bool] = True
     kl_loss_coef : Optional[float] = 0.005
-    clip_ratio : Optional[float]
+    clip_ratio : Optional[float] = None
     clip_ratio_low : Optional[float] = 0.2
     clip_ratio_high : Optional[float] = 0.28
 
