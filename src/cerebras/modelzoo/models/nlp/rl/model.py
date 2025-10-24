@@ -3,6 +3,7 @@ from typing import Literal, Optional, Union
 from pydantic import Field
 
 import torch
+import torch.nn.functional as F
 
 import cerebras.pytorch as cstorch
 from cerebras.modelzoo.losses.GRPOLoss import GRPOLoss
@@ -10,6 +11,16 @@ from cerebras.modelzoo.models.nlp.llama.model import LlamaModelConfig
 from cerebras.modelzoo.models.nlp.gpt2.model import GPT2ModelConfig
 from cerebras.modelzoo.config import ModelConfig
 from typing_extensions import Annotated
+
+def logprobs_from_logits(logits: torch.Tensor, labels) -> torch.Tensor:
+    """
+    Implementation taken from verL; modified to fix compile issues on our stack.
+    """
+    logp = F.log_softmax(logits, dim=-1)
+    one_hot = cstorch.nn.functional.one_hot(
+        labels.to(torch.int64), num_classes=logp.size(-1)
+    ).to(logp.dtype)
+    return (logp * one_hot).sum(dim=-1)
 
 
 class RLModelConfig(ModelConfig):
@@ -31,6 +42,25 @@ class RLModel(torch.nn.Module):
         self.loss_fn = GRPOLoss(config.clip_ratio, config.clip_ratio_low, config.clip_ratio_high, config.use_kl_loss, config.kl_loss_coef)
 
     def forward(self, data):
+        if "old_log_probs" not in data:
+            _, logits = self.policy_model(
+                data={
+                    "input_ids": data["input_ids"],
+                    "attention_mask": data["attention_mask"],
+                    "labels": data["input_ids"],
+                    "position_ids": data["position_ids"],
+                },
+                output_logits=True,
+            )
+
+            # TODO: We don't divide by temperature here. veRL does something like logits.div_(temperature),
+            # where temperature is present in data.meta_info.
+
+            response_length = data["responses"].size(-1)
+            logits = logits[:, -response_length - 1 : -1, :]  # [batch_size, response_length, vocab_size]
+            old_log_probs = logprobs_from_logits(logits, data["responses"])
+            return old_log_probs
+
         _, curr_log_probs = self.policy_model(
             data={
                 "input_ids": data["input_ids"],

@@ -22,15 +22,32 @@ class NpyRLDataset(torch.utils.data.Dataset):
         try:
             with open(rollouts_path, 'rb') as f:
                 samples = np.load(f)
-                self.advantages = samples['first']
-                self.attention_mask = samples['second'].astype(np.int32)
-                self.input_ids = samples['third'].astype(np.int32)
-                self.responses = samples['fourth'].astype(np.int32)
-                self.old_log_probs = samples['fifth']
-                self.position_ids = samples['sixth'].astype(np.int32)
-                self.ref_log_probs = samples['seventh']
-                self.dataset_size = len(self.advantages)
+
+                # For this to work, we build the .npz file exactly as we've built for training.
+                # TODO: Revisit this later, to make it more robust.
+
+                self.advantages = samples['first'] if 'first' in samples else None
+                self.attention_mask = samples['second'].astype(np.int32) if 'second' in samples else None
+                self.input_ids = samples['third'].astype(np.int32) if 'third' in samples else None
+                self.responses = samples['fourth'].astype(np.int32) if 'fourth' in samples else None
+                self.old_log_probs = samples['fifth'] if 'fifth' in samples else None
+                self.position_ids = samples['sixth'].astype(np.int32) if 'sixth' in samples else None
+                self.ref_log_probs = samples['seventh'] if 'seventh' in samples else None
+
+                # If True, we're in training mode; else we're calculating old log probs.
+                self._has_log_prob = self.old_log_probs is not None
+
+                if not self._has_log_prob:
+                    self.dataset_size = len(self.input_ids)
+                else:
+                    self.dataset_size = len(self.advantages)
+
                 #self.prompt = samples['eighth']
+
+                # These keys are common to both the modes i.e training as well as old-log-prob calculation.
+                for name in ("attention_mask","input_ids","responses","position_ids"):
+                    if getattr(self, name) is None:
+                        raise KeyError(f"Missing required key for '{name}' in {rollouts_path}")
 
                 self.loss_mask = np.zeros((self.dataset_size, self.MSL), dtype=np.float32)
                 self.loss_mask[:, self.prompt_len:self.prompt_len + len(self.responses[0])] = 1.0
@@ -38,10 +55,11 @@ class NpyRLDataset(torch.utils.data.Dataset):
                 self.attention_mask = self.pad_length(self.attention_mask)       
                 self.position_ids = self.pad_length(self.position_ids)
 
-                self.advantages = self.pad_in_bw(self.advantages)
-                self.responses = self.pad_in_bw(self.responses)
-                self.old_log_probs = self.pad_in_bw(self.old_log_probs)
-                self.ref_log_probs = self.pad_in_bw(self.ref_log_probs)
+                if self._has_log_prob:
+                    self.advantages = self.pad_in_bw(self.advantages)
+                    self.responses = self.pad_in_bw(self.responses)
+                    self.old_log_probs = self.pad_in_bw(self.old_log_probs)
+                    self.ref_log_probs = self.pad_in_bw(self.ref_log_probs)
 
         except Exception as e:
             raise RuntimeError(f"Failed to read : {rollouts_path}") from e
@@ -60,15 +78,26 @@ class NpyRLDataset(torch.utils.data.Dataset):
         return self.dataset_size
 
     def __getitem__(self, idx):
-        data = {
-            "input_ids": self.input_ids[idx],
-            "attention_mask": self.attention_mask[idx],
-            "advantages": self.advantages[idx],
-            "loss_mask": self.loss_mask[idx],
-            "ref_log_probs": self.ref_log_probs[idx],
-            "old_log_probs": self.old_log_probs[idx],
-            "position_ids": self.position_ids[idx],
-        }
+        data = {}
+
+        if self._has_log_prob:
+            data = {
+                "input_ids": self.input_ids[idx],
+                "attention_mask": self.attention_mask[idx],
+                "advantages": self.advantages[idx],
+                "loss_mask": self.loss_mask[idx],
+                "ref_log_probs": self.ref_log_probs[idx],
+                "old_log_probs": self.old_log_probs[idx],
+                "position_ids": self.position_ids[idx],
+            }
+        else:
+            data = {
+                "responses":      self.responses[idx],
+                "input_ids":      self.input_ids[idx],
+                "attention_mask": self.attention_mask[idx],
+                "position_ids":   self.position_ids[idx],
+            }
+
         return data
 
 class GptNpyRLDataProcessorConfig(DataConfig):

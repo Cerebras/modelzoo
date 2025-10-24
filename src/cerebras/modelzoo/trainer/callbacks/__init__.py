@@ -81,6 +81,7 @@ from .run_schedule import RunSchedule
 from .selective_grad import SelectiveGrad
 from .model_stats import CountParams
 from .notification import EmailNotification, SlackNotification
+from .rl_log_probs import SaveOldLogProbs
 
 
 # isort: on
@@ -145,4 +146,5 @@ __all__ = [
     "SlackNotification",
     "RunSchedule",
     "NaNChecker",
+    "SaveOldLogProbs",
 ]
