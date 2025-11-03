@@ -28,7 +28,6 @@ Classes:
 """
 
 import copy
-import functools
 import inspect
 import logging
 import numbers
@@ -502,22 +501,7 @@ class Reader:
         Returns:
             Iterator[Any]: Yields processed data chunks.
         """
-
-        # Dump the read hook code
-        if output_dir:
-            hook_dump = os.path.join(output_dir, "hook.py")
-            with open(hook_dump, "w") as f:
-                if isinstance(self.read_hook_fn, functools.partial):
-                    # If it's a partial, get the underlying function.
-                    # This will only capture the code of the wrapped function,
-                    # not the partial arguments.
-                    f.write(inspect.getsource(self.read_hook_fn.func))
-                else:
-                    # Directly a function or other inspect-able object
-                    f.write(inspect.getsource(self.read_hook_fn))
-
         file_list = self.file_list[self.checkpoint_args["file_index"] :]
-
         custom_loader_path = os.path.abspath(inspect.getfile(DatasetLoader))
 
         def build_load_supported_format_args(filepath, fmt):

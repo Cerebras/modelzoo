@@ -14,6 +14,7 @@
 
 import argparse
 import os
+import time
 
 import yaml
 
@@ -71,6 +72,7 @@ def load_config(config_path):
 
 
 def main():
+    start = time.time()
     args = parse_args()
     config = load_config(args.config)
 
@@ -91,20 +93,23 @@ def main():
         CustomURLDedupPipelineStep,
     )
     from data_curation.pipeline.deepseek_math.extractors import (
+        PIIRedactingExtractor,
         ResiliparseExtractor,
+        TrafilaturaExtractor,
     )
     from data_curation.pipeline.deepseek_math.filters import (
         EnglishFastTextFilter,
-        LatexSymbolFilter,
+        FastTextQualityFilter,
+        InclusiveLatexSymbolFilter,
         MathFastTextFilter,
         PerplexityScorer,
     )
+    from data_curation.pipeline.deepseek_math.readers import SafeWarcReader
     from data_curation.pipeline.deepseek_math.writers import (
         ConditionalJsonlWriter,
     )
     from datatrove.executor import LocalPipelineExecutor
     from datatrove.pipeline.filters import URLFilter
-    from datatrove.pipeline.readers import WarcReader
     from datatrove.pipeline.readers.base import BaseDiskReader
     from datatrove.pipeline.writers import JsonlWriter
     from executors.slurm.slurm import SlurmPipelineExecutor
@@ -117,7 +122,7 @@ def main():
         return doc_dict
 
     pipeline = [
-        WarcReader(
+        SafeWarcReader(
             data_folder=config['pipeline']['input_warc_folder'],
             adapter=warc_adapter,
             default_metadata={"dump": config['pipeline']['dump']},
@@ -130,11 +135,23 @@ def main():
             eng_class_name=config['filters']['labels']['english'],
             exclusion_writer=None,
         ),
+        TrafilaturaExtractor(
+            favour_precision=False,  # Include symbol-heavy content
+            include_tables=True,  # Math in tables
+            include_formatting=True,  # Preserve structure
+            prune_unwanted_sections=True,  # Remove ads/navigation
+            deduplicate=True,  # ← Remove duplicate sections
+            include_links=False,
+        ),
+        PIIRedactingExtractor(),
+        FastTextQualityFilter(
+            model_path=config['models']['text_quality_fasttext_model_path']
+        ),
         JsonlWriter(
             output_folder=config['pipeline']['extracted_english_path'],
             output_filename="${cc_path}.jsonl.gz",
         ),
-        LatexSymbolFilter(),
+        InclusiveLatexSymbolFilter(),
         MathFastTextFilter(
             model_path=config['models']['math_fasttext_model_path'],
             math_threshold=config['filters']['math_threshold'],
@@ -155,8 +172,8 @@ def main():
         executor = LocalPipelineExecutor(
             pipeline=pipeline,
             logging_dir=config['pipeline']['logging_dir'],
-            tasks=config['executor']['local']['tasks'],
-            workers=config['executor']['local']['workers'],
+            tasks=config['local']['tasks'],
+            workers=config['local']['workers'],
         )
         executor.run()
 
@@ -175,6 +192,9 @@ def main():
     else:  # slurm
         executor = SlurmPipelineExecutor(pipeline=pipeline, **config['slurm'])
         executor.run()
+
+    end = time.time()
+    print(f"It took {end - start} seconds to finish.")
 
 
 if __name__ == "__main__":

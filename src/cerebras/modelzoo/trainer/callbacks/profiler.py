@@ -419,6 +419,15 @@ class DurationProfiler(Callback):
         self._current_teardown_time["duration"] = (
             time.time() - self._current_teardown_time["start"]
         )
+        self._clear_tensor_hook_handle()
+
+    def on_train_exception(self, trainer, exception):
+        self._clear_tensor_hook_handle()
+
+    def on_validate_exception(self, trainer, exception):
+        self._clear_tensor_hook_handle()
+
+    def _clear_tensor_hook_handle(self):
         self.tensor_hook_handle.remove()
         self.tensor_hook_handle = None
 

@@ -147,3 +147,74 @@ class MNISTDataProcessor:
                 shuffle=False if train_sampler else self.shuffle,
                 num_workers=self.config.num_workers,
             )
+
+
+class MNISTMapDataProcessorConfig(MNISTDataProcessorConfig):
+    data_processor: Literal["MNISTMapDataProcessor"]
+    """Name of the data processor."""
+
+    nan_index: Optional[int] = None
+    """Index of the batch to generate NaN data."""
+
+
+class MnistMapFakeDataset(torch.utils.data.Dataset):
+    def __init__(
+        self,
+        batch_size,
+        sample_count,
+        input_dtype,
+        shuffle=True,
+        nan_sample_index=None,
+    ):
+        import cerebras.pytorch as cstorch
+
+        self.sample_count = sample_count
+        self.sampler = cstorch.utils.data.DistributedSampler(
+            self, batch_size=batch_size, shuffle=shuffle
+        )
+
+        self.input_dtype = input_dtype
+        self.target_dtype = torch.int32 if cstorch.use_cs() else torch.int64
+        self.nan_sample_index = nan_sample_index
+
+    def __len__(self):
+        return self.sample_count
+
+    def __getitem__(self, idx):
+        return [
+            (
+                torch.full((1, 28, 28), torch.nan, dtype=self.input_dtype)
+                if idx == self.nan_sample_index
+                else torch.ones((1, 28, 28), dtype=self.input_dtype)
+            ),
+            torch.tensor(1, dtype=self.target_dtype),
+        ]
+
+
+class MNISTMapDataProcessor:
+    def __init__(self, config: MNISTMapDataProcessorConfig):
+        if isinstance(config, dict):
+            config = MNISTMapDataProcessorConfig(**config)
+
+        self.config = config
+
+        self.batch_size = get_streaming_batch_size(config.batch_size)
+        self.shuffle = config.shuffle
+
+        self.dtype = cstorch.amp.get_floating_point_dtype()
+
+    def create_dataloader(self):
+        from cerebras.modelzoo.data.common.restartable_dataloader import (
+            RestartableDataLoader,
+        )
+
+        if self.config.nan_index is not None:
+            # set shuffle = False because we want to generate NaN data at a specific index
+            ds = MnistMapFakeDataset(
+                self.batch_size, 100, self.dtype, False, self.config.nan_index
+            )
+        else:
+            ds = MnistMapFakeDataset(
+                self.batch_size, 100, self.dtype, self.shuffle
+            )
+        return RestartableDataLoader(ds, batch_sampler=ds.sampler)

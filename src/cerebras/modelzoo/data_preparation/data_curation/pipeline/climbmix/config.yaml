@@ -1,0 +1,76 @@
+# Paths configuration (all paths except basedir are relative to the basedir)
+paths:
+  basedir: <YOUR_BASE_DIRECTORY>
+  output_folder: "output"
+  log_dir: "output/logs"
+  container_path: "img.sif"
+
+# Embeddings configuration
+embeddings:
+  enabled: true
+  model: "NovaSearch/stella_en_400M_v5"
+  model_kwargs:
+    trust_remote_code: true
+    config_kwargs:
+      use_memory_efficient_attention: false
+      unpad_inputs: false
+  batch_size: 1
+  use_gpu: false
+  dataset:
+    name: "common-pile/youtube_filtered"
+    limit: -1
+
+  slurm:
+    tasks: 10
+    randomize_start_duration: 60
+    job_name: "embeddings"
+    partition: "cpu-spot"
+    time: "4:00:00"
+    mem_per_cpu_gb: 4
+    cpus_per_task: 4
+    tasks_per_job: 1
+    use_gpu: false
+
+# Clustering configuration
+clustering:
+  num_clusters: 1000
+  kmeans_iterations: 20
+  merge_clusters: true
+  merge_threshold: 0.3
+
+  slurm:
+    tasks: 1
+    job_name: "clustering"
+    partition: "cpu-spot"
+    time: "03:00:00"
+    mem_per_cpu_gb: 8
+    cpus_per_task: 16
+    use_gpu: false
+
+# Labeling configuration
+labeling:
+  model: "llama-3.3-70b"
+  api_key: "csk-<API-KEY>"
+  prompt_template: >
+    Analyze the following representative documents from a cluster and assign a concise topic label (1–3 words).
+    - If the content is related to mathematics, assign a specific subfield or subtopic INSTEAD of a general label like "Mathematics".
+    - If not related to mathematics, provide the MOST PRECISE TOPIC label possible.
+    - AVOID vague or high-level categories such as "Math", "Science", "Education", etc.
+
+    Examples:
+    A document about solving systems of linear equations → Linear Algebra
+    A document discussing prime number theorems → Analytic Number Theory
+    A document about graphs and shortest paths → Graph Theory
+    A document about integration techniques → Calculus
+
+    {text}
+
+  slurm:
+    tasks: 1
+    job_name: "labeling"
+    partition: "cpu-spot"
+    time: "01:00:00"
+    mem_per_cpu_gb: 4
+    cpus_per_task: 2
+    use_gpu: false
+

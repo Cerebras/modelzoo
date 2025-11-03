@@ -160,9 +160,10 @@ def pass_2_shuffle_holdout(
                 f"{holdout_output_chunk}/example_holdout_{j}.jsonl.zst"
             )
 
-            with open(output_file_name, "wb") as fout, open(
-                output_holdout_file_name, "wb"
-            ) as holdout_fout:
+            with (
+                open(output_file_name, "wb") as fout,
+                open(output_holdout_file_name, "wb") as holdout_fout,
+            ):
                 # train output set
                 write_lmd_dataset(fout, lines, buckets_train[j])
 

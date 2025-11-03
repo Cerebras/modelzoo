@@ -148,6 +148,7 @@ models:
   path: cerebras.modelzoo.models.vision.fc_mnist.model.MNISTModel
   data_processor_paths:
   - cerebras.modelzoo.models.vision.fc_mnist.data.MNISTDataProcessor
+  - cerebras.modelzoo.models.vision.fc_mnist.data.MNISTMapDataProcessor  
 
 - name: generic_image_encoders
   path: cerebras.modelzoo.models.vision.generic_image_encoders.base.BaseSSLArch.BaseSSLArch

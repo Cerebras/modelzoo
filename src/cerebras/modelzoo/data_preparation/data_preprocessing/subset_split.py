@@ -47,25 +47,40 @@ class SubsetSplit:
         updated_params["setup"]["output_dir"] = os.path.join(
             params["setup"]["output_dir"], os.path.basename(sub_dir)
         )
-
+        data_splits_dir = updated_params["setup"].get("data_splits_dir")
+        if data_splits_dir:
+            updated_params["setup"]["data_splits_dir"] = os.path.join(
+                data_splits_dir, os.path.basename(sub_dir)
+            )
+        else:
+            updated_params["setup"]["data_splits_dir"] = os.path.join(
+                os.path.dirname(params["setup"]["output_dir"]),
+                "data_splits_dir",
+                os.path.basename(sub_dir),
+            )
+        logger.info(f"Updated params: {updated_params}")
         return updated_params
 
     def process_huggingface_params(self, params, subset):
         updated_params = copy.deepcopy(params)
-        updated_params["setup"]["data"].pop("subsets")
 
         updated_params["setup"]["data"]["data_dir"] = subset
         updated_params["setup"]["data"]["verification_mode"] = "no_checks"
         updated_params["setup"]["output_dir"] = os.path.join(
             params["setup"]["output_dir"], f"{subset}"
         )
+        data_splits_dir = updated_params["setup"].get("data_splits_dir")
+        if data_splits_dir:
+            updated_params["setup"]["data_splits_dir"] = os.path.join(
+                data_splits_dir, f"{subset}"
+            )
         return updated_params
 
     def generate_subsets(self):
-        top_level_as_subsets = self.data_params.get(
+        top_level_as_subsets = self.data_params.pop(
             "top_level_as_subsets", False
         )
-        subsets = self.data_params.get("subsets", False)
+        subsets = self.data_params.pop("subsets", False)
 
         if not (top_level_as_subsets or subsets):
             return [self.params]
@@ -82,11 +97,9 @@ class SubsetSplit:
                 )
                 return [self.params]
 
-            list_of_subsets = self.params["setup"]["data"]["subsets"]
-
             return [
-                self.process_huggingface_params(self.params, subsets)
-                for subsets in list_of_subsets
+                self.process_huggingface_params(self.params, subset)
+                for subset in subsets
             ]
 
         else:

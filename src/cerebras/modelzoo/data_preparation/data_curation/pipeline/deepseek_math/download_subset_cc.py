@@ -93,14 +93,17 @@ def download_with_retry(url, download_dir, max_retries, chunk_size):
             with requests.get(url, stream=True, timeout=60) as r:
                 r.raise_for_status()
                 total_size = int(r.headers.get("content-length", 0))
-                with open(dest_path, "wb") as f, tqdm(
-                    desc=filename,
-                    total=total_size,
-                    unit="B",
-                    unit_scale=True,
-                    unit_divisor=1024,
-                    leave=False,
-                ) as bar:
+                with (
+                    open(dest_path, "wb") as f,
+                    tqdm(
+                        desc=filename,
+                        total=total_size,
+                        unit="B",
+                        unit_scale=True,
+                        unit_divisor=1024,
+                        leave=False,
+                    ) as bar,
+                ):
                     for chunk in r.iter_content(chunk_size=chunk_size):
                         if chunk:
                             f.write(chunk)

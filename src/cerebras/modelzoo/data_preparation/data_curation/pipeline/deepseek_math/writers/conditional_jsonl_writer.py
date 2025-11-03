@@ -37,8 +37,8 @@ class ConditionalJsonlWriter(PipelineStep):
         super().__init__()
         self.base_output_folder = base_output_folder
         self.filename_template = filename_template
-        # cache JsonlWriter instances by subfolder
         self._writers: Dict[str, JsonlWriter] = {}
+        self._closed = False
 
     def _get_writer(self, subfolder: str) -> JsonlWriter:
         """Return a JsonlWriter for the given subfolder, creating if needed."""
@@ -56,29 +56,50 @@ class ConditionalJsonlWriter(PipelineStep):
         self, docs: Iterator[Document], rank: int, world_size: int
     ) -> Iterator[Document]:
         """
-        Iterate incoming documents, route each one to the appropriate writer,
-        and yield it downstream unchanged.
+        Route documents to appropriate writers and yield downstream.
         """
-        for idx, doc in enumerate(docs):
+        docs_processed = 0
+        try:
+            for doc in docs:
+                meta = doc.metadata or {}
+                latex_flag = meta.get("contains_latex_symbols", 0) == 1
+                math_flag = meta.get("math_fasttext", 0) == 1
 
-            meta = doc.metadata or {}
-            latex_flag = meta.get("contains_latex_symbols", 0) == 1
-            math_flag = meta.get("math_fasttext", 0) == 1
+                if latex_flag and math_flag:
+                    sub = "true_positives"
+                elif latex_flag and not math_flag:
+                    sub = "false_negatives"
+                elif not latex_flag and math_flag:
+                    sub = "false_positives"
+                else:
+                    sub = "true_negatives"
 
-            if latex_flag and math_flag:
-                sub = "true_positives"
-            elif latex_flag and not math_flag:
-                sub = "false_negatives"
-            elif not latex_flag and math_flag:
-                sub = "false_positives"
-            else:
-                sub = "true_negatives"
+                writer = self._get_writer(sub)
+                writer.write(doc, rank)
 
-            writer = self._get_writer(sub)
-            writer.write(doc, rank)
-            yield doc
+                docs_processed += 1
+                yield doc
+
+        finally:
+            if docs_processed > 0:
+                print(
+                    f"ConditionalJsonlWriter processed {docs_processed} documents, closing..."
+                )
+                self.close()
 
     def close(self) -> None:
-        """Close all underlying writers."""
-        for writer in self._writers.values():
-            writer.close()
+        """Close all underlying writers properly."""
+        if self._closed:
+            return
+
+        if self._writers:
+            for subfolder, writer in self._writers.items():
+                try:
+                    writer.close()
+                    print(f"  ✓ Closed {subfolder}")
+                except Exception as e:
+                    print(f"  Error closing {subfolder}: {e}")
+
+            self._writers.clear()
+
+        self._closed = True
