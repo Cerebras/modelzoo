@@ -8,6 +8,9 @@ from cerebras.modelzoo.common.input_utils import get_streaming_batch_size
 from cerebras.modelzoo.config import DataConfig
 from cerebras.modelzoo.config.types import ValidatedPath
 from cerebras.modelzoo.data.common.input_utils import is_distributed
+import logging
+from transformers import AutoTokenizer
+
 
 
 class NpyRLDataset(torch.utils.data.Dataset):
@@ -17,8 +20,10 @@ class NpyRLDataset(torch.utils.data.Dataset):
     ):
         super().__init__()
         rollouts_path = data_dir + "/rollouts.npz"
+        print("rollouts path = ", rollouts_path)
         self.MSL = 131072
         self.prompt_len = 256
+
         try:
             with open(rollouts_path, 'rb') as f:
                 samples = np.load(f)
@@ -51,22 +56,83 @@ class NpyRLDataset(torch.utils.data.Dataset):
 
                 self.loss_mask = np.zeros((self.dataset_size, self.MSL), dtype=np.float32)
                 self.loss_mask[:, self.prompt_len:self.prompt_len + len(self.responses[0])] = 1.0
-                self.input_ids = self.pad_length(self.input_ids)       
-                self.attention_mask = self.pad_length(self.attention_mask)       
+                self.input_ids, self.attention_mask, self.prompts_len = self.shift_ones_left(self.input_ids, self.attention_mask)
                 self.position_ids = self.pad_length(self.position_ids)
 
                 if self._has_log_prob:
-                    self.advantages = self.pad_in_bw(self.advantages)
                     self.responses = self.pad_in_bw(self.responses)
+                    self.advantages = self.pad_in_bw(self.advantages)
                     self.old_log_probs = self.pad_in_bw(self.old_log_probs)
                     self.ref_log_probs = self.pad_in_bw(self.ref_log_probs)
 
         except Exception as e:
             raise RuntimeError(f"Failed to read : {rollouts_path}") from e
 
+    def shift_ones_left(self, input_ids: np.ndarray, attention_mask: np.ndarray):
+        B, MSL = input_ids.shape
+        new_input_ids = np.empty_like(input_ids)
+        new_attention_mask = np.zeros_like(attention_mask)
+        prompt_lens = np.zeros(B, dtype=np.int32)
+
+        for i in range(B):
+            mask = attention_mask[i]
+            tokens = input_ids[i]
+
+            ones_idx = np.where(mask == 1)[0]
+            first_one_idx = ones_idx[0]
+            prompt_lens[i] = self.prompt_len - first_one_idx
+        
+            # indices of active tokens (1's)
+            active = mask == 1
+            valid_tokens = tokens[active]
+            inactive_tokens = tokens[~active]
+            valid_len = len(valid_tokens)
+
+            # Put valid tokens first, followed by the others
+            new_input_ids[i] = np.concatenate([valid_tokens, inactive_tokens])
+            new_attention_mask[i, :valid_len] = 1
+
+        return new_input_ids, new_attention_mask, prompt_lens
+
+    def pad_input_right(self, input_ids, pad_token_id, attention_mask):
+        batch_size, seq_len = input_ids.shape
+        new_input_ids = np.full_like(input_ids, pad_token_id)
+        new_attention_mask = np.zeros_like(attention_mask)
+
+        for i in range(batch_size):
+            valid_len = int(attention_mask[i].sum())
+
+            new_input_ids[i, :valid_len] = input_ids[i, -valid_len:] if valid_len > 0 else []
+            new_attention_mask[i, :valid_len] = 1 if valid_len > 0 else 0
+
+        pad_len = self.MSL - 4096
+        last_tokens = new_input_ids[:, -1:]
+
+        pad = np.repeat(last_tokens, pad_len, axis=1)
+        a = np.concatenate([new_input_ids, pad], axis=1)
+
+        last_tokens = new_attention_mask[:, -1:]
+        pad = np.repeat(last_tokens, pad_len, axis=1)
+        b = np.concatenate([new_attention_mask, pad], axis=1)
+            
+        return a, b
+
+
+    def pad_inputs(self, input_ids, pad_token_id, attention_mask):
+        batch_size, seq_len = input_ids.shape
+
+        padded_inputs = np.full((batch_size, self.MSL), pad_token_id, dtype=input_ids.dtype)
+
+        padded_inputs[:, :seq_len] = input_ids
+
+        mask = attention_mask.astype(bool)
+
+        padded_inputs[:, :seq_len][~mask] = pad_token_id
+        return padded_inputs
+
     def pad_length(self, batch):
         return np.array([np.pad(seq, (0, self.MSL - len(seq)), mode='constant', constant_values=0) for seq in batch])
-    
+
     def pad_in_bw(self, batch):
         batch_size = batch.shape[0]
         insert_len = batch.shape[1]
@@ -80,6 +146,7 @@ class NpyRLDataset(torch.utils.data.Dataset):
     def __getitem__(self, idx):
         data = {}
 
+        logging.info(f"Rahul old log probs = {self._has_log_prob}")
         if self._has_log_prob:
             data = {
                 "input_ids": self.input_ids[idx],
@@ -95,8 +162,12 @@ class NpyRLDataset(torch.utils.data.Dataset):
                 "responses":      self.responses[idx],
                 "input_ids":      self.input_ids[idx],
                 "attention_mask": self.attention_mask[idx],
-                "position_ids":   self.position_ids[idx],
+                "prompts_len": self.prompts_len[idx],
+                #"position_ids":   self.position_ids[idx],
             }
+        #if idx < 10:
+        #    for k,v in data.items():
+        #        logging.info(f"{k}: shape{v.shape}, first 20:{v[:20]}")
 
         return data
 
