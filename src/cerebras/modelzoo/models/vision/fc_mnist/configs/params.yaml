@@ -1,0 +1,41 @@
+train_input:
+    data_processor: "MNISTDataProcessor"
+    data_dir: "./mnist"
+    # The effective batch size, which is evenly divided across "num_csx" systems used for the run
+    batch_size: 4
+    drop_last_batch: True
+    to_float16: True
+    shuffle: True
+    split: "train"
+
+eval_input:
+    data_processor: "MNISTDataProcessor"
+    data_dir: "./mnist"
+    # The effective batch size, which is evenly divided across "num_csx" systems used for the run
+    batch_size: 4
+    drop_last_batch: True
+    shuffle: False
+    split: "val"
+
+model:
+    name: "fc_mnist"
+    mixed_precision: True
+    depth: 10
+    hidden_size: 50
+    dropout: 0.0
+    activation_fn: "relu"
+    to_float16: False
+
+optimizer:
+    optimizer_type: "SGD"
+    learning_rate: 0.001
+    momentum: 0.0
+    loss_scaling_factor: 1.0
+
+runconfig:
+    max_steps: 1000
+    log_steps: 50
+    checkpoint_steps: 10000000
+    seed: 1
+    model_dir: "./model_dir"
+    eval_frequency: 10000000

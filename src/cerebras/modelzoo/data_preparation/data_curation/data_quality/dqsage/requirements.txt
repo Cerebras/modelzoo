@@ -1,0 +1,31 @@
+# Python version 3.11.8
+
+# Core Streamlit and Data Processing
+streamlit>=1.47.0
+pandas>=2.3.0
+numpy>=2.3.0
+
+# Database and SQL
+duckdb>=1.3.0
+sqlparse>=0.5.0
+
+# Parquet Support (required by DuckDB for Parquet files)
+pyarrow>=21.0.0
+
+# Visualization Libraries
+altair>=5.5.0
+
+# Note: The following are Python standard library modules (no installation needed):
+# - json (built-in)
+# - glob (built-in) 
+# - os (built-in)
+# - datetime (built-in)
+# - re (built-in)
+# - collections (built-in)
+# - time (built-in)
+# - traceback (built-in)
+# - multiprocessing (built-in)
+# - concurrent.futures (built-in)
+# - functools (built-in)
+# - atexit (built-in)
+# - uuid (built-in)

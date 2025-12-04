@@ -1,0 +1,88 @@
+# BertSum config file. Bert Large backbone.
+
+trainer:
+  init:
+    backend:
+      backend_type: CSX
+    model_dir: ./model_dir
+    seed: 1
+    model:
+      name: "bert/extractive_summarization"
+      vocab_size: 30522
+      vocab_file: "$MODELZOO_ROOT/models/vocab/google_research_uncased_L-12_H-768_A-12.txt"
+      hidden_size: 1024
+      num_hidden_layers: 24
+      num_heads: 16
+      filter_size: 4096
+      encoder_nonlinearity: gelu # {"gelu", "relu", "silu", "gelu_new"}
+      pooler_nonlinearity: tanh
+      max_position_embeddings: 768
+      use_cls_bias: true
+      dropout_rate: 0.1
+      attention_dropout_rate: 0.1
+      compute_eval_metrics: false
+      layer_norm_epsilon: 1.0e-05
+      loss_weight: 0.0539
+    optimizer:
+      Adam: # {"SGD", "AdamW", "Adam"}
+        eps: 1.0e-06
+    schedulers:
+    - SequentialLR:
+        schedulers:
+        - LinearLR:
+            initial_learning_rate: 0.0
+            end_learning_rate: 2.0e-05
+            total_iters: 10000
+        - LinearLR:
+            initial_learning_rate: 2.0e-05
+            end_learning_rate: 1.4142135623730951e-05
+            total_iters: 10000
+        - LinearLR:
+            initial_learning_rate: 1.4142135623730951e-05
+            end_learning_rate: 1.1547005383792515e-05
+            total_iters: 10000
+        - LinearLR:
+            initial_learning_rate: 1.1547005383792515e-05
+            end_learning_rate: 1.0e-05
+            total_iters: 10000
+        - LinearLR:
+            initial_learning_rate: 1.0e-05
+            end_learning_rate: 8.944361354059921e-06
+            total_iters: 10000
+    precision:
+      enabled: true
+      fp16_type: cbfloat16
+      loss_scaling_factor: dynamic
+      max_gradient_norm: 1.0
+    loop:
+      max_steps: 50000
+      eval_frequency: 10000
+      eval_steps: 416 # For GPU, multiply the eval_steps by grad_accum_steps
+    checkpoint:
+      steps: 10000
+      save_initial_checkpoint: true
+    logging:
+      log_steps: 100
+  fit:
+    train_dataloader:
+      data_dir: ./language/datasets/extractive_summarization_csv/train/
+      data_processor: BertSumCSVDataProcessor
+      max_sequence_length: 768
+      max_cls_tokens: 50
+      # The effective batch size, which is evenly divided across "num_csx" systems used for the run
+      batch_size: 32 # for GPU(16GB) set batch_size 4
+      # 8 * 4 = 32 with grad_accum_steps: 8 and single GPU
+      num_workers: 1
+      shuffle: true
+    val_dataloader: &val_dataloader
+      data_dir: ./language/datasets/extractive_summarization_csv/valid/
+      data_processor: BertSumCSVDataProcessor
+      max_sequence_length: 768
+      max_cls_tokens: 50
+      batch_size: 32
+      num_workers: 1
+      shuffle: false
+  validate:
+    val_dataloader: *val_dataloader
+  validate_all:
+    val_dataloaders: *val_dataloader

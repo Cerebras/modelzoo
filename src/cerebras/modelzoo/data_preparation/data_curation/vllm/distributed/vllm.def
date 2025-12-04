@@ -1,0 +1,2 @@
+Bootstrap: docker
+From: vllm/vllm-openai:latest

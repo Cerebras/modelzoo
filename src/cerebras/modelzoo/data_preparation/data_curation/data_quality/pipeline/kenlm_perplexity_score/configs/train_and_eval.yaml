@@ -1,0 +1,36 @@
+# Base runtime configuration
+run_config:
+  cpus_per_task: 4
+  num_tasks: 2    # Number of tasks per worker
+  executor_type: 'slurm'  # Type of executor to use (slurm/local)
+# Data input/output configuration
+data_config:
+  input_folder: "/path/to/input/data"  # Path to input data
+  output_folder: "/preprocessing/output/path"
+  input_format: "txt"  # Input file format
+  text_column: "text"  # Column containing text data
+
+# Pipeline steps configuration
+pipelines:
+  # Preprocessor configuration
+  KenLMPreprocessor: {} # Takes required config data from data_config
+  
+  KenLMTrainer:
+    input_folder: "/preprocessing/output/path"
+    output_path: "/path/to/output/kenlm/model"
+    kenlm_path: "/path/to/built/kenlm/repo"
+    vocab_estimate: 15000  # Estimated vocabulary size
+    quantize: 8  # Quantization level (0 = no quantization)
+    offsets: 255  # Maximum number of offsets
+  
+  SentencePieceTrainer:
+    input_folder: "/preprocessing/output/path"
+    output_path: "/path/to/output/sentencepiece/model"
+    model_prefix: "tokenizer_model_name"
+  
+  CCPerplexityStats:
+    model_dataset: "dataset_name"
+    domain: "domain_name"
+    model_path: "/path/to/output/kenlm/model/model.binary"
+    tokenizer_path: "/path/to/output/sentencepiece/model/tokenizer.model"
+    output_folder: "/path/to/output/perplexity"

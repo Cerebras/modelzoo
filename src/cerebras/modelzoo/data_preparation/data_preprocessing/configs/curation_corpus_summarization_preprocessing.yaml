@@ -1,0 +1,36 @@
+setup:
+    data:
+        source: "/path/to/input" # replace with your directory
+        type: "local"
+
+    output_dir: "/path/to/output" # replace with your directory
+    processes: 1
+    mode: "finetuning"
+
+processing:
+    custom_tokenizer: "gpt2tokenizer"
+    tokenizer_params:
+        vocab_file: "/path/to/vocab"
+        encoder_file: "/path/to/encoder"
+
+    max_seq_length: 2048
+    write_in_batch: True
+    resume_from_checkpoint: False
+
+    read_hook: "cerebras.modelzoo.data_preparation.data_preprocessing.hooks:prompt_completion_key"
+    read_hook_kwargs:
+        prompt_key: "article_content"
+        completion_key: "summary"
+    
+    shuffle_seed: 0
+    shuffle: False
+
+    use_ftfy: True
+    ftfy_normalizer: "NFC"
+    wikitext_detokenize: False
+
+    UNSAFE_skip_jsonl_decoding_errors: False
+
+dataset:
+    
+    sep_token: "<SEP>"

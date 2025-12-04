@@ -1,0 +1,40 @@
+##############################################################
+## Summarization Preprocessing Parameters
+##############################################################
+
+setup:
+    data:
+        source: "/input/dir/here" # replace with your directory
+        type: "local"
+    output_dir: "./data_dir_summarization/" # replace with your output directory
+    processes: 1
+    mode: "finetuning"
+
+processing:
+    custom_tokenizer: "neoxtokenizer"
+    tokenizer_params:
+        encoder_file: "/path/to/encoder"
+
+    max_seq_length: 2048
+    short_seq_prob: 0.0
+
+    write_in_batch: True
+    resume_from_checkpoint: False
+    read_hook: "cerebras.modelzoo.data_preparation.data_preprocessing.hooks:prompt_completion_text_read_hook"
+    read_hook_kwargs:
+        prompt_key: "source"
+        completion_key: "target"
+    
+    shuffle_seed: 0
+    shuffle: False
+    use_ftfy: True
+    ftfy_normalizer: "NFC"
+    wikitext_detokenize: False
+    UNSAFE_skip_jsonl_decoding_errors: False
+
+dataset:
+   
+    sep_token: null
+    truncate_to_msl:
+        truncation_mode: "keep_start"
+        max_turn_length: 512

@@ -1,0 +1,17 @@
+commitpack_diff:
+  reader:
+    cls: datatrove.pipeline.readers.JsonlReader
+    params:
+      data_folder: <source path>
+      limit: -1
+      glob_pattern: "*.jsonl.zst"
+
+  writer:
+    cls: datatrove.pipeline.writers.JsonlWriter
+    params:
+      output_folder: <output path>
+      compression: zstd
+      expand_metadata: true
+
+
+

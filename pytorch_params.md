@@ -7,14 +7,13 @@
 | Parameter Name | Description |
 | --- | --- |
 | mixed_precision | Whether to use mixed precision training or not. (`bool`, optional) Default: `None` |
-| use_bfloat16 | Whether to use bfloat16 data type instead of float32. See [more](https://docs.cerebras.net/en/latest/general/cs-1-data-formats.html?#bfloat16-floating-type) (`bool`, optional) Default: `False` |
+| fp16_type | The 16-bit floating type to use. Accepted values:<br>`"float16"`<br>`"bfloat16"`<br>`"cfloat16"`. See [more](https://docs.cerebras.net/en/latest/general/cs-1-data-formats.html?#bfloat16-floating-type) (`bool`, optional) Default: `False` |
 
 ### Transformer based models
 
 | Parameter Name | Description | Supported Models |
 | --- | --- | --- |
 | attention_dropout_rate | Dropout rate for attention layer. (`float`, optional) Default: same as `dropout` | All |
-| attention_kernel | Attention kernel to use. Accepted values: <br> `None` - compiler selects the kernel.<br>`"default"` - Default implementation.<br>`"optimized_beta"` - Optimized implementation. Beta feature, support is limited.<br>(`str`/`None`, optional) Default: `None` | All |
 | attention_softmax_fp32 | Whether to use fp32 precision for attention softmax. (`bool`, optional)  Default: `True`) | All |
 | attention_type | Type of attention. Accepted values:<br>`"dot_product"`<br>`"scaled_dot_product"`.<br>(`str`,  optional) Default: `"scaled_dot_product"` | All |
 | d_ff | Size of the intermediate feed forward layer in each `T5Block`. (`int`,  optional) Default: `2048` | T5, Transformer |
@@ -25,22 +24,22 @@
 | disable_nsp | Whether to disable the next sentence prediction task. (`bool`, optional) Default: False | BERT (pre-training, fine-tuning) |
 | dropout_rate | The dropout probability for all fully connected layers. (`float`, optional), Default: `0.1` | All |
 | embedding_dropout_rate | Dropout rate for embeddings. (`float`, optional) Default: `0.1` | All |
-| embedding_initializer | Initializer to use for embeddings. See [supported initializers](./common/pytorch/model_utils/create_initializer.py). (`str`, optional) Default: "normal" | GPT2, GPT3, GPTJ |
+| embedding_initializer | Initializer to use for embeddings. See [supported initializers](./layers/create_initializer.py). (`str`, optional) Default: "normal" | GPT2, GPT3, GPTJ |
 | encoder_nonlinearity | Type of nonlinearity to be used in encoder. (`str`, optional) Default: varies per model | BERT (pre-training, fine-tuning), T5, Transformer |
 | encoder_num_hidden_layers  | Number of hidden layers in the encoder. (`int`, optional) Default: `6` | T5, Transformer |
 | extra_ids | The number of extra ids used for additional vocabulary items  (`int`, optional) Default: `0` | T5, Transformer
 | filter_size |  Dimensionality of the feed-forward layer in the Transformer block. (`int`, optional) Default: `3072` |  BERT (pre-training, fine-tuning), GPT2, GPT3, GPTJ |
 | hidden_size | The size of the transformer hidden layers (`int`, optional) Default: `768` |  BERT (pre-training, fine-tuning), GPT2, GPT3, GPTJ |
-| initializer | The initializer to be used for all the initializers used in the model. See [supported initializers](./common/pytorch/model_utils/create_initializer.py). (`str`, optional) Default: varies based on model | BERT (pre-training, fine-tuning), GPT2, GPT3, GPTJ |
+| initializer | The initializer to be used for all the initializers used in the model. See [supported initializers](./layers/create_initializer.py). (`str`, optional) Default: varies based on model | BERT (pre-training, fine-tuning), GPT2, GPT3, GPTJ |
 | initializer_range | The standard deviation of the truncated_normal_initializer as the default initializer. (`float`, optional) Default: `0.02` | BERT (pre-training), GPT2, GPT3, GPTJ |
 | layer_norm_epsilon | The epsilon value used in layer normalization layers. (`float`, optional) Default: `1e-5`)| All |
 | lm_loss_weight | Value that scales loss by the mean number of predictions per sequence in the dataset. This number varies per dataset and can be calculated by getting the reciprocal of average number of tokens per sequence in the training dataset. This is only needed when setting loss scaling to `"batch_size"`.  (`float`, optional) Default: `1.0` | T5, Transformer |
-| loss_scaling | The scaling type used to calculate the loss. Accepts: <br> `batch_size`, `num_tokens`. See [more](https://docs.cerebras.net/en/latest/wsc/general/num-tokens-loss-scaling.html). **Note:** It is recommended to set this to `batch_size` when `use_cs_grad_accum: True` for training stability. (`str`, optional) Default: `num_tokens` | GPT2, GPT3, GPTJ |
+| loss_scaling | The scaling type used to calculate the loss. Accepts: <br> `batch_size`, `num_tokens`. See [more](https://docs.cerebras.net/en/latest/wsc/general/num-tokens-loss-scaling.html). **Note:** It is recommended to set this to `batch_size` when gradient accumulation is enabled for training stability. (`str`, optional) Default: `num_tokens` | GPT2, GPT3, GPTJ |
 | loss_weight | The weight for the loss scaling when `loss_scaling: "batch_size"`, generally set to `1/max_sequence_length`. (`float`, optional) Default: `1.0` | GPT2, GPT3, GPTJ |
 | max_position_embeddings | The maximum sequence length that the model can handle. (`int`, optional) Default: `1024` | All |
 | mlm_loss_scaling | A string specifying the scaling factor type used for the language modeling loss. Accepts one of: `"num_masked"` - uses the off-the shelf loss scaling by number of valid (non-padding) tokens the cross entropy loss function, `"precomputed_num_masked"` - uses loss scaling from the computed num valid masks in the data loader, when enabling `dynamic_loss_weight` in the data loader params, `"batch_size"` - uses loss scaling by `"batch_size"` and `lm_loss_weight` should be provided when using `"batch_size"`. (`str`, optional) Default: `"batch_size"` | T5, Transformer |
 | mlm_loss_weight | The weight for the masked language modeling loss used when scaling the loss with `"batch_size"`. This number varies per dataset and can be calculated by getting the reciprocal of average number of masked tokens per sequence in the training dataset. (`float`, optional) Default: `1.0` | BERT (pre-training) |
-| nonlinearity | The non-linear activation function used in the feed forward network in each transformer block. See list of non-linearity functions [here](https://pytorch.org/docs/stable/nn.html#non-linear-activations-weighted-sum-nonlinearity). Some may have to use `autogen_policy: "medium"`. (`str`, optional) Default: varies per model | BERT (pre-training, fine-tuning), GPT2, GPT3, GPTJ |
+| nonlinearity | The non-linear activation function used in the feed forward network in each transformer block. See list of non-linearity functions [here](https://pytorch.org/docs/stable/nn.html#non-linear-activations-weighted-sum-nonlinearity). (`str`, optional) Default: varies per model | BERT (pre-training, fine-tuning), GPT2, GPT3, GPTJ |
 | num_heads | The number of attention heads in the multi-head attention layer. (`int`, optional) Default: varies per model| All |
 | num_hidden_layers | Number of hidden layers in the Transformer encoder/decoder. (`int`, optional) Default: `12` | All |
 | output_layer_initializer | The name of the initializer for the weights of the output layer. See [supported initializers](./common/pytorch/model_utils/create_initializer.py). (str, optional) Default: varies based on model | GPT2, GPT3, GPTJ |
@@ -56,7 +55,6 @@
 | use_dropout_outside_residual_path | Whether to set dropout calculations outside of the residual path. (`bool`, optional) Default: `True` for T5, `False` for Transformer | T5, Transformer |
 | use_ffn_bias | Whether to use bias in the feedforward network (FFN). (`bool`, optional) Default: varies per model | All |
 | use_ffn_bias_in_attention | Whether to include bias in the attention layer for feed-forward network (FFN). (`bool`, optional) Default: varies per model | All |
-| use_position_embedding | Whether to use position embedding in the model. (`bool`, optional) Default: `True` | GPT2, GPT3 |
 | use_pre_encoder_decoder_dropout | Whether to use dropout layer after positional embedding layer and encoder/decoder. (`bool`, optional) Default: `False` | T5, Transformer |
 | use_pre_encoder_decoder_layer_norm | Whether to use layer norm before passing input tensors into encoder/decoder. (`bool`, optional) Default: `True` | T5, Transformer |
 | use_projection_bias_in_attention | Whether to include bias in the attention layer for projection.  (`bool`, optional) Default: varies per model | All |
@@ -80,12 +78,12 @@
 | encoder_filters | List of filter sizes for each block in the encoder. (`List[str]`, required) | UNet |
 | eval_ignore_classes | List of classes to ignore during evaluation of model. (`List[int]`, optional) | UNet |
 | eval_metrics | List of evaluation metrics to use during training and validation. Available options are accuracy (`Acc`), mean IOU (`mIOU`) or Dice (`DSC`).  (`List[str]`, optional). | UNet |
-| initializer | Initializer for the convolution weights. See [supported initializers](./common/pytorch/model_utils/create_initializer.py) (`str`, required) | UNet |
+| initializer | Initializer for the convolution weights. See [supported initializers](./layers/create_initializer.py) (`str`, required) | UNet |
 | input_channels | Number of channels in the input images to the model. (`int`, required) | UNet |
 | loss |  Loss type, supported: values: `"bce"`, `"multilabel_bce"`, `"ssce"` (`str`, required) | UNet |
 | nonlinearity | Activation function used in the model following convolutions in the encoder and decoder. (`str`, required) | UNet |
 | norm_kwargs | args to be passed to norm layers during initialization. For <br>`norm_type` = `group`, `norm_kwargs` must include `num_groups` key value pair. <br>`norm_type` = `layer`, `norm_kwargs` must include `normalized_shape` key value pair. <br>(`dict`, optional) Default: `None` | UNet |
-| norm_layer | Type of normalization to be used. See [supported norm layers]](./common/pytorch/model_utils/norms.py). (`str`, optional) Default: `"batchnorm2d"` | UNet |
+| norm_layer | Type of normalization to be used. See [supported norm layers]](./layers/norms.py). (`str`, optional) Default: `"batchnorm2d"` | UNet |
 | residual_blocks | Flag for using residual connections at the end of each block. (`bool`, optional) Default: `False` | UNet |
 | skip_connect | Flag for if the model concatenates encoder outputs to decoder inputs. (`bool`, optional) Default: `True` | UNet |
 | use_conv3d | Whether to use 3D convolutions in the model. (`bool`, optional) Default: `False` | UNet |
@@ -132,7 +130,7 @@
 | data_dir | Path/s to the data files to use. (`str`/`List[str]`, required) |
 | data_processor | Name of the data processor to be used. (`str`, required)  |
 | mixed_precision | Flag to cast input to fp16. (`bool`, optional) Default: `None` |
-| micro_batch_size | Micro batch size to force for gradient accumulation. Only applies to 'CSX' runs. Please set `num_csx` and `batch_size` such that `batch_size//num_csx` is a multiple of `micro_batch_size`.  (`int`, optional) Default: `None` |
+| micro_batch_size | Micro batch size settings for gradient accumulation. Only applies to 'CSX' runs. Please set `num_csx` and `batch_size` such that `batch_size//num_csx` is a multiple of `micro_batch_size`.  (`Union[None, int, Literal["auto", "explore"]]`, optional) Default: `auto` |
 | num_workers | Number of workers to use in the dataloader. See [more](https://pytorch.org/docs/stable/data.html#torch.utils.data.DataLoader). (`int`, optional) Default: `0` |
 | persistent_workers | For multi-worker dataloader controls if the workers are recreated at the end of each epoch (see [PyTorch docs](https://pytorch.org/docs/stable/data.html#torch.utils.data.DataLoader)). (`bool`, optional) Default: `True` |
 | prefetch_factor |  Number of samples loaded in advance by each worker. (`int`, optional) Default: `10` |
@@ -195,7 +193,6 @@
 
 | Key | Description | Supported mode |
 | --- | --- | --- |
-| autogen_policy | The autogen policy to be used for the given run. <br>Can be one of: `"default"`, `"disabled"`, `"mild"`, `"medium"`, `"aggressive"`. See [more](https://docs.cerebras.net/en/latest/wsc/general/autogen.html).<br> (`str`, optional) Default: `None` | CSX |
 | autoload_last_checkpoint | Flag to automatically load the last checkpoint in the `model_dir`. (`bool`, optional) Default: `True` | All |
 | check_loss_values | Flag to check the loss values to see if it is `Nan/inf`. (`bool`, optional) Default: `True` | All |
 | checkpoint_path | The path to load checkpoints from during training. (`str`, optional) Default: `None` | All |
@@ -203,7 +200,7 @@
 | compile_dir | Compile directory where compile artifacts will be written. (`str`, optional) Default: `None` | All |
 | compile_only | Enables compile only workflow. (`bool`, optional) Default: `False` | All |
 | credentials_path | Credentials for cluster access. If `None`, the value from a pre-configured location will be used if available. (`str`, optional) Default: `None`| CSX |
-| debug_args_path | ath to debugs args file.  (`str`, optional) Default: `None` | CSX |
+| debug_args_path | Path to debugs args file.  (`str`, optional) Default: `None` | CSX |
 | disable_strict_checkpoint_loading | Flag used in conjunction with `checkpoint_path`, to avoid enforcing strict model state loading. (`bool`, optional) Default: `False`    | All            |
 | dist_addr | To init master_addr and master_port of distributed. (`str`, optional) Default: `localhost:8888` | GPU |
 | dist_backend | Distributed backend engine. (`str`, optional) Default: `"nccl"` | GPU |
@@ -234,5 +231,5 @@
 | seed | The seed to use for random number generation for reproducibility. (`int`, optional) Default: `None` | All |
 | sync_batchnorm | Whether to use synchronized batch normalization on multi GPU setup. (`bool`, optional) Default: `False` | GPU |
 | target_device | The target device to run the training on. One of: `CPU`, `GPU`, `CSX`. Required in command line. (`str`, optional) Default: command line value | All |
-| use_cs_grad_accum | Whether to use gradient accumulation to support larger batch sizes. (`bool`, optional) Default: `False` | CSX |
 | validate_only | Enables validate only workflow, stops the compilation at kernel matching stage. (`bool`, optional) Default: `False` | CSX |
+| wsc_log_level | Specifes the logging level for particular Wafer-Scale Cluster servers or tasks. Input can be either a single value setting a global log level (i.e. `--wsc_log_level DEBUG`) or a list of equal-sign-separated key value pairs in the format of `<task or server>=<log level>`. A task and server can be combined to specify a server only during a specific task (i.e. `<execute>.<crd>`). The log level can be either an int or a string (i.e. `INFO`, `DEBUG`, `VERBOSE`, `20`, `10`). See [more](https://docs.python.org/3/library/logging.html#logging-levels). (`str`, optional) Default: `None` | All |
