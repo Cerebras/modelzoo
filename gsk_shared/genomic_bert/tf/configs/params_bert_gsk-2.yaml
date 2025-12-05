@@ -1,0 +1,79 @@
+# Genomic BERT - Scenario 4g
+
+train_input:
+    data_processor: "GenomeDataProcessor"
+    metadata_files: "./gsk-data/metadata.txt"
+    # multiple file input support example below
+    # metadata_files:
+    #   - "./gsk-data/metadata.txt"
+    #   - "./gsk-data/metadata_test.txt"
+    #   - "./gsk-data/metadata2.txt"
+    vocab_file_dna: "./gsk-data/vocab_dna.txt"
+    vocab_file_ideas: "./gsk-data/vocab_ideas.txt"
+    ngram: 5
+    stride: 5
+    max_sequence_length: 250
+    max_predictions_per_seq: 40
+    add_special_tokens: False
+    batch_size: 128  # effective batch size = 128 * num_gpus
+
+eval_input: # same as train for now
+    data_processor: "GenomeDataProcessor"
+    # set appropriaite evaluation set
+    metadata_files: "./gsk-data/metadata_test.txt"
+    vocab_file_dna: "./gsk-data/vocab_dna.txt"
+    vocab_file_ideas: "./gsk-data/vocab_ideas.txt"
+    ngram: 5
+    stride: 5
+    max_sequence_length: 250
+    max_predictions_per_seq: 40
+    add_special_tokens: False
+    batch_size: 128  # effective batch size = 128 * num_gpus
+
+model:
+    # Embedding
+    hidden_size: 512
+    use_position_embedding: True
+    position_embedding_type: "learned" # {"learned", "fixed"}
+
+    # Encoder
+    num_hidden_layers: 8
+    dropout_rate: 0.1
+
+    # Encoder - Attention
+    num_heads: 8
+    attention_type: "scaled_dot_product" # {"dot_product", "scaled_dot_product"}
+    use_projection_bias_in_attention: False
+    use_ffn_bias_in_attention: False
+    attention_dropout_rate: 0.1
+
+    # Encoder - ffn
+    filter_size: 2048
+    encoder_nonlinearity: "gelu"
+    use_ffn_bias: True
+
+    # Task-specific
+    use_output_bias_in_mlm: True  # add learned bias to MLM layer output
+    use_ffn_bias_in_mlm: True # add bias to MLM's dense layer
+    mlm_nonlinearity: "gelu"
+    mlm_loss_weight: 0.499
+
+    mixed_precision: True
+    boundary_casting: False
+    tf_summary: False
+
+optimizer:
+    optimizer_type: "adam" # {"sgd", "momentum", "adam", "adamw"}
+    learning_rate: 8.0e-6
+    loss_scaling_factor: 64.0
+
+runconfig:
+    ### Cerebras parameters
+    max_steps: 900000
+    save_summary_steps: 100
+    save_checkpoints_steps: 10 #10000
+    keep_checkpoint_max: 0
+    enable_distributed: False
+    mode: "train"
+    cs_ip:
+    model_dir: "model_dir"

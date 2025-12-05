@@ -1,0 +1,274 @@
+properties:
+  check_loss_values:
+    type: boolean
+  checkpoint_path:
+    type:
+    - string
+    - 'null'
+  checkpoint_steps:
+    type:
+    - integer
+    - 'null'
+  hf_cache_dir:
+    type:
+    - string
+    - 'null'
+  compile_crd_memory_gi:
+    type:
+    - integer
+    - 'null'
+  compile_dir:
+    type:
+    - string
+    - 'null'
+  compile_only:
+    type:
+    - boolean
+    - 'null'
+  credentials_path:
+    type:
+    - string
+    - 'null'
+  debug_args_path:
+    type:
+    - string
+    - 'null'
+  debug_args:
+    type:
+    - object
+    - 'null'
+    additionalProperties:
+      type:
+      - "boolean"
+      - "number"
+      - "object"
+      - "string"
+  retrace_every_iteration:
+    type:
+    - boolean
+    - 'null'
+  disable_strict_checkpoint_loading:
+    type:
+    - boolean
+    - 'null'
+  dist_addr:
+    type: string
+  dist_backend:
+    type: string
+  drop_data:
+    type:
+    - boolean
+    - 'null'
+  dump_activations:
+    type: boolean
+  enable_act_frequency:
+    type: boolean
+  enable_distributed:
+    type: boolean
+  eval_steps:
+    type:
+    - integer
+    - 'null'
+  execute_crd_memory_gi:
+    type:
+    - integer
+    - 'null'
+  fabric_type_blacklist:
+    type:
+    - array
+    - 'null'
+  ini:
+    type:
+    - object
+    - 'null'
+    additionalProperties:
+      type:
+      - "boolean"
+      - "number"
+      - "string"
+  init_method:
+    type: string
+  cbcore_image:
+    type:
+    - string
+    - 'null'
+  job_labels:
+    type:
+    - array
+    - 'null'
+  job_priority:
+    type:
+    - string
+    - 'null'
+  job_time_sec:
+    type:
+    - integer
+    - 'null'
+  load_checkpoint_states:
+    type:
+    - string
+    - 'null'
+  log_steps:
+    type: integer
+  logging:
+    type:
+    - string
+    - 'null'
+  wsc_log_level:
+    type:
+    - object
+    - 'null'
+    additionalProperties:
+      type:
+      - "string"
+  log_initialization:
+    type:
+    - boolean
+    - 'null'
+  log_input_summaries:
+    type:
+    - boolean
+    - 'null'
+  legacy_event_dirs:
+    type:
+    - boolean
+  main_process_id:
+    type: integer
+  max_checkpoints:
+    type:
+    - integer
+    - 'null'
+  max_steps:
+    type:
+    - integer
+    - 'null'
+  mgmt_address:
+    type:
+    - string
+    - 'null'
+  mgmt_namespace:
+    type:
+    - string
+    - 'null'
+  mode:
+    type: string
+  model_dir:
+    type: string
+  mount_dirs:
+    type:
+    - array
+    - 'null'
+  num_act_servers:
+    type:
+    - integer
+    - 'null'
+  num_csx:
+    type: integer
+  num_epochs:
+    type:
+    - integer
+    - 'null'
+  num_steps:
+    type:
+    - integer
+    - 'null'
+  num_wgt_servers:
+    type:
+    - integer
+    - 'null'
+  num_workers_per_csx:
+    type: integer
+  python_paths:
+    type:
+    - array
+    - 'null'
+  precision_opt_level:
+    type:
+    - integer
+    - 'null'
+  save_initial_checkpoint:
+    type: boolean
+  seed:
+    type:
+    - integer
+    - 'null'
+  steps_per_epoch:
+    type:
+    - integer
+    - 'null'
+  summary_dir:
+    type:
+    - string
+    - 'null'
+  sync_batchnorm:
+    type: boolean
+  target_device:
+    type:
+    - string
+  lazy_initialization:
+    type: boolean
+  transfer_processes:
+    type:
+    - integer
+    - 'null'
+  validate_only:
+    type:
+    - boolean
+    - 'null'
+  autoload_last_checkpoint:
+    type:
+    - boolean
+    - 'null'
+  variant:
+    type:
+    - string
+    - 'null'
+  eval_frequency:
+    type:
+    - integer
+    - 'null'
+  disable_version_check:
+    type:
+    - boolean
+    - 'null'
+  wrk_memory_gi:
+    type:
+    - integer
+    - 'null'
+  act_memory_gi:
+    type:
+    - integer
+    - 'null'
+  cmd_memory_gi:
+    type:
+    - integer
+    - 'null'
+  wgt_memory_gi:
+    type:
+    - integer
+    - 'null'
+  chf_memory_gi:
+    type:
+    - integer
+    - 'null'
+  experimental:
+    listeners:
+      type:
+        - array
+        - 'null'
+    type:
+    - object
+  op_profiler_config:
+    start_step:
+      type:
+        - integer
+        - 'null'
+    end_step:
+      type:
+        - integer
+        - 'null'
+    type:
+    - object
+    - 'null'
+type: object
+additionalProperties: false

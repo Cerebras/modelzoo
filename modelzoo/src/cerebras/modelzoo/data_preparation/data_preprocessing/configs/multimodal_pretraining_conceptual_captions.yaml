@@ -1,0 +1,35 @@
+##############################################################
+##############################################################
+
+setup:
+    data:
+        type: "huggingface"
+        source: "conceptual_captions"
+        split: "validation"
+    output_dir: "./out_dir_multimodal_pretraining/" # replace with your output directory
+    image_dir: "/path/to/image_dir" ## replace with your image directory
+    processes: 16
+    mode: "pretraining"
+
+processing:
+    tokenizer_type: "HuggingFaceTokenizer"
+    huggingface_tokenizer: "NousResearch/Llama-2-7b-hf"
+    
+    max_chunk_size: 1024
+    max_seq_length: 512
+    read_hook: "cerebras.modelzoo.data_preparation.data_preprocessing.hooks.pretraining_image_captions_hook"
+    read_hook_kwargs:
+        image_key: "image_url"
+        caption_key: "caption"
+        image_token: "<image>"
+    shuffle_seed: 0
+    shuffle: False
+    use_ftfy: True
+    ftfy_normalizer: "NFC"
+    wikitext_detokenize: False
+    UNSAFE_skip_jsonl_decoding_errors: False
+dataset:
+    
+    is_multimodal: True
+    num_patches: 32
+    max_num_img: 1

@@ -1,0 +1,7 @@
+# Map-Style HDF5 Datasets
+
+This directory contains code for map style PyTorch datasets. Its primary entry points are
+* `HDF5Dataset` (implemented in `dataset.py` and exposed as `h5_map_dataset.HDF5Dataset`): This file defines a dataset class that loads samples from an H5 file in a mapped manner. It supports reading sequences either from a contiguous corpus on disk or form a file of pre-processed samples, deterministic restart, dataset mixing, and a data order that is independent of the setup of the cluster that is being used. It is suggested that users of this dataset customize it for their particular application using the `map` function therein. For more information, see the documentation in `HDF5Dataset`.
+* `preprocess_pile.py`: This script performs basic preprocessing of a raw download of the [Pile](https://pile.eleuther.ai/) dataset into a corpus format that is useable with `HDF5Dataset`. This script does not split examples into sequences at preprocessing time, which allows for flexible sequence lengths. The `HDF5Dataset` class is also compatible with the format of data output by the scripts [here](../../../data_preparation/data_preprocessing/), although using these scripts removes some of the desirable properties of the dataset, in particular flexible sequence lengths and easier online shuffling at performance.
+
+Additionally, `readers.py` contains utilities for reading and mixing datasets, and `samplers.py` contains samplers for runtime shuffling, batching, sharding, and skipping that users might find useful for a variety of applications.

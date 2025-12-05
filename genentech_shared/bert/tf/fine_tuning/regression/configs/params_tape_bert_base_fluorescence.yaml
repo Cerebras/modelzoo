@@ -1,0 +1,55 @@
+#BERT-Base
+
+### Input
+train_input:
+    data_processor: FluorescenceDataProcessor
+    data_dir: "./data/fluorescence/train/"
+    max_sequence_length: 237
+    add_special_tokens: True
+    batch_size: 32
+    shuffle: True
+
+eval_input:
+    data_processor: FluorescenceDataProcessor
+    data_dir: "./data/fluorescence/eval/"
+    max_sequence_length: 237
+    add_special_tokens: True
+    batch_size: 32
+
+model:
+    pretrain_params_path: "../../configs/params_tape_bert_base.yaml"
+    use_cls_bias: True
+    cls_nonlinearity: "relu"
+    cls_dropout_rate: 0.1
+    num_regression_values: 1
+    mixed_precision: True
+    boundary_casting: False
+    tf_summary: False
+
+### Optimization
+optimizer:
+    optimizer_type: "adamw" # {"sgd", "momentum", "adam", "adamw"}
+    weight_decay_rate: 0.01
+    epsilon: 1e-6
+    max_gradient_norm: 1.0
+    learning_rate:
+        - scheduler: "Linear"
+          steps: 100
+          initial_learning_rate: 0.0
+          end_learning_rate: 0.0003
+        - scheduler: "Constant"
+          learning_rate: 0.0003
+    loss_scaling_factor: "dynamic"
+
+### Cerebras parameters
+runconfig:
+    max_steps: 2000 # 3 epochs
+    save_summary_steps: 100
+    save_checkpoints_steps: 1000
+    eval_steps: 0 # eval_steps <= 0 means we use all of the eval data
+    keep_checkpoint_max: 2
+    tf_random_seed: 1202
+    mixed_precision: True
+    boundary_casting: False
+    tf_summary: False
+    throttle_secs: 0

@@ -1,0 +1,24 @@
+#############################################
+## Pre-Training Tutorial Train Data Config ##
+#############################################
+
+setup:
+    data:
+        type: "huggingface"
+        source: "karpathy/tiny_shakespeare"
+        split: "train"
+    mode: "pretraining"
+    output_dir: "pretraining_tutorial/train_data"
+    processes: 1
+
+processing:
+    custom_tokenizer: cerebras.modelzoo.data_preparation.data_preprocessing.custom_tokenizer_example.CustomLlama3Tokenizer:CustomLlama3Tokenizer
+    tokenizer_params:
+        pretrained_model_name_or_path: "baseten/Meta-Llama-3-tokenizer"
+    write_in_batch: True
+    read_hook: "cerebras.modelzoo.data_preparation.data_preprocessing.hooks:text_read_hook"
+    read_hook_kwargs:
+        text_key: "text"
+    max_seq_length: 2048
+    use_ftfy: True
+    

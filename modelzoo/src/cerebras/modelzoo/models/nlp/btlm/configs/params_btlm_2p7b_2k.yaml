@@ -1,0 +1,116 @@
+###################################################################
+## Base configuration (1st stage): BTLM 2.7B model with 2k-MSL
+###################################################################
+
+trainer:
+  init:
+    seed: 1
+    backend:
+      backend_type: CSX
+    model:
+      name: "btlm"
+      # Embedding
+      hidden_size: 2560
+      position_embedding_type: alibi
+      share_embedding_weights: true
+      max_position_embeddings: 2048
+      vocab_size: 50257
+      # Decoder
+      num_hidden_layers: 32
+      dropout_rate: 0.0
+      layer_norm_epsilon: 1.0e-05  # change to 1.0e-12 for single precision training
+      # Decoder - Attention
+      num_heads: 32
+      attention_type: scaled_dot_product
+      attention_dropout_rate: 0.0
+      use_projection_bias_in_attention: true
+      use_ffn_bias_in_attention: true
+      # Decoder - ffn
+      filter_size: 6826
+      nonlinearity: swiglu
+      use_ffn_bias: true
+      embedding_initializer:
+        mean: 0.0
+        name: truncated_normal
+        std: 0.073
+        a: -0.146
+        b: 0.146
+      initializer:
+        mean: 0.0
+        name: truncated_normal
+        std: 0.073
+        a: -0.146
+        b: 0.146
+      output_layer_initializer:
+        mean: 0.0
+        name: truncated_normal
+        std: 0.073
+        a: -0.146
+        b: 0.146
+      # Task-specific
+      loss_scaling: batch_size
+      loss_weight: 0.00048828125  # = 1/max_sequence_length
+      use_bias_in_output: false
+      mup_base_filter_size: 682.6
+      mup_base_hidden_size: 256
+      output_logits_alpha: 2.22
+      scale_qk_dot_by_d: true
+      embeddings_scale: 14.6
+    optimizer:
+      AdamW:
+        betas:
+        - 0.9
+        - 0.95
+        eps: 1.0e-08
+        weight_decay: 0.1
+        correct_bias: true
+    schedulers:
+    - SequentialLR:
+        schedulers:
+        - LinearLR:
+            initial_learning_rate: 0.0
+            end_learning_rate: 0.012
+            total_iters: 95
+        - LinearLR:
+            initial_learning_rate: 0.012
+            end_learning_rate: 0.00010138
+            total_iters: 159541
+    precision:
+      # Cerebras parameters
+      enabled: true
+      fp16_type: cbfloat16
+      precision_opt_level: 1
+      loss_scaling_factor: dynamic
+      max_gradient_norm: 1.0
+      log_loss_scale: true
+    loop:
+      max_steps: 119727
+      eval_frequency: 200
+      eval_steps: 8688
+    checkpoint:
+      steps: 200
+      save_initial_checkpoint: false
+    logging:
+      log_steps: 1
+    callbacks:
+    - ComputeNorm: {}
+  fit:
+    train_dataloader:
+      data_processor: GptHDF5MapDataProcessor
+      data_dir: ./language/datasets/SlimPajama/train_shuffled_msl2048/
+      shuffle: false
+      shuffle_seed: 1
+      batch_size: 1920
+      use_worker_cache: false
+      num_workers: 8
+    val_dataloader: &val_dataloader
+      data_processor: GptHDF5MapDataProcessor
+      data_dir: ./language/datasets/SlimPajama/val_msl2048/
+      batch_size: 60
+      shuffle: false
+      use_worker_cache: false
+      num_workers: 8
+  validate:
+    val_dataloader: *val_dataloader
+  validate_all:
+    val_dataloaders: *val_dataloader

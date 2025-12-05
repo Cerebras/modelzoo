@@ -1,0 +1,18 @@
+- name: variant_1
+  # scenario: specifies which variant to use from the params.yaml
+  scenario: emission 
+  #checkpoint_dir: directory that contains a checkpoint to use for pretrained weights for this variant
+  checkpoint_dir:
+  - ./file_location/pretrained_checkpoints/model_dir_base
+  # tfrecord: data from this tfrecord file will be fed to this variant
+  tfrecord: "./file_location/test_data.tfrecord"
+  # count: how many of this variant to create
+  count: 7
+  n_towers: 1
+- name: variant_2
+  scenario: absorption
+  checkpoint_dir: 
+  - ./file_location/pretrained_checkpoints/model_dir_base
+  tfrecord: "./file_location/test_data.tfrecord"
+  count: 7
+  n_towers: 1

@@ -1,0 +1,22 @@
+body, html {
+    font-family: 'Lato', sans-serif;
+}
+
+/* All the colors for the token */
+.bg-remove-200 {
+    background-color: #ececec;
+}
+
+.bg-loss-active {
+    background-color: #01643e;
+    color: white;
+}
+
+.bg-attn-active {
+    background-color: #f74f40;
+    color: white;
+}
+
+.bg-loss-attn-active {
+    background-color: #a2db47
+}

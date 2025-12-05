@@ -1,0 +1,7 @@
+torch
+torchvision
+transformers
+tokenizers
+tiktoken
+tqdm
+cerebras_pytorch==2.0.2

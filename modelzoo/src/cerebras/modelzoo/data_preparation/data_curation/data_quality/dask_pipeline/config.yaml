@@ -1,0 +1,85 @@
+logging:
+  file: "./pipeline.log"
+  level: "INFO"
+  format: "%(asctime)s [%(levelname)s] %(message)s"
+
+checkpoint:
+  offset_file: "./offset.txt"
+
+dask_cluster:
+  type: "local"
+  queue: "cpu-spot"
+  cores: 4
+  memory: "64 GB"
+  walltime: "04:00:00"
+  processes: 1
+  interface: "eth0"
+  workers: 4
+
+dask_config:
+  distributed.worker.memory.target: 0.8
+  distributed.worker.memory.spill: 0.9
+  distributed.worker.memory.pause: 0.95
+  distributed.scheduler.worker-ttl: "30s"
+  distributed.comm.timeouts.tcp: "120s"
+
+dataset:
+  files_pattern: "./true_positives/*.jsonl.gz"
+  format: "json"
+  split: "train"
+  batch_size: 16
+  cache_dir: "~/.cache"
+
+embedding_model:
+  path: "Salesforce/SFR-Embedding-Code-400M_R"
+  dim: 1024
+  batch_size: 1
+  trust_remote_code: true
+  # download_url: "https://..."  # optional if you host a zip
+
+clustering:
+  min_cluster_size: 10
+
+zero_shot_model:
+  name: "facebook/bart-large-mnli"
+  device: 0
+
+classification:
+  batch_size: 4
+  labels:
+    - Adult
+    - Arts_and_Entertainment
+    - Autos_and_Vehicles
+    - Beauty_and_Fitness
+    - Books_and_Literature
+    - Business_and_Industrial
+    - Computers_and_Electronics
+    - Finance
+    - Food_and_Drink
+    - Games
+    - Health
+    - Hobbies_and_Leisure
+    - Home_and_Garden
+    - Internet_and_Telecom
+    - Jobs_and_Education
+    - Law_and_Government
+    - Mathematics
+    - News
+    - Online_Communities
+    - People_and_Society
+    - Pets_and_Animals
+    - Real_Estate
+    - Science
+    - Sensitive_Subjects
+    - Shopping
+    - Sports
+    - Travel_and_Transportation
+
+output:
+  embeddings_dir: "./embeddings/"
+  clustered_file: "clustered_output.parquet"
+  final_file: "clustered_output_with_labels.parquet"
+
+fasttext:
+  binary_path: "./fasttext"
+  model_path: "./lid.176.bin"

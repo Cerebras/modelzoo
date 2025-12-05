@@ -1,0 +1,80 @@
+#BERT-MNLI-Large
+
+trainer:
+  init:
+    backend:
+      backend_type: CSX
+    model_dir: ./model_dir
+    seed: 1
+    model:
+      name: "bert/classifier"
+      vocab_size: 30522
+      hidden_size: 1024
+      num_hidden_layers: 24
+      num_heads: 16
+      filter_size: 4096
+      encoder_nonlinearity: gelu # {"gelu", "relu", "silu", "gelu_new"}
+      pooler_nonlinearity: tanh
+      dropout_rate: 0.1
+      attention_dropout_rate: 0.1
+      max_position_embeddings: 512
+      task_dropout: 0.1
+      problem_type: single_label_classification
+      num_labels: 3
+      compute_eval_metrics: false
+    optimizer:
+      AdamW:
+        weight_decay: 0.01
+        eps: 1.0e-06
+    schedulers:
+    - SequentialLR:
+        schedulers:
+        - LinearLR:
+            total_iters: 10000
+            initial_learning_rate: 0.0
+            end_learning_rate: 5.0e-06
+        - ConstantLR:
+            learning_rate: 5.0e-06
+    precision:
+      enabled: true
+      fp16_type: cbfloat16
+      loss_scaling_factor: dynamic
+      max_gradient_norm: 1.0
+    loop:
+      max_steps: 100000 # ~3 epochs, 372k samples in an epoch
+      eval_frequency: 20000
+      eval_steps: 1636
+    checkpoint:
+      steps: 20000
+      save_initial_checkpoint: true
+    logging:
+      log_steps: 1000
+  fit:
+    train_dataloader:
+      data_processor: MNLIDataProcessor
+      is_training: True
+      data_dir: ./language/datasets/glue_data/MNLI
+      vocab_file: "$MODELZOO_ROOT/models/vocab/google_research_uncased_L-12_H-768_A-12.txt"
+      max_sequence_length: 448
+      do_lower: true
+      # The effective batch size, which is evenly divided across "num_csx" systems used for the run
+      batch_size: 512 # for GPU(16GB) set batch_size 6
+      # 6 * 2 * 1 = 12 with grad_accum_steps: 2 and single GPU
+      num_workers: 8
+      shuffle_seed: 1
+      shuffle: true
+    val_dataloader: &val_dataloader
+      data_processor: MNLIDataProcessor
+      is_training: False
+      data_dir: ./language/datasets/glue_data/MNLI
+      vocab_file: ./language/models/bert/pretrained/google-research/uncased_L-12_H-768_A-12/vocab.txt
+      max_sequence_length: 448
+      do_lower: true
+      batch_size: 12
+      num_workers: 1
+      shuffle: false
+      shuffle_seed: 1
+  validate:
+    val_dataloader: *val_dataloader
+  validate_all:
+    val_dataloaders: *val_dataloader

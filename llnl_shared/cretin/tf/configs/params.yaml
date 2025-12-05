@@ -1,0 +1,211 @@
+## parameters for toy model for CRETIN autoencoder
+base: &base
+  train_input: &base_train_input
+      batch_size: 128
+      input_len: 40
+      tfrecord: "./file_location/train_data.tfrecord"
+
+  model: &base_model
+      # "LLNL uses softplus activation for encoder and decoder subgraphs but we are seeing numerical
+      # issues with softplus (SW-31519) so replacing with relu for now."
+      encoder_output_sizes: [19, 9, 4, 2]
+      djinn_output_sizes: [6, 10, 18, 34, 66, 130, 258, 514, 1026, 2048, 4]
+      decoder_output_sizes: [6, 7, 11, 15, 21, 29, 40]
+      encoder_activation: "relu" #"LLNL uses softplus"
+      djinn_activation: "relu"
+      decoder_activation: "relu" #"LLNL uses softplus"
+      boundary_casting: False
+      mixed_precision: True
+      tf_summary: False
+
+  optimizer: &base_optimizer
+      clip_gradients: False
+      learning_rate: 0.0002
+      optimizer_type: "adam"
+      epsilon: 1.0e-8
+      loss_scaling_factor: "dynamic"
+
+  runconfig: &base_runconfig
+      seed: &seed 1
+      save_stats_steps: &save_stats_steps 50
+      model_dir: "model_dir"
+      tf_random_seed: *seed
+      save_summary_steps: *save_stats_steps
+      save_checkpoints_steps: 1000
+      keep_checkpoint_max: 2
+      log_step_count_steps: 100
+      max_steps: &max_steps 10000
+      eval_steps: 100
+      infer_steps: 100
+      mode: "train"
+      cs_ip:
+
+  evaluation:
+      checkpoint_dir: null
+      tfrecord: "./file_location/train_data.tfrecord"
+      eval_input: "./file_location/eval_data.tfrecord"
+
+  inference:
+      checkpoint_dir: null
+      infer_input: "./file_location/test_data.tfrecord"
+
+
+nano: &nano
+  <<: *base
+  # train_input:
+  train_input:
+      batch_size: 8
+      input_len: 40
+      tfrecord: "./file_location/train_data.tfrecord"
+      steps: 1
+  # model:
+  model:
+      # "LLNL uses softplus activation for encoder and decoder subgraphs but we are seeing numerical
+      # issues with softplus (SW-31519) so replacing with relu for now."
+      encoder_output_sizes: [19, 2]
+      djinn_output_sizes: [6, 10, 4]
+      decoder_output_sizes: [6, 7, 40]
+      encoder_activation: "relu" # "softplus"
+      djinn_activation: "relu"
+      decoder_activation: "relu" # "softplus"
+      n_towers: 1
+      in_parallel: True
+      boundary_casting: False
+      mixed_precision: True
+      tf_summary: False
+
+compile: &compile
+  <<: *base
+  runconfig:
+      <<: *base_runconfig
+      mode: "compile_only"
+
+base_perf:
+    <<: *base
+    train_input:
+        <<: *base_train_input
+        batch_size: 1024
+    runconfig:
+        <<: *base_runconfig
+        save_summary_steps: *max_steps
+        save_checkpoints_steps: 0
+        keep_checkpoint_max: 0
+        log_step_count_steps: *max_steps
+
+encoder_deep:
+    <<: *base
+    train_input:
+        <<: *base_train_input
+        batch_size: 512
+    model:
+        <<: *base_model
+        encoder_output_sizes: [19, 19, 9, 9, 4, 2]
+    runconfig:
+        <<: *base_runconfig
+        eval_steps: 25
+        infer_steps: 25
+djinn_wide:
+    <<: *base
+    train_input:
+        <<: *base_train_input
+        batch_size: 512
+    model:
+        <<: *base_model
+        djinn_output_sizes: [12, 20, 36, 68, 132, 260, 516, 1028, 2052, 4096, 4]
+    runconfig:
+        <<: *base_runconfig
+        eval_steps: 25
+        infer_steps: 25
+decoder_shallow:
+    <<: *base
+    train_input:
+        <<: *base_train_input
+        batch_size: 512
+    model:
+        <<: *base_model
+        decoder_output_sizes: [6, 11, 21, 40]
+    runconfig:
+        <<: *base_runconfig
+        eval_steps: 25
+        infer_steps: 25
+encoder_deep_wide_djinn_wide:
+    <<: *base
+    train_input:
+        <<: *base_train_input
+        batch_size: 512
+    model:
+        <<: *base_model
+        encoder_output_sizes: [38, 38, 18, 18, 8, 4, 2]
+        djinn_output_sizes: [12, 20, 36, 68, 132, 260, 516, 1028, 2052, 4096, 4]
+    runconfig:
+        <<: *base_runconfig
+        eval_steps: 25
+        infer_steps: 25
+djinn_shallow_decoder_shallow:
+    <<: *base
+    train_input:
+        <<: *base_train_input
+        batch_size: 512
+    model:
+        <<: *base_model
+        djinn_output_sizes: [6, 18, 66, 258, 1026, 4]
+        decoder_output_sizes: [6, 11, 21, 40]
+    runconfig:
+        <<: *base_runconfig
+        eval_steps: 25
+        infer_steps: 25
+deep_wide_wide:
+    <<: *base
+    train_input:
+        <<: *base_train_input
+        batch_size: 512
+    model:
+        <<: *base_model
+        encoder_output_sizes: [19, 19, 9, 9, 4, 2]
+        djinn_output_sizes: [12, 20, 36, 68, 132, 260, 516, 1028, 2052, 4096, 4]
+        decoder_output_sizes: [12, 14, 22, 30, 42, 58, 80, 40]
+    runconfig:
+        <<: *base_runconfig
+        eval_steps: 25
+        infer_steps: 25
+deepwide_base_shallow:
+    <<: *base
+    train_input:
+        <<: *base_train_input
+        batch_size: 512
+    model:
+        <<: *base_model
+        encoder_output_sizes: [38, 38, 18, 18, 8, 4, 2]
+        decoder_output_sizes: [6, 11, 21, 40]
+    runconfig:
+        <<: *base_runconfig
+        eval_steps: 25
+        infer_steps: 25
+deepwide_wide_wide:
+    <<: *base
+    train_input:
+        <<: *base_train_input
+        batch_size: 512
+    model:
+        <<: *base_model
+        encoder_output_sizes: [38, 38, 18, 18, 8, 4, 2]
+        djinn_output_sizes: [12, 20, 36, 68, 132, 260, 516, 1028, 2052, 4096, 4]
+        decoder_output_sizes: [12, 14, 22, 30, 42, 58, 80, 40]
+    runconfig:
+        <<: *base_runconfig
+        eval_steps: 25
+        infer_steps: 25
+deepwide_shallow_shallow:
+    <<: *base
+    train_input:
+        <<: *base_train_input
+        batch_size: 512
+    model:
+        <<: *base_model
+        encoder_output_sizes: [38, 38, 18, 18, 8, 4, 2]
+        djinn_output_sizes: [6, 18, 66, 258, 1026, 4]
+        decoder_output_sizes: [6, 11, 21, 40]
+    runconfig:
+        <<: *base_runconfig
+        eval_steps: 25
+        infer_steps: 25

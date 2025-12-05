@@ -1,0 +1,8 @@
+bert : ../../vocab/google_research_uncased_L-12_H-768_A-12.txt
+roberta : ../../vocab/google_research_cased_L-12_H-768_A-12.txt
+classifier : ../../../../vocab/google_research_uncased_L-12_H-768_A-12.txt
+linformer: ../../vocab/google_research_cased_L-12_H-768_A-12.txt
+extractive_summarization : ../../../../vocab/google_research_uncased_L-12_H-768_A-12.txt
+qa : ../../../../vocab/google_research_uncased_L-12_H-768_A-12.txt
+token_classifier: ../../../../vocab/Pubmed_fulltext_vocab.txt
+

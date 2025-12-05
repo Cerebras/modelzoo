@@ -1,0 +1,48 @@
+trainer:
+  init:
+    model_dir: ./model_dir
+    seed: 1
+    model:
+      name: fc_mnist
+      depth: 10
+      hidden_size: 50
+      dropout: 0.0
+      activation_fn: relu
+      to_float16: false
+    optimizer:
+      SGD:
+        learning_rate: 0.001
+        momentum: 0.0
+    precision:
+      enabled: true
+      loss_scaling_factor: 1.0
+    loop:
+      max_steps: 1000
+      eval_frequency: 10000000
+    checkpoint:
+      steps: 10000000
+    logging:
+      log_steps: 50
+    schedulers:
+    - ConstantLR:
+        learning_rate: 0.001
+  fit:
+    train_dataloader:
+      data_processor: MNISTDataProcessor
+      data_dir: ./mnist
+      batch_size: 4
+      drop_last_batch: true
+      to_float16: true
+      shuffle: true
+      split: train
+    val_dataloader: &id001
+      data_processor: MNISTDataProcessor
+      data_dir: ./mnist
+      batch_size: 4
+      drop_last_batch: true
+      shuffle: false
+      split: val
+  validate:
+    val_dataloader: *id001
+  validate_all:
+    val_dataloaders: *id001

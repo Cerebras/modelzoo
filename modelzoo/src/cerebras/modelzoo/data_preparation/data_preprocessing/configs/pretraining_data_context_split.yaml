@@ -1,0 +1,54 @@
+##############################################################
+## Autoregressive LM Preprocessing Parameters
+##############################################################
+
+setup:
+    data:
+        source: /path/to/text_data
+        type: "local"  
+    data_splits_dir:  /path/to/raw_data_splits_dir
+    mode: "pretraining"
+    output_dir: /path/to/output_dir
+    processes: 1
+
+    data_splits: 
+        train : 
+           split_fraction: 0.8
+           context_splits:
+             MSL_List : [1K, 2K, 3K]
+             split_fractions : [0.5, 0.3, 0.2]
+        val : 
+           split_fraction: 0.2
+           context_splits:
+             MSL_List : [0.5K, 1K, 2K]
+             split_fractions : [0.3, 0.3, 0.4]
+
+
+processing:
+    huggingface_tokenizer: "tiiuae/falcon-7b"
+
+    max_seq_length: 2048
+    short_seq_prob: 0.0
+    write_in_batch: True
+    
+    resume_from_checkpoint: False
+    seed: 0
+
+    read_hook: "cerebras.modelzoo.data_preparation.data_preprocessing.hooks:text_read_hook"
+    read_hook_kwargs:
+        text_key: "text"
+
+    shuffle_seed: 0
+    shuffle: False
+    
+    use_ftfy: True
+    ftfy_normalizer: "NFC"
+    wikitext_detokenize: False
+
+    UNSAFE_skip_jsonl_decoding_errors: False
+    read_chunk_size: 64
+
+dataset:
+    
+    pack_sequences: True
+    

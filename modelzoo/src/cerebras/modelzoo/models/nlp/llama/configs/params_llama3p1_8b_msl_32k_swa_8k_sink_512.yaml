@@ -1,0 +1,106 @@
+trainer:
+  fit:
+    train_dataloader:
+      batch_size: 16
+      data_dir: ./datasets/mle_datasets/rpj_1t/rpj_1t_100k_llama3p1_msl32k_train
+      data_processor: GptHDF5MapDataProcessor
+      num_workers: 8
+      persistent_workers: true
+      prefetch_factor: 10
+      shuffle: true
+      shuffle_seed: 1337
+      data_transforms:
+        - name: "add_sink_tokens"
+          sink_token_id: 128002
+          num_sink_tokens: 512
+    val_dataloader: &id001
+      batch_size: 16
+      data_dir: ./datasets/mle_datasets/rpj_1t/rpj_1t_100k_llama3p1_msl32k_val
+      data_processor: GptHDF5MapDataProcessor
+      num_workers: 8
+      shuffle: false
+  init:
+    backend:
+      backend_type: CSX
+    callbacks:
+    - GlobalFlags:
+        csx.debug.compile_crd_memory_gi: 67
+        csx.debug.execute_crd_memory_gi: 50
+    - ScopedTrainFlags:
+        csx.performance.micro_batch_size: 1
+    - ScopedValidateFlags:
+        csx.performance.micro_batch_size: 1
+    - ComputeNorm: {}
+    - LoadCheckpointStates:
+        load_checkpoint_states: model
+    checkpoint:
+      disable_strict_checkpoint_loading: true
+      save_initial_checkpoint: false
+      steps: 132
+    logging:
+      log_steps: 1
+    loop:
+      eval_steps: 2
+      max_steps: 38146 # 20B tokens, max_steps = 20e9 / (32768 * 16)
+      eval_frequency: 19073
+    model:
+      name: llama
+      attention_dropout_rate: 0.0
+      attention_module: multiquery_attention
+      attention_type: scaled_dot_product
+      attention_sliding_window_length: 8192
+      attention_sink_tokens: 512
+      dropout_rate: 0.0
+      embedding_dropout_rate: 0.0
+      embedding_layer_norm: false
+      extra_attention_params:
+        num_kv_groups: 8
+      filter_size: 14336
+      hidden_size: 4096
+      initializer_range: 0.02
+      layer_norm_epsilon: 1.0e-05
+      loss_scaling: num_tokens
+      loss_weight: 1.0
+      max_position_embeddings: 33280
+      nonlinearity: swiglu
+      norm_type: rmsnorm
+      num_heads: 32
+      num_hidden_layers: 32
+      pos_scaling_extra_args:
+        high_freq_factor: 4.0
+        low_freq_factor: 1.0
+        original_max_position_embeddings: 8192
+      pos_scaling_factor: 8.0
+      pos_scaling_type: llama3
+      position_embedding_type: rotary
+      rope_theta: 500000.0
+      rotary_dim: 128
+      share_embedding_weights: false
+      use_bias_in_output: false
+      use_ffn_bias: false
+      use_ffn_bias_in_attention: false
+      use_projection_bias_in_attention: false
+      vocab_size: 128256
+    optimizer:
+      Adam:
+        betas:
+        - 0.9
+        - 0.95
+        correct_bias: true
+        weight_decay: 0.1
+    precision:
+      enabled: true
+      fp16_type: cbfloat16
+      log_loss_scale: true
+      loss_scaling_factor: dynamic
+      max_gradient_norm: 1.0
+    schedulers:
+    - LinearLR:
+        initial_learning_rate: 0.0
+        end_learning_rate: 7.5e-05
+        total_iters: 38146
+    seed: 1
+  validate:
+    val_dataloader: *id001
+  validate_all:
+    val_dataloaders: *id001

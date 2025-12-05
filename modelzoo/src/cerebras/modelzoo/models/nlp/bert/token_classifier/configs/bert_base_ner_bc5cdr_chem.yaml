@@ -1,0 +1,72 @@
+#BERT-NER-Base
+
+trainer:
+  init:
+    backend:
+      backend_type: CSX
+    model_dir: ./model_dir
+    seed: 1
+    model:
+      name: "bert/token_classifier"
+      vocab_size: 30522
+      label_vocab_file: ./language/datasets/ner-pt/bc5cdr-chem-csv/train/label2id.json
+      hidden_size: 768
+      num_hidden_layers: 12
+      num_heads: 12
+      filter_size: 3072
+      encoder_nonlinearity: gelu
+      pooler_nonlinearity: tanh
+      max_position_embeddings: 512
+      encoder_output_dropout_rate: 0.1
+      num_classes: 7
+      compute_eval_metrics: false
+      include_padding_in_loss: true
+    optimizer:
+      Adam: # {"SGD", "AdamW", "Adam"}
+        eps: 1.0e-06
+    schedulers:
+    - SequentialLR:
+        schedulers:
+        - LinearLR:
+            total_iters: 1508 # 10% of max_steps
+            initial_learning_rate: 0.0
+            end_learning_rate: 1.0e-05
+        - LinearLR:
+            total_iters: 15080
+            initial_learning_rate: 1.0e-05
+            end_learning_rate: 0
+    precision:
+      enabled: true
+      fp16_type: cbfloat16
+      loss_scaling_factor: dynamic
+      max_gradient_norm: 1.0
+    loop:
+      max_steps: 15080 # 20 epochs
+      eval_frequency: 1000
+      eval_steps: 759
+    checkpoint:
+      steps: 1000
+    logging:
+      log_steps: 100
+  fit:
+    train_dataloader:
+      data_processor: BertTokenClassifierDataProcessor
+      data_dir: ./language/datasets/ner-pt/bc5cdr-chem-csv/train
+      vocab_file: "$MODELZOO_ROOT/models/vocab/Pubmed_fulltext_vocab.txt"
+      max_sequence_length: 128
+      # The effective batch size, which is evenly divided across "num_csx" systems used for the run
+      batch_size: 4096
+      shuffle: true
+      num_workers: 1
+    val_dataloader: &val_dataloader
+      data_processor: BertTokenClassifierDataProcessor
+      data_dir: ./language/datasets/ner-pt/bc5cdr-chem-csv/dev
+      vocab_file: ./language/datasets/pubmed_abstracts_baseline_fulltext_vocab/Pubmed_fulltext_vocab.txt
+      max_sequence_length: 128
+      batch_size: 12
+      shuffle: false
+      num_workers: 1
+  validate:
+    val_dataloader: *val_dataloader
+  validate_all:
+    val_dataloaders: *val_dataloader

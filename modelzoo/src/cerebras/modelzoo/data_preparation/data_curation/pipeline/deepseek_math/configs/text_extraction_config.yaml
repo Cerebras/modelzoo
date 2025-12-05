@@ -1,0 +1,41 @@
+# Pipeline Configuration
+pipeline:
+  dump: "CC-MAIN-2025-13"
+  input_warc_folder: /input
+  extracted_english_path: /output/eng_extracted
+  extracted_math_path: /output/math_extracted
+  cache_dir: /output/cache
+
+# Model Paths
+models:
+  english_fasttext_model_path: <relative-path-to-english-fasttext-model>
+  math_fasttext_model_path: <relative-path-to-math_fasttext_model>
+  text_quality_fasttext_model_path: <relative-path-to-text_quality_fasttext_model>
+
+# Filter Settings
+filters:
+  math_threshold: 0.5
+  english_threshold: 0.65
+  labels:
+    math: "__label__MATH"
+    english: "__label__eng_Latn"
+
+# Executor Configuration
+executor:
+  type: "slurm"  # Options: "slurm" or "local"
+
+local:   ## local executor config
+  tasks: 15
+  workers: 15
+
+slurm:   ## slurm config
+  container_path: <path_to_singularity.sif_file>
+  tasks: 50
+  job_name: "curation_job"
+  time: "24:00:00"
+  partition: "cpu-spot" # To be provided at runtime
+  logging_dir: /output/curation_logs
+  slurm_logs_folder:  <actual_path_to_slurm_logs>
+  qos: "normal"
+  mem_per_cpu_gb: 8
+  cpus_per_task: 1

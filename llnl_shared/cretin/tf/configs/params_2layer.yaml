@@ -1,0 +1,48 @@
+## parameters for toy model for CRETIN autoencoder
+base: &base
+    train_input:
+        batch_size: 8
+        input_len: 10
+
+    model:
+        # "LLNL uses softplus activation for encoder and decoder subgraphs but we are seeing numerical
+        # issues with softplus (SW-31519) so replacing with relu for now."
+        encoder_output_sizes: [10]
+        djinn_output_sizes: []
+        decoder_output_sizes: [10]
+        encoder_activation: "relu" #"softplus"
+        djinn_activation: "relu"
+        decoder_activation: "relu" #"softplus"
+        n_towers: 2
+        in_parallel: True
+        boundary_casting: False
+        mixed_precision: True
+        tf_summary: False
+
+    optimizer:
+        clip_gradients: False
+        learning_rate: 0.01
+        optimizer: "sgd"
+
+    runconfig:
+        seed: &seed 1
+        save_stats_steps: &save_stats_steps 50
+        model_dir: 'model_dir_cretin2'
+        tf_random_seed: *seed
+        save_summary_steps: *save_stats_steps
+        save_checkpoints_steps: 1000
+        keep_checkpoint_max: 2
+        cs_ip: null
+        max_steps: 10000
+
+        loss_scaling_factor: 1.0
+
+    evaluation:
+        checkpoint_dir: null
+        eval_params:
+            max_steps: 300
+
+    inference:
+        checkpoint_dir: null
+        infer_params:
+            max_steps: 50

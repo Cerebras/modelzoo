@@ -1,0 +1,96 @@
+# ESM-2 Model, 650M parameters, max_seq_length 1026
+# Based on: https://huggingface.co/facebook/esm2_t33_650M_UR50D
+
+trainer:
+  init:
+    backend:
+      backend_type: CSX
+    model_dir: ./model_dir
+    #save_initial_checkpoint: True
+    seed: 1
+    model:
+      name: "esm2"
+      attention_dropout_rate: 0.0
+      disable_nsp: true
+      dropout_rate: 0.0
+      embedding_layer_norm: false
+      encoder_nonlinearity: gelu
+      filter_size: 5120
+      hidden_size: 1280
+      initializer_range: 0.02
+      layer_norm_epsilon: 1.0e-05
+      mask_token_id: 32
+      max_position_embeddings: 1026
+      mlm_nonlinearity: gelu
+      mlm_loss_weight: 0.0256 # = 1/(0.15/4 * 1026). The synthetic data processor
+      # masks 15% /4 of the sequence on average.
+      num_heads: 20
+      num_hidden_layers: 33
+      pad_token_id: 1
+      position_embedding_type: rotary
+      rotary_dim: 64
+      share_embedding_weights: true
+      token_dropout: true
+      use_final_layer_norm: true
+      vocab_size: 33
+    optimizer:
+      # The paper uses warmup of 2000 steps to learning rate of 4e-4, with GBS=2048. 
+      # Since we reduced GBS to 162, we change warmup steps to (2048/162) * 2000 ~ 25000 
+      Adam:
+        betas:
+        - 0.9
+        - 0.98
+        eps: 1.0e-08
+        weight_decay: 0.01
+    schedulers:
+    - SequentialLR:
+        schedulers:
+        - LinearLR:
+            initial_learning_rate: 0.0
+            end_learning_rate: 1.0e-04
+            total_iters: 2000
+        - LinearLR:
+            initial_learning_rate: 1.0e-04
+            end_learning_rate: 1.0e-05
+            total_iters: 453280
+    precision:
+      enabled: true
+      fp16_type: cbfloat16
+      loss_scaling_factor: dynamic
+      log_loss_scale: true
+    loop:
+      max_steps: 27000
+      eval_frequency: 27000
+    checkpoint:
+      steps: 27000
+    logging:
+      log_steps: 100
+    callbacks:
+    - ScopedTrainFlags:
+        csx.performance.micro_batch_size: 256
+    - ScopedValidateFlags:
+        csx.performance.micro_batch_size: 162
+    - ComputeNorm: {}
+  fit:
+    train_dataloader:
+      data_processor: BertHDF5DataProcessor
+      data_dir: ./language/datasets/scratch/esm2/non_vsl
+      batch_size: 2048
+      shuffle: true
+      shuffle_seed: 1
+      num_workers: 8
+      prefetch_factor: 10
+      persistent_workers: true
+    val_dataloader: &val_dataloader
+      data_processor: BertCSVDataProcessor
+      data_dir: ./language/datasets/esm2/validation/
+      batch_size: 162
+      shuffle: true
+      shuffle_seed: 1
+      num_workers: 3
+      prefetch_factor: 10
+      persistent_workers: true
+  validate:
+    val_dataloader: *val_dataloader
+  validate_all:
+    val_dataloaders: *val_dataloader

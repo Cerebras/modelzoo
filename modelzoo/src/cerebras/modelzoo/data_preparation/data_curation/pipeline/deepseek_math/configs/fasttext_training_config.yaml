@@ -1,0 +1,28 @@
+output:
+  output_dir: "/output"
+  train_filename: "train_preprocessed.txt"
+  val_filename: "valid_preprocessed.txt"
+
+datasets:
+  math_dataset_name: "HuggingFaceTB/finemath"
+  non_math_dataset_name: "HuggingFaceFW/fineweb"
+  math_config: "finemath-4plus"
+  non_math_config: "sample-100BT"
+  cache_math: "./finemath-4plus-1M-samples"
+  cache_non_math: "./sample-100BT-1M-samples"
+
+training:
+  num_iterations: 3
+  total_samples: 1100
+  train_prob: 0.90909  # 10 / 11
+  fasttext_params:
+    lr: 0.1
+    epoch: 3
+    wordNgrams: 3
+    minCount: 3
+    loss: softmax
+    dim: 256
+    thread: 5
+    verbose: 2
+
+random_seed: 42
