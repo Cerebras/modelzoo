@@ -1,0 +1,167 @@
+# The configs here are set to use image size of `256 x 256`.
+# To use with image size `512 x 512`, please make the following changes:
+# 1. train_input.image_size: [512, 512]
+# 2. model.vae.latent_size: [64, 64]
+# 3. train_input.transforms(if any): change `size` params under various transforms to [512, 512] 
+
+trainer:
+  init:
+    seed: 1
+    backend:
+      # # enable GPU distributed training:
+      # backend_type: "GPU"
+      # enable_distributed: true
+      # dist_addr: "localhost:8888"
+      # dist_backend: "nccl"
+      # init_method: "env://"
+      # sync_batchnorm: True
+      backend_type: CSX
+      cluster_config:
+        num_workers_per_csx: 2
+    model:
+      name: "dit"
+      # diffusion settings
+      schedule_name: linear
+      # Embedding
+      embedding_dropout_rate: 0.0
+      hidden_size: 2048
+      embedding_nonlinearity: silu
+      position_embedding_type: fixed
+      # Time embedding
+      frequency_embedding_size: 256
+      # Label embedding
+      label_dropout_rate: 0.1
+      # Encoder
+      num_hidden_layers: 30
+      layer_norm_epsilon: 1.0e-06
+      # Encoder Attn
+      num_heads: 16
+      attention_type: scaled_dot_product
+      attention_softmax_fp32: true
+      dropout_rate: 0.0
+      encoder_nonlinearity: gelu
+      attention_dropout_rate: 0.0
+      use_projection_bias_in_attention: true
+      use_ffn_bias_in_attention: true
+      # Encoder ffn
+      filter_size: 8192
+      use_ffn_bias: true
+      # Task-specific
+      initializer_range: 0.02
+      norm_first: true
+      # vision related params
+      patch_size:
+      - 2
+      - 2
+      use_conv_patchified_embedding: true
+      num_diffusion_steps: 1000
+      num_classes: 1000
+      vae:
+        # https://huggingface.co/stabilityai/sd-vae-ft-ema/blob/main/config.json
+        down_block_types:
+        - DownEncoderBlock2D
+        - DownEncoderBlock2D
+        - DownEncoderBlock2D
+        - DownEncoderBlock2D
+        up_block_types:
+        - UpDecoderBlock2D
+        - UpDecoderBlock2D
+        - UpDecoderBlock2D
+        - UpDecoderBlock2D
+        block_out_channels:
+        - 128
+        - 256
+        - 512
+        - 512
+        layers_per_block: 2
+        act_fn: silu
+        latent_size:
+        - 32 #
+        - 32
+        latent_channels: 4
+        norm_num_groups: 32
+        sample_size: 256
+        scaling_factor: 0.18215
+        in_channels: 3
+        out_channels: 3
+      reverse_process:
+        sampler:
+          # Can pass all kwargs that are in _init_ of sampler
+          name: ddpm
+          beta_start: 0.0001
+          beta_end: 0.02
+          num_inference_steps: 250
+          num_diffusion_steps: 1000
+          variance_type: "fixed_small"
+        pipeline:
+          # Refer to Appendix A 
+          guidance_scale: 1.0
+          # guidance_scale = 1.0 disables classifier-free guidance,
+          num_cfg_channels: 3
+          # set `custom_labels` to generate samples related 
+          # to particular imagenet ids
+          # custom_labels: [207, 360, 387, 974, 88, 979, 417, 279]
+          num_classes: 1000
+          custom_labels: None
+    optimizer:
+      AdamW:
+        learning_rate: 0.0001
+        weight_decay: 0.0
+    precision:
+      enabled: true
+      fp16_type: cbfloat16
+      precision_opt_level: 1
+      loss_scaling_factor: dynamic
+      log_loss_scale: true
+    loop:
+      max_steps: 206869 # ~80 epochs, ImageNet has 1,281,167 samples
+      eval_frequency: 50000
+    checkpoint:
+      steps: 50000
+      save_initial_checkpoint: true
+    logging:
+      log_steps: 1
+    callbacks:
+    - ScopedTrainFlags:
+        csx.performance.micro_batch_size: 1168
+    - ScopedValidateFlags:
+        csx.performance.micro_batch_size: 1168
+    - ComputeNorm: {}
+    schedulers:
+    - ConstantLR:
+        learning_rate: 0.0001
+  fit:
+    train_dataloader:
+      # NOTE: when using this input, model.latent_size should be set to [32, 32]
+      data_processor: DiffusionLatentImageNet1KProcessor
+      data_dir:
+      - ./computer_vision/datasets/imagenet1k_ilsvrc2012_vaelatent_im256
+      - ./computer_vision/datasets/imagenet1k_ilsvrc2012_vaelatent_im256_hflipped
+      # In distributed training, batch_size specifies the per-GPU batch size;
+      # thus, you should divide by the number of GPU used.
+      # The effective batch size, which is evenly divided across "num_csx" systems used for the run
+      batch_size: 1168
+      shuffle: true
+      num_classes: 1000
+      num_workers: 8
+      split: train
+      num_diffusion_steps: 1000
+      image_channels: 3
+      use_worker_cache: true
+    val_dataloader: &val_dataloader
+      data_processor: DiffusionLatentImageNet1KProcessor
+      data_dir:
+      - ./computer_vision/datasets/imagenet1k_ilsvrc2012_vaelatent_im256
+      - ./computer_vision/datasets/imagenet1k_ilsvrc2012_vaelatent_im256_hflipped
+      batch_size: 1168
+      shuffle: false
+      num_classes: 1000
+      num_workers: 8
+      split: val
+      num_diffusion_steps: 1000
+      image_channels: 3
+      use_worker_cache: true
+  validate:
+    val_dataloader: *val_dataloader
+  validate_all:
+    val_dataloaders: *val_dataloader

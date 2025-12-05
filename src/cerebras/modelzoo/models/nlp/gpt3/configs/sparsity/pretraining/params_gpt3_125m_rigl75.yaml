@@ -1,0 +1,138 @@
+# A 125M parameter Cerebras-GPT model configuration designed for a single CS-2
+# to run with 75% RigL sparsity, i.e., masks are updated with Top-K weight dropping and
+# Top-K gradient re-growth.
+
+trainer:
+  init:
+    backend:
+      backend_type: CSX
+    model:
+      name: "gpt3"
+      # Embedding
+      hidden_size: 768
+      position_embedding_type: learned
+      share_embedding_weights: true
+      max_position_embeddings: 2048
+      vocab_size: 50257
+      # Decoder
+      num_hidden_layers: 12
+      dropout_rate: 0.0
+      layer_norm_epsilon: 1.0e-05
+      # Decoder - Attention
+      num_heads: 12
+      attention_type: scaled_dot_product
+      attention_dropout_rate: 0.0
+      use_projection_bias_in_attention: true
+      use_ffn_bias_in_attention: true
+      # Decoder - ffn
+      filter_size: 3072
+      nonlinearity: gelu
+      use_ffn_bias: true
+      embedding_initializer:
+        mean: 0.0
+        name: truncated_normal
+        std: 0.02
+        a: -0.04
+        b: 0.04
+      initializer:
+        mean: 0.0
+        name: truncated_normal
+        std: 0.02
+        a: -0.04
+        b: 0.04
+      output_layer_initializer:
+        mean: 0.0
+        name: truncated_normal
+        std: 0.004082482904638631
+        a: -0.008164965809277261
+        b: 0.008164965809277261
+      # Task-specific
+      loss_scaling: num_tokens
+      loss_weight: 1.0
+      use_bias_in_output: false
+    optimizer:
+      AdamW:
+        betas:
+        - 0.9
+        - 0.95
+        eps: 1.0e-08
+        weight_decay: 0.1
+        correct_bias: true
+    schedulers:
+    - SequentialLR:
+        schedulers:
+        - LinearLR:
+            initial_learning_rate: 0.0
+            end_learning_rate: 0.0006
+            total_iters: 716
+        - CosineDecayLR:
+            initial_learning_rate: 0.0006
+            end_learning_rate: 6.0e-05
+            total_iters: 4062
+    precision:
+      # Cerebras parameters
+      enabled: true
+      fp16_type: cbfloat16
+      precision_opt_level: 1
+      loss_scaling_factor: dynamic
+      max_gradient_norm: 1.0
+      log_loss_scale: true
+    sparsity:
+      sparsity: 0.75
+      init_method: random
+      algorithm: rigl
+      drop_fraction:
+        type: cosine    # anneal drop fraction with cosine schedule
+        init: 0.3
+        half_period: 3584  # set half-period to schedule at 75% of max_steps
+      update:
+        freq: 100
+        stop: 3584
+      param_filter:
+      - '*proj_[qkv]_dense_layer.weight'
+      - '*proj_output_dense_layer.weight'
+      - '*linear_layer.weight'
+    loop:
+      max_steps: 4778
+      eval_frequency: 956
+      eval_steps: 724
+    checkpoint:
+      steps: 956
+      save_initial_checkpoint: false
+    logging:
+      log_steps: 50
+    callbacks:
+    - ComputeNorm: {}
+  fit:
+    train_dataloader:
+      data_processor: GptHDF5MapDataProcessor
+      data_dir:
+      - ./language/datasets/pile_original/hdf5_dataset/train_shuffled_msl2048/0/
+      - ./language/datasets/pile_original/hdf5_dataset/train_shuffled_msl2048/1/
+      - ./language/datasets/pile_original/hdf5_dataset/train_shuffled_msl2048/2/
+      - ./language/datasets/pile_original/hdf5_dataset/train_shuffled_msl2048/3/
+      - ./language/datasets/pile_original/hdf5_dataset/train_shuffled_msl2048/4/
+      - ./language/datasets/pile_original/hdf5_dataset/train_shuffled_msl2048/5/
+      - ./language/datasets/pile_original/hdf5_dataset/train_shuffled_msl2048/6/
+      - ./language/datasets/pile_original/hdf5_dataset/train_shuffled_msl2048/7/
+      - ./language/datasets/pile_original/hdf5_dataset/train_shuffled_msl2048/8/
+      - ./language/datasets/pile_original/hdf5_dataset/train_shuffled_msl2048/9/
+      shuffle: true
+      shuffle_seed: 0
+      # The effective batch size, which is evenly divided across "num_csx" systems used for the run
+      batch_size: 256  # 256 global = (256 micro)*(1 csx)*(1 grad accum step)
+      num_workers: 1
+      prefetch_factor: 10
+      persistent_workers: true
+    val_dataloader: &val_dataloader
+      data_processor: GptHDF5MapDataProcessor
+      data_dir: ./language/datasets/pile_original/hdf5_dataset/val_msl2048/
+      batch_size: 256
+      shuffle: false
+      num_workers: 1
+      prefetch_factor: 10
+      persistent_workers: true
+  validate:
+    val_dataloader: *val_dataloader
+  validate_all:
+    val_dataloaders: *val_dataloader

@@ -1,0 +1,39 @@
+setup:
+    data:
+        source: "/path/to/input_directory"
+        type: "local"
+
+    output_dir: "/path/to/output_directory"
+    image_dir: "/path/to/image_directory"
+    # adjust the below to however many cores you have available
+    processes: 1
+    mode: "finetuning"
+    
+processing:
+    huggingface_tokenizer: "NousResearch/Llama-2-7b-hf"
+    max_seq_length: 2048
+
+    write_in_batch: True
+
+    resume_from_checkpoint: False
+    read_hook: "cerebras.modelzoo.data_preparation.data_preprocessing.hooks:finetuning_llava_hook"
+    read_hook_kwargs:
+        multi_turn_key: "conversations"
+        image_key: "image"
+        image_token: "<image>"
+        multi_turn_content_key: "value"
+        system_prompt_style: "vicuna_v1"
+        phase: 2
+
+    shuffle_seed: 0
+    shuffle: True
+    use_ftfy: True
+    ftfy_normalizer: "NFC"
+    wikitext_detokenize: False
+    UNSAFE_skip_jsonl_decoding_errors: False
+dataset:
+    
+    num_patches: 576
+    is_multimodal: True
+    max_num_img: 1
+     

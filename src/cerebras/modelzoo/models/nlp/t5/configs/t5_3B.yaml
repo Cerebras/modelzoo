@@ -1,0 +1,87 @@
+trainer:
+  init:
+    backend:
+      backend_type: CSX
+    model_dir: ./model_dir
+    seed: 1
+    model:
+      name: "t5"
+      src_vocab_size: 32001
+      extra_ids: 100
+      ## Encoder
+      encoder_num_hidden_layers: 24
+      dropout_rate: 0.1
+      # Encoder -- Attention
+      d_kv: 128 # Size of the key, query, value projections per attention head.
+      num_heads: 32 # d_kv * num_heads = hidden size.
+      use_projection_bias_in_attention: false
+      # Position Embeddings
+      position_embedding_type: relative
+      src_max_position_embeddings: 512
+      tgt_max_position_embeddings: 114
+      # Shared Weighed Embeddings
+      share_embedding_weights: true
+      share_encoder_decoder_embedding: true
+      norm_type: layernorm   # Disable T5 style layer norm (RMSNorm)
+      # Encoder -- ffn
+      d_ff: 16384 # Size of the intermediate feed forward layer in t5 blocks.
+      d_model: 1024 # Size of the encoder layers and the pooler layer.
+      encoder_nonlinearity: relu   # {"gelu", "relu", "geglu"}
+      decoder_nonlinearity: relu   # {"gelu", "relu", "geglu"}
+      layer_norm_epsilon: 1.0e-05
+      ## Decoder
+      decoder_num_hidden_layers: 24
+      # Loss scaling weight, 1/{average_number_valid_tokens}
+      lm_loss_weight: 0.015
+    optimizer:
+      AdaFactor: {}
+    schedulers:
+    - InverseSquareRootDecayLR:
+        warmup_steps: 3870 # 10000 * 216 / 558
+        scale: 1.0
+    precision:
+      # Cerebras configs.
+      enabled: true
+      fp16_type: cbfloat16
+      loss_scaling_factor: dynamic
+    loop:
+      max_steps: 202950 # (524288 * 216 / 558)
+      eval_frequency: 10000 #compile_crd_memory_gi: 95  # 2023-04 - requires ~90Gi
+      eval_steps: 703
+    checkpoint:
+      steps: 10000
+    logging:
+      log_steps: 100
+  fit:
+    train_dataloader:
+      data_processor: T5DynamicDataProcessor
+      src_vocab_file: ./t5/c4/vocab.txt   # https//huggingface.co/t5-small/resolve/main/spiece.model.
+      src_data_dir: ./t5/c4/en/train.tok.sentencepiece.3200
+      extra_ids: 100 # A number of extra ids added to the end of the vocabulary for use as sentinels.
+      src_max_sequence_length: 512
+      tgt_max_sequence_length: 114
+      shuffle: true
+      shuffle_seed: 1
+      shuffle_buffer: 16384 # large buffer size allows batches to contain samples from multiple documents
+      # The effective batch size, which is evenly divided across "num_csx" systems used for the run
+      batch_size: 558 # this is more than 2**16 tokens per batch (ref batch size = 216) for perf reasons on CS system
+      num_workers: 8
+      prefetch_factor: 10
+      persistent_workers: true
+    val_dataloader: &val_dataloader
+      data_processor: T5DynamicDataProcessor
+      src_vocab_file: ./t5/c4/vocab.txt
+      src_data_dir: ./t5/c4/en/validation.tok.sentencepiece.3200
+      extra_ids: 100
+      src_max_sequence_length: 512
+      tgt_max_sequence_length: 114
+      shuffle: false
+      shuffle_seed: 1
+      batch_size: 558
+      num_workers: 8
+      prefetch_factor: 10
+      persistent_workers: true
+  validate:
+    val_dataloader: *val_dataloader
+  validate_all:
+    val_dataloaders: *val_dataloader

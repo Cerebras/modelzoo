@@ -1,0 +1,110 @@
+# Paths configuration (all non absolute paths except basedir are relative to the basedir)
+paths:
+  basedir: <YOUR_BASE_DIRECTORY>
+  output_folder: output
+  log_dir: output/logs
+  container_path: <path to sif file>
+
+# Resharding configuration
+resharding:
+  enabled: true
+  reader:
+    cls: datatrove.pipeline.readers.JsonlReader
+    params:
+      data_folder: <source data folder>
+      limit: -1
+      glob_pattern: "*.jsonl*"
+  params:
+    compression: gzip
+    max_docs_per_file: 10_000
+
+  slurm:
+    tasks: 1
+    job_name: "resharding"
+    partition: "cpu"
+    time: "03:00:00"
+    mem_per_cpu_gb: 4
+    cpus_per_task: 4
+    use_gpu: false
+
+# Embeddings configuration
+embeddings:
+  enabled: false
+  params:
+    model_name_or_path: "NovaSearch/stella_en_400M_v5"
+    model_kwargs:
+      trust_remote_code: true
+      # Use this options if running on CPU
+      # config_kwargs:
+      #   use_memory_efficient_attention: false
+      #   unpad_inputs: false
+    batch_size: 200
+
+  slurm:
+    tasks: 1000
+    randomize_start_duration: 20
+    job_name: "embeddings"
+    partition: "a10-spot"
+    time: "4:00:00"
+    mem_per_cpu_gb: 4
+    cpus_per_task: 4
+    tasks_per_job: 1
+    use_gpu: true
+
+# Clustering configuration
+clustering:
+  params:
+    num_clusters: 1000
+    niter: 20
+    merge_clusters: true
+    merge_threshold: 0.35
+    num_cluster_representatives: 100
+
+  slurm:
+    tasks: 1
+    job_name: "clustering"
+    partition: "cpu-spot"
+    time: "03:00:00"
+    mem_per_cpu_gb: 8
+    cpus_per_task: 16
+    use_gpu: false
+
+# Labeling configuration
+labeling:
+  params:
+    model: <model name>
+    api_key: <api key>
+    base_url: <base url for the API>
+    max_len_per_doc: 500
+    prompt_template: >
+      You are given a set of representative documents from a cluster. Assign multiple concise and specific topic labels (each 1–3 words) that together best capture the main subjects covered by the cluster.
+      * Choose the most precise subtopics or subfields possible, based on the content.
+      * If the documents are technical, academic, or domain-specific, reflect that in your labels (e.g., Quantum Optics, Behavioral Economics, Compiler Design).
+      * For non-technical or everyday topics, still aim for specificity (e.g., Home Gardening, Celebrity Biographies, Online Privacy).
+      * Only include distinct, relevant 4-8 topics — avoid overly broad or redundant terms.
+      * Output ONLY the topic labels, separated by commas — DO NOT include any explanation or reasoning.
+
+      Examples:
+      * A cluster about solving systems of equations and matrix properties → Linear Algebra, Matrix Theory
+      * A cluster discussing instruction-level parallelism and processor caching → Computer Architecture, CPU Optimization
+      * A cluster on collaborative filtering and personalization → Recommender Systems, User Profiling
+      * A cluster on therapy methods and teen anxiety → Adolescent Psychology, Mental Health Treatment
+
+      Representative documents:
+      {text}
+
+  writer:
+    cls: cerebras.modelzoo.data_preparation.data_curation.pipeline.climbmix.jsonl_writer_ext.JsonlWriterExt
+    params:
+      split_by_cluster: true
+      max_file_size: 200_000_000
+
+  slurm:
+    tasks: 1
+    job_name: "labeling"
+    partition: "cpu"
+    time: "03:00:00"
+    mem_per_cpu_gb: 4
+    cpus_per_task: 2
+    use_gpu: false
+

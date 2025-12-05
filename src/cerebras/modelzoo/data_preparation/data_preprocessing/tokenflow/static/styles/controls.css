@@ -1,0 +1,150 @@
+.dropdown-container {
+    position: relative;
+    transition: margin-left 0.3s ease-in-out; /* Smooth transition */
+}
+
+.dropdown-container::after {
+    content: '';
+    position: absolute;
+    right: 14px; /* Adjust position as needed */
+    top: 70%;
+    transform: translateY(-50%);
+    width: 14px; /* Adjust width based on your image size */
+    height: 14px; /* Adjust height based on your image size */
+    background-image: url('/static/images/down-arrow.png'); /* Adjust the path to your image */
+    background-size: contain; /* Ensures the image scales to fit the element */
+    background-repeat: no-repeat;
+    pointer-events: none; /* Make sure the icon doesn't block dropdown interaction */
+}
+
+.fixed-controls {
+    position: fixed;
+    top: 0px;
+}
+
+.fixed-controls .controls {
+    margin-left:0px;
+    margin-top:0px!important;
+}
+
+.fixed-controls .fixed-sections {
+    margin-top:0px;
+}
+
+
+.fixed-controls .controls {
+    justify-content: flex-start;
+}
+
+.seq-dist {
+    margin-top:50px;
+}
+
+/* *************************************************** Image Section *************************************************** */
+.images-section {
+    height: 250px; /* Set a fixed height to control scrolling */
+    padding: 5px;
+    margin-bottom: 20px; /* Optional: Add some space below */
+    width: 100%;
+}
+
+.multimodal-images-display {
+    overflow-y: auto; /* Enable vertical scrolling */
+    overflow-x: hidden;
+    height: 200px; 
+    display: block;
+    border: 1px solid #ddd;
+    border-radius: 10px;
+    width: 100%; /* Ensure images take the full width */
+    margin-bottom: 10px; /* Add space between images */
+}
+
+.multimodal-images-display::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+}
+
+
+.multimodal-images img:last-child {
+    margin-bottom: 0; /* Remove margin from the last image */
+}
+
+.image-block {
+    display: flex;
+    justify-content: flex-start;
+    padding:16px;
+}
+
+.image-block img {
+    height:100px;
+}
+
+.image-block p {
+    margin-left:20px;
+    color: #807c7c;
+    font-size: 16px;
+    align-content: center;
+    word-wrap: break-word;
+    word-break: break-all;
+    white-space: normal; /* Ensure text wraps to the next line */
+}
+
+/* *************************************************** Image Section *************************************************** */
+
+/* *************************************************** Preprocessing Metadata *************************************************** */
+.stats {
+    height: 400px;
+    width: 101%;
+}
+
+.stats table {
+    padding: 16px;
+    font-size:16px;
+    border: 1px solid #ccc;
+    border-radius: 10px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    max-height: 70%; 
+    display: block;
+}
+
+.stats table::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+}
+
+.stats table tr::after {
+    content: '';
+    height: 1px;
+    background-color: black; /* Color for the horizontal line */
+}
+
+.stats table tr:last-child::after {
+    display: none; /* Remove the line after the last row */
+}
+
+.stats table td {
+    padding: 5px; /* Add padding to table cells */
+}
+.separator-row {
+    border-bottom: 1px solid #e0e0e0; /* Add horizontal line */
+    height: 1px; /* Set height for the separator row */
+}
+tr td:last-child {
+    word-wrap: break-word;
+    word-break: break-all;
+    white-space: normal; /* Ensure text wraps to the next line */
+    width: 100%;
+    color: #666;
+}
+
+tbody tr td:first-child {
+    font-weight: bold;
+}
+
+tbody tr td:last-child {
+    text-align: right
+}
+
+
+/* *************************************************** Preprocessing Metadata *************************************************** */

@@ -1,0 +1,170 @@
+version: 0.1
+
+models:
+
+- name: llava
+  path: cerebras.modelzoo.models.multimodal.llava.model.LlavaModel
+  data_processor_paths:
+  - cerebras.modelzoo.data.multimodal.llava.LlavaHDF5MapDataProcessor.LlavaHDF5MapDataProcessor
+
+- name: multimodal_simple
+  path: cerebras.modelzoo.models.multimodal.multimodal_simple.model.MMSimpleModel
+  data_processor_paths:
+  - cerebras.modelzoo.data.multimodal.llava.LlavaHDF5MapDataProcessor.LlavaHDF5MapDataProcessor
+  - cerebras.modelzoo.data.multimodal.llava.MultimodalSimpleHDF5MapDataProcessor.MultimodalSimpleHDF5MapDataProcessor
+  - cerebras.modelzoo.data_preparation.raw_dataset_processor.RawDatasetProcessor.MultimodalRawDatasetProcessor
+
+- name: bert
+  path: cerebras.modelzoo.models.nlp.bert.model.BertForPreTrainingModel
+  data_processor_paths: &bert_data_processor_paths
+  - cerebras.modelzoo.data.nlp.bert.BertCSVDataProcessor.BertCSVDataProcessor
+  - cerebras.modelzoo.data.nlp.bert.BertCSVDynamicMaskDataProcessor.BertCSVDynamicMaskDataProcessor
+  - cerebras.modelzoo.data.nlp.bert.BertHDF5DataProcessor.BertHDF5DataProcessor
+
+- name: bert/classifier
+  path: cerebras.modelzoo.models.nlp.bert.classifier.model.BertForSequenceClassificationModel
+  data_processor_paths:
+  - cerebras.modelzoo.data.nlp.bert.BertClassifierDataProcessor.MNLIDataProcessor
+  - cerebras.modelzoo.data.nlp.bert.BertClassifierDataProcessor.SST2DataProcessor
+
+- name: bert/extractive_summarization
+  path: cerebras.modelzoo.models.nlp.bert.extractive_summarization.model.BertSummarizationModel
+  data_processor_paths:
+  - cerebras.modelzoo.data.nlp.bert.BertSumCSVDataProcessor.BertSumCSVDataProcessor
+
+- name: bert/token_classifier
+  path: cerebras.modelzoo.models.nlp.bert.token_classifier.model.BertForTokenClassificationModel
+  data_processor_paths:
+  - cerebras.modelzoo.data.nlp.bert.BertTokenClassifierDataProcessor.BertTokenClassifierDataProcessor
+
+- name: dpo
+  path: cerebras.modelzoo.models.nlp.dpo.model.DPOModel
+  data_processor_paths:
+  - cerebras.modelzoo.data.nlp.dpo.DpoHDF5DataProcessor.DpoHDF5DataProcessor
+
+- name: dpr
+  path: cerebras.modelzoo.models.nlp.dpr.model.DPRWrapperModel
+  data_processor_paths:
+  - cerebras.modelzoo.data.nlp.dpr.DPRHDF5DataProcessor.DPRHDF5DataProcessor
+
+- name: dpr/embedding_generation
+  path: cerebras.modelzoo.models.nlp.dpr.embedding_generation.model.DPRWrapperModelForEmbeddingGeneration
+  data_processor_paths:
+  - cerebras.modelzoo.models.nlp.dpr.embedding_generation.input.DPREmbedGenHDF5DataProcessor.DPREmbedGenHDF5DataProcessor
+  - cerebras.modelzoo.models.nlp.dpr.embedding_generation.input.DPREmbedGenHDF5MapDataProcessor.DPREmbedGenHDF5MapDataProcessor
+
+- name: esm2/classification
+  path: cerebras.modelzoo.models.nlp.esm2.classification.model.ESM2ForSequenceClassificationModel
+  data_processor_paths: *bert_data_processor_paths
+
+- name: esm2
+  path: cerebras.modelzoo.models.nlp.esm2.model.Esm2ForPreTrainingModel
+  data_processor_paths: *bert_data_processor_paths
+
+- name: gpt2
+  path: cerebras.modelzoo.models.nlp.gpt2.model.Gpt2Model
+  data_processor_paths: &gpt2_data_processor_paths
+  - cerebras.modelzoo.data.nlp.gpt.DummyDataProcessor.DummyDataProcessor
+  - cerebras.modelzoo.data.nlp.gpt.DummyIterableDataProcessor.DummyIterableDataProcessor
+  - cerebras.modelzoo.data.nlp.gpt.GptHDF5DataProcessor.GptHDF5DataProcessor
+  - cerebras.modelzoo.data.nlp.gpt.GptHDF5MapDataProcessor.GptHDF5MapDataProcessor
+  - cerebras.modelzoo.data.nlp.gpt.HuggingFaceDataProcessorEli5.HuggingFaceDataProcessorEli5
+  - cerebras.modelzoo.data.nlp.gpt.HuggingFaceIterableDataProcessorEli5.HuggingFaceIterableDataProcessorEli5
+
+- name: gpt3
+  path: cerebras.modelzoo.models.nlp.gpt3.model.GPT3Model
+  data_processor_paths: *gpt2_data_processor_paths
+
+- name: gpt_backbone
+  path: cerebras.modelzoo.models.nlp.gpt_backbone.model.GPTBackboneWrapperModel
+  data_processor_paths: *gpt2_data_processor_paths
+
+- name: btlm
+  path: cerebras.modelzoo.models.nlp.btlm.model.BTLMModel
+  data_processor_paths: *gpt2_data_processor_paths
+
+- name: bloom
+  path: cerebras.modelzoo.models.nlp.bloom.model.BloomModel
+  data_processor_paths: *gpt2_data_processor_paths
+
+- name: llama
+  path: cerebras.modelzoo.models.nlp.llama.model.LlamaModel
+  data_processor_paths: *gpt2_data_processor_paths
+
+- name: mistral
+  path: cerebras.modelzoo.models.nlp.mistral.model.MistralModel
+  data_processor_paths: *gpt2_data_processor_paths
+
+- name: mixtral
+  path: cerebras.modelzoo.models.nlp.mixtral.model.MixtralModel
+  data_processor_paths: *gpt2_data_processor_paths
+
+
+- name: santacoder
+  path: cerebras.modelzoo.models.nlp.santacoder.model.SantaCoderModel
+  data_processor_paths: *gpt2_data_processor_paths
+
+- name: starcoder
+  path: cerebras.modelzoo.models.nlp.starcoder.model.StarCoderModel
+  data_processor_paths: *gpt2_data_processor_paths
+
+- name: jais
+  path: cerebras.modelzoo.models.nlp.jais.model.JAISModel
+  data_processor_paths: *gpt2_data_processor_paths
+
+- name: gemma2
+  path: cerebras.modelzoo.models.nlp.gemma2.model.Gemma2Model
+  data_processor_paths: *gpt2_data_processor_paths
+
+- name: gptj
+  path: cerebras.modelzoo.models.nlp.gptj.model.GptjModel
+  data_processor_paths: *gpt2_data_processor_paths
+
+- name: falcon
+  path: cerebras.modelzoo.models.nlp.falcon.model.FalconModel
+  data_processor_paths: *gpt2_data_processor_paths
+
+- name: gpt-neox
+  path: cerebras.modelzoo.models.nlp.gptj.model.GPTNeoXModel
+  data_processor_paths: *gpt2_data_processor_paths
+
+- name: t5
+  path: cerebras.modelzoo.models.nlp.t5.model.T5ForConditionalGenerationModel
+  data_processor_paths: &t5_data_processor_paths
+  - cerebras.modelzoo.data.nlp.t5.T5DynamicDataProcessor.T5DynamicDataProcessor
+  - cerebras.modelzoo.data.nlp.t5.T5HDF5DataProcessor.T5HDF5DataProcessor
+
+- name: transformer
+  path: cerebras.modelzoo.models.nlp.transformer.model.TransformerModel
+  data_processor_paths:
+  - cerebras.modelzoo.data.nlp.transformer.TransformerDynamicDataProcessor.TransformerDynamicDataProcessor
+
+- name: dit
+  path: cerebras.modelzoo.models.vision.dit.model.DiTModel
+  data_processor_paths:
+  - cerebras.modelzoo.data.vision.diffusion.DiffusionLatentImageNet1KProcessor.DiffusionLatentImageNet1KProcessor
+
+- name: fc_mnist
+  path: cerebras.modelzoo.models.vision.fc_mnist.model.MNISTModel
+  data_processor_paths:
+  - cerebras.modelzoo.models.vision.fc_mnist.data.MNISTDataProcessor
+  - cerebras.modelzoo.models.vision.fc_mnist.data.MNISTMapDataProcessor  
+
+- name: generic_image_encoders
+  path: cerebras.modelzoo.models.vision.generic_image_encoders.base.BaseSSLArch.BaseSSLArch
+  data_processor_paths:
+  - cerebras.modelzoo.models.vision.generic_image_encoders.base.BaseImageDataProcessor.BaseImageDataProcessor
+
+- name: dino
+  path: cerebras.modelzoo.models.vision.dino.model.DinoModel
+  data_processor_paths:
+  - cerebras.modelzoo.models.vision.dino.DinoImageDataProcessor
+
+- name: vision_transformer
+  path: cerebras.modelzoo.models.vision.vision_transformer.model.ViTClassificationWrapperModel
+  data_processor_paths:
+  - cerebras.modelzoo.data.vision.classification.data.imagenet.ImageNet1KProcessor
+
+
+
+

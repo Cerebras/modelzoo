@@ -1,0 +1,56 @@
+#############################################################
+## Fine-Tuning Tutorial Eleuther Evaluation Harness Config ##
+#############################################################
+
+trainer:
+  init:
+    backend:
+      backend_type: CSX
+      cluster_config:
+        num_csx: 1
+    model:
+      model_name: "llama"
+      attention_dropout_rate: 0.0
+      attention_module: multiquery_attention
+      attention_type: scaled_dot_product
+      dropout_rate: 0.0
+      embedding_dropout_rate: 0.0
+      embedding_layer_norm: false
+      extra_attention_params:
+        num_kv_groups: 8
+      filter_size: 14336
+      hidden_size: 4096
+      initializer_range: 0.02
+      layer_norm_epsilon: 1.0e-05
+      loss_scaling: num_tokens
+      loss_weight: 1.0
+      max_position_embeddings: 8192
+      nonlinearity: swiglu
+      norm_type: rmsnorm
+      num_heads: 32
+      num_hidden_layers: 32
+      pos_scaling_factor: 1.0
+      position_embedding_type: rotary
+      rope_theta: 500000.0
+      rotary_dim: 128
+      share_embedding_weights: false
+      use_bias_in_output: false
+      use_ffn_bias: false
+      use_ffn_bias_in_attention: false
+      use_projection_bias_in_attention: false
+      vocab_size: 128256
+    callbacks:
+    - EleutherEvalHarness:
+        eeh_args:
+          tasks: winogrande
+          num_fewshot: 0
+        keep_data_dir: false
+        batch_size: 4
+        shuffle: false
+        max_sequence_length: 8192
+        num_workers: 1
+        data_dir: finetuning_tutorial/eeh
+        eos_id: 128001
+        pretrained_model_name_or_path: baseten/Meta-Llama-3-tokenizer
+        flags:
+          csx.performance.micro_batch_size: null

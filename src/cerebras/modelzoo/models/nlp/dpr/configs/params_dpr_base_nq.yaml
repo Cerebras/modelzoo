@@ -1,0 +1,79 @@
+# DPR model, 220M parameters (2*110M for BERT question and passage encoder), max_seq_length 512
+# Based on: https://huggingface.co/facebook/dpr-question_encoder-multiset-base
+
+trainer:
+  init:
+    backend:
+      backend_type: CSX
+    model_dir: ./model_dir
+    seed: 1
+    model:
+      name: "dpr"
+      q_encoder: &base_model
+        vocab_size: 30522
+        hidden_size: 768
+        num_hidden_layers: 12
+        num_heads: 12
+        filter_size: 3072
+        encoder_nonlinearity: gelu   # {"gelu", "relu", "silu", "gelu_new"}
+        pooler_nonlinearity: tanh
+        dropout_rate: 0.1
+        attention_dropout_rate: 0.1
+        max_position_embeddings: 512
+        layer_norm_epsilon: 1.0e-12
+      ctx_encoder:
+        <<: *base_model
+    optimizer:
+      Adam:
+        weight_decay: 0.0
+    schedulers:
+    - SequentialLR:
+        schedulers:
+        - LinearLR:
+            initial_learning_rate: 0.0
+            total_iters: 460
+            end_learning_rate: 1.0e-05
+        - LinearLR:
+            initial_learning_rate: 1.0e-05
+            end_learning_rate: 0.0
+            total_iters: 17940
+    precision:
+      enabled: True
+      fp16_type: cbfloat16
+      loss_scaling_factor: dynamic
+      max_gradient_norm: 1.0
+    loop:
+      max_steps: 18400 # (58880 samples per epoch * 40 epochs / 128 samples per batch)
+      eval_frequency: 460
+      eval_steps: 101
+    checkpoint:
+      steps: 460 # checkpoint each epoch
+      save_initial_checkpoint: true
+    logging:
+      log_steps: 1
+  fit:
+    train_dataloader:
+      data_processor: DPRHDF5DataProcessor
+      data_dir: ./dpr_data/NQ/train_hdf5/
+      batch_size: 128
+      shuffle: true
+      shuffle_seed: 1
+      shuffle_buffer: 16384 # large buffer size allows batches to contain samples from multiple documents
+      # The effective batch size, which is evenly divided across "num_csx" systems used for the run
+      num_workers: 8
+      prefetch_factor: 10
+      persistent_workers: true
+    val_dataloader: &val_dataloader
+      data_processor: DPRHDF5DataProcessor
+      data_dir: ./dpr_data/NQ/val_hdf5/
+      batch_size: 64
+      shuffle: true
+      shuffle_seed: 1
+      shuffle_buffer: 16384
+      num_workers: 4
+      prefetch_factor: 4
+      persistent_workers: true
+  validate:
+    val_dataloader: *val_dataloader
+  validate_all:
+    val_dataloaders: *val_dataloader

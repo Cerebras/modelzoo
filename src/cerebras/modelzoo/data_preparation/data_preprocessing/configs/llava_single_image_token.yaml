@@ -1,0 +1,29 @@
+setup:
+    output_dir: "./output"
+    processes: 1
+    image_dir: "/cb/cold/multimodal_datasets/LLaVA/LLaVA-Pretrain/images"
+
+processing:
+    huggingface_tokenizer: "NousResearch/Llama-2-7b-hf"
+    max_seq_length: 2048
+    short_seq_prob: 0.0
+    write_in_batch: True
+    resume_from_checkpoint: False
+    seed: 0
+    use_ftfy: True
+    ftfy_normalizer: "NFC"
+    wikitext_detokenize: False
+
+dataset:
+    chat_template: "{% for message in messages %}
+    {% if message['role'] == 'user' %}
+        {{ bos_token + '[INST] ' + message['content'] + ' [/INST]' }}
+    {% elif message['role'] == 'system' %}
+        {{ '<<SYS>>\\n' + message['content'] + '\\n<</SYS>>\\n\\n' }}
+    {% elif message['role'] == 'assistant' %}
+        {{ ' '  + message['content'] + ' ' + eos_token }}
+    {% endif %}
+{% endfor %}"
+    use_single_image_token: True
+    image_token: "<special_image_token>"
+    register_special_image_token: True # True by default. Set it to false if image_token generates single token ID

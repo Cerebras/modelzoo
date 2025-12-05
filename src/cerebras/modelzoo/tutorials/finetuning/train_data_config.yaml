@@ -1,0 +1,25 @@
+############################################
+## Fine-Tuning Tutorial Train Data Config ##
+############################################
+
+setup:
+    data:
+        type: "huggingface"
+        source: "SpeedOfMagic/xsum_tiny"
+        split: "train"
+    mode: "finetuning"
+    output_dir: "finetuning_tutorial/train_data"
+    processes: 1
+
+processing:
+    custom_tokenizer: cerebras.modelzoo.data_preparation.data_preprocessing.custom_tokenizer_example.CustomLlama3Tokenizer:CustomLlama3Tokenizer
+    tokenizer_params:
+        pretrained_model_name_or_path: "baseten/Meta-Llama-3-tokenizer"
+    write_in_batch: True
+    read_hook: "cerebras.modelzoo.data_preparation.data_preprocessing.hooks:prompt_completion_text_read_hook"
+    read_hook_kwargs:
+        prompt_key: "document"
+        completion_key: "summary"
+    max_seq_length: 2048
+    use_ftfy: True
+

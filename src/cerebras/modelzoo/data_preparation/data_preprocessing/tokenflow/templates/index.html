@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>TokenFlow Dashboard</title>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lato:wght@400;700&display=swap">
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles/styles.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles/colors.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles/clickables.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles/controls.css') }}">
+    <link rel="icon" href="{{ url_for('static', filename='images/cerebras_logo.png') }}" type="image/x-icon">
+    <link rel="shortcut icon" href="{{ url_for('static', filename='images/cerebras_logo.png') }}" type="image/x-icon">
+</head>
+<body>
+    <div id="loader" class="loader">
+        <img src="{{ url_for('static', filename='images/cerebras_logo.png') }}" alt="Loading...">
+    </div>
+    <div id="content" class="content">    
+    <div class="container">
+        <div class="header">
+            <h1 class="title">TokenFlow</h1>
+            <div class="logo">
+                <img src="{{ url_for('static', filename='images/cerebras_logo.png') }}" alt="Cerebras Logo">
+            </div>
+        </div>
+        <div class="controls-section">
+            <div class="controls">
+                <div class="dropdown-containers">
+                    <div class="dropdown-container">
+                        <select id="fileSelector" class="dropdown" onchange="loadData(0, null, true)">
+                            {% for file in files %}
+                                <option value="{{ file }}">{{ file.split('/')[-1] }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="dropdown-container">
+                        <select id="stringLengthSelector" class="dropdown">
+                            <!-- Options will be populated dynamically -->
+                        </select>
+                    </div>
+                </div>
+                <div class="legend">
+                    <div id="removeSpecialCharDiv" class="legend-item" style="font-size: 12px;">
+                        <label for="special-characters" style="white-space: nowrap;">Remove Word Boundary:</label>
+                        <input type="text" id="special-characters" name="special-characters" placeholder="Enter text here" style="font-size: 12px; padding: 2px 4px; width: 100px;">
+                        <button onClick="removeSpecialCharacter()" style="font-size: 12px; padding: 2px 6px; margin-left: 5px;">Remove</button>
+                    </div>
+                    <div class="legend-item">
+                        <span class="color-box" style="background-color: #78fd68;"></span> Loss On
+                    </div>
+                    <div class="separator"></div>
+                    <div class="legend-item">
+                        <span class="color-box" style="background-color: #f35e5d;"></span> Attn. Off
+                    </div>
+                </div>            
+            </div>
+            <div class="fixed-sections">
+                <div class="seq-dist">
+                    <h2>Sequence Distribution</h2>
+                    <div class="sequence-distribution">
+                        <div id="spinner" class="spinner"></div>
+                        <img id="sequence-image" alt="Sequence Distribution" style="display: none;">
+                    </div>
+                </div>
+                <div class="stats">
+                    <h2>Preprocessing Metadata</h2>
+                    <table id="statsTable"></table>
+                </div>
+            </div>
+            <div class="overlay" style="display: none;"></div>
+        </div>
+        <div class="main-content">
+            <div class="dynamic-sections">
+                <div id="input_strings_section" class="section">
+                    <h3 class="section-title">Input Strings</h3>
+                    <div id="input_strings_display" class="data-display"></div>
+                </div>
+                <div id="label_strings_section" class="section">
+                    <h3 class="section-title">Label Strings</h3>
+                    <div id="label_strings_display" class="data-display"></div>
+                </div>
+                <div id="input_ids_section" class="section">
+                    <h3 class="section-title">Input IDs</h3>
+                    <div id="input_ids_display" class="data-display"></div>
+                </div>
+                <div id="label_ids_section" class="section">
+                    <h3 class="section-title">Label IDs</h3>
+                    <div id="label_ids_display" class="data-display"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+    </div>
+    <script src="{{ url_for('static', filename='js/hover.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+    <script type="text/javascript">
+        document.addEventListener('DOMContentLoaded', function() {
+            loadData(0, null, true);
+        });
+    </script>
+    
+</body>
+</html>

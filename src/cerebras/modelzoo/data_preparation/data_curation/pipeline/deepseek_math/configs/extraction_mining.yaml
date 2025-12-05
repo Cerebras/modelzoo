@@ -1,0 +1,123 @@
+# Pipeline Configuration
+extraction_pipeline:
+  dump: "CC-MAIN-2025-13"
+  input_warc_folder: /raw_warc_dir
+  extracted_english_path: /extracted_dir/eng_extracted
+  extracted_math_path: /extracted_dir/math_extracted
+  cache_dir: /extracted_dir/cache_dir
+  # Executor Configuration
+  executor:
+    type: "local"  # Options: "slurm" or "local"
+  
+  local:
+    tasks: 8
+    workers: 8
+  
+  slurm:   ## slurm config
+    container_path: <path_to_singularity.sif_file>
+    tasks: 50
+    job_name: "extraction_job"
+    time: "24:00:00"
+    partition: "cpu-spot" # To be provided at runtime
+    logging_dir: /extracted_dir/extraction_logs
+    slurm_logs_folder: <actual_path_to_slurm_logs_for_extraction_pipeline> # BEGIN:
+    qos: "normal"
+    mem_per_cpu_gb: 32
+    cpus_per_task: 1 # END:
+
+# Model Paths
+models:
+  english_fasttext_model_path: <relative-path-to-english-fasttext-model>
+  math_fasttext_model_path: <relative-path-to-math_fasttext_model>
+  text_quality_fasttext_model_path: <relative-path-to-text_quality_fasttext_model>
+
+# Filter Settings
+filters:
+  math_threshold: 0.5
+  english_threshold: 0.65
+  labels:
+    math: "__label__MATH"
+    english: "__label__eng_Latn"
+
+# Phase 1: URL Mining Pipeline Configuration
+url_pipeline: 
+  input_dir: /extracted_dir/math_extracted/true_positives
+  output_dir: "/extracted_dir/true_positives_mined_urls"
+  headers:
+    User-Agent: "math-content-downloader/1.0"
+    Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+    Accept-Language: "en-US,en;q=0.5"
+    Accept-Encoding: "gzip, deflate"
+    Connection: "keep-alive"
+    Cache-Control: "no-cache"
+  delay: 1.0
+  executor:
+    type: "slurm" # Options: "slurm" or "local"
+  local:
+    tasks: 8
+    workers: 8
+
+  slurm:   ## slurm config
+    container_path: <path_to_singularity.sif_file>
+    tasks: 50
+    job_name: "url_mining_job"
+    time: "24:00:00"
+    partition: "cpu-spot" # To be provided at runtime
+    logging_dir: /extracted_dir/url_mining_logs
+    slurm_logs_folder: <actual_path_to_slurm_logs_for_url_pipeline>
+    qos: "normal"
+    mem_per_cpu_gb: 32
+    cpus_per_task: 1
+
+# Phase 2: Downloading Pipeline Configuration
+downloading_pipeline:
+  warc_output_dir: "/raw_warc_dir/subset_1_true_positives_mined_warc"
+  max_warc_size: 1073741824
+  max_workers: 8
+  timeout: 30
+  headers:
+    User-Agent: "math-content-downloader/1.0"
+    Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+    Accept-Language: "en-US,en;q=0.5"
+    Accept-Encoding: "gzip, deflate"
+    Connection: "keep-alive"
+    Cache-Control: "no-cache"
+  executor:
+    type: "slurm"
+  local:
+    tasks: 8
+    workers: 8
+    
+  slurm:   ## slurm config
+    container_path: <path_to_singularity.sif_file>
+    tasks: 50
+    job_name: "downloading_urls_job"
+    time: "24:00:00"
+    partition: "cpu-spot" # To be provided at runtime
+    logging_dir: /extracted_dir/downloading_logs
+    slurm_logs_folder: <actual_path_to_slurm_logs_for_downloading_pipeline>
+    qos: "normal"
+    mem_per_cpu_gb: 32
+    cpus_per_task: 1
+  
+
+mined_urls_extraction_pipeline:
+  extracted_english_path: /extracted_dir/mined_urls_extracted/eng_extracted
+  extracted_math_path: /extracted_dir/mined_urls_extracted/math_extracted
+  logging_dir: /extracted_dir/mined_urls_extracted/extraction_logs
+  executor:
+    type: "slurm" # Options: "slurm" or "local"
+  local:
+    tasks: 8
+    workers: 8
+  slurm:   ## slurm config
+    container_path: <path_to_singularity.sif_file>
+    tasks: 50
+    job_name: "mined_urls_extraction_job"
+    time: "24:00:00"
+    partition: "cpu-spot" # To be provided at runtime
+    logging_dir: /extracted_dir/mined_urls_extracted/extraction_logs
+    slurm_logs_folder: <actual_path_to_slurm_logs_for_mined_urls_extraction_pipeline>
+    qos: "normal"
+    mem_per_cpu_gb: 32
+    cpus_per_task: 1
