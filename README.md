@@ -22,7 +22,7 @@ The Cerebras Model Zoo is a collection of deep learning models and utilities opt
 
 * Reach out to us [here](https://cerebras.ai/contact) to get access to Cerebras Hardware and ModelZoo!
 * Install Cerebras ModelZoo by following the steps in our [setup guide](https://training-docs.cerebras.ai/rel-2.7.0/getting-started/setup-and-installation). 
-* Once you have ModelZoo installed, get started by [pretraining](https://training-docs.cerebras.ai/rel-2.7.0/getting-started/setup-and-installation) or [finetuning](https://training-docs.cerebras.ai/rel-2.5.0/getting-started/fine-tune-your-first-model) your first model!
+* Once you have ModelZoo installed, get started by [pretraining](https://training-docs.cerebras.ai/rel-2.7.0/getting-started/setup-and-installation) or [finetuning](https://training-docs.cerebras.ai/rel-2.7.0/getting-started/fine-tune-your-first-model) your first model!
 * Visit our [developer documentation](https://training-docs.cerebras.ai) for comprehensive guides on everything you can do with Cerebras ModelZoo. 
 
 ## Models in this repository
