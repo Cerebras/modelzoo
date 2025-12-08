@@ -341,9 +341,7 @@ class Converter_MLlamaForCausalLM_HF_CS24(BaseCheckpointConverter_HF_CS):
         self.rules = [
             ConversionRule(
                 [
-                    EquivalentSubkey(
-                        "language_model.lm_head", "text_model.model.lm_head"
-                    ),
+                    EquivalentSubkey("lm_head", "text_model.model.lm_head"),
                     r"\.(?:weight|bias)",
                 ],
                 action=self.replaceKey,
@@ -351,7 +349,7 @@ class Converter_MLlamaForCausalLM_HF_CS24(BaseCheckpointConverter_HF_CS):
             ConversionRule(
                 [
                     EquivalentSubkey(
-                        "language_model.model.", "text_model.model."
+                        "model.language_model.", "text_model.model."
                     ),
                     Converter_MLlamaTextModel_HF_CS(),
                 ],
@@ -359,14 +357,16 @@ class Converter_MLlamaForCausalLM_HF_CS24(BaseCheckpointConverter_HF_CS):
             ),
             ConversionRule(
                 [
-                    EquivalentSubkey("vision_model.", "image_model."),
+                    EquivalentSubkey("model.vision_model.", "image_model."),
                     Converter_MLlamaVisionModel_HF_CS(),
                 ],
                 action=self.replaceKey,
             ),
             ConversionRule(
                 [
-                    EquivalentSubkey("multi_modal_projector", "projection"),
+                    EquivalentSubkey(
+                        "model.multi_modal_projector", "projection"
+                    ),
                     r"\.(?:weight|bias)",
                 ],
                 action=self.replaceKey,
@@ -570,6 +570,12 @@ class ConfigConverter_MLLaMa_HF_CS24(ConfigConverter_LLaMa_HF_CS21):
                 ),
             ),
         ]
+
+        self.pre_convert_defaults[0].update(
+            {
+                "rms_norm_eps": 1e-5,  # Needs to be specified with transformers v4.49
+            }
+        )
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:

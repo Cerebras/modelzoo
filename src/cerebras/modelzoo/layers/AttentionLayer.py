@@ -119,6 +119,7 @@ class MultiheadAttention(nn.Module):
         assert not add_zero_attn, "add_zero_attn=True is not supported."
         super(MultiheadAttention, self).__init__()
 
+        self.device = device
         self.embed_dim = embed_dim
         self.kdim = kdim if kdim is not None else embed_dim
         self.vdim = vdim if vdim is not None else embed_dim
@@ -402,6 +403,7 @@ class MultiheadAttention(nn.Module):
         v = self.process_v_before_logits_calc(v)
 
         logits = self.calculate_attention_logits(q, k, layer_idx)
+        logits = self.process_after_logits_calc(logits)
 
         if (
             rotary_position_embedding_helper is not None
@@ -437,6 +439,7 @@ class MultiheadAttention(nn.Module):
             v,
             special_token_meta=special_token_meta,
         )
+        attention_output = self.process_after_attention_output(attention_output)
 
         if cache_present_kv:
             return attention_output, present_kv
@@ -575,15 +578,15 @@ class MultiheadAttention(nn.Module):
         return vector
 
     def process_q_before_logits_calc(self, q):
-        # May get overriden but other attention schemas
+        # May get overriden by other attention schemas
         return q
 
     def process_k_before_logits_calc(self, k):
-        # May get overriden but other attention schemas
+        # May get overriden by other attention schemas
         return k
 
     def process_v_before_logits_calc(self, v):
-        # May get overriden but other attention schemas
+        # May get overriden by other attention schemas
         return v
 
     def process_past_kv(self, past_kv, past_kv_self_attn, k, v):
@@ -601,6 +604,14 @@ class MultiheadAttention(nn.Module):
         if cache_present_kv:
             present_kv = (k, v)
         return present_kv
+
+    def process_after_logits_calc(self, logits):
+        # May get overriden by other attention schemas
+        return logits
+
+    def process_after_attention_output(self, attention_output):
+        # May get overriden by other attention schemas
+        return attention_output
 
     def calculate_attention_logits(self, q, k, layer_idx=None):
         if self.attention_type == "scaled_dot_product":

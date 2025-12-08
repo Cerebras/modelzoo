@@ -91,8 +91,8 @@ def expert_annotation(num_experts: int, top_k: int, expert_block_id: int):
 # once stack is updated.
 def average_sparsity_annotation(average_sparsity: float):
     assert (
-        average_sparsity >= 0.0 and average_sparsity < 1.0
-    ), f"Expected 0.0 <= average_sparsity < 1.0. Instead got average_sparsity = {average_sparsity}"
+        average_sparsity >= 0.0 and average_sparsity <= 1.0
+    ), f"Expected 0.0 <= average_sparsity <= 1.0. Instead got average_sparsity = {average_sparsity}"
 
     density = 1.0 - average_sparsity
     num_experts = int(2**31 - 1)

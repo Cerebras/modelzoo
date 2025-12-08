@@ -161,6 +161,21 @@ def get_2d_fixed_position_embeddings(
     return pe_seq
 
 
+def compute_expert_capacity(
+    tokens_per_batch: int,
+    top_k: int,
+    num_experts: int,
+    expert_capacity_factor: float,
+) -> int:
+    tokens_per_expert = int(
+        tokens_per_batch * (top_k / num_experts) * expert_capacity_factor
+    )
+    assert (
+        tokens_per_expert <= tokens_per_batch
+    ), f"Capacity factor set to high, tokens_per_expert = {tokens_per_expert} but tokens_per_batch = {tokens_per_batch}"
+    return tokens_per_expert
+
+
 class ModuleWrapperClass(nn.Module):
     def __init__(self, fcn, name=None, kwargs=None):
         self.fcn = fcn

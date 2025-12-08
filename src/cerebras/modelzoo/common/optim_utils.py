@@ -22,6 +22,7 @@ from cerebras.modelzoo.common.utils.model.mup_utils import (
     LRAdjustmentGroup,
     process_lr_adjustment_params,
 )
+from cerebras.modelzoo.layers import RMSNorm
 from cerebras.pytorch.utils.utils import convert_glob_to_regex
 
 
@@ -72,6 +73,7 @@ def _should_apply_weight_decay(model, param_name):
         torch.nn.InstanceNorm3d,
         torch.nn.GroupNorm,
         torch.nn.SyncBatchNorm,
+        RMSNorm,
     )
     if 'bias' in param_name:
         return False

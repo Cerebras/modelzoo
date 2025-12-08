@@ -24,7 +24,9 @@ their tensor dumps, for numeric validation.
 from dataclasses import dataclass
 from typing import Optional
 
+import cerebras.pytorch as cstorch
 from cerebras.pytorch.core.annotation import AnnotationMode, create_annotation
+from cerebras.pytorch.lib import cerebras_pytorch_lib
 
 
 @dataclass
@@ -50,3 +52,13 @@ def source_variable(
         enable_fwd=enable_fwd,
         enable_bwd=enable_bwd,
     )
+
+
+def annotate_source_vars_attr(tensor, names):
+    if cstorch.use_cs():
+        cerebras_pytorch_lib.set_attribute(
+            tensor,
+            "cs.internal",
+            {"source_vars": names},
+        )
+    return

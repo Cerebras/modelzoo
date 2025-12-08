@@ -1,0 +1,30 @@
+reader:
+  input_folder: /net/extradisks0/srv/nfs/apoorvp-extra-data/pypi_packages_extracted
+
+writer:
+  output_folder: /net/extradisks0/srv/nfs/apoorvp-extra-data/pypi_packages_ast_extracted
+
+pipeline:
+  start_subdir: 28
+  end_subdir: 47
+  timeout_seconds: 3600
+
+executor_type: slurm
+
+local_executor:
+  tasks: 1
+  workers: 1
+  logging_dir: /net/extradisks0/srv/nfs/apoorvp-extra-data/pypi_packages_ast_extracted/logs
+  skip_completed: false
+
+slurm_executor:
+  tasks: 1000
+  workers: 100
+  job_name: "pypi_ast_extraction"
+  time: "72:00:00"
+  partition: "main"
+  logging_dir: /net/extradisks0/srv/nfs/apoorvp-extra-data/pypi_packages_ast_extracted
+  slurm_logs_folder: /net/extradisks0/srv/nfs/apoorvp-extra-data/pypi_packages_ast_extracted
+  qos: "normal"
+  mem_per_cpu_gb: 12
+  cpus_per_task: 1

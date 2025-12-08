@@ -507,6 +507,29 @@ class StreamingCSWriterView:
     def __repr__(self):
         return f"StreamingCSWriterView: {str(self)}"
 
+    def to_dict(self):
+        """Convert StreamingCSWriterView to a regular Python dictionary.
+
+        This recursively converts all StreamingCSLeaf objects to their actual
+        tensor values and nested StreamingCSWriterView objects to dictionaries.
+
+        Returns:
+            dict: A regular Python dictionary containing the actual tensor values.
+        """
+        if not isinstance(self.state, dict):
+            raise ValueError(
+                "to_dict() can only be called on dict-like StreamingCSWriterView objects"
+            )
+
+        result = {}
+        for key in self.keys():
+            value = self[key]
+            if isinstance(value, StreamingCSWriterView):
+                result[key] = value.to_dict()
+            else:
+                result[key] = value
+        return result
+
     def __iter__(self):
         if isinstance(self.state, dict):
             for key in self.keys():

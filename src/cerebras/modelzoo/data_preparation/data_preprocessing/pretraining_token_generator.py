@@ -156,6 +156,7 @@ class PretrainingTokenGenerator:
         self.pack_sequences = dataset_params.pop(
             "pack_sequences", False if self.is_multimodal else True
         )
+        self.truncate_to_msl = dataset_params.pop("truncate_to_msl", False)
         self.image_token = dataset_params.pop(
             "image_token", "<special_image_token>"
         )
@@ -230,6 +231,9 @@ class PretrainingTokenGenerator:
             )
             return []
 
+        input_mask = doc.get("loss_mask")
+        attention_mask = doc.get("attention_mask")
+
         if not self.is_multimodal and self.rng.random() < self.short_seq_prob:
             input_ids = input_ids[
                 0 : self.rng.randint(2, self.max_seq_length - 1)
@@ -237,9 +241,6 @@ class PretrainingTokenGenerator:
             input_mask = input_mask[0 : len(input_ids)]
             attention_mask = attention_mask[0 : len(input_ids)]
 
-        input_mask, attention_mask = doc.get("loss_mask"), doc.get(
-            "attention_mask"
-        )
         labels = input_ids[1:]
         input_ids = input_ids[:-1]
         attention_mask = attention_mask[:-1]
@@ -778,6 +779,7 @@ class PretrainingTokenGenerator:
             padding='max_length',
             return_attention_mask=True,
         )
+
         input_ids, attention_mask = (
             tokenized_data['input_ids'],
             tokenized_data['attention_mask'],
@@ -1122,6 +1124,22 @@ class PretrainingTokenGenerator:
         }
         return transformed_data, stats
 
+    def _add_eos_to_doc(self, doc):
+        """Add EOS token to the document if needed."""
+        if not doc:
+            return
+
+        if len(doc.get("input_ids", [])) == 0 or self.eos_id is None:
+            return
+
+        if doc['input_ids'][-1] != self.eos_id:
+            if len(doc['input_ids']) < self.max_seq_length + 1:
+                doc['input_ids'].append(self.eos_id)
+                doc['loss_mask'].append(doc['loss_mask'][-1])
+                doc['attention_mask'].append(doc['attention_mask'][-1])
+            else:
+                doc['input_ids'][-1] = self.eos_id
+
     def process_docs(self, doc_list):
         results = defaultdict(list)
         tokenized_data_stats = defaultdict(int)
@@ -1134,52 +1152,18 @@ class PretrainingTokenGenerator:
                 tokenized_data_stats["successful_files"] += 1
             return {}, tokenized_data_stats
 
-        # Add eos at the end.
+        # Add eos at the end of last doc.
         # TODO: Find a better way to handle this?
-        last_doc = doc_list[-1]
-        if len(last_doc.get("input_ids", [])) != 0 and self.eos_id != None:
-            if last_doc['input_ids'][-1] != self.eos_id:
-                if len(last_doc['input_ids']) < self.max_seq_length + 1:
-                    last_doc['input_ids'].append(self.eos_id)
-                    last_doc['loss_mask'].append(last_doc['loss_mask'][-1])
-                    last_doc['attention_mask'].append(
-                        last_doc['attention_mask'][-1]
-                    )
-                else:
-                    last_doc['input_ids'][-1] = self.eos_id
+        if not self.training_objective == "bert_pretraining":
+            self._add_eos_to_doc(doc_list[-1])
 
         for doc_idx, doc in enumerate(doc_list):
-            has_img = False
             if len(doc.get("input_ids", [])) == 0:
                 continue
 
-            token_modality_idx = (
-                np.zeros(self.max_seq_length) if self.is_multimodal else None
+            token_modality_idx, img_data_loc, image_paths, has_img = (
+                self._process_multimodal_data(doc)
             )
-            image_paths, image_data_positions = doc.pop(
-                "image_paths", None
-            ), doc.pop("image_data_positions", None)
-            has_img = doc.pop("has_img", None)
-            img_data_loc = None
-            if self.is_multimodal:
-                img_data_loc = np.full(
-                    (self.max_num_img, self.num_patches), self.max_seq_length
-                )
-
-                assert (
-                    len(image_data_positions) <= self.max_num_img
-                ), "Number of images should be <= max_num_images"
-
-                # Preallocate img_data_loc as a list of arrays to avoid dynamic resizing
-                for image_index, (start_img_pos, end_img_pos) in enumerate(
-                    image_data_positions
-                ):
-                    img_data_loc[image_index] = np.arange(
-                        start_img_pos, end_img_pos
-                    )
-
-                    # Efficiently update the token_modality_idx using vectorized assignment
-                    token_modality_idx[start_img_pos:end_img_pos] = 1
 
             sample = self.create_features_pretraining(
                 doc,
@@ -1188,32 +1172,10 @@ class PretrainingTokenGenerator:
             if len(sample) == 0:
                 continue
 
-            if self.is_multimodal:
-                if image_paths:
-                    num_images = len(image_paths)
-                    image_paths += [None] * (self.max_num_img - num_images)
-                    has_img = True
-                else:
-                    image_paths = [None] * (self.max_num_img)
+            self._update_sample_stats(sample, tokenized_data_stats)
 
-            if not self.use_vsl:
-                ## Sample stats for vsl are computed after packing is done.
-                sample_stats = get_data_stats(
-                    sample, self.pad_id, self.eos_id, self.max_seq_length
-                )
-                for key in sample_stats:
-                    tokenized_data_stats[key] += sample_stats[key]
-            data = (
-                {
-                    "data": sample,
-                    "img_path": np.array(image_paths, dtype="S"),
-                    "has_img": np.array([has_img], dtype=np.bool_),
-                    "img_data_loc": img_data_loc,
-                }
-                if self.is_multimodal
-                else {
-                    "data": sample,
-                }
+            data = self._create_data_dict(
+                sample, image_paths, has_img, img_data_loc
             )
             for key, value in data.items():
                 results[key].append(value)
@@ -1225,6 +1187,68 @@ class PretrainingTokenGenerator:
             tokenized_data_stats["successful_files"] += 1
 
         return results, tokenized_data_stats
+
+    def _process_multimodal_data(self, doc):
+        """Process multimodal data including images and token modality indices."""
+        token_modality_idx = (
+            np.zeros(self.max_seq_length) if self.is_multimodal else None
+        )
+        img_data_loc = None
+        image_paths = doc.pop("image_paths", None)
+        image_data_positions = doc.pop("image_data_positions", None)
+        has_img = doc.pop("has_img", False)
+
+        if self.is_multimodal:
+            img_data_loc = np.full(
+                (self.max_num_img, self.num_patches), self.max_seq_length
+            )
+
+            assert (
+                len(image_data_positions) <= self.max_num_img
+            ), "Number of images should be <= max_num_images"
+
+            # Update img_data_loc and token_modality_idx for each image
+            for image_index, (start_img_pos, end_img_pos) in enumerate(
+                image_data_positions
+            ):
+                img_data_loc[image_index] = np.arange(
+                    start_img_pos, end_img_pos
+                )
+                # Efficiently update the token_modality_idx using vectorized assignment
+                token_modality_idx[start_img_pos:end_img_pos] = 1
+
+            if image_paths:
+                num_images = len(image_paths)
+                image_paths += [None] * (self.max_num_img - num_images)
+                has_img = True
+            else:
+                image_paths = [None] * (self.max_num_img)
+
+        return token_modality_idx, img_data_loc, image_paths, has_img
+
+    def _update_sample_stats(self, sample, tokenized_data_stats):
+        """Update sample statistics if not using VSL."""
+        if not self.use_vsl:
+            ## Sample stats for vsl are computed after packing is done.
+            sample_stats = get_data_stats(
+                sample, self.pad_id, self.eos_id, self.max_seq_length
+            )
+            for key in sample_stats:
+                tokenized_data_stats[key] += sample_stats[key]
+
+    def _create_data_dict(self, sample, image_paths, has_img, img_data_loc):
+        """Create the data dictionary for multimodal or text-only data."""
+        if self.is_multimodal:
+            return {
+                "data": sample,
+                "img_path": np.array(image_paths, dtype="S"),
+                "has_img": np.array([has_img], dtype=np.bool_),
+                "img_data_loc": img_data_loc,
+            }
+        else:
+            return {
+                "data": sample,
+            }
 
     def encode(
         self, semantic_data_array: List[Dict[str, Any]]

@@ -59,6 +59,10 @@ from cerebras.modelzoo.data_preparation.data_preprocessing.utils import (
     update_progress,
 )
 
+from cerebras.modelzoo.data_preparation.data_preprocessing.bert_pretraining_token_generator import (  # noqa
+    BertPretrainingTokenGenerator,
+)
+
 from cerebras.modelzoo.data_preparation.data_preprocessing.dpo_token_generator import (  # noqa
     DPOTokenGenerator,
 )
@@ -277,7 +281,10 @@ class DataPreprocessor:
         self.training_objective = dataset_params.get("training_objective", None)
         # Set the token generator name
         if self.mode == "pretraining":
-            if self.training_objective == 'fim':
+            if self.training_objective == "bert_pretraining":
+                logger.info(f"Initializing BERT pretraining mode")
+                self.token_generator_name = "BertPretrainingTokenGenerator"
+            elif self.training_objective == 'fim':
                 logger.info(f"Initializing fill in the middle pretraining mode")
                 self.token_generator_name = "FIMTokenGenerator"
             else:
