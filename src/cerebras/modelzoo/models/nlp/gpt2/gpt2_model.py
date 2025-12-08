@@ -157,9 +157,10 @@ class GPT2LMHeadModelConfig(ModelConfig):
     result in different behavior.
     """
 
-    attention_module: Literal["aiayn_attention", "multiquery_attention"] = (
-        "aiayn_attention"
-    )
+    attention_module: Literal[
+        "aiayn_attention",
+        "multiquery_attention",
+    ] = "aiayn_attention"
     """
     Determines whether to use multiheaded attention (from
     the Attention is All You Need paper) or multi-query/grouped-query

@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .embeddings import Embeddings
-from .faiss_clustering import FAISSClustering
-from .jsonl_writer_ext import JsonlWriterExt
-from .llm_topic_labeler import LLMTopicLabeler
-from .utils.utils import import_cls
+"""
+DQSage Data Visualizer Package
+A modular data visualization tool for large datasets.
+"""
+
+__version__ = "1.0.0"
+__author__ = "Cerebras MLE Team Sahil Lathiya"

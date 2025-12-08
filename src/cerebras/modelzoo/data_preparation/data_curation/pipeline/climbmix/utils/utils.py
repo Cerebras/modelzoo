@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .embeddings import Embeddings
-from .faiss_clustering import FAISSClustering
-from .jsonl_writer_ext import JsonlWriterExt
-from .llm_topic_labeler import LLMTopicLabeler
-from .utils.utils import import_cls
+import importlib
+
+
+def import_cls(path):
+    module_path, class_name = path.rsplit(".", 1)
+    module = importlib.import_module(module_path)
+    return getattr(module, class_name)

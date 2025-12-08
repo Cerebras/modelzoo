@@ -193,6 +193,11 @@ class TopKExpertsSparseFeedForwardNetwork(nn.Module):
     def __init__(self, config: FeedForwardNetworkConfig) -> None:
         super().__init__()
         self.config = config
+
+        assert (
+            self.config.moe_params.probability_before_ffn == False
+        ), "TopKExpertsSparseFeedForwardNetwork does not support probability_before_ffn"
+
         # For MoE layers, shared experts are also added as experts
         # We dont use this in routing logic, but they process as regular experts
         num_shared_experts = (
@@ -318,12 +323,16 @@ class SparseActLinear(nn.Module):
             torch.nn.init.uniform_(self.bias, -stdv, stdv)
 
     def forward(
-        self, input: torch.Tensor, act_mask: torch.Tensor
+        self,
+        input: torch.Tensor,
+        act_mask: torch.Tensor,
+        dense_capacity: Optional[int] = None,
     ) -> torch.Tensor:
         input = maybe_to_half_dtype(input)
         weight = maybe_to_half_dtype(self.weight)
-
-        output = F.sparse_act_matmul(input, act_mask.to(torch.int16), weight)
+        output = F.sparse_act_matmul(
+            input, act_mask.to(torch.int16), weight, dense_capacity
+        )
 
         B, S, H = output.shape
         if self.bias is not None:
@@ -331,7 +340,7 @@ class SparseActLinear(nn.Module):
             bias = bias[None, None, :].expand(B, S, -1)
             mask = act_mask.to(output.dtype)
             mask = mask[..., None].broadcast_to(output.shape)
-            output += bias * mask
+            output = (output + bias) * mask
 
         return output
 
@@ -356,6 +365,7 @@ class SparseActSingleFeedForwardLayer(nn.Module):
 
     def __init__(
         self,
+        config: FeedForwardNetworkConfig,
         in_features: int,
         out_features: int,
         activation: Optional[Union[str, Callable[[Tensor], Tensor]]] = None,
@@ -364,6 +374,8 @@ class SparseActSingleFeedForwardLayer(nn.Module):
         device=None,
     ):
         super().__init__()
+        self.config = config
+
         self.linear_layer = SparseActLinear(
             in_features, out_features, use_bias, device
         )
@@ -385,12 +397,16 @@ class SparseActSingleFeedForwardLayer(nn.Module):
     def forward(
         self, input: torch.Tensor, act_mask: torch.Tensor
     ) -> torch.Tensor:
+        dense_capacity = None
+
         if self.is_glu_activation:
-            glu_component_1 = self.linear_layer(input, act_mask)
-            glu_component_2 = self.linear_layer_for_glu(input, act_mask)
+            glu_component_1 = self.linear_layer(input, act_mask, dense_capacity)
+            glu_component_2 = self.linear_layer_for_glu(
+                input, act_mask, dense_capacity
+            )
             output = self.act_layer(glu_component_1, glu_component_2)
         else:
-            output = self.linear_layer(input, act_mask)
+            output = self.linear_layer(input, act_mask, dense_capacity)
             if self.act_layer:
                 output = self.act_layer(output)
 
@@ -423,16 +439,20 @@ class SparseActFeedForwardNetwork(nn.Module):
         # Routed experts
         self.num_experts = self.config.moe_params.num_experts
 
+        # Top-k experts each token gets routed to
+        self.top_k = self.config.moe_params.top_k
+
         def create_ffn(config):
             return nn.ModuleList(
                 [
                     SparseActSingleFeedForwardLayer(
+                        config=config,
                         in_features=in_features,
                         out_features=out_features,
                         activation=activation,
                         dropout=dropout,
-                        use_bias=self.config.use_bias,
-                        device=self.config.device,
+                        use_bias=config.use_bias,
+                        device=config.device,
                     )
                     for in_features, out_features, activation, dropout in zip(
                         config.input_units,
@@ -446,8 +466,6 @@ class SparseActFeedForwardNetwork(nn.Module):
         self.experts = nn.ModuleList(
             [create_ffn(self.config) for _ in range(self.num_experts)]
         )
-
-        self.top_k = self.config.moe_params.top_k
 
         # Shared experts
         self.num_shared_experts = (
@@ -565,6 +583,11 @@ class ExpertsFeedForwardNetwork(nn.Module):
     def __init__(self, config: FeedForwardNetworkConfig) -> None:
         super().__init__()
         self.config = config
+
+        assert (
+            self.config.moe_params.probability_before_ffn == False
+        ), "ExpertsFeedForwardNetwork does not support probability_before_ffn"
+
         # For MoE layers, shared experts are also added as experts
         # We dont use this in routing logic, but they process as regular experts
         num_shared_experts = (
@@ -738,11 +761,11 @@ class SparseMoEBlock(nn.Module):
                     == "sinkhorn"
                 ):
                     with torch.no_grad():
-                        routing_weights, sinkhorn_error = sinkhorn(
+                        expert_weights, sinkhorn_error = sinkhorn(
                             router_logits.detach(),
                             self.config.moe_params.sinkhorn_n_iters,
                         )
-                        expert_weights_fp32 = routing_weights.float()
+                        expert_weights_fp32 = expert_weights.float()
                 elif (
                     self.config.moe_params.expert_weighting_nonlinearity
                     == "sigmoid"
@@ -763,6 +786,7 @@ class SparseMoEBlock(nn.Module):
         if (
             self.config.moe_optimized_impl()
             or self.config.moe_experimental_impl()
+            or self.config.moe_forge_experimental_impl()
         ):
             # Compute TopK
             topk_probs, topk_indices = routing_weights.topk(
@@ -792,15 +816,14 @@ class SparseMoEBlock(nn.Module):
                     expert_weights, -1, topk_indices.to(torch.int64)
                 )
 
-            else:
-                num_experts = routing_weights.shape[-1]
-                expert_mask = (
-                    cstorch.nn.functional.one_hot(
-                        topk_indices.to(torch.int64), num_classes=num_experts
-                    )
-                    .to(x.dtype)
-                    .sum(dim=2)
+            num_experts = routing_weights.shape[-1]
+            expert_mask = (
+                cstorch.nn.functional.one_hot(
+                    topk_indices.to(torch.int64), num_classes=num_experts
                 )
+                .to(x.dtype)
+                .sum(dim=2)
+            )
 
             if self.config.moe_params.expert_weighting_normalization:
                 denom = torch.sum(topk_probs, dim=-1).to(x.dtype)

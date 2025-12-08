@@ -43,9 +43,9 @@ class MoEConfig(BaseConfig):
     "Weight for the load balancing loss"
     null_expert_bias: Optional[float] = 0.0
     "Optional bias to add null expert prob to the routing"
-    moe_implementation: Literal["functional", "optimized", "experimental"] = (
-        "experimental"
-    )
+    moe_implementation: Literal[
+        "functional", "optimized", "experimental", "forge_experimental"
+    ] = "experimental"
     "Whether to use the functional or Optimized implementation of MoE"
     router_fp32: bool = True
     "Selects the precision of routing weights to be float"
@@ -65,7 +65,7 @@ class MoEConfig(BaseConfig):
     "Number of iterations for sinkhorn nonlinearity"
     gate_initializer: Optional[InitializerConfig] = None
     "Initializer used for router gating network"
-    probability_before_ffn: bool = True
+    probability_before_ffn: bool = False
     "Compute routing probabilities before the FFN layer instead of after"
 
     def post_init(self, context):
@@ -248,7 +248,7 @@ class FeedForwardNetworkConfig(ModelConfig):
         bias_initializer: Bias initializer. Defaults to `"zeros"`.
         output_layer_initializer: If not None, initialize the last projection
             layer with this initializer. Defaults to None.
-        moe_implementation (str): "functional", "optimized", or "experimental" implementation. Defaults to "optimized".
+        moe_implementation (str): "functional", "optimized", "experimental", or "forge_experimental" implementation. Defaults to "optimized".
         device (optional): Device to create the model parameters on, can be a cuda device or CS device.
         moe_params (optional [MoEConfig]): config params for setting up MoE
     """
@@ -269,7 +269,8 @@ class FeedForwardNetworkConfig(ModelConfig):
     static_dual_expert: bool = False
     # Class variables.
     MoEImpl: ClassVar[enum.Enum] = enum.Enum(
-        "MoEImpl", ["functional", "optimized", "experimental"]
+        "MoEImpl",
+        ["functional", "optimized", "experimental", "forge_experimental"],
     )
     moe_params: Optional[MoEConfig] = None
 
@@ -323,6 +324,13 @@ class FeedForwardNetworkConfig(ModelConfig):
         return (
             self.MoEImpl[self.moe_params.moe_implementation]
             == self.MoEImpl.experimental
+        )
+
+    def moe_forge_experimental_impl(self) -> bool:
+        """Return True if forge_experimental implementation is used."""
+        return (
+            self.MoEImpl[self.moe_params.moe_implementation]
+            == self.MoEImpl.forge_experimental
         )
 
     def moe_optimized_impl(self) -> bool:
