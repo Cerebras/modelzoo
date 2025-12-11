@@ -14,6 +14,7 @@
 
 import json
 import os
+import re
 import time
 from collections import defaultdict
 from typing import Dict, List
@@ -139,6 +140,10 @@ class LLMTopicLabeler(PipelineStep):
                 topic_label = response.choices[0].message.content.strip()
 
                 if topic_label:
+                    # Remove <think> tags if present
+                    topic_label = re.sub(
+                        r'<think>.*?</think>', '', topic_label, flags=re.DOTALL
+                    ).strip()
                     cluster_labels[cluster_id] = topic_label
                     logger.info(
                         f"Labeled cluster {cluster_id} with '{topic_label}'"

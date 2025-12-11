@@ -12,8 +12,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .embeddings import Embeddings
-from .faiss_clustering import FAISSClustering
-from .jsonl_writer_ext import JsonlWriterExt
-from .llm_topic_labeler import LLMTopicLabeler
-from .utils.utils import import_cls
+#!/usr/bin/env python3
+"""
+DQSage Data Visualizer - Entry Point
+Main entry point for the Streamlit data visualization application.
+"""
+
+import os
+import sys
+
+# Add parent directory to Python path so 'dqsage' package can be found
+# This MUST be done before importing ui.app
+parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
+
+from ui.app import main
+from ui.styles import configure_page
+
+if __name__ == "__main__":
+    configure_page()
+    main()

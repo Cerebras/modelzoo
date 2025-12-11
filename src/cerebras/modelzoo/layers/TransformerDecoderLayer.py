@@ -23,6 +23,9 @@ import torch.nn as nn
 from torch import Tensor
 from torch.nn import Dropout, Identity, LayerNorm
 
+from cerebras.modelzoo.common.utils.model.source_variable_api import (
+    annotate_source_vars_attr,
+)
 from cerebras.modelzoo.layers.AttentionHelper import get_attention_module
 from cerebras.modelzoo.layers.FeedForwardNetwork import (
     FeedForwardNetwork,
@@ -473,6 +476,10 @@ class TransformerDecoderLayer(nn.Module):
 
                 x = x + cross_attn_out
 
+            annotate_source_vars_attr(
+                x,
+                [f"decoder_attention_out_layer{layer_idx}"],
+            )
             ffn_output = (
                 self.ffn(self.norm3(x), **ffn_extra_args)
                 if self.norm3 is not None
@@ -497,6 +504,10 @@ class TransformerDecoderLayer(nn.Module):
                 post_ffn_output = full_text_row_masked_out_mask * post_ffn_output  # type: ignore
 
             x = x + post_ffn_output
+            annotate_source_vars_attr(
+                x,
+                [f"decoder_out_layer{layer_idx}"],
+            )
         else:
             if self.disable_self_attention:
                 raise NotImplementedError(
@@ -533,6 +544,10 @@ class TransformerDecoderLayer(nn.Module):
                     **extra_args,
                 )
                 x = self.norm2(x + attn2_out[0])
+            annotate_source_vars_attr(
+                x,
+                [f"decoder_attention_out_layer{layer_idx}"],
+            )
             ffn_output = self.ffn(x, **ffn_extra_args)
             if self.moe_enabled:
                 (ffn_output, routing_weights, expert_mask) = ffn_output
@@ -541,6 +556,10 @@ class TransformerDecoderLayer(nn.Module):
                 self.norm3(x + ffn_output)
                 if self.norm3 is not None
                 else x + ffn_output
+            )
+            annotate_source_vars_attr(
+                x,
+                [f"decoder_out_layer{layer_idx}"],
             )
 
         if not self.moe_enabled:
