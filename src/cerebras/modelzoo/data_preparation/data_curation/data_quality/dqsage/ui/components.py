@@ -17,10 +17,56 @@ Reusable UI components for the data visualizer.
 Contains functions for displaying common UI elements and interactions.
 """
 
+import codecs
+import json
+import re
+
 import pandas as pd
 import streamlit as st
 
 from ..utils.helpers import get_nested_value
+
+# -------------------------------------------------------------
+# Pretty text decoding utilities (optional display feature)
+# -------------------------------------------------------------
+
+# Detect common escaped sequences (\\n, \\t, \\r, \\uXXXX, \\UXXXXXXXX, \\\\)
+_ESCAPE_SEQ_PATTERN = re.compile(
+    r"\\(u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8}|[ntr\\\"])"
+)
+
+
+def _decode_escaped_text(value: str) -> str:
+    """Best-effort decode of visible escape sequences into real characters.
+
+    Rules:
+      - Only attempt if we detect at least one escape pattern.
+      - Leaves original string unchanged on failure.
+      - Avoid double-decoding: if no patterns, return as-is.
+    - Supports: \\n, \\t, \\r, \\\\, \\\" plus Unicode \\uXXXX / \\UXXXXXXXX.
+    """
+    if not isinstance(value, str):
+        return value
+    if not _ESCAPE_SEQ_PATTERN.search(value):
+        return value
+    # Guard: append a space if ending in single backslash (would error in unicode_escape)
+    candidate = value
+    if candidate.endswith('\\') and not candidate.endswith('\\\\'):
+        candidate += ' '
+    try:
+        # unicode_escape handles the intended sequences; wrap in try for malformed \u
+        decoded = codecs.decode(candidate, 'unicode_escape')
+        return decoded
+    except Exception:
+        # Fallback manual replacements (subset) — safer than failing entirely
+        basic = (
+            candidate.replace('\\n', '\n')
+            .replace('\\t', '\t')
+            .replace('\\r', '\r')
+            .replace('\\\\', '\\')
+            .replace('\"', '"')
+        )
+        return basic
 
 
 def display_schema_analysis(schema_info):
@@ -43,8 +89,14 @@ def display_schema_analysis(schema_info):
             st.markdown("**Top-level Fields:**")
 
             scrollable_top_fields = """
-            <div style='max-height: 200px; overflow-y: auto; padding: 0.5em; border: 1px solid #ccc; border-radius: 5px; background-color: #f8f9fa; margin-bottom: 1em;'>
-            """
+                <div style='max-height:200px; overflow-y:auto; padding:0.5em; 
+                            border:1px solid var(--secondary-background-color); 
+                            border-radius:5px; 
+                            background-color: var(--background-color); 
+                            margin-bottom:1em; 
+                            color: var(--text-color);'>
+                """
+
             for field in sorted(schema_info['top_level_fields']):
                 scrollable_top_fields += (
                     f"<div style='margin-bottom: 2px;'>• {field}</div>"
@@ -58,8 +110,14 @@ def display_schema_analysis(schema_info):
             nested_fields = schema_info.get('nested_fields', {})
             if nested_fields:
                 scrollable_content = """
-                <div style='max-height: 200px; overflow-y: auto; padding: 0.5em; border: 1px solid #ccc; border-radius: 5px; background-color: #f8f9fa; margin-bottom: 1em;'>
-                """
+                    <div style='max-height: 200px; overflow-y: auto; padding: 0.5em; 
+                                border: 1px solid var(--secondary-background-color); 
+                                border-radius: 5px; 
+                                background-color: var(--background-color); 
+                                margin-bottom: 1em; 
+                                color: var(--text-color);'>
+                    """
+
                 for parent_field, nested_keys in sorted(nested_fields.items()):
                     scrollable_content += f"<div style='margin-bottom: 8px;'><strong>{parent_field}:</strong></div>"
                     # Show all nested keys, not just first 5
@@ -195,8 +253,15 @@ def _handle_batch_navigation_buttons(
 
 
 def display_individual_record_viewer(display_df_source, selected_fields):
-    """Display the individual record viewer component"""
+    """Display the individual record viewer component with optional pretty formatting."""
     st.markdown("### 🔍 Individual Record Viewer")
+
+    pretty_mode = st.checkbox(
+        "Pretty format text fields",
+        value=st.session_state.get('pretty_text_mode', False),
+        help="Decode visible escape sequences (\\n, \\t, \\uXXXX) into real characters for display.",
+        key='pretty_text_mode',
+    )
 
     if not display_df_source.empty:
         record_options = []
@@ -236,12 +301,18 @@ def display_individual_record_viewer(display_df_source, selected_fields):
 
         col1, col2 = st.columns([1, 1])
 
-        _display_nested_fields(col1, selected_record, selected_fields)
-        _display_top_level_fields(col2, selected_record, selected_fields)
+        _display_nested_fields(
+            col1, selected_record, selected_fields, pretty_mode
+        )
+        _display_top_level_fields(
+            col2, selected_record, selected_fields, pretty_mode
+        )
 
 
-def _display_nested_fields(col, selected_record, selected_fields):
-    """Display nested fields in the individual record viewer"""
+def _display_nested_fields(
+    col, selected_record, selected_fields, pretty_mode: bool = False
+):
+    """Display nested fields in the individual record viewer; optionally pretty-decode string values."""
     with col:
         st.markdown("**Nested Fields:**")
         # Show only loaded nested fields (any parent.child pattern)
@@ -251,7 +322,10 @@ def _display_nested_fields(col, selected_record, selected_fields):
             if '.' in field:
                 value = get_nested_value(selected_record, field)
                 if value is not None:
-                    loaded_nested[field] = value
+                    if pretty_mode and isinstance(value, str):
+                        loaded_nested[field] = _decode_escaped_text(value)
+                    else:
+                        loaded_nested[field] = value
 
         if loaded_nested:
             st.json(loaded_nested)
@@ -259,8 +333,10 @@ def _display_nested_fields(col, selected_record, selected_fields):
             st.write("No nested fields were loaded or have values")
 
 
-def _display_top_level_fields(col, selected_record, selected_fields):
-    """Display top-level fields in the individual record viewer"""
+def _display_top_level_fields(
+    col, selected_record, selected_fields, pretty_mode: bool = False
+):
+    """Display top-level fields in the individual record viewer; optionally pretty-decode string values."""
     with col:
         st.markdown("**Top-level Fields:**")
 
@@ -283,6 +359,8 @@ def _display_top_level_fields(col, selected_record, selected_fields):
             st.markdown(f"**{field.replace('_', ' ').title()}:**")
 
             field_str = _safe_field_to_string(field_value)
+            if pretty_mode and isinstance(field_str, str):
+                field_str = _decode_escaped_text(field_str)
 
             # Check if it's a long text field that should be scrollable
             if len(field_str) > 200:

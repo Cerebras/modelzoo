@@ -1,19 +1,28 @@
 # Python version 3.11.8
 
 # Core Streamlit and Data Processing
-streamlit>=1.47.0
-pandas>=2.3.0
-numpy>=2.3.0
+streamlit==1.47.0
+pandas==2.3.0
+numpy==1.26.4
 
 # Database and SQL
-duckdb>=1.3.0
-sqlparse>=0.5.0
+duckdb==1.3.0
+sqlparse==0.5.0
 
 # Parquet Support (required by DuckDB for Parquet files)
-pyarrow>=21.0.0
+pyarrow==21.0.0
+
+# Machine Learning (t-SNE Visualizer)
+scikit-learn==1.5.0
+scipy==1.11.0
 
 # Visualization Libraries
-altair>=5.5.0
+altair==5.5.0
+plotly==5.22.0
+
+zstandard==0.22.0
+orjson==3.11.2
+
 
 # Note: The following are Python standard library modules (no installation needed):
 # - json (built-in)

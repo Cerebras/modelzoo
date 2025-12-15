@@ -41,7 +41,7 @@ def main():
     root_directory = Path(__file__).parent
     long_description = (root_directory / "PYPI-README.md").read_text()
 
-    __version__ = "2.7.1"
+    __version__ = "2.8.0"
 
     entry_points = []
 
@@ -89,6 +89,7 @@ def main():
             "pydantic==2.8.2",
             "pyYAML",
             "pandas==2.2.3",
+            "peft==0.17.1",
             "jsonschema==4.23.0",
             "torch==2.4.0",
             "torchvision==0.19.0",
@@ -96,7 +97,7 @@ def main():
             "sentencepiece==0.2.0",
             # pylint: disable=line-too-long
             "lm-dataformat @ https://github.com/leogao2/lm_dataformat/archive/ac85cb7dae49ce25e9973a128ebd9167deaf64dd.zip",
-            "lm-eval @ https://github.com/EleutherAI/lm-evaluation-harness/archive/refs/tags/v0.4.7.zip",
+            "lm-eval @ https://github.com/EleutherAI/lm-evaluation-harness/archive/refs/tags/v0.4.9.1.zip",
             "bigcode_eval @ https://github.com/bigcode-project/bigcode-evaluation-harness/archive/f0b81a9d079289881bd42f509811d42fe73e58cf.zip",
             "h5py==3.13.0",
             "tqdm==4.66.5",

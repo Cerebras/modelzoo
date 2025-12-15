@@ -13,6 +13,7 @@ A comprehensive, high-performance data analysis and visualization application de
 - **Schema Analysis**: Automatic field detection, nested structure analysis, and data type inference
 - **Selective Field Loading**: Load only needed fields to minimize memory usage and improve performance
 - **Smart Navigation**: Previous/Next/Jump controls with intelligent boundary protection
+- **t-SNE Embedding Visualizer**: 2D / 3D interactive Plotly scatter with reservoir sampling, label distribution analytics (entropy + Jensen–Shannon distance), multi-format metadata + NPZ shard ingestion
 
 ### Advanced Features
 - **Full Dataset SQL Processing**: Execute SQL queries across entire datasets with export capabilities
@@ -74,8 +75,17 @@ sqlparse>=0.5.0        # SQL query parsing and validation
 # Advanced File Format Support
 pyarrow>=21.0.0        # Parquet file processing
 
-# Data Visualization
-altair>=5.5.0          # Declarative statistical visualization
+# Machine Learning (t-SNE)
+scikit-learn>=1.5.0    # Provides TSNE implementation
+scipy>=1.11.0          # SciPy stack (neighbors / distances)
+
+# Visualization Libraries
+altair>=5.5.0          # Declarative statistical visualization (core app)
+plotly>=5.22.0         # Interactive 2D / 3D embedding scatter & bar charts
+
+# High-performance I/O & Compression
+zstandard>=0.22.0      # .jsonl.zst decompression for metadata
+orjson>=3.11.2         # Fast JSON parsing for large metadata streams
 ```
 
 **Built-in Modules**: The application uses Python's standard library extensively (json, glob, os, datetime, re, collections, time, traceback, multiprocessing, concurrent.futures, functools, atexit, uuid) - no additional installation required.
@@ -123,6 +133,7 @@ The DQSage Data Visualizer provides a comprehensive web-based interface with the
 3. **Lazy Loading Controls**: Batch management and indexing
 4. **Data Explorer Tabs**: Raw data viewing and SQL querying
 5. **Export & Analysis Tools**: Full dataset processing and export capabilities
+6. **t-SNE Embedding Visualizer**: Dimensionality reduction & cluster quality diagnostics
 
 ---
 
@@ -155,6 +166,8 @@ streamlit run main.py
      - `chunk_*.jsonl` (specific prefix)
      - `*.parquet` (all Parquet files)
      - `data_*.parquet` (with prefix)
+     - `file_name.jsonl` (single JSONL files)
+     - `file_name.parquet` (single Parquet files)
 
 ---
 
@@ -528,3 +541,100 @@ ORDER BY quality_score DESC
    ORDER BY count DESC
    ```
 4. **Export results** in chunks for downstream processing
+
+---
+
+## 🌀 Phase 9: t-SNE Embedding Visualization (Embeddings Explorer)
+
+The t-SNE module is a second application accessible via the unified launcher. It lets you uniformly sample large labelled corpora, align them with pre‑computed embedding shards, project to 2D / 3D using scikit-learn's TSNE, and analyze cluster label distributions.
+
+### 9.1 Launching the Multi‑App Suite
+```bash
+streamlit run main.py
+```
+In the left sidebar (Application Module) choose: **t-SNE Visualizer**.
+
+### 9.2 Required Directory Structure
+```
+<root>/
+   metadata/                # (labelled_dir) JSONL metadata files
+      chunk_00001.jsonl[.gz|.zst]
+      ...
+   embeddings/              # (embedding_dir) NPZ shards
+      shard_0.npz
+      shard_1.npz
+      ...
+```
+Each metadata line must contain (or allow dot‑path extraction of):
+- id (string / numeric convertible)
+- optional text (for hover)  
+- optional cluster identifier (e.g. cluster_id, label, topic)
+
+Each embedding shard `*.npz` must include:
+- `doc_ids` (1-D array of ids as stored in metadata, order arbitrary)
+- `embeddings` (2-D float array shape `[N, D]`)
+
+### 9.3 Supported Metadata Formats
+Automatic detection / streaming across: `.jsonl`, `.jsonl.gz`, `.jsonl.zst` (zstandard). Files are scanned in sorted order; sampling is streaming & memory efficient.
+
+### 9.4 Reservoir Sampling (Uniform)
+- True single-pass reservoir sampling → unbiased selection across arbitrarily large corpora.
+- Parameter: **Sample Size** (100 – 200,000). Typical sweet spots:
+   - 2,000–5,000: fast exploratory plots
+   - 10,000–20,000: richer structure (heavier runtime / memory)
+- Complexity: O(total_lines) streaming read with O(sample_size) memory.
+
+### 9.5 Embedding Alignment
+After sampling metadata ids, the tool scans NPZ shards until all sampled ids are collected (early-exit when complete). Missing ids are silently dropped (sample shrinks); this avoids bias as long as embeddings were precomputed for most examples.
+
+### 9.6 t-SNE Parameters (Sidebar)
+- Dimension: 2D or 3D (3D uses Plotly Scatter3d; heavier to render)
+- Perplexity: 5–100 (rule-of-thumb: `< sample_size / 3`)
+- Iterations (max_iter / n_iter): 250–5000 (default 750)
+- Learning Rate: auto or manual (10–1000)
+- Seed: deterministic reproducibility (fixed to 42 for sampling + TSNE random_state)
+- Extra Hover Field: optional dot path appended to hover tooltip
+
+### 9.7 Performance Tips
+- t-SNE scales roughly O(N²) (pairwise affinities). Keep `sample_size` moderate.
+- Increase iterations only after you verify coarse structure.
+- Start with 2D; upgrade to 3D once clusters look meaningful.
+- If clusters are very large & dense, consider reducing sample size.
+
+### 9.8 Interactive Plot Features
+- Per-cluster legend toggle (Select All / Deselect All buttons)
+- Hover tooltips with multi-line wrapped text + cluster + extra field
+- 3D rotation & zoom (when 3D selected)
+- Stable UI state (figure retained until re-run)
+
+### 9.9 Label Distribution Analytics
+Separate **Distribution** tab computes full dataset cluster frequencies (not just the sample):
+- Full scan across all metadata files (cached; invalidated if files change)
+- Outputs top-K clusters + aggregated OTHERS row
+- Metrics: total records, unique clusters, top cluster %, entropy (bits)
+- Optional comparison with current sample → Jensen–Shannon Distance (bits)
+- Log-scale toggle for skewed distributions
+
+### 9.10 Handling Missing / Irregular Labels
+- Blank / null / 'none' / 'null' → mapped to `UNKNOWN`
+- All labels normalized to strings for consistent grouping.
+
+### 9.11 Field Path Overrides
+Auto-detected top-level + first-level nested keys are offered. For deeper nesting use manual dot-path overrides (e.g. `metadata.details.category`). Extraction gracefully returns `None` if path missing.
+
+### 9.12 Typical Workflow
+1. Choose metadata + embedding directories.
+2. Adjust sample size & perplexity (start small: 2000 / 30).
+3. (Optional) Specify cluster_id & extra hover field.
+4. Run t-SNE → inspect scatter; iterate parameters.
+5. Open Distribution tab → compute full label distribution & compare sample bias (JSD).
+
+### 9.13 Troubleshooting
+| Issue | Cause | Mitigation |
+|-------|-------|------------|
+| No embeddings collected | id mismatch between metadata & NPZ `doc_ids` | Ensure consistent string casting; regenerate shards |
+| Perplexity error | Perplexity >= sample_size | Reduce perplexity or increase sample |
+| Slow run | Sample too large / high iterations | Lower sample / iterations; use 2D first |
+| Many UNKNOWN labels | Missing cluster field | Set correct cluster field or override path |
+
+---

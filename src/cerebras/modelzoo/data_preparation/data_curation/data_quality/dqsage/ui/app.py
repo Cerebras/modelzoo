@@ -225,12 +225,24 @@ def handle_field_selection_and_loader_init(schema_info):
     # Lazy Loading Configuration
     st.sidebar.markdown("**Lazy Loading Settings:**")
 
-    batch_size = st.sidebar.selectbox(
+    # Predefined batch size options
+    batch_size_option = st.sidebar.selectbox(
         "Batch Size:",
-        options=[10, 50, 100, 200, 500, 1000],
-        index=2,  # Default to 100
+        options=["Custom", 10, 50, 100, 200, 500, 1000],
+        index=3,  # Default to 100
         help="Number of records to load per batch. Smaller batches use less memory.",
     )
+
+    # If user selects "Custom", show a number input
+    if batch_size_option == "Custom":
+        batch_size = st.sidebar.number_input(
+            "Enter custom batch size:",
+            min_value=1,
+            step=1,
+            value=100,  # Default custom value
+        )
+    else:
+        batch_size = int(batch_size_option)
 
     if st.sidebar.button("🚀 Initialize Lazy Data Loader", type="primary"):
         if selected_fields:
@@ -238,6 +250,7 @@ def handle_field_selection_and_loader_init(schema_info):
                 with st.spinner("Initializing lazy data loader..."):
                     # COMPREHENSIVE RESET - Clear all session state and caches
                     # Clear existing lazy loader and its caches if it exists
+
                     if 'lazy_loader' in st.session_state:
                         old_loader = st.session_state['lazy_loader']
                         if hasattr(old_loader, 'clear_cache'):
@@ -295,35 +308,25 @@ def handle_field_selection_and_loader_init(schema_info):
                     st.session_state['total_batches_loaded'] = 0
                     st.session_state['current_df'] = pd.DataFrame()
 
-                    # Get estimated total records
-                    estimated_total = lazy_loader.get_total_estimated_records()
-                    st.session_state['estimated_total_records'] = (
-                        estimated_total
-                    )
-
                     # Auto-load the first batch
                     try:
                         first_batch_df = lazy_loader.get_batch(
                             0, batch_size=batch_size
                         )
+
                         if not first_batch_df.empty:
                             st.session_state['current_df'] = first_batch_df
                             st.session_state['current_batch'] = (
                                 0  # Set to 0 since we loaded batch 0
                             )
                             st.session_state['total_batches_loaded'] = 1
-                            st.success(
-                                f"✅ Fresh lazy loader initialized! All caches cleared. Estimated {estimated_total:,} records across {lazy_loader.total_files} files"
-                            )
+
                             st.info(
                                 f"🚀 Auto-loaded first batch with {len(first_batch_df):,} records"
                             )
                         else:
                             st.warning("First batch appears to be empty")
                     except Exception as batch_error:
-                        st.success(
-                            f"✅ Fresh lazy loader initialized! All caches cleared. Estimated {estimated_total:,} records across {lazy_loader.total_files} files"
-                        )
                         st.warning(
                             f"Could not auto-load first batch: {batch_error}"
                         )
@@ -866,8 +869,14 @@ def handle_full_dataset_sql():
             def _render_fallback_fields(fields):
                 st.session_state['full_dataset_field_types'] = {}
                 content = """
-                <div style='max-height: 300px; overflow-y: auto; padding: 0.5em; border: 1px solid #ccc; border-radius: 5px; background-color: #f8f9fa; margin-bottom: 1em;'>
-                """
+                    <div style='max-height: 300px; overflow-y: auto; padding: 0.5em; 
+                                border: 1px solid var(--secondary-background-color); 
+                                border-radius: 5px; 
+                                background-color: var(--background-color); 
+                                margin-bottom: 1em; 
+                                color: var(--text-color);'>
+                    """
+
                 for field in sorted(fields):
                     content += f"<div style='margin-bottom: 2px;'>• <code>{field}</code> (VARCHAR)</div>"
                 content += "</div>"
@@ -984,8 +993,14 @@ def handle_full_dataset_sql():
 
             if type_map:
                 content = """
-                <div style='max-height: 300px; overflow-y: auto; padding: 0.5em; border: 1px solid #ccc; border-radius: 5px; background-color: #f8f9fa; margin-bottom: 1em;'>
-                """
+                    <div style='max-height: 300px; overflow-y: auto; padding: 0.5em; 
+                                border: 1px solid var(--secondary-background-color); 
+                                border-radius: 5px; 
+                                background-color: var(--background-color); 
+                                margin-bottom: 1em; 
+                                color: var(--text-color);'>
+                    """
+
                 for field in sorted(all_available_fields):
                     display_type = type_map.get(field, 'VARCHAR')
                     content += f"<div style='margin-bottom: 2px;'>• <code>{field}</code> ({display_type})</div>"
@@ -1185,7 +1200,7 @@ def execute_full_dataset_query(sql_query, output_config):
                         # Single query for ALL JSONL files using glob pattern
                         optimized_query = standardized_sql_query.replace(
                             'FROM data',
-                            f"FROM read_json_auto('{glob_pattern}', format='newline_delimited')",
+                            f"FROM read_json_auto('{glob_pattern}', format='newline_delimited', maximum_object_size=1000000000)",
                         )
                     elif file_format == 'parquet':
                         # Single query for ALL Parquet files using glob pattern
@@ -1280,7 +1295,7 @@ def execute_full_dataset_query(sql_query, output_config):
                         if file_format == 'jsonl':
                             file_query = standardized_sql_query.replace(
                                 'FROM data',
-                                f"FROM read_json_auto('{normalized_path}', format='newline_delimited')",
+                                f"FROM read_json_auto('{normalized_path}', format='newline_delimited', maximum_object_size=1000000000)",
                             )
                         elif file_format == 'parquet':
                             file_query = standardized_sql_query.replace(
@@ -1680,6 +1695,177 @@ def expand_nested_fields_for_sql(df, selected_fields):
     # Removed local standardize_sql_syntax in favor of SQLQueryProcessor.standardize_sql_syntax
 
 
+# ------------------------ Mini Histogram Helpers (Phase 1) ------------------------
+def _extract_series_from_column(
+    display_df_source: pd.DataFrame, col_name: str
+) -> pd.Series:
+    """Return a pandas Series for the requested column from the source batch.
+    Supports nested dot paths using get_nested_value on each row.
+    Always returns a Series of length == len(display_df_source).
+    """
+    if display_df_source is None or display_df_source.empty:
+        return pd.Series([], dtype=object)
+    if '.' in col_name and col_name not in display_df_source.columns:
+        # Build from nested path
+        vals = [
+            get_nested_value(row, col_name, None)
+            for _, row in display_df_source.iterrows()
+        ]
+        return pd.Series(vals)
+    if col_name in display_df_source.columns:
+        return display_df_source[col_name]
+    # Unknown column -> empty series of Nones
+    return pd.Series([None] * len(display_df_source))
+
+
+def _build_chart_for_series(
+    series_in: pd.Series, title: str, size: str = 'mini'
+):
+    """Build an Altair chart for a Series and return (chart, caption_text).
+    size: 'mini' for small grid thumbnails, 'full' for normal-size charts.
+    Only two types are supported: numeric histogram or text length histogram.
+    All non-numeric data (including datetime, categorical, bool-as-text) is treated as text.
+    """
+    try:
+        s = series_in.copy()
+        total = int(len(s))
+        # Normalize missing detection (treat empty strings as missing for texty cols)
+        missing_mask = s.isna() | (s.astype(object) == '')
+        non_missing = s[~missing_mask]
+        missing_count = int(missing_mask.sum())
+
+        # Dimensions
+        if size == 'full':
+            h_small = 200
+            h_medium = 240
+            h_cat = 260
+            maxbins_cap = 60
+            topk_cat = 30
+        else:
+            h_small = 80
+            h_medium = 100
+            h_cat = 120
+            maxbins_cap = 30
+            topk_cat = 20
+
+        # Try numeric
+        numeric = pd.to_numeric(non_missing, errors='coerce')
+        numeric = numeric.dropna()
+        if not numeric.empty:
+            df_num = pd.DataFrame({'value': numeric})
+            maxbins = int(min(maxbins_cap, max(5, df_num['value'].nunique())))
+            chart = (
+                alt.Chart(df_num)
+                .mark_bar()
+                .encode(
+                    x=alt.X(
+                        'value:Q', bin=alt.Bin(maxbins=maxbins), title=None
+                    ),
+                    y=alt.Y('count()', title=None),
+                )
+                .properties(height=h_small if size == 'mini' else h_medium)
+            )
+            try:
+                mn, mx = float(df_num['value'].min()), float(
+                    df_num['value'].max()
+                )
+                mean = float(df_num['value'].mean())
+                caption = f"min {mn:.2f} • mean {mean:.2f} • max {mx:.2f} • missing {missing_count/total*100:.1f}%"
+            except Exception:
+                caption = f"missing {missing_count/total*100:.1f}%"
+            return chart, caption
+
+        # Text length histogram for all remaining data
+        s_str = non_missing.astype(str)
+        lens = s_str.map(lambda v: len(v))
+        df_len = pd.DataFrame({'length': lens})
+        maxbins = int(min(maxbins_cap, max(5, df_len['length'].nunique())))
+        chart = (
+            alt.Chart(df_len)
+            .mark_bar()
+            .encode(
+                x=alt.X('length:Q', bin=alt.Bin(maxbins=maxbins), title=None),
+                y=alt.Y('count()', title=None),
+            )
+            .properties(height=h_small if size == 'mini' else h_medium)
+        )
+        try:
+            mean_len = float(df_len['length'].mean())
+            p95 = (
+                float(np.percentile(df_len['length'], 95)) if len(df_len) else 0
+            )
+            caption = f"avg len {mean_len:.1f} • p95 {p95:.0f} • missing {missing_count/total*100:.1f}%"
+        except Exception:
+            caption = f"missing {missing_count/total*100:.1f}%"
+        return chart, caption
+
+    except Exception as e:
+        # On any error, show nothing but a small caption
+        return None, f"error: {e}"
+
+
+def _mini_chart_for_series(series_in: pd.Series, title: str):
+    """Backwards-compatible wrapper for mini-sized charts."""
+    return _build_chart_for_series(series_in, title, size='mini')
+
+
+def render_mini_histograms(
+    display_df_source: pd.DataFrame, display_columns: list[str]
+):
+    """Render a compact grid of mini histograms aligned in the same order as visible columns.
+    Designed for batch-sized data (10-1000 rows). Recomputes on batch change.
+    """
+    if display_df_source is None or display_df_source.empty:
+        return
+    # Avoid too many plots at once
+    columns_to_show = display_columns[:40]
+    per_row = (
+        4
+        if len(columns_to_show) > 8
+        else (3 if len(columns_to_show) > 4 else len(columns_to_show))
+    )
+    # Title row
+    st.markdown("#### Column Distributions (current batch)")
+    for i in range(0, len(columns_to_show), max(1, per_row)):
+        subset = columns_to_show[i : i + per_row]
+        row_cols = st.columns(len(subset))
+        for sc, col_name in zip(row_cols, subset):
+            with sc:
+                s = _extract_series_from_column(display_df_source, col_name)
+                chart, caption = _mini_chart_for_series(s, col_name)
+                # Header with truncation
+                label = (
+                    col_name if len(col_name) <= 40 else (col_name[:37] + '…')
+                )
+                st.markdown(f"**{label}**")
+                if chart is not None and not s.dropna().empty:
+                    st.altair_chart(chart, use_container_width=True)
+                else:
+                    st.caption("No data")
+                if caption:
+                    st.caption(caption)
+
+
+def render_full_histograms(
+    display_df_source: pd.DataFrame, display_columns: list[str]
+):
+    """Render normal-size charts, one per selected column, full-width."""
+    if display_df_source is None or display_df_source.empty:
+        return
+    st.markdown("### Column Distributions")
+    for col_name in display_columns:
+        s = _extract_series_from_column(display_df_source, col_name)
+        chart, caption = _build_chart_for_series(s, col_name, size='full')
+        label = col_name if len(col_name) <= 80 else (col_name[:77] + '…')
+        st.markdown(f"#### {label}")
+        if chart is not None and not s.dropna().empty:
+            st.altair_chart(chart, use_container_width=True)
+        else:
+            st.caption("No data")
+        if caption:
+            st.caption(caption)
+
+
 def handle_raw_data_tab(lazy_loader, selected_fields, batch_size, filtered_df):
     """Handle everything in the Raw Data tab"""
     st.markdown("## 🔎 Raw Data Explorer")
@@ -1919,7 +2105,50 @@ def display_data_table(display_df_source, selected_fields):
                 else:
                     display_df[col] = ''
 
-        st.dataframe(display_df, use_container_width=True, height=500)
+    st.dataframe(display_df, use_container_width=True, height=500)
+
+
+def handle_stats_tab(filtered_df, selected_fields):
+    """Stats tab showing per-column histograms for the current batch.
+    Recomputes automatically when the batch changes (Streamlit rerun).
+    """
+    st.markdown("## 📈 Stats (Current Batch)")
+
+    if filtered_df is None or filtered_df.empty:
+        st.info("Load a batch to view stats.")
+        return
+
+    # Build options: include saved display columns and selected_fields (nested dot paths), plus DataFrame columns
+    saved_cols = st.session_state.get("saved_display_columns", [])
+    base_cols = list(filtered_df.columns)
+    extra_cols = selected_fields or []
+    # Merge while preserving order preference: saved -> selected_fields -> df columns
+    merged = []
+    for lst in (saved_cols, extra_cols, base_cols):
+        for c in lst:
+            if c not in merged:
+                merged.append(c)
+    # Exclude technical columns
+    options = [c for c in merged if c not in ("source_file", "line_number")]
+    # Default selection prefers saved columns (filtered and capped), fallback to options
+    default_pool = [c for c in saved_cols if c in options] or options
+    default_cols = default_pool[:40]
+
+    cols = st.multiselect(
+        "Columns to analyze:",
+        options=options,
+        default=default_cols,
+        help="Choose columns to render histograms for (current batch only).",
+        key="stats_columns_selection",
+    )
+    if not cols:
+        st.info("Select at least one column to render stats.")
+        return
+
+    try:
+        render_full_histograms(filtered_df, cols)
+    except Exception as e:
+        st.warning(f"Could not render stats: {e}")
 
 
 def validate_and_setup_data():
@@ -2009,8 +2238,13 @@ def main():
     memory_usage_mb = df.memory_usage(deep=True).sum() / (1024 * 1024)
     st.info(f"💾 Current batch memory usage: {memory_usage_mb:.1f} MB")
 
-    # Main tabs
-    tab_raw, tab_sql = st.tabs(["🔎 Raw Data", "🗄️ SQL Query"])
+    # Main tabs (add Stats)
+    tab_raw, tab_stats, tab_sql = st.tabs(
+        ["🔎 Raw Data", "📈 Stats", "🗄️ SQL Query"]
+    )
+
+    with tab_stats:
+        handle_stats_tab(filtered_df, selected_fields)
 
     with tab_sql:
         handle_sql_query_tab(

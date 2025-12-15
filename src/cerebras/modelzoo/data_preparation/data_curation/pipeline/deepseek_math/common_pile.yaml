@@ -1,0 +1,19 @@
+pipeline:
+  input_jsonl_folder: '<path/to/input/data>'  # Top-level folder with nested .jsonl.gz files
+  output_path: '<path/to/output>'     # Where filtered .json.gz files will be saved
+  logging_dir: '<path/to/output/logs>'    # Where logs go (stdout, errors, stats)
+  cache_dir:  '<path/to/cache>'     # HF + FastText cache folder
+
+models:
+  math_fasttext_model_path: '<path/to/fasttext/model>'  # Trained FastText model.
+
+filters:
+  math_threshold: 0.90                      # Threshold score for classification
+  labels:
+    math: "__label__MATH"                   # Positive label output by your FastText model
+
+executor:
+  type: local
+  local:
+    tasks: 246                              # Number of .jsonl.gz files to process
+    workers: 4                            # Number of parallel worker processes
