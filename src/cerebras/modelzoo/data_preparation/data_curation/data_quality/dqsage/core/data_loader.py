@@ -198,30 +198,6 @@ class LazyDataLoader:
             except:
                 return False
 
-        # Validate structure if reference provided
-        if self.reference_structure:
-            is_valid, issues = self.validate_structure(
-                data, self.reference_structure
-            )
-            if not is_valid:
-                self.inconsistent_records.append(
-                    {
-                        'file': os.path.basename(file_path),
-                        'line': line_num + 1,
-                        'keys': list(data.keys()),
-                        'nested_keys': {
-                            k: (
-                                list(v.keys())
-                                if isinstance(v, dict)
-                                else type(v).__name__
-                            )
-                            for k, v in data.items()
-                        },
-                        'issues': issues,
-                    }
-                )
-                return None  # Skip inconsistent records
-
         # Filter fields if specified
         if self.selected_fields:
             filtered_data = {}
@@ -248,12 +224,52 @@ class LazyDataLoader:
                     ):
                         value = value[: self.text_length_limit]
                     filtered_data[field] = value
-            data = filtered_data
+            data_projected = filtered_data
+        else:
+            data_projected = data
+
+        # Validate structure AFTER projection if reference provided
+        if self.reference_structure:
+            # Build a projected reference matching the fields we kept (if any were selected)
+            if self.selected_fields:
+                ref_projected = {}
+                for field in self.selected_fields:
+                    if '.' in field:
+                        ref_val = get_nested_value(
+                            self.reference_structure, field
+                        )
+                        set_nested_value_safe(ref_projected, field, ref_val)
+                    elif field in self.reference_structure:
+                        ref_projected[field] = self.reference_structure[field]
+            else:
+                ref_projected = self.reference_structure
+
+            is_valid, issues = self.validate_structure(
+                data_projected, ref_projected
+            )
+            if not is_valid:
+                self.inconsistent_records.append(
+                    {
+                        'file': os.path.basename(file_path),
+                        'line': line_num + 1,
+                        'keys': list(data_projected.keys()),
+                        'nested_keys': {
+                            k: (
+                                list(v.keys())
+                                if isinstance(v, dict)
+                                else type(v).__name__
+                            )
+                            for k, v in data_projected.items()
+                        },
+                        'issues': issues,
+                    }
+                )
+                return None  # Skip inconsistent records
 
         # Always add source info
-        data['source_file'] = os.path.basename(file_path)
-        data['line_number'] = line_num + 1
-        return data
+        data_projected['source_file'] = os.path.basename(file_path)
+        data_projected['line_number'] = line_num + 1
+        return data_projected
 
     def build_batch_index(
         self,

@@ -85,8 +85,16 @@ def get_data_size(data: Any) -> int:
         # For basic data types, rely on sys.getsizeof
         return sys.getsizeof(data)
 
-    # If the data type is not supported, you could raise a TypeError.
-    raise TypeError("Unsupported data type for size calculation")
+    # try type casting to str before throwing error
+    try:
+        str(data)
+        return len(str(data).encode("utf-8"))
+    except Exception:
+        # If the data cannot be converted to a string, we assume it is not supported.
+        # If the data type is not supported, you could raise a TypeError.
+        raise TypeError(
+            f"Unsupported data type {type(data)} of {data} for size calculation"
+        )
 
 
 @contextmanager
@@ -529,6 +537,11 @@ class Reader:
                 build_load_supported_format_args,
             ),
             ".json.gz": (
+                self.load_supported_format,
+                "json",
+                build_load_supported_format_args,
+            ),
+            ".jsonl.gz": (
                 self.load_supported_format,
                 "json",
                 build_load_supported_format_args,

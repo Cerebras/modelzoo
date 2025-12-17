@@ -44,12 +44,16 @@ class MoEConfig(BaseConfig):
     null_expert_bias: Optional[float] = 0.0
     "Optional bias to add null expert prob to the routing"
     moe_implementation: Literal[
-        "functional", "optimized", "experimental", "forge_experimental"
+        "functional",
+        "optimized",
+        "experimental",
+        "forge_experimental",
+        "expert_parallel",
     ] = "experimental"
     "Whether to use the functional or Optimized implementation of MoE"
     router_fp32: bool = True
     "Selects the precision of routing weights to be float"
-    routing_algorithm: Literal["hash", "learned"] = "learned"
+    routing_algorithm: Literal["hash", "uniform", "learned"] = "learned"
     "Routing algorithm to use for selection of experts"
     router_selection_nonlinearity: Optional[
         Literal["sigmoid", "sinkhorn", "softmax"]
@@ -85,6 +89,20 @@ class MoEConfig(BaseConfig):
             if self.expert_weighting_nonlinearity is not None:
                 warn(
                     f"Expert weighting non-linearity {self.expert_weighting_nonlinearity} is ignored with hash routing"
+                )
+
+        elif self.routing_algorithm == "uniform":
+            if self.load_balancing_loss_coef > 0.0:
+                raise ValueError(
+                    "Load Balancing Loss not supported with uniform routing"
+                )
+            if self.router_selection_nonlinearity is not None:
+                warn(
+                    f"Routing non-linearity {self.router_selection_nonlinearity} is ignored with uniform routing"
+                )
+            if self.expert_weighting_nonlinearity is not None:
+                warn(
+                    f"Expert weighting non-linearity {self.expert_weighting_nonlinearity} is ignored with uniform routing"
                 )
 
         elif self.routing_algorithm == "learned":
@@ -270,7 +288,13 @@ class FeedForwardNetworkConfig(ModelConfig):
     # Class variables.
     MoEImpl: ClassVar[enum.Enum] = enum.Enum(
         "MoEImpl",
-        ["functional", "optimized", "experimental", "forge_experimental"],
+        [
+            "functional",
+            "optimized",
+            "experimental",
+            "forge_experimental",
+            "expert_parallel",
+        ],
     )
     moe_params: Optional[MoEConfig] = None
 
@@ -345,6 +369,13 @@ class FeedForwardNetworkConfig(ModelConfig):
         return (
             self.MoEImpl[self.moe_params.moe_implementation]
             == self.MoEImpl.functional
+        )
+
+    def moe_exp_parallel_impl(self) -> bool:
+        """Return True if expert parallel implementation is used."""
+        return (
+            self.MoEImpl[self.moe_params.moe_implementation]
+            == self.MoEImpl.expert_parallel
         )
 
     def post_init(self, context):

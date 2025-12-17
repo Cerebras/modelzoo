@@ -42,7 +42,11 @@ from cerebras.appliance.errors import (
     ApplianceUnknownError,
     ClusterJobCancelledByCsctl,
 )
-from cerebras.appliance.log import ClassLogger, named_class_logger
+from cerebras.appliance.log import (
+    ClassLogger,
+    get_level_name,
+    named_class_logger,
+)
 from cerebras.modelzoo.config import BaseConfig
 from cerebras.modelzoo.trainer.callbacks.artifact_dir import (
     create_timestamped_dir,
@@ -50,7 +54,10 @@ from cerebras.modelzoo.trainer.callbacks.artifact_dir import (
 from cerebras.modelzoo.trainer.callbacks.autorestart import (
     TRAINER_STATE_FILENAME,
 )
-from cerebras.modelzoo.trainer.callbacks.logging import _CustomFormatter
+from cerebras.modelzoo.trainer.callbacks.logging import (
+    Logging,
+    _CustomFormatter,
+)
 from cerebras.modelzoo.trainer.utils import (
     ModeT,
     create_backend_from_config,
@@ -103,7 +110,7 @@ def _run_trainer(
         if logfile is not None:
             logger = logging.getLogger()
             run_idx = 0 if run_number is None else run_number
-            _setup_restartable_logging(logger, logfile, f"restart_{run_idx}")
+            _setup_restartable_logging(logger, logfile, f"run_{run_idx}")
 
         if stdout_pipe is not None:
             original_stdout = sys.stdout
@@ -125,13 +132,20 @@ def _run_trainer(
 
 def _setup_restartable_logging(
     logger: logging.Logger, logfile: Path, prefix: str
-):
+) -> None:
+    """Sets up logging to the consolidated log file for all auto-restart runs.
+
+    Args:
+        logger: The logger to attach the file handler to.
+        logfile: Path of the consolidated auto-restart run log file.
+        prefix: A prefix to add to each log line to identify the run attempt.
+    """
     handler = logging.FileHandler(logfile)
     # pylint: disable=protected-access
     fmt = f"[{prefix}] " + _CustomFormatter()._fmt
     formatter = logging.Formatter(fmt)
     handler.setFormatter(formatter)
-    handler.is_sticky = True
+    handler.is_sticky = True  # Ensures handler is attached to global logging config of subprocesses
     logger.addHandler(handler)
 
 
@@ -515,6 +529,9 @@ class RestartableTrainer(ClassLogger):
 
         self._mp_ctx = mp.get_context('spawn')
         self._telemetry_client = None
+        self._log_level = self.trainer_configs[0]["trainer"]["init"][
+            "logging"
+        ].get("log_level", "INFO")
 
     @staticmethod
     def is_restart_config(params: Dict[str, Any]) -> bool:
@@ -769,18 +786,21 @@ class RestartableTrainer(ClassLogger):
             )["workflow_id"] = backend.cluster.workflow_id
 
         try:
-            model_dir = Path(config.init.model_dir).resolve()
             compile_prefetcher = None
 
+            model_dir = Path(config.init.model_dir).resolve()
             restartable_artifact_dir = create_timestamped_dir(
                 model_dir, "_restartable"
             )
+
             logfile = restartable_artifact_dir / "run.log"
+
+            _setup_restartable_logging(self.logger, logfile, "main")
+
+            # Dump the params used for the restartable run
             params_file = restartable_artifact_dir / "params.yaml"
             with params_file.open("w") as f:
                 yaml.dump(params, f, sort_keys=False)
-
-            _setup_restartable_logging(self.logger, logfile, "main")
 
             ckpting_configured = (
                 config.init.checkpoint is not None
@@ -888,7 +908,7 @@ class RestartableTrainer(ClassLogger):
                         params,
                         to_self,
                         logfile,
-                        len(summary.runs) - 1,
+                        len(summary.runs) + 1,
                     ),
                 )
                 process.start()
@@ -1205,8 +1225,22 @@ class RestartableTrainer(ClassLogger):
 
             summary.save(summary_file)
 
+    def _setup_logging(self) -> None:
+        """Set up logging for the parent process conducting restarts."""
+        handler = logging.StreamHandler(sys.stdout)
+        handler.setFormatter(_CustomFormatter())
+
+        level = get_level_name(self._log_level)
+
+        logging.getLogger().handlers.clear()
+        logging.basicConfig(level=level, handlers=[handler])
+
+        Logging.setup_logging_excepthook()
+
     def run_trainer(self, mode: ModeT):
         """Run the trainer."""
+
+        self._setup_logging()
 
         if len(self.trainer_configs) > 1:
             self.logger.info(

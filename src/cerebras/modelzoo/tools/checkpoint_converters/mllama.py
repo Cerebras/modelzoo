@@ -571,6 +571,12 @@ class ConfigConverter_MLLaMa_HF_CS24(ConfigConverter_LLaMa_HF_CS21):
             ),
         ]
 
+        self.pre_convert_defaults[0].update(
+            {
+                "rms_norm_eps": 1e-5,  # Needs to be specified with transformers v4.49
+            }
+        )
+
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (FormatVersions("hf"), FormatVersions("cs-2.4", "cs-2.5"))
