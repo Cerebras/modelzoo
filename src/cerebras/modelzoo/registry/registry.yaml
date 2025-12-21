@@ -168,3 +168,180 @@ models:
 
 
 
+# BEGIN_CEREBRAS_ONLY
+#
+# These are internal models that shouldn't exist in the published ModelZoo's registry
+#
+
+- name: vit_mae
+  path: cerebras.modelzoo.models.internal.vision.vit_mae.model.ViTMAEWrapperModel
+  data_processor_paths:
+  - cerebras.modelzoo.data.internal.vision.masked_auto_encoding.ViTMAESyntheticDataProcessor.ViTMAESyntheticDataProcessor
+  - cerebras.modelzoo.data.vision.masked_auto_encoding.ImageNet1KMAEProcessor.ImageNet1KMAEProcessor
+
+- name: pali
+  path: cerebras.modelzoo.models.multimodal.pali.model.PaLIWrapperModel
+  data_processor_paths:
+  - cerebras.modelzoo.data.internal.multimodal.pali.PaLISyntheticProcessor.PaLISyntheticDataProcessor
+  - cerebras.modelzoo.data.internal.multimodal.pali.PaLIDataProcessor.PaLIDataProcessor
+
+- name: albert
+  path: cerebras.modelzoo.models.internal.nlp.albert.model.AlbertForPreTrainingModel
+  data_processor_paths: *bert_data_processor_paths
+
+- name: bart
+  path: cerebras.modelzoo.models.internal.nlp.bart.model.BartForSequenceClassificationModel
+  data_processor_paths:
+  - cerebras.modelzoo.data.internal.nlp.bart.BartClassifierSyntheticDataProcessor.BartClassifierSyntheticDataProcessor
+
+- name: big_bird
+  path: cerebras.modelzoo.models.internal.nlp.big_bird.model.BigBirdForPreTrainingModel
+  data_processor_paths:
+  - cerebras.modelzoo.data.internal.nlp.big_bird.BigBirdSyntheticDataset.BigBirdSyntheticDataProcessor
+  - cerebras.modelzoo.data.internal.nlp.big_bird.BigBirdCSVDynamicMaskDataProcessor.BigBirdCSVDynamicMaskDataProcessor
+  - cerebras.modelzoo.data.internal.nlp.big_bird.BigBirdCSVDataProcessor.BigBirdCSVDataProcessor
+
+- name: clip
+  path: cerebras.modelzoo.models.multimodal.clip.model.ClipPretrainWrapperModel
+  data_processor_paths:
+  - cerebras.modelzoo.data.multimodal.clip.ImageNet1KClipProcessor.ImageNet1KClipProcessor
+  - cerebras.modelzoo.data.internal.multimodal.clip.ClipSyntheticProcessor.ClipSyntheticDataProcessor
+
+- name: deberta
+  path: cerebras.modelzoo.models.internal.nlp.deberta.model.DebertaForPreTrainingModel
+  data_processor_paths: *bert_data_processor_paths
+
+- name: distilbert
+  path: cerebras.modelzoo.models.internal.nlp.distilbert.model.DistilBertForPreTrainingModel
+  data_processor_paths: *bert_data_processor_paths
+
+- name: efficientnet
+  path: cerebras.modelzoo.models.internal.vision.efficientnet.model.EfficientNetModel
+  data_processor_paths:
+  - cerebras.modelzoo.data.vision.classification.data.ImageNet1KProcessor
+
+- name: fido
+  path: cerebras.modelzoo.models.internal.nlp.fido.model.FIDO
+  data_processor_paths:
+  - cerebras.modelzoo.data.internal.nlp.fido.FIDSyntheticDataset.FIDSyntheticDataProcessor
+  - cerebras.modelzoo.data.nlp.t5.T5HDF5DataProcessor.T5HDF5DataProcessor
+
+- name: git
+  path: cerebras.modelzoo.models.internal.multimodal.git.model.GitPretrainWrapperModel
+  data_processor_paths:
+  - cerebras.modelzoo.data.internal.multimodal.git.GiTSyntheticProcessor.GiTSyntheticDataProcessor
+
+- name: lamda
+  path: cerebras.modelzoo.models.internal.nlp.lamda.model.LamdaModel
+  data_processor_paths: *gpt2_data_processor_paths
+
+- name: linformer
+  path: cerebras.modelzoo.models.internal.nlp.linformer.model.LinformerForPretrainingModel
+  data_processor_paths: *bert_data_processor_paths
+
+- name: moe
+  path: cerebras.modelzoo.models.internal.nlp.moe.model.MOEModel
+  data_processor_paths: *gpt2_data_processor_paths
+
+- name: moe_no_gate
+  path: cerebras.modelzoo.models.internal.performance.moe_no_gate.model.MOENoGateModel
+  data_processor_paths:
+  - cerebras.modelzoo.models.internal.performance.moe_no_gate.data.MOENoGateSyntheticDataProcessor
+
+- name: mpt
+  path: cerebras.modelzoo.models.internal.nlp.mpt.model.MPTModel
+  data_processor_paths: *gpt2_data_processor_paths
+
+- name: opt
+  path: cerebras.modelzoo.models.internal.nlp.opt.model.OPTModel
+  data_processor_paths: *gpt2_data_processor_paths
+
+- name: palm
+  path: cerebras.modelzoo.models.internal.nlp.palm.model.PalmModel
+  data_processor_paths: *gpt2_data_processor_paths
+
+- name: perf_mlp
+  path: cerebras.modelzoo.models.internal.performance.perf_mlp.model.PerfMLPModel
+  data_processor_paths:
+  - cerebras.modelzoo.models.internal.performance.perf_mlp.data.PerfMLPSyntheticDataProcessor
+
+- name: pfc
+  path: cerebras.modelzoo.models.internal.pfc.model.PFCModel
+  data_processor_paths:
+  - cerebras.modelzoo.data.internal.pfc.PFCDataProcessor.PFCDataProcessor
+
+- name: resnet
+  path: cerebras.modelzoo.models.internal.vision.resnet.model.ResNetModel
+  data_processor_paths:
+  - cerebras.modelzoo.data.vision.classification.data.ImageNet1KProcessor
+  - cerebras.modelzoo.data.vision.classification.data.CIFAR10Processor
+  - cerebras.modelzoo.data.vision.classification.data.CIFAR100Processor
+
+- name: retinanet
+  path: cerebras.modelzoo.models.internal.vision.retinanet.model.RetinaNetModel
+  data_processor_paths:
+  - cerebras.modelzoo.data.internal.vision.object_detection.data.SyntheticDataProcessor.SyntheticDataProcessor
+  - cerebras.modelzoo.data.internal.vision.object_detection.data.CocoDataProcessor.CocoDataProcessor
+
+- name: gpt_reward_model
+  path: cerebras.modelzoo.models.internal.nlp.reward_modeling.model.GptRewardModel
+  data_processor_paths:
+  - cerebras.modelzoo.data.internal.nlp.reward_modeling.GPTRewardModelHDF5DataProcessor.GPTRewardModelHDF5DataProcessor
+  - cerebras.modelzoo.data.internal.nlp.reward_modeling.GPTRewardModelSyntheticDataProcessor.GPTRewardModelSyntheticDataProcessor
+
+- name: sota_harness
+  path: cerebras.modelzoo.models.internal.sota.sota_harness.model.SotaHarnessModel
+  data_processor_paths:
+  - cerebras.modelzoo.models.internal.sota.sota_harness.data.SotaHarnessSyntheticDataProcessor
+
+- name: swin/classifier
+  path: cerebras.modelzoo.models.internal.vision.swin_transformer.classifier.model.SwinClassificationWrapperModel
+  data_processor_paths:
+  - cerebras.modelzoo.data.vision.classification.data.ImageNet1KProcessor
+  - cerebras.modelzoo.data.internal.vision.classification.ViTClassificationSyntheticDataProcessor.ViTClassificationSyntheticDataProcessor
+
+- name: swin/mim  # masked image modeling
+  path: cerebras.modelzoo.models.internal.vision.swin_transformer.mim.model.SwinMIMWrapperModel
+  data_processor_paths:
+    - cerebras.modelzoo.data.vision.masked_auto_encoding.ImageNet1KMAEProcessor.ImageNet1KMAEProcessor
+    - cerebras.modelzoo.data.vision.masked_auto_encoding.ImageNet21KMAEProcessor.ImageNet21KMAEProcessor
+    - cerebras.modelzoo.data.internal.vision.masked_auto_encoding.ViTMAESyntheticDataProcessor.ViTMAESyntheticDataProcessor
+
+- name: ul2
+  path: cerebras.modelzoo.models.internal.nlp.ul2.model.UL2Model
+  data_processor_paths: *t5_data_processor_paths
+
+- name: unet
+  path: cerebras.modelzoo.models.internal.vision.unet.model.UNetModel
+  data_processor_paths:
+  - cerebras.modelzoo.data.vision.segmentation.SeverstalBinaryClassDataProcessor.SeverstalBinaryClassDataProcessor
+  - cerebras.modelzoo.data.vision.segmentation.Hdf5DataProcessor.Hdf5DataProcessor
+  - cerebras.modelzoo.data.vision.segmentation.InriaAerialDataProcessor.InriaAerialDataProcessor
+  - cerebras.modelzoo.data.vision.segmentation.SkmDataProcessor.SkmDataProcessor
+  - cerebras.modelzoo.data.vision.segmentation.CityscapesDataProcessor.CityscapesDataProcessor
+  - cerebras.modelzoo.data.internal.vision.segmentation.Med3DDataProcessor.Med3DDataProcessor
+  - cerebras.modelzoo.data.internal.vision.segmentation.MLPerfDataProcessor.MLPerfDataProcessor
+  - cerebras.modelzoo.data.internal.vision.segmentation.SeverstalMultiClassDataProcessor.SeverstalMultiClassDataProcessor
+  - cerebras.modelzoo.data.internal.vision.segmentation.SegmentSyntheticDataProcessor.SegmentSyntheticDataProcessor
+
+- name: xlm
+  path: cerebras.modelzoo.models.internal.nlp.xlm.model.XLMForPreTrainingModel
+  data_processor_paths:
+  - cerebras.modelzoo.data.internal.nlp.xlm.XLMSyntheticDataset.XLMSyntheticDataProcessor
+
+- name: mllama-vision
+  path: cerebras.modelzoo.models.internal.vision.mllama_vision_encoder.model.MllamaVisionOnlyModel
+  data_processor_paths:
+  - cerebras.modelzoo.data.internal.multimodal.mllama.MLlamaVisionSyntheticDataProcessor.MllamaVisionSyntheticDataProcessor
+
+- name: qwen2
+  path: cerebras.modelzoo.models.internal.nlp.qwen2.model.Qwen2Model
+  data_processor_paths: *gpt2_data_processor_paths
+
+- name: qwen3
+  path: cerebras.modelzoo.models.internal.nlp.qwen3.model.Qwen3Model
+  data_processor_paths: *gpt2_data_processor_paths
+
+- name: qwen3_moe
+  path: cerebras.modelzoo.models.internal.nlp.qwen3_moe.model.Qwen3_moe_Model
+  data_processor_paths: *gpt2_data_processor_paths

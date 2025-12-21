@@ -782,7 +782,16 @@ class Converter_Codegen_Headless_HF_CS20(Converter_Codegen_Headless_HF_CS18):
         return (
             FormatVersions("hf"),
             FormatVersions(
-                "cs-2.0", "cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4", "cs-2.5"
+                "cs-2.0",
+                "cs-2.1",
+                "cs-2.2",
+                "cs-2.3",
+                "cs-2.4",
+                "cs-2.5",
+                "cs-2.6",
+                "cs-2.7",
+                "cs-2.8",
+                "cs-2.9",
             ),
         )
 
@@ -799,7 +808,16 @@ class Converter_Codegen_LMHeadModel_HF_CS20(
         return (
             FormatVersions("hf"),
             FormatVersions(
-                "cs-2.0", "cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4", "cs-2.5"
+                "cs-2.0",
+                "cs-2.1",
+                "cs-2.2",
+                "cs-2.3",
+                "cs-2.4",
+                "cs-2.5",
+                "cs-2.6",
+                "cs-2.7",
+                "cs-2.8",
+                "cs-2.9",
             ),
         )
 
@@ -826,7 +844,16 @@ class ConfigConverter_Codegen_Model_HF_CS20(
         return (
             FormatVersions("hf"),
             FormatVersions(
-                "cs-2.0", "cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4", "cs-2.5"
+                "cs-2.0",
+                "cs-2.1",
+                "cs-2.2",
+                "cs-2.3",
+                "cs-2.4",
+                "cs-2.5",
+                "cs-2.6",
+                "cs-2.7",
+                "cs-2.8",
+                "cs-2.9",
             ),
         )
 

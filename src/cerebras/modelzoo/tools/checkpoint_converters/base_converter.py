@@ -1389,6 +1389,54 @@ class BaseCheckpointConverter_CS24_CS25(FallbackConverter_CS_CS):
         return BaseConfigConverter_CS24_CS25
 
 
+class BaseCheckpointConverter_CS25_CS26(FallbackConverter_CS_CS):
+    """Generic fallback converter class for cs-2.5 -> cs-2.6."""
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("cs-2.5"), FormatVersions("cs-2.6"))
+
+    @staticmethod
+    def get_config_converter_class() -> BaseConfigConverter:
+        return BaseConfigConverter_CS25_CS26
+
+
+class BaseCheckpointConverter_CS26_CS27(FallbackConverter_CS_CS):
+    """Generic fallback converter class for cs-2.6 -> cs-2.7."""
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("cs-2.6"), FormatVersions("cs-2.7"))
+
+    @staticmethod
+    def get_config_converter_class() -> BaseConfigConverter:
+        return BaseConfigConverter_CS26_CS27
+
+
+class BaseCheckpointConverter_CS27_CS28(FallbackConverter_CS_CS):
+    """Generic fallback converter class for cs-2.7 -> cs-2.8."""
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("cs-2.7"), FormatVersions("cs-2.8"))
+
+    @staticmethod
+    def get_config_converter_class() -> BaseConfigConverter:
+        return BaseConfigConverter_CS27_CS28
+
+
+class BaseCheckpointConverter_CS28_CS29(FallbackConverter_CS_CS):
+    """Generic fallback converter class for cs-2.8 -> cs-2.9."""
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("cs-2.8"), FormatVersions("cs-2.9"))
+
+    @staticmethod
+    def get_config_converter_class() -> BaseConfigConverter:
+        return BaseConfigConverter_CS28_CS29
+
+
 # Base converters to be used as fallback if converter does not exist
 fallback_converters: List[BaseCheckpointConverter] = [
     BaseCheckpointConverter_CS18_CS19,
@@ -2310,6 +2358,38 @@ class BaseConfigConverter_CS24_CS25(FallbackConfigConverter_CS_CS):
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (FormatVersions("cs-2.4"), FormatVersions("cs-2.5"))
+
+
+class BaseConfigConverter_CS25_CS26(FallbackConfigConverter_CS_CS):
+    """Generic fallback config converter class for cs-2.5 -> cs-2.6."""
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("cs-2.5"), FormatVersions("cs-2.6"))
+
+
+class BaseConfigConverter_CS26_CS27(FallbackConfigConverter_CS_CS):
+    """Generic fallback config converter class for cs-2.6 -> cs-2.7."""
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("cs-2.6"), FormatVersions("cs-2.7"))
+
+
+class BaseConfigConverter_CS27_CS28(FallbackConfigConverter_CS_CS):
+    """Generic fallback config converter class for cs-2.7 -> cs-2.8."""
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("cs-2.7"), FormatVersions("cs-2.8"))
+
+
+class BaseConfigConverter_CS28_CS29(FallbackConfigConverter_CS_CS):
+    """Generic fallback config converter class for cs-2.8 -> cs-2.9."""
+
+    @staticmethod
+    def formats() -> Tuple[FormatVersions, FormatVersions]:
+        return (FormatVersions("cs-2.8"), FormatVersions("cs-2.9"))
 
 
 def _addindent(s_, numSpaces):

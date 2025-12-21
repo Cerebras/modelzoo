@@ -312,6 +312,10 @@ class Converter_Falcon_40B_Attention_HF_CS20(
                 "cs-2.3",
                 "cs-2.4",
                 "cs-2.5",
+                "cs-2.6",
+                "cs-2.7",
+                "cs-2.8",
+                "cs-2.9",
             ),
         )
 
@@ -496,6 +500,10 @@ class Converter_Falcon_40B_Headless_WithoutModelPrefix_HF_CS20(
                 "cs-2.3",
                 "cs-2.4",
                 "cs-2.5",
+                "cs-2.6",
+                "cs-2.7",
+                "cs-2.8",
+                "cs-2.9",
             ),
         )
 
@@ -583,6 +591,10 @@ class Converter_Falcon_40B_WithoutModelPrefix_HF_CS20(
                 "cs-2.3",
                 "cs-2.4",
                 "cs-2.5",
+                "cs-2.6",
+                "cs-2.7",
+                "cs-2.8",
+                "cs-2.9",
             ),
         )
 
@@ -893,5 +905,9 @@ class ConfigConverter_Falcon_40B_HF_CS20(BaseConfigConverter_HF_CS):
                 "cs-2.3",
                 "cs-2.4",
                 "cs-2.5",
+                "cs-2.6",
+                "cs-2.7",
+                "cs-2.8",
+                "cs-2.9",
             ),
         )

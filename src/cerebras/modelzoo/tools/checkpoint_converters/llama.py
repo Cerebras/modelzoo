@@ -67,7 +67,92 @@ class Converter_LlamaAttention_HF_CS(BaseCheckpointConverter_HF_CS):
                 ],
                 action=self.replaceKey,
             ),
+            ConversionRule(
+                [
+                    EquivalentSubkey("k_norm", "k_norm"),
+                    r"\.(?:weight|bias)",
+                ],
+                action=self.convert_with_interleaving_norm,
+            ),
+            ConversionRule(
+                [
+                    EquivalentSubkey("q_norm", "q_norm"),
+                    r"\.(?:weight|bias)",
+                ],
+                action=self.convert_with_interleaving_norm,
+            ),
         ]
+
+    def convert_with_interleaving_norm(
+        self,
+        old_key,
+        new_key,
+        old_state_dict,
+        new_state_dict,
+        from_index,
+        action_fn_args,
+    ):
+        # QK Norm weights should be interleaved since HF and CS RoPE differ
+        cs_config = action_fn_args["configs"][1]
+        tensor = old_state_dict[old_key]
+        initial_shape = tensor.size()
+
+        if from_index == 0:
+            tensor = self.interleave_helper_norm(tensor, cs_config)
+        else:
+            tensor = self.reverse_interleave_helper_norm(tensor, cs_config)
+        tensor = tensor.view(*initial_shape)
+        new_state_dict[new_key] = tensor
+
+    def interleave_helper_norm(self, t, cs_config):
+        rotary_dim = cs_config["model"]["rotary_dim"]
+        if len(t.shape) == 1:
+            # Expect: t is [N], and the first rotary_dim entries are laid out as
+            # [x0, x1, ..., x{n-1}, y0, y1, ..., y{n-1}] to be interleaved -> [x0,y0,x1,y1,...]
+            if rotary_dim % 2 != 0:
+                raise ValueError(f"rotary_dim must be even, got {rotary_dim}")
+            if t.shape[0] < rotary_dim:
+                raise ValueError(
+                    f"t has length {t.shape[0]} < rotary_dim {rotary_dim}"
+                )
+
+            to_rotate = t[:rotary_dim]
+            to_pass = t[rotary_dim:]
+
+            # Split into two halves, swap axes to make pairs adjacent, then flatten
+            # [2, n] -> [n, 2] -> [2n]
+            to_rotate = to_rotate.reshape(2, -1).permute(1, 0).reshape(-1)
+            interleaved = torch.cat((to_rotate, to_pass), dim=0)
+        else:
+            assert False, (
+                "shape of query, key norm weight tensor has to have shape of length 1"
+                " when converting from HF to CS."
+            )
+        return interleaved
+
+    def reverse_interleave_helper_norm(self, t, cs_config):
+        rotary_dim = cs_config["model"]["rotary_dim"]
+        if len(t.shape) == 1:
+            if rotary_dim % 2 != 0:
+                raise ValueError(f"rotary_dim must be even, got {rotary_dim}")
+            if t.shape[0] < rotary_dim:
+                raise ValueError(
+                    f"t has length {t.shape[0]} < rotary_dim {rotary_dim}"
+                )
+
+            to_rotate = t[:rotary_dim]
+            to_pass = t[rotary_dim:]
+
+            # Split into pairs, swap axes to undo interleaving, then flatten
+            # [2n] -> [n, 2] -> [2, n]
+            reversed = to_rotate.reshape(-1, 2).permute(1, 0).reshape(-1)
+            reversed = torch.cat((reversed, to_pass), dim=0)
+        else:
+            assert False, (
+                "shape of query, key norm weight tensor has to have shape of length 1"
+                " when converting from CS to HF."
+            )
+        return reversed
 
     def convert_with_interleaving_query(
         self,
@@ -894,7 +979,17 @@ class Converter_LlamaModel_HF_CS21(Converter_LlamaModel_HF_CS20):
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4", "cs-2.5"),
+            FormatVersions(
+                "cs-2.1",
+                "cs-2.2",
+                "cs-2.3",
+                "cs-2.4",
+                "cs-2.5",
+                "cs-2.6",
+                "cs-2.7",
+                "cs-2.8",
+                "cs-2.9",
+            ),
         )
 
     @staticmethod
@@ -907,7 +1002,17 @@ class Converter_LlamaForCausalLM_HF_CS21(Converter_LlamaForCausalLM_HF_CS20):
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4", "cs-2.5"),
+            FormatVersions(
+                "cs-2.1",
+                "cs-2.2",
+                "cs-2.3",
+                "cs-2.4",
+                "cs-2.5",
+                "cs-2.6",
+                "cs-2.7",
+                "cs-2.8",
+                "cs-2.9",
+            ),
         )
 
     @staticmethod
@@ -1021,7 +1126,17 @@ class ConfigConverter_LLaMa_HF_CS21(ConfigConverter_LLaMa_HF_CS20):
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4", "cs-2.5"),
+            FormatVersions(
+                "cs-2.1",
+                "cs-2.2",
+                "cs-2.3",
+                "cs-2.4",
+                "cs-2.5",
+                "cs-2.6",
+                "cs-2.7",
+                "cs-2.8",
+                "cs-2.9",
+            ),
         )
 
     def supports_mup_conversion(self):

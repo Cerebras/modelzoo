@@ -696,7 +696,17 @@ class ConfigConverter_Falcon_180B_HF_CS21(ConfigConverter_Falcon_180B_HF_CS20):
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4", "cs-2.5"),
+            FormatVersions(
+                "cs-2.1",
+                "cs-2.2",
+                "cs-2.3",
+                "cs-2.4",
+                "cs-2.5",
+                "cs-2.6",
+                "cs-2.7",
+                "cs-2.8",
+                "cs-2.9",
+            ),
         )
 
 
@@ -722,7 +732,17 @@ Converter_Falcon_180B_Headless_HF_CS21 = Build_HF_CS_Converter_WithOptionalModel
     config_converter_class=ConfigConverter_Falcon_180B_HF_CS21,
     formats=(
         FormatVersions("hf"),
-        FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4", "cs-2.5"),
+        FormatVersions(
+            "cs-2.1",
+            "cs-2.2",
+            "cs-2.3",
+            "cs-2.4",
+            "cs-2.5",
+            "cs-2.6",
+            "cs-2.7",
+            "cs-2.8",
+            "cs-2.9",
+        ),
     ),
 )
 
@@ -750,7 +770,17 @@ class Converter_Falcon_180B_WithoutOptionalModel_HF_CS21(
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4", "cs-2.5"),
+            FormatVersions(
+                "cs-2.1",
+                "cs-2.2",
+                "cs-2.3",
+                "cs-2.4",
+                "cs-2.5",
+                "cs-2.6",
+                "cs-2.7",
+                "cs-2.8",
+                "cs-2.9",
+            ),
         )
 
     @staticmethod

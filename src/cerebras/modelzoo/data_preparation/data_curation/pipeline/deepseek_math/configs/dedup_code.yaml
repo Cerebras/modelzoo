@@ -1,0 +1,9 @@
+
+
+S3_MINHASH_BASE_PATH: /net/extradisks0/srv/nfs/apoorvp-extra-data/stackv2_pypi_dedup_final/minhash
+INPUT_FOLDER_PATH:  /net/extradisks0/srv/nfs/apoorvp-extra-data/combined_stackv2_pypi
+S3_LOGS_FOLDER: /net/extradisks0/srv/nfs/apoorvp-extra-data/stackv2_pypi_dedup_final/my_minhash_logs_path/
+LOCAL_LOGS_FOLDER: python_stackv2_pypi_final_slurm_logs
+deduped_input_path:  /net/extradisks0/srv/nfs/apoorvp-extra-data/stackv2_pypi_dedup_final/seen_ids.txt
+
+TOTAL_TASKS: 300

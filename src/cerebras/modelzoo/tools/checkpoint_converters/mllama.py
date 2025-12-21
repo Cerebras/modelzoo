@@ -71,7 +71,9 @@ class Converter_MLlamaSelfAttention_HF_CS(BaseCheckpointConverter_HF_CS):
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.4", "cs-2.5"),
+            FormatVersions(
+                "cs-2.4", "cs-2.5", "cs-2.6", "cs-2.7", "cs-2.8", "cs-2.9"
+            ),
         )
 
     @staticmethod
@@ -324,7 +326,9 @@ class Converter_MLlamaVisionModel_HF_CS(BaseCheckpointConverter_HF_CS):
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.4", "cs-2.5"),
+            FormatVersions(
+                "cs-2.4", "cs-2.5", "cs-2.6", "cs-2.7", "cs-2.8", "cs-2.9"
+            ),
         )
 
     @staticmethod
@@ -341,9 +345,7 @@ class Converter_MLlamaForCausalLM_HF_CS24(BaseCheckpointConverter_HF_CS):
         self.rules = [
             ConversionRule(
                 [
-                    EquivalentSubkey(
-                        "language_model.lm_head", "text_model.model.lm_head"
-                    ),
+                    EquivalentSubkey("lm_head", "text_model.model.lm_head"),
                     r"\.(?:weight|bias)",
                 ],
                 action=self.replaceKey,
@@ -351,7 +353,7 @@ class Converter_MLlamaForCausalLM_HF_CS24(BaseCheckpointConverter_HF_CS):
             ConversionRule(
                 [
                     EquivalentSubkey(
-                        "language_model.model.", "text_model.model."
+                        "model.language_model.", "text_model.model."
                     ),
                     Converter_MLlamaTextModel_HF_CS(),
                 ],
@@ -359,14 +361,16 @@ class Converter_MLlamaForCausalLM_HF_CS24(BaseCheckpointConverter_HF_CS):
             ),
             ConversionRule(
                 [
-                    EquivalentSubkey("vision_model.", "image_model."),
+                    EquivalentSubkey("model.vision_model.", "image_model."),
                     Converter_MLlamaVisionModel_HF_CS(),
                 ],
                 action=self.replaceKey,
             ),
             ConversionRule(
                 [
-                    EquivalentSubkey("multi_modal_projector", "projection"),
+                    EquivalentSubkey(
+                        "model.multi_modal_projector", "projection"
+                    ),
                     r"\.(?:weight|bias)",
                 ],
                 action=self.replaceKey,
@@ -377,7 +381,9 @@ class Converter_MLlamaForCausalLM_HF_CS24(BaseCheckpointConverter_HF_CS):
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.4", "cs-2.5"),
+            FormatVersions(
+                "cs-2.4", "cs-2.5", "cs-2.6", "cs-2.7", "cs-2.8", "cs-2.9"
+            ),
         )
 
     @staticmethod
@@ -579,7 +585,12 @@ class ConfigConverter_MLLaMa_HF_CS24(ConfigConverter_LLaMa_HF_CS21):
 
     @staticmethod
     def formats() -> Tuple[FormatVersions, FormatVersions]:
-        return (FormatVersions("hf"), FormatVersions("cs-2.4", "cs-2.5"))
+        return (
+            FormatVersions("hf"),
+            FormatVersions(
+                "cs-2.4", "cs-2.5", "cs-2.6", "cs-2.7", "cs-2.8", "cs-2.9"
+            ),
+        )
 
     def convert_image_patch_size(
         self,

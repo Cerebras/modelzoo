@@ -1,0 +1,29 @@
+reader:
+  input_folder: /net/extradisks0/srv/nfs/apoorvp-extra-data/stackv2_train_smol_ids
+  text_key: "file_contents"
+writer:
+  output_folder: /net/extradisks0/srv/nfs/apoorvp-extra-data/stackv2_train_smol_ids_extracted
+
+pipeline:
+  start_chunk: 1
+  end_chunk: 64
+  timeout_seconds: 3600
+
+executor_type: local
+
+local_executor:
+  tasks: 1
+  workers: 1
+  logging_dir: /net/extradisks0/srv/nfs/apoorvp-extra-data/stackv2_train_smol_ids_subset_extracted/logs
+
+slurm_executor:
+  tasks: 64
+  workers: 200
+  job_name: "stackv2_smol_ids_extraction"
+  time: "72:00:00"
+  partition: "main"
+  # logging_dir: /net/extradisks0/srv/nfs/apoorvp-extra-data/stackv2_train_smol_ids_extracted/
+  # slurm_logs_folder: /net/extradisks0/srv/nfs/apoorvp-extra-data/stackv2_train_smol_ids_extracted/
+  qos: "normal"
+  mem_per_cpu_gb: 12
+  cpus_per_task: 1

@@ -671,7 +671,17 @@ class ConfigConverter_StarcoderModel_HF_CS21(
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4", "cs-2.5"),
+            FormatVersions(
+                "cs-2.1",
+                "cs-2.2",
+                "cs-2.3",
+                "cs-2.4",
+                "cs-2.5",
+                "cs-2.6",
+                "cs-2.7",
+                "cs-2.8",
+                "cs-2.9",
+            ),
         )
 
     def supports_mup_conversion(self):
@@ -700,7 +710,17 @@ class Converter_StarcoderModel_WithoutOptionalModel_HF_CS21(
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4", "cs-2.5"),
+            FormatVersions(
+                "cs-2.1",
+                "cs-2.2",
+                "cs-2.3",
+                "cs-2.4",
+                "cs-2.5",
+                "cs-2.6",
+                "cs-2.7",
+                "cs-2.8",
+                "cs-2.9",
+            ),
         )
 
     @staticmethod
@@ -749,7 +769,17 @@ class Converter_StarcoderForCausalLM_WithoutOptionalModel_HF_CS21(
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.1", "cs-2.2", "cs-2.3", "cs-2.4", "cs-2.5"),
+            FormatVersions(
+                "cs-2.1",
+                "cs-2.2",
+                "cs-2.3",
+                "cs-2.4",
+                "cs-2.5",
+                "cs-2.6",
+                "cs-2.7",
+                "cs-2.8",
+                "cs-2.9",
+            ),
         )
 
     @staticmethod

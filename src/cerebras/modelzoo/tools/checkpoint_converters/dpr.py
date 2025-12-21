@@ -98,7 +98,16 @@ class Converter_DPR_BertWrapper(
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.2", "cs-2.3", "cs-2.4", "cs-2.5"),
+            FormatVersions(
+                "cs-2.2",
+                "cs-2.3",
+                "cs-2.4",
+                "cs-2.5",
+                "cs-2.6",
+                "cs-2.7",
+                "cs-2.8",
+                "cs-2.9",
+            ),
         )
 
     @staticmethod
@@ -138,7 +147,16 @@ class Converter_DPRQuestionEncoder_HF_CS(BaseCheckpointConverter_HF_CS):
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.2", "cs-2.3", "cs-2.4", "cs-2.5"),
+            FormatVersions(
+                "cs-2.2",
+                "cs-2.3",
+                "cs-2.4",
+                "cs-2.5",
+                "cs-2.6",
+                "cs-2.7",
+                "cs-2.8",
+                "cs-2.9",
+            ),
         )
 
     @classmethod
@@ -184,7 +202,16 @@ class Converter_DPRContextEncoder_HF_CS(BaseCheckpointConverter_HF_CS):
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.2", "cs-2.3", "cs-2.4", "cs-2.5"),
+            FormatVersions(
+                "cs-2.2",
+                "cs-2.3",
+                "cs-2.4",
+                "cs-2.5",
+                "cs-2.6",
+                "cs-2.7",
+                "cs-2.8",
+                "cs-2.9",
+            ),
         )
 
     @classmethod
@@ -239,7 +266,16 @@ class Converter_DPRModel_HF_CS22(BaseCheckpointConverter_UnpackedHF_PackedCS):
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.2", "cs-2.3", "cs-2.4", "cs-2.5"),
+            FormatVersions(
+                "cs-2.2",
+                "cs-2.3",
+                "cs-2.4",
+                "cs-2.5",
+                "cs-2.6",
+                "cs-2.7",
+                "cs-2.8",
+                "cs-2.9",
+            ),
         )
 
     @staticmethod
@@ -295,7 +331,16 @@ class ConfigConverter_DPR_HF_CS(ConfigConverter_Bert_HF_CS21):
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.2", "cs-2.3", "cs-2.4", "cs-2.5"),
+            FormatVersions(
+                "cs-2.2",
+                "cs-2.3",
+                "cs-2.4",
+                "cs-2.5",
+                "cs-2.6",
+                "cs-2.7",
+                "cs-2.8",
+                "cs-2.9",
+            ),
         )
 
 
@@ -378,7 +423,16 @@ class ConfigConverter_DPRModel_HF_CS22(BaseConfigConverter_UnpackedHF_PackedCS):
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.2", "cs-2.3", "cs-2.4", "cs-2.5"),
+            FormatVersions(
+                "cs-2.2",
+                "cs-2.3",
+                "cs-2.4",
+                "cs-2.5",
+                "cs-2.6",
+                "cs-2.7",
+                "cs-2.8",
+                "cs-2.9",
+            ),
         )
 
 
@@ -391,7 +445,15 @@ class ConfigConverter_DPR_HF_CS23(ConfigConverterEncoder_HF_CS):
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.3", "cs-2.4", "cs-2.5"),
+            FormatVersions(
+                "cs-2.3",
+                "cs-2.4",
+                "cs-2.5",
+                "cs-2.6",
+                "cs-2.7",
+                "cs-2.8",
+                "cs-2.9",
+            ),
         )
 
 
@@ -421,7 +483,15 @@ class ConfigConverter_DPRModel_HF_CS23(ConfigConverter_DPRModel_HF_CS22):
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.3", "cs-2.4", "cs-2.5"),
+            FormatVersions(
+                "cs-2.3",
+                "cs-2.4",
+                "cs-2.5",
+                "cs-2.6",
+                "cs-2.7",
+                "cs-2.8",
+                "cs-2.9",
+            ),
         )
 
 
@@ -430,7 +500,15 @@ class Converter_DPRModel_HF_CS23(Converter_DPRModel_HF_CS22):
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.3", "cs-2.4", "cs-2.5"),
+            FormatVersions(
+                "cs-2.3",
+                "cs-2.4",
+                "cs-2.5",
+                "cs-2.6",
+                "cs-2.7",
+                "cs-2.8",
+                "cs-2.9",
+            ),
         )
 
     @staticmethod
@@ -450,7 +528,15 @@ class Converter_DPRModel_CS22_CS23(BaseCheckpointConverter_CS_CS):
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("cs-2.2"),
-            FormatVersions("cs-2.3", "cs-2.4", "cs-2.5"),
+            FormatVersions(
+                "cs-2.3",
+                "cs-2.4",
+                "cs-2.5",
+                "cs-2.6",
+                "cs-2.7",
+                "cs-2.8",
+                "cs-2.9",
+            ),
         )
 
     @staticmethod
@@ -527,5 +613,13 @@ class ConfigConverter_DPRModel_CS22_CS23(BaseConfigConverter_CS_CS):
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("cs-2.2"),
-            FormatVersions("cs-2.3", "cs-2.4", "cs-2.5"),
+            FormatVersions(
+                "cs-2.3",
+                "cs-2.4",
+                "cs-2.5",
+                "cs-2.6",
+                "cs-2.7",
+                "cs-2.8",
+                "cs-2.9",
+            ),
         )

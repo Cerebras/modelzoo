@@ -12,7 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from .arrow_reader import ArrowReader
+from .dedup_reader import DedupJsonlReader
 from .math_domain_reader import MathDomainReader
+from .pypi_reader import PyPIReader
 from .safe_jsonl_reader import SafeJsonlReader
 from .safe_warc_reader import SafeWarcReader
 
@@ -20,4 +23,7 @@ __all__ = [
     "SafeWarcReader",
     "MathDomainReader",
     "SafeJsonlReader",
+    "ArrowReader",
+    "PyPIReader",
+    "DedupJsonlReader",
 ]

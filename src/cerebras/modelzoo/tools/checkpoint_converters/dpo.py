@@ -161,6 +161,10 @@ class Converter_DPO_HF_CS21(BaseCheckpointConverter_HF_CS):
                 "cs-2.3-dpo",
                 "cs-2.4-dpo",
                 "cs-2.5-dpo",
+                "cs-2.6-dpo",
+                "cs-2.7-dpo",
+                "cs-2.8-dpo",
+                "cs-2.9-dpo",
             ),
         )
 
@@ -184,6 +188,10 @@ class ConfigConverter_DPO_HF_CS21(BaseConfigConverter_HF_CS):
                 "cs-2.3-dpo",
                 "cs-2.4-dpo",
                 "cs-2.5-dpo",
+                "cs-2.6-dpo",
+                "cs-2.7-dpo",
+                "cs-2.8-dpo",
+                "cs-2.9-dpo",
             ),
         )
 
