@@ -54,6 +54,15 @@ Convert data to Parquet for maximum performance:
 # Clone or download the DQSage directory
 cd dqsage
 
+# Create a virtual environment with Python 3.11.8
+python3.11 -m venv venv
+
+# Activate the virtual environment
+# On Linux/macOS:
+source venv/bin/activate
+# On Windows:
+# venv\Scripts\activate
+
 # Install dependencies
 pip install -r requirements.txt
 
@@ -64,28 +73,28 @@ streamlit run main.py
 ### Dependencies
 ```bash
 # Core Data Processing and Visualization
-streamlit>=1.47.0      # Modern web app framework
-pandas>=2.3.0          # Data manipulation and analysis
-numpy>=2.3.0           # Numerical computing
+streamlit==1.47.0      # Modern web app framework
+pandas==2.3.0          # Data manipulation and analysis
+numpy==2.3.0           # Numerical computing
 
 # High-Performance SQL Engine
-duckdb>=1.3.0          # Ultra-fast analytics database
-sqlparse>=0.5.0        # SQL query parsing and validation
+duckdb==1.3.2         # Ultra-fast analytics database
+sqlparse==0.5.0        # SQL query parsing and validation
 
 # Advanced File Format Support
-pyarrow>=21.0.0        # Parquet file processing
+pyarrow==21.0.0        # Parquet file processing
 
 # Machine Learning (t-SNE)
-scikit-learn>=1.5.0    # Provides TSNE implementation
-scipy>=1.11.0          # SciPy stack (neighbors / distances)
+scikit-learn==1.5.0    # Provides TSNE implementation
+scipy==1.11.0          # SciPy stack (neighbors / distances)
 
 # Visualization Libraries
-altair>=5.5.0          # Declarative statistical visualization (core app)
-plotly>=5.22.0         # Interactive 2D / 3D embedding scatter & bar charts
+altair==5.5.0          # Declarative statistical visualization (core app)
+plotly==5.22.0         # Interactive 2D / 3D embedding scatter & bar charts
 
 # High-performance I/O & Compression
-zstandard>=0.22.0      # .jsonl.zst decompression for metadata
-orjson>=3.11.2         # Fast JSON parsing for large metadata streams
+zstandard==0.22.0      # .jsonl.zst decompression for metadata
+orjson==3.11.2         # Fast JSON parsing for large metadata streams
 ```
 
 **Built-in Modules**: The application uses Python's standard library extensively (json, glob, os, datetime, re, collections, time, traceback, multiprocessing, concurrent.futures, functools, atexit, uuid) - no additional installation required.

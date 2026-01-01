@@ -60,6 +60,9 @@ from cerebras.modelzoo.tools.checkpoint_converters.gptj_hf_cs import (
     Converter_GPTJ_LMHeadModel_HF_CS20,
     Converter_GPTJ_LMHeadModel_HF_CS23,
 )
+from cerebras.modelzoo.tools.checkpoint_converters.internal.moe_implementation import (
+    Converter_MoEImpl_Func_Exp_CS25,
+)
 from cerebras.modelzoo.tools.checkpoint_converters.llama import (
     Converter_LlamaForCausalLM_CS19_CS20,
     Converter_LlamaForCausalLM_CS20_CS21,
@@ -171,6 +174,14 @@ from cerebras.modelzoo.tools.checkpoint_converters.gpt_backbone import (  # noqa
 from cerebras.modelzoo.tools.checkpoint_converters.internal.qwen2 import (  # noqa
     Converter_Qwen2Model_HF_CS25,
     Converter_Qwen2ForCausalLM_HF_CS25,
+)
+
+from cerebras.modelzoo.tools.checkpoint_converters.internal.qwen3 import (  # noqa
+    Converter_Qwen3Model_HF_CS25,
+    Converter_Qwen3ForCausalLM_HF_CS25,
+)
+from cerebras.modelzoo.tools.checkpoint_converters.internal.qwen3_moe import (  # noqa
+    Converter_Qwen3_moe_functional_ForCausalLM_HF_CS25,
 )
 
 converters: Dict[str, List[BaseCheckpointConverter]] = {
@@ -317,6 +328,11 @@ converters: Dict[str, List[BaseCheckpointConverter]] = {
         Converter_T5_HF_CS23,
     ],
     "qwen2": [Converter_Qwen2ForCausalLM_HF_CS25],
+    "qwen3": [Converter_Qwen3ForCausalLM_HF_CS25],
+    "qwen3_moe": [
+        Converter_Qwen3_moe_functional_ForCausalLM_HF_CS25,
+        Converter_MoEImpl_Func_Exp_CS25,
+    ],
 }
 
 # Add some model aliases

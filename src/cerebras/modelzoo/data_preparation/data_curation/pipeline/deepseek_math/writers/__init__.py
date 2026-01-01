@@ -13,11 +13,15 @@
 # limitations under the License.
 
 from .conditional_jsonl_writer import ConditionalJsonlWriter
+from .dedup_writer import DedupJsonlWriter
 from .mine_save_url import Mine_Save_URL
+from .pypi_writer import PyPIJsonlWriter
 from .warc_downloader import WarcDownloader
 
 __all__ = [
     "ConditionalJsonlWriter",
     "Mine_Save_URL",
     "WarcDownloader",
+    "PyPIJsonlWriter",
+    "DedupJsonlWriter",
 ]

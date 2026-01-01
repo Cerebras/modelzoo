@@ -96,7 +96,16 @@ class Converter_LLaVA_CLIPViT_WithoutModel_HF_CS22(
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.2", "cs-2.3", "cs-2.4", "cs-2.5"),
+            FormatVersions(
+                "cs-2.2",
+                "cs-2.3",
+                "cs-2.4",
+                "cs-2.5",
+                "cs-2.6",
+                "cs-2.7",
+                "cs-2.8",
+                "cs-2.9",
+            ),
         )
 
     @staticmethod
@@ -200,7 +209,16 @@ class Converter_LLaVA_LLaMA_WithoutModel_HF_CS22(BaseCheckpointConverter_HF_CS):
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.2", "cs-2.3", "cs-2.4", "cs-2.5"),
+            FormatVersions(
+                "cs-2.2",
+                "cs-2.3",
+                "cs-2.4",
+                "cs-2.5",
+                "cs-2.6",
+                "cs-2.7",
+                "cs-2.8",
+                "cs-2.9",
+            ),
         )
 
     @staticmethod
@@ -304,7 +322,16 @@ class Converter_LLaVA_WithoutModel_HF_CS22(
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.2", "cs-2.3", "cs-2.4", "cs-2.5"),
+            FormatVersions(
+                "cs-2.2",
+                "cs-2.3",
+                "cs-2.4",
+                "cs-2.5",
+                "cs-2.6",
+                "cs-2.7",
+                "cs-2.8",
+                "cs-2.9",
+            ),
         )
 
     @staticmethod
@@ -532,7 +559,16 @@ class ConfigConverter_LLaVA_HF_CS22(BaseConfigConverter_UnpackedHF_PackedCS):
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.2", "cs-2.3", "cs-2.4", "cs-2.5"),
+            FormatVersions(
+                "cs-2.2",
+                "cs-2.3",
+                "cs-2.4",
+                "cs-2.5",
+                "cs-2.6",
+                "cs-2.7",
+                "cs-2.8",
+                "cs-2.9",
+            ),
         )
 
     @staticmethod
@@ -771,7 +807,16 @@ class ConfigConverter_LLaMaProjector_HF_CS22(ConfigConverter_LLaMa_HF_CS21):
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.2", "cs-2.3", "cs-2.4", "cs-2.5"),
+            FormatVersions(
+                "cs-2.2",
+                "cs-2.3",
+                "cs-2.4",
+                "cs-2.5",
+                "cs-2.6",
+                "cs-2.7",
+                "cs-2.8",
+                "cs-2.9",
+            ),
         )
 
     def post_config_convert(

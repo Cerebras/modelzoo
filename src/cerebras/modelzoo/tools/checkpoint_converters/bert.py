@@ -1307,7 +1307,15 @@ class ConfigConverter_Bert_HF_CS23(ConfigConverter_Bert_HF_CS21):
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.3", "cs-2.4", "cs-2.5"),
+            FormatVersions(
+                "cs-2.3",
+                "cs-2.4",
+                "cs-2.5",
+                "cs-2.6",
+                "cs-2.7",
+                "cs-2.8",
+                "cs-2.9",
+            ),
         )
 
 
@@ -1321,7 +1329,15 @@ class Converter_BertModel_WithoutOptionalModel_HF_CS23(
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.3", "cs-2.4", "cs-2.5"),
+            FormatVersions(
+                "cs-2.3",
+                "cs-2.4",
+                "cs-2.5",
+                "cs-2.6",
+                "cs-2.7",
+                "cs-2.8",
+                "cs-2.9",
+            ),
         )
 
     @staticmethod
@@ -1339,7 +1355,15 @@ class Converter_BertPretrainModel_WithoutOptionalModel_HF_CS23(
     def formats() -> Tuple[FormatVersions, FormatVersions]:
         return (
             FormatVersions("hf"),
-            FormatVersions("cs-2.3", "cs-2.4", "cs-2.5"),
+            FormatVersions(
+                "cs-2.3",
+                "cs-2.4",
+                "cs-2.5",
+                "cs-2.6",
+                "cs-2.7",
+                "cs-2.8",
+                "cs-2.9",
+            ),
         )
 
     @staticmethod

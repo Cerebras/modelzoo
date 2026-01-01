@@ -12,12 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from .ast_extractor import ASTExtractor
 from .pii_redacting_extractor import PIIRedactingExtractor
+from .pypi_extractor import PyPIExtractor
 from .resiliparse_extractor import ResiliparseExtractor
+from .stackv2_extractor import StackV2Extractor
 from .trafilatura_extractor import TrafilaturaExtractor
 
 __all__ = [
     "ResiliparseExtractor",
     "PIIRedactingExtractor",
     "TrafilaturaExtractor",
+    "PyPIExtractor",
+    "ASTExtractor",
+    "StackV2Extractor",
 ]

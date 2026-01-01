@@ -28,10 +28,10 @@ To run on a GPU, the CUDA libraries must be installed on the system. This includ
 
 Currently, the Model Zoo only supports PyTorch version `2.0.1` which requires CUDA version `11.7/11.8`.
 
-Once all the CUDA requirements are installed, create a `virtualenv` on your system, with Python version `3.8` or newer, activate the `virtualenv` and install the packages needed for running PyTorch models using the below steps:
+Once all the CUDA requirements are installed, create a `virtualenv` on your system, with Python version `3.11` or newer, activate the `virtualenv` and install the packages needed for running PyTorch models using the below steps:
 
 ```bash
-    virtualenv -p python3.8 /path/to/venv_gpu
+    virtualenv -p python3.11 /path/to/venv_gpu
     source /path/to/venv_pt/bin/activate
     pip install --upgrade pip
     pip install -r requirements.txt

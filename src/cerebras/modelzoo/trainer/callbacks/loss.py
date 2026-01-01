@@ -86,7 +86,7 @@ class CheckLoss(Callback):
     It also checks whether the model output contains a scalar loss value.
     """
 
-    def on_train_step_end(self, trainer, model, outputs, batch):
+    def on_after_forward(self, trainer, model, outputs, batch):
         if "loss" in outputs:
             loss = outputs["loss"]
 
@@ -101,6 +101,12 @@ class CheckLoss(Callback):
                     f"but got tensor with shape {loss.shape} instead."
                 )
 
+    def on_train_step_end(self, trainer, model, outputs, batch):
+        if "loss" in outputs:
+            self.check_loss(cb16_to_fp32(outputs["loss"]))
+
+    def on_validate_step_end(self, trainer, model, outputs, batch):
+        if "loss" in outputs:
             self.check_loss(cb16_to_fp32(outputs["loss"]))
 
     @cstorch.step_closure

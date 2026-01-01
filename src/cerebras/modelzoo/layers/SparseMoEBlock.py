@@ -517,7 +517,6 @@ class SparseActFeedForwardNetwork(nn.Module):
         output = torch.zeros_like(input)
 
         # Shared experts
-        print(f"len(self.shared_experts) = {len(self.shared_experts)}")
         for expert in self.shared_experts:
             output += expert(input)
 
@@ -910,7 +909,7 @@ class SparseMoEBlock(nn.Module):
                     topk_indices = torch.cat((topk_indices, topk_index), dim=-1)
 
             if self.config.moe_exp_parallel_impl():
-                output = self.experts.forward_ep(x, topk_probs, topk_indices)
+                output = self.experts(x, topk_probs, topk_indices)
             elif (
                 self.config.moe_experimental_impl()
                 or self.config.moe_forge_experimental_impl()

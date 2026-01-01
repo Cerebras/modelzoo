@@ -41,7 +41,7 @@ def main():
     root_directory = Path(__file__).parent
     long_description = (root_directory / "PYPI-README.md").read_text()
 
-    __version__ = "2.8.0"
+    __version__ = "2.9.0"
 
     entry_points = []
 
@@ -69,18 +69,18 @@ def main():
         },
         install_requires=[
             f"cerebras_pytorch=={__version__}",
-            "argcomplete==3.5.0",
+            "argcomplete==3.6.3",
             "tabulate==0.9.0",
-            "transformers==4.45.2",
-            "tokenizers==0.20.1",
-            "datasets==2.19.1",
-            "filelock==3.14.0",
+            "transformers==4.57.1",
+            "tokenizers==0.22.1",
+            "datasets==3.6.0",
+            "filelock==3.20.0",
             "more-itertools==10.5.0",
             "datasketch==1.6.5",
             "ftfy==6.2.3",
-            "networkit==10.1",
+            "networkit==11.0",
             "Keras-Preprocessing==1.1.2",
-            "scipy==1.10.1",
+            "scipy==1.15.3",
             "regex>=2021.8.3",
             "nltk==3.9.1",
             "spacy==3.7.6",
@@ -89,7 +89,6 @@ def main():
             "pydantic==2.8.2",
             "pyYAML",
             "pandas==2.2.3",
-            "peft==0.17.1",
             "jsonschema==4.23.0",
             "torch==2.4.0",
             "torchvision==0.19.0",
@@ -102,13 +101,13 @@ def main():
             "h5py==3.13.0",
             "tqdm==4.66.5",
             "Flask==3.0.3",
-            "Pillow==9.4.0",
+            "Pillow==10.4.0",
             "faiss-cpu==1.8.0.post1",
             "deepdiff>=8,<9",
             "cerebras_cloud_sdk>=1.0.0",
-            "click==8.1.7",
-            "termcolor==2.4.0",
-            "slack-sdk==3.11.2",
+            "click==8.3.0",
+            "termcolor==3.2.0",
+            "slack-sdk==3.33.1",
         ],
         # PyPI package information.
         classifiers=[
