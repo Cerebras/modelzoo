@@ -14,6 +14,8 @@
 
 # isort: off
 import sys
+# ensure os is available before it's used below
+import os
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "../../../"))
 # isort: on
