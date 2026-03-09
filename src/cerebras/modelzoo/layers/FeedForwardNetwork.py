@@ -51,6 +51,8 @@ class MoEConfig(BaseConfig):
         "expert_parallel",
     ] = "experimental"
     "Whether to use the functional or Optimized implementation of MoE"
+    router_use_bias: Optional[bool] = False
+    "Whether to use bias in the router gating network"
     router_fp32: bool = True
     "Selects the precision of routing weights to be float"
     routing_algorithm: Literal["hash", "uniform", "learned"] = "learned"

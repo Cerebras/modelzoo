@@ -15,10 +15,10 @@
 # Separate file for converter list so it can be lazily imported
 from typing import Dict, List
 
-from cerebras.modelzoo.tools.checkpoint_converters.base_converter import (
+from cerebras.modelzoo.tools.checkpoint_converters.base_converter import (  # noqa
     BaseCheckpointConverter,
 )
-from cerebras.modelzoo.tools.checkpoint_converters.bert import (
+from cerebras.modelzoo.tools.checkpoint_converters.bert import (  # noqa
     Converter_Bert_CS17_CS18,
     Converter_Bert_CS18_CS20,
     Converter_Bert_CS20_CS21,
@@ -27,32 +27,33 @@ from cerebras.modelzoo.tools.checkpoint_converters.bert import (
     Converter_BertPretrainModel_HF_CS21,
     Converter_BertPretrainModel_HF_CS23,
 )
-from cerebras.modelzoo.tools.checkpoint_converters.bert_finetune import (
+from cerebras.modelzoo.tools.checkpoint_converters.bert_finetune import (  # noqa
     Converter_BertFinetuneModel_CS16_CS17,
     Converter_BertFinetuneModel_CS16_CS18,
     Converter_BertForQuestionAnswering_HF_CS21,
     Converter_BertForSequenceClassification_HF_CS21,
     Converter_BertForTokenClassification_HF_CS21,
 )
-from cerebras.modelzoo.tools.checkpoint_converters.falcon import (
+
+from cerebras.modelzoo.tools.checkpoint_converters.falcon import (  # noqa
     Converter_Falcon_CS20_CS21,
     Converter_Falcon_Headless_HF_CS21,
     Converter_Falcon_HF_CS21,
 )
-from cerebras.modelzoo.tools.checkpoint_converters.gpt2_hf_cs import (
+from cerebras.modelzoo.tools.checkpoint_converters.gpt2_hf_cs import (  # noqa
     Converter_GPT2LMHeadModel_CS18_CS20,
     Converter_GPT2LMHeadModel_CS20_CS21,
     Converter_GPT2LMHeadModel_CS22_CS23,
     Converter_GPT2LMHeadModel_HF_CS21,
     Converter_GPT2Model_HF_CS21,
 )
-from cerebras.modelzoo.tools.checkpoint_converters.gpt_neox_hf_cs import (
+from cerebras.modelzoo.tools.checkpoint_converters.gpt_neox_hf_cs import (  # noqa
     Converter_GPT_Neox_Headless_HF_CS21,
     Converter_GPT_Neox_LMHeadModel_CS18_CS20,
     Converter_GPT_Neox_LMHeadModel_CS20_CS21,
     Converter_GPT_Neox_LMHeadModel_HF_CS21,
 )
-from cerebras.modelzoo.tools.checkpoint_converters.gptj_hf_cs import (
+from cerebras.modelzoo.tools.checkpoint_converters.gptj_hf_cs import (  # noqa
     Converter_GPTJ_Headless_HF_CS20,
     Converter_GPTJ_Headless_HF_CS23,
     Converter_GPTJ_LMHeadModel_CS18_CS20,
@@ -60,32 +61,31 @@ from cerebras.modelzoo.tools.checkpoint_converters.gptj_hf_cs import (
     Converter_GPTJ_LMHeadModel_HF_CS20,
     Converter_GPTJ_LMHeadModel_HF_CS23,
 )
-from cerebras.modelzoo.tools.checkpoint_converters.internal.moe_implementation import (
-    Converter_MoEImpl_Func_Exp_CS25,
-)
-from cerebras.modelzoo.tools.checkpoint_converters.llama import (
+
+from cerebras.modelzoo.tools.checkpoint_converters.llama import (  # noqa
     Converter_LlamaForCausalLM_CS19_CS20,
     Converter_LlamaForCausalLM_CS20_CS21,
     Converter_LlamaForCausalLM_HF_CS21,
     Converter_LlamaModel_HF_CS21,
 )
-from cerebras.modelzoo.tools.checkpoint_converters.llava import (
+from cerebras.modelzoo.tools.checkpoint_converters.llava import (  # noqa
     Converter_LLaVA_HF_CS22,
 )
-from cerebras.modelzoo.tools.checkpoint_converters.mm_simple import (
+
+from cerebras.modelzoo.tools.checkpoint_converters.mm_simple import (  # noqa
     Converter_MMSimple_LLaVA_HF_CS23,
     Converter_MMSimple_LLaVA_HF_CS24,
 )
-from cerebras.modelzoo.tools.checkpoint_converters.roberta import (
+from cerebras.modelzoo.tools.checkpoint_converters.roberta import (  # noqa
     Converter_RobertaPretrainModel_HF_CS21,
 )
-from cerebras.modelzoo.tools.checkpoint_converters.salesforce_codegen_hf_cs import (
+from cerebras.modelzoo.tools.checkpoint_converters.salesforce_codegen_hf_cs import (  # noqa
     Converter_Codegen_Headless_HF_CS20,
     Converter_Codegen_LMHeadModel_CS18_CS20,
     Converter_Codegen_LMHeadModel_CS20_CS21,
     Converter_Codegen_LMHeadModel_HF_CS20,
 )
-from cerebras.modelzoo.tools.checkpoint_converters.t5 import (
+from cerebras.modelzoo.tools.checkpoint_converters.t5 import (  # noqa
     Converter_T5_CS16_CS17,
     Converter_T5_CS16_CS18,
     Converter_T5_CS17_CS18,
@@ -145,7 +145,6 @@ from cerebras.modelzoo.tools.checkpoint_converters.dragon_plus import (  # noqa
     Converter_DragonModel_HF_CS23,
 )
 
-
 from cerebras.modelzoo.tools.checkpoint_converters.starcoder import (  # noqa
     Converter_StarcoderForCausalLM_HF_CS21,
     Converter_StarcoderModel_HF_CS21,
@@ -169,19 +168,6 @@ from cerebras.modelzoo.tools.checkpoint_converters.mixtral import (  # noqa
 
 from cerebras.modelzoo.tools.checkpoint_converters.gpt_backbone import (  # noqa
     Converter_GPT2LMHeadModel_GPTBackboneLMHeadModel_CS24,
-)
-
-from cerebras.modelzoo.tools.checkpoint_converters.internal.qwen2 import (  # noqa
-    Converter_Qwen2Model_HF_CS25,
-    Converter_Qwen2ForCausalLM_HF_CS25,
-)
-
-from cerebras.modelzoo.tools.checkpoint_converters.internal.qwen3 import (  # noqa
-    Converter_Qwen3Model_HF_CS25,
-    Converter_Qwen3ForCausalLM_HF_CS25,
-)
-from cerebras.modelzoo.tools.checkpoint_converters.internal.qwen3_moe import (  # noqa
-    Converter_Qwen3_moe_functional_ForCausalLM_HF_CS25,
 )
 
 converters: Dict[str, List[BaseCheckpointConverter]] = {
@@ -326,12 +312,6 @@ converters: Dict[str, List[BaseCheckpointConverter]] = {
         Converter_T5_CS20_CS21,
         Converter_T5_HF_CS21,
         Converter_T5_HF_CS23,
-    ],
-    "qwen2": [Converter_Qwen2ForCausalLM_HF_CS25],
-    "qwen3": [Converter_Qwen3ForCausalLM_HF_CS25],
-    "qwen3_moe": [
-        Converter_Qwen3_moe_functional_ForCausalLM_HF_CS25,
-        Converter_MoEImpl_Func_Exp_CS25,
     ],
 }
 

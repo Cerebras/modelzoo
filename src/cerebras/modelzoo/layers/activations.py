@@ -117,11 +117,53 @@ def swiglu(x1, x2):
     return glu_bivariate_base_fn(x1, x2, nn.functional.silu)
 
 
+class ClampOpt(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, x, min_val=None, max_val=None):
+        ctx.save_for_backward(x)
+        ctx.min_val = min_val
+        ctx.max_val = max_val
+        if min_val is not None:
+            x = torch.maximum(
+                x, torch.tensor(min_val, dtype=x.dtype, device=x.device)
+            )
+        if max_val is not None:
+            max_val_t = torch.tensor(max_val, dtype=x.dtype, device=x.device)
+            x = -torch.maximum(-x, -max_val_t)
+        return x
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        (x,) = ctx.saved_tensors
+        grad_input = grad_output.clone()
+
+        # gradient flows only for elements that were inside [min_val, max_val]
+        zeros = torch.zeros_like(x)
+        ones = torch.ones_like(x)
+        if ctx.min_val is not None:
+            minCond = (x - ctx.min_val) >= 0
+            lbMask = torch.where(minCond, ones, zeros)
+            grad_input = grad_input * lbMask
+        if ctx.max_val is not None:
+            maxCond = (x - ctx.max_val) <= 0
+            ubMask = torch.where(maxCond, ones, zeros)
+            grad_input = grad_input * ubMask
+        return grad_input, None, None  # None for min_val/max_val
+
+
+def swiglu_clamped(x1, x2, limit=7.0):
+
+    x1 = ClampOpt.apply(x1, -limit, limit)
+    x2 = ClampOpt.apply(x2, None, limit)
+    return (x1 + 1) * quick_gelu(x2)
+
+
 GLU_ACTIVATIONS = {
     "liglu",
     "geglu",
     "reglu",
     "swiglu",
+    "swiglu_clamped",
 }
 
 ACT2FN = {
@@ -144,6 +186,7 @@ ACT2FN = {
     "geglu": geglu,
     "reglu": reglu,
     "swiglu": swiglu,
+    "swiglu_clamped": swiglu_clamped,
     None: linear_act,
 }
 

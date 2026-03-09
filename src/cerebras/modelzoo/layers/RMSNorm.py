@@ -51,4 +51,5 @@ class RMSNorm(nn.Module):
         hidden_states = hidden_states * torch.rsqrt(
             variance + self.variance_epsilon
         )
-        return self.weight.to(input_dtype) * hidden_states.to(input_dtype)
+        weight = self.weight.to(input_dtype)
+        return weight * hidden_states.to(input_dtype)

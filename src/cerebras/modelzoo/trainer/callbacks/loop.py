@@ -26,6 +26,23 @@ from warnings import warn
 import cerebras.pytorch as cstorch
 from cerebras.modelzoo.trainer.callbacks import CoreCallback
 
+# CSX runtime uses signed 32-bit integers for step counters.
+_MAX_SUPPORTED_STEPS = (1 << 31) - 1
+
+
+def _validate_num_steps(value, steps_config):
+    """Validate a step count field within the Trainer's loop config."""
+    if value is None:
+        return
+    if value <= 0:
+        raise ValueError(
+            f"`{steps_config}` must be greater than 0 in the loop config, got {value}"
+        )
+    if cstorch.use_cs() and value > _MAX_SUPPORTED_STEPS:
+        raise ValueError(
+            f"`{steps_config}` must be at most {_MAX_SUPPORTED_STEPS} for CSX runs, got {value}"
+        )
+
 
 class LoopCallback(CoreCallback, ABC):
     """
@@ -97,6 +114,11 @@ class TrainingLoop(LoopCallback):
                 runs.
         """
         super().__init__()
+
+        _validate_num_steps(num_steps, "num_steps")
+        _validate_num_steps(max_steps, "max_steps")
+        _validate_num_steps(steps_per_epoch, "steps_per_epoch")
+
         self.num_steps = num_steps
         self.max_steps = max_steps
         self.num_epochs = num_epochs
@@ -200,6 +222,9 @@ class ValidationLoop(LoopCallback):
                 Default: "validate".
         """
         super().__init__()
+
+        _validate_num_steps(eval_steps, "eval_steps")
+
         self._eval_steps = None
         self._max_eval_steps = eval_steps
 

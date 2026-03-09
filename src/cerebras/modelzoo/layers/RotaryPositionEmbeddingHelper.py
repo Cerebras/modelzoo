@@ -119,14 +119,20 @@ def _yarn_find_correction_dim(
 
 # Find dim range bounds based on rotations
 def _yarn_find_correction_range(
-    low_rot, high_rot, dim, base=10000, max_position_embeddings=2048
+    low_rot,
+    high_rot,
+    dim,
+    base=10000,
+    max_position_embeddings=2048,
+    truncate=True,
 ):
-    low = math.floor(
-        _yarn_find_correction_dim(low_rot, dim, base, max_position_embeddings)
+    low = _yarn_find_correction_dim(low_rot, dim, base, max_position_embeddings)
+    high = _yarn_find_correction_dim(
+        high_rot, dim, base, max_position_embeddings
     )
-    high = math.ceil(
-        _yarn_find_correction_dim(high_rot, dim, base, max_position_embeddings)
-    )
+    if truncate:
+        low = math.floor(low)
+        high = math.ceil(high)
     return max(low, 0), min(high, dim - 1)  # Clamp values just in case
 
 
@@ -144,7 +150,7 @@ def _yarn_linear_ramp_mask(x_shape, min, max, device):
 
     linear_func = (dim_pairs - min) / (max - min)
     ramp_func = torch.where(linear_func < 0, 0, linear_func)
-    ramp_func = torch.where(linear_func > 1, 1, linear_func)
+    ramp_func = torch.where(ramp_func > 1, 1, ramp_func)
     return ramp_func
 
 
@@ -257,6 +263,7 @@ class RotaryPositionEmbeddingHelper:
             self.beta_slow = scaling_extra_args.get("beta_slow", 1)
             self.mscale_a = scaling_extra_args.get("mscale_a", 0.1)
             self.mscale_b = scaling_extra_args.get("mscale_b", 1.0)
+            self.truncate = scaling_extra_args.get("truncate", True)
 
     @property
     def is_rel_distance_default(self):
@@ -366,10 +373,12 @@ class RotaryPositionEmbeddingHelper:
                 self.rotary_dim,
                 self.base,
                 self.original_max_position_embeddings,
+                self.truncate,
             )
             inv_freq_mask = (
                 1 - _yarn_linear_ramp_mask(x_shape, low, high, device)
             ) * self.extrapolation_factor  # Get n-d rotational scaling corrected for extrapolation
+
             inv_freq = (
                 inv_freq_interpolation * (1 - inv_freq_mask)
                 + inv_freq_extrapolation * inv_freq_mask
@@ -377,6 +386,7 @@ class RotaryPositionEmbeddingHelper:
             self.mscale = _yarn_get_mscale(
                 self.scaling_factor, self.mscale_a, self.mscale_b
             )
+
         elif self.scaling_type == "llama3":
             self.mscale = 1.0
             inv_freq = _llama_3_update_inv_freq(

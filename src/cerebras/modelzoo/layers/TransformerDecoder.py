@@ -95,6 +95,7 @@ class TransformerDecoder(nn.Module):
         memory: Optional[Tensor] = None,
         tgt_mask: Optional[Tensor] = None,
         sparse_mask: Optional[Tensor] = None,
+        sparse_mask_pattern: Optional[str] = "full_attention_first",
         memory_mask: Optional[Tensor] = None,
         tgt_key_padding_mask: Optional[Tensor] = None,
         memory_key_padding_mask: Optional[Tensor] = None,
@@ -119,6 +120,10 @@ class TransformerDecoder(nn.Module):
             tgt: the sequence to the decoder (required).
             memory: the sequence from the last layer of the encoder (optional).
             tgt_mask: the mask for the tgt sequence (optional).
+            sparse_mask: the mask for the sparse attention (optional).
+            sparse_mask_pattern: pattern for applying sparse mask when
+                sparse_mask is provided. Can be either 'sliding_window_first' or
+                'full_attention_first'. Defaults to 'full_attention_first'.
             memory_mask: the mask for the memory sequence (optional).
             tgt_key_padding_mask: the mask for the tgt keys per batch (optional).
             memory_key_padding_mask: the mask for the memory keys per batch (optional).
@@ -163,12 +168,22 @@ class TransformerDecoder(nn.Module):
                 # tgt_mask provided by the user is a list corresponding to the
                 # mask for each layer.
                 tgt_mask_i = tgt_mask[layer_idx]
-            elif sparse_mask is not None and layer_idx % 2 != 0:
-                # Alternate between dense and fixed sparse attention,
-                # This is used in GPT-3 model.
-                tgt_mask_i = sparse_mask
-            else:
+            elif sparse_mask is None:
+                # No sparse mask, just use the dense one
                 tgt_mask_i = tgt_mask
+            else:
+                # Alternate between dense and sparse attention.
+                # Decide which mask to use based on layer index and pattern.
+                # If sparse_mask_pattern is 'sliding_window_first', then
+                # use sparse mask for even layers (0, 2, 4, ...) and
+                # dense mask for odd layers (1, 3, 5, ...) and vice versa.
+                sw_first = sparse_mask_pattern == "sliding_window_first"
+                even_layer = layer_idx % 2 == 0
+
+                if sw_first == even_layer:
+                    tgt_mask_i = sparse_mask
+                else:
+                    tgt_mask_i = tgt_mask
 
             from cerebras.modelzoo.common.utils.model.transformer_utils import (
                 SparseAttentionMask,

@@ -672,7 +672,7 @@ class SparseMoEBlock(nn.Module):
         self.gate = nn.Linear(
             self.config.input_unit,
             self.config.moe_params.num_experts,
-            bias=False,
+            bias=config.moe_params.router_use_bias,
         )
         if self.config.moe_optimized_impl():
             self.experts = TopKExpertsSparseFeedForwardNetwork(self.config)

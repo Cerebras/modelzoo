@@ -85,6 +85,7 @@ class TransformerDecoderLayer(nn.Module):
         use_ffn_bias_in_attention: Add bias in the concluding FFN
             in the Attention layer. Defaults to False.
         use_ffn_bias: Add bias in all dense layers of the decoder's ffn sublayer
+        use_sink_token: If ``True``, enables the use of sink tokens in the attention mechanism. Defaults to False.
         attention_initializer: Attention layer initializer. Defaults to "xavier_uniform".
         attention_q_initializer: Query projection kernel initializer. If not
             specified, the query will be initialized via ``attention_initializer``
@@ -145,6 +146,7 @@ class TransformerDecoderLayer(nn.Module):
         use_projection_bias_in_attention=False,
         use_ffn_bias_in_attention=False,
         use_ffn_bias=False,
+        use_sink_token=False,
         attention_initializer="xavier_uniform",
         attention_q_initializer=None,
         attention_output_layer_initializer=None,
@@ -204,6 +206,7 @@ class TransformerDecoderLayer(nn.Module):
                 softmax_dtype_fp32=attention_softmax_fp32,
                 use_projection_bias=use_projection_bias_in_attention,
                 use_ffn_bias=use_ffn_bias_in_attention,
+                use_sink_token=use_sink_token,
                 attention_qk_norm_layer=attention_qk_norm_layer,
                 attention_qk_norm_eps=attention_qk_norm_eps,
                 attention_initializer=attention_initializer,
@@ -267,6 +270,7 @@ class TransformerDecoderLayer(nn.Module):
                 softmax_dtype_fp32=attention_softmax_fp32,
                 use_projection_bias=use_projection_bias_in_attention,
                 use_ffn_bias=use_ffn_bias_in_attention,
+                use_sink_token=use_sink_token,
                 attention_qk_norm_layer=attention_qk_norm_layer,
                 attention_qk_norm_eps=attention_qk_norm_eps,
                 attention_initializer=attention_initializer,
@@ -423,6 +427,7 @@ class TransformerDecoderLayer(nn.Module):
             return tgt
 
         x = tgt
+
         if self.norm_first:
             if not self.disable_self_attention:
                 attn1_out = self._sa_block(
@@ -480,6 +485,7 @@ class TransformerDecoderLayer(nn.Module):
                 x,
                 [f"decoder_attention_out_layer{layer_idx}"],
             )
+
             ffn_output = (
                 self.ffn(self.norm3(x), **ffn_extra_args)
                 if self.norm3 is not None
@@ -508,6 +514,7 @@ class TransformerDecoderLayer(nn.Module):
                 x,
                 [f"decoder_out_layer{layer_idx}"],
             )
+
         else:
             if self.disable_self_attention:
                 raise NotImplementedError(
@@ -549,6 +556,7 @@ class TransformerDecoderLayer(nn.Module):
                 [f"decoder_attention_out_layer{layer_idx}"],
             )
             ffn_output = self.ffn(x, **ffn_extra_args)
+
             if self.moe_enabled:
                 (ffn_output, routing_weights, expert_mask) = ffn_output
 
@@ -581,6 +589,7 @@ class TransformerDecoderLayer(nn.Module):
                     if not self.add_cross_attention
                     else attn1_out[1] + attn2_out[1]
                 )
+
             return x, routing_weights, expert_mask, present_kv
 
     # self-attention block

@@ -41,7 +41,7 @@ def main():
     root_directory = Path(__file__).parent
     long_description = (root_directory / "PYPI-README.md").read_text()
 
-    __version__ = "2.9.0"
+    __version__ = "2.10.0"
 
     entry_points = []
 
@@ -93,7 +93,7 @@ def main():
             "torch==2.4.0",
             "torchvision==0.19.0",
             "safetensors==0.4.5",
-            "sentencepiece==0.2.0",
+            "sentencepiece==0.2.1",
             # pylint: disable=line-too-long
             "lm-dataformat @ https://github.com/leogao2/lm_dataformat/archive/ac85cb7dae49ce25e9973a128ebd9167deaf64dd.zip",
             "lm-eval @ https://github.com/EleutherAI/lm-evaluation-harness/archive/refs/tags/v0.4.9.1.zip",
@@ -103,7 +103,7 @@ def main():
             "Flask==3.0.3",
             "Pillow==10.4.0",
             "faiss-cpu==1.8.0.post1",
-            "deepdiff>=8,<9",
+            "deepdiff>=8.6.1,<9",
             "cerebras_cloud_sdk>=1.0.0",
             "click==8.3.0",
             "termcolor==3.2.0",
