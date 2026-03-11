@@ -14,7 +14,7 @@ setup:
 processing:
     custom_tokenizer: cerebras.modelzoo.data_preparation.data_preprocessing.custom_tokenizer_example.CustomLlama3Tokenizer:CustomLlama3Tokenizer
     tokenizer_params:
-        pretrained_model_name_or_path: "baseten/Meta-Llama-3-tokenizer"
+        pretrained_model_name_or_path: "meta-llama/Meta-Llama-3-8B-Instruct"
     write_in_batch: True
     read_hook: "cerebras.modelzoo.data_preparation.data_preprocessing.hooks:text_read_hook"
     read_hook_kwargs:

@@ -15,8 +15,6 @@
 import torch
 import torch.nn as nn
 
-from cerebras.modelzoo.trainer import summarize_scalar
-
 
 class LoadBalancingLoss(nn.Module):
     def __init__(
@@ -69,16 +67,6 @@ class LoadBalancingLoss(nn.Module):
 
         tokens_per_expert /= len(router_weights_list)
         router_prob_per_expert /= len(router_weights_list)
-
-        for expert_idx in range(self.num_experts):
-            summarize_scalar(
-                f"expert_stats/tokens_per_expert/expert_{expert_idx}",
-                torch.mean(tokens_per_expert[:, expert_idx]),
-            )
-            summarize_scalar(
-                f"expert_stats/router_prob_per_expert/expert_{expert_idx}",
-                torch.mean(router_prob_per_expert[:, expert_idx]),
-            )
 
         return (self.num_experts**2) * torch.mean(
             router_prob_per_expert * tokens_per_expert

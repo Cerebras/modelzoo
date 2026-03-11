@@ -80,6 +80,8 @@ class Gpt2Model(torch.nn.Module):
 
         super().__init__()
 
+        self.num_heads = config.num_heads
+
         pol = cstorch.backends.csx.precision.optimization_level
         if pol == 2 or (
             pol == 1 and cstorch.amp.get_half_dtype_str() == "cbfloat16"
@@ -256,19 +258,16 @@ class Gpt2Model(torch.nn.Module):
             and self.moe_params.load_balancing_loss_coef > 0.0
             and self.training
         ):
-            load_balance_loss = (
-                self.moe_params.load_balancing_loss_coef
-                * self.load_balancing_loss_fn(
-                    routing_weights,
-                    expert_masks,
-                    attention_mask=data["attention_mask"],
-                )
+            load_balance_loss = self.load_balancing_loss_fn(
+                routing_weights,
+                expert_masks,
+                attention_mask=data["attention_mask"],
             )
             summarize_scalar(
                 "expert_stats/load_balance_loss", load_balance_loss
             )
             summarize_scalar("loss/cross_entropy_loss", loss)
-            loss = loss + load_balance_loss
+            loss += self.moe_params.load_balancing_loss_coef * load_balance_loss
 
         # Calculate eval metrics if not training
         if not self.model.training and self.compute_eval_metrics:

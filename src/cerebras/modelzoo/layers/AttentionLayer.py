@@ -43,6 +43,7 @@ class MultiheadAttention(nn.Module):
         use_projection_bias (bool): Whether to use bias in the key, query, and
             value projections.
         use_ffn_bias (bool): Whether to use bias in the output projection.
+        use_sink_token (bool): Whether to use a sink token. If true, a sink token is used like in GPT-OSS
         attention_qk_norm_layer (nn.Module): Norm layer for applying qk normalization
         attention_qk_norm_eps (float): epsilon for norm layer for applying qk normalization
         attention_initializer (str): Projection kernel initializer. Defaults to
@@ -78,6 +79,7 @@ class MultiheadAttention(nn.Module):
         vdim=None,
         use_projection_bias=False,
         use_ffn_bias=False,
+        use_sink_token=False,
         attention_qk_norm_layer=None,
         attention_qk_norm_eps=1e-5,
         attention_initializer="xavier_uniform",
@@ -127,7 +129,15 @@ class MultiheadAttention(nn.Module):
 
         self.num_heads = num_heads
         self.attention_type = attention_type
-
+        ## use_sink_token flag enables the use of a sink token in attention. This mechanism is used in GPT-OSS model.
+        ## Reference Implementation - https://github.com/huggingface/transformers/blob/f54647c80ea7091d425087546725b56371bf6068/src/transformers/models/gpt_oss/modeling_gpt_oss.py#L338
+        ## This introduces an additional learnable parameter per head to the attention logits.
+        self.use_sink_token = use_sink_token
+        self.sinks = (
+            nn.Parameter(torch.empty(self.num_heads))
+            if use_sink_token
+            else None
+        )
         self.use_projection_bias = use_projection_bias
         self.use_ffn_bias = use_ffn_bias
 
@@ -434,11 +444,13 @@ class MultiheadAttention(nn.Module):
         logits = self.apply_attention_bias(logits, attention_bias)
 
         attention_scores = self.calculate_attention_scores(logits)
+
         attention_output = self.calculate_attention_output(
             attention_scores,
             v,
             special_token_meta=special_token_meta,
         )
+
         attention_output = self.process_after_attention_output(attention_output)
 
         if cache_present_kv:
@@ -844,6 +856,14 @@ class MultiheadAttention(nn.Module):
             mask_range,
         )
 
+        if self.use_sink_token:
+            # (H,) -> (1,H,1,1) via unsqueeze
+            sink_col = self.sinks.unsqueeze(0).unsqueeze(-1).unsqueeze(-1)
+            b, h, seq_len_q, seq_len_k = logits.shape
+            sink_col = sink_col.broadcast_to((b, h, seq_len_q, 1))
+            logits = torch.cat([logits, sink_col], dim=-1)
+            logits = logits - logits.max(dim=-1, keepdim=True).values
+
         @mask_range(self.sparse_attn_mask_ranges)
         def apply_softmax():
             if self.softmax_dtype_fp32 and logits.dtype != torch.float32:
@@ -852,6 +872,9 @@ class MultiheadAttention(nn.Module):
                 ).type_as(logits)
             else:
                 attention_scores = nn.functional.softmax(logits, dim=-1)
+            if self.use_sink_token:
+
+                attention_scores = attention_scores[..., :-1]
             return attention_scores
 
         attention_scores = apply_softmax()

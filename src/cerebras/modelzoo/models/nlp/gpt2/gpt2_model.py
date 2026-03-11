@@ -179,6 +179,17 @@ class GPT2LMHeadModelConfig(ModelConfig):
     fixed_sparse_attention.
     """
 
+    sliding_window_every_other_decoder_layer_pattern: Optional[
+        Literal["sliding_window_first", "full_attention_first"]
+    ] = "full_attention_first"
+    """
+    When sliding_window_every_other_decoder_layer is enabled, this flag determines the pattern of applying sliding window attention.
+    - 'sliding_window_first': Applies sliding window attention on the first decoder layer, then full attention on the next, and so on alternating.
+    - 'full_attention_first': Applies full attention on the first decoder layer, then sliding window attention on the next, and so on alternating.
+    Can only be set if sliding_window_every_other_decoder_layer is True and attention_sliding_window_length is specified.
+    Cannot be used in conjunction with fixed_sparse_attention.
+    """
+
     attention_sink_tokens: Optional[int] = None
     "Number of sink tokens to use in the attention module."
 
@@ -271,6 +282,8 @@ class GPT2LMHeadModelConfig(ModelConfig):
     Whether to use bias in the feedforward network (FFN).
     """
 
+    use_sink_token: bool = False
+    "Whether to use a sink token. If true, a sink token is used like in GPT-OSS."
     #
     # Task-specific
     #
@@ -637,6 +650,9 @@ class GPT2LMHeadModel(nn.Module):
         sliding_window_every_other_decoder_layer = (
             config.sliding_window_every_other_decoder_layer
         )
+        sliding_window_every_other_decoder_layer_pattern = (
+            config.sliding_window_every_other_decoder_layer_pattern
+        )
         attention_sink_tokens = config.attention_sink_tokens
         attention_vertical_column_spacing = (
             config.attention_vertical_column_spacing
@@ -661,6 +677,7 @@ class GPT2LMHeadModel(nn.Module):
         filter_size = config.filter_size
         nonlinearity = config.nonlinearity
         use_ffn_bias = config.use_ffn_bias
+        use_sink_token = config.use_sink_token
         use_bias_in_output = config.use_bias_in_output
         initializer_range = config.initializer_range
         embedding_initializer = config.embedding_initializer
@@ -878,6 +895,7 @@ class GPT2LMHeadModel(nn.Module):
             use_projection_bias_in_attention=use_projection_bias_in_attention,
             use_ffn_bias_in_attention=use_ffn_bias_in_attention,
             use_ffn_bias=use_ffn_bias,
+            use_sink_token=use_sink_token,
             attention_initializer=attention_initializer,
             attention_output_layer_initializer=output_layer_initializer,
             attention_logit_softcapping=attention_logit_softcapping,
@@ -971,10 +989,22 @@ class GPT2LMHeadModel(nn.Module):
                 "When sliding_window_every_other_decoder_layer is enabled, the "
                 "attention_sliding_window_length must be specified."
             )
-
+        if (
+            sliding_window_every_other_decoder_layer_pattern
+            != "full_attention_first"
+        ):
+            assert sliding_window_every_other_decoder_layer, (
+                "sliding_window_every_other_decoder_layer_pattern is only "
+                "applicable when sliding_window_every_other_decoder_layer is "
+                "enabled."
+            )
         self.sliding_window_every_other_decoder_layer = (
             sliding_window_every_other_decoder_layer
         )
+        self.sliding_window_every_other_decoder_layer_pattern = (
+            sliding_window_every_other_decoder_layer_pattern
+        )
+
         if fixed_sparse_attention is not None:
             self.fixed_sparsity_mask = create_fixed_sparse_attention_mask(
                 max_sequence_length=max_position_embeddings,
@@ -1079,6 +1109,7 @@ class GPT2LMHeadModel(nn.Module):
         special_token_meta=None,
         full_text_row_masked_out_mask=None,
     ):
+
         if input_ids is not None and input_embeddings is not None:
             raise ValueError(
                 f"Only one of `input_ids` or `input_embeddings` "
@@ -1270,6 +1301,7 @@ class GPT2LMHeadModel(nn.Module):
             tgt_mask=causal_attention_mask,
             tgt_key_padding_mask=tgt_key_padding_mask,
             sparse_mask=sparse_attention_mask,
+            sparse_mask_pattern=self.sliding_window_every_other_decoder_layer_pattern,
             memory=cross_attention_states,
             memory_mask=memory_mask,
             rotary_position_embedding_helper=self.embedding_layer.get_rope_helper(),
