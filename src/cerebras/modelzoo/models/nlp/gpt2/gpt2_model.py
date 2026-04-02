@@ -160,6 +160,7 @@ class GPT2LMHeadModelConfig(ModelConfig):
     attention_module: Literal[
         "aiayn_attention",
         "multiquery_attention",
+        "multilatent_attention",
     ] = "aiayn_attention"
     """
     Determines whether to use multiheaded attention (from
