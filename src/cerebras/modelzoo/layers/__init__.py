@@ -31,6 +31,9 @@ from cerebras.modelzoo.layers.GroupInstanceNorm import GroupInstanceNorm
 from cerebras.modelzoo.layers.LearnedPositionEmbeddingLayer import (
     LearnedPositionEmbeddingLayer,
 )
+from cerebras.modelzoo.layers.MultiLatentAttentionLayer import (
+    MultiLatentAttention,
+)
 from cerebras.modelzoo.layers.MultiQueryAttentionLayer import (
     MultiQueryAttention,
 )
@@ -59,6 +62,7 @@ __all__ = [
     "FeedForwardNetwork",
     "GPTJDecoderLayer",
     "GroupInstanceNorm",
+    "MultiLatentAttention",
     "MultiQueryAttention",
     "RelativePositionEmbeddingLayer",
     "RMSNorm",
