@@ -13,6 +13,7 @@
 # limitations under the License.
 
 # isort: off
+import os
 import sys
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "../../../"))
@@ -22,7 +23,6 @@ import argparse
 import glob
 import json
 import logging
-import os
 import re
 import shutil
 from datetime import datetime
