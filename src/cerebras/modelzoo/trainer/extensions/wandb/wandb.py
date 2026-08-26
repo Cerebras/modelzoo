@@ -107,7 +107,6 @@ class WandbLogger(Logger):
 
     def setup(self, trainer):
         import wandb
-        from wandb.sdk.lib import RunDisabled
         from wandb.wandb_run import Run
 
         rundir = trainer.model_dir
@@ -165,7 +164,7 @@ class WandbLogger(Logger):
                 entity=self.entity,
             )
             # define default x-axis
-            if isinstance(self.run, (Run, RunDisabled)) and getattr(
+            if isinstance(self.run, Run) and getattr(
                 self.run, "define_metric", None
             ):
                 self.run.define_metric("global_step")
