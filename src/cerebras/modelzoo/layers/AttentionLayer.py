@@ -590,11 +590,13 @@ class MultiheadAttention(nn.Module):
         return vector
 
     def process_q_before_logits_calc(self, q):
-        # May get overriden by other attention schemas
+        if self.q_norm is not None:
+            q = self.q_norm(q)
         return q
 
     def process_k_before_logits_calc(self, k):
-        # May get overriden by other attention schemas
+        if self.k_norm is not None:
+            k = self.k_norm(k)
         return k
 
     def process_v_before_logits_calc(self, v):
