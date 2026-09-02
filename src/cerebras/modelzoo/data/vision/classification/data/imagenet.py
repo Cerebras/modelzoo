@@ -64,13 +64,6 @@ class ImageNet1KProcessor(VisionClassificationProcessor):
             use_training_transforms
         )
 
-        if not os.path.isfile(os.path.join(self.data_dir, "meta.bin")):
-            raise RuntimeError(
-                "The meta file meta.bin is not present in the root directory. "
-                "Check vision/pytorch/input/classification/data/README.md for "
-                "more details on downloading the dataset."
-            )
-
         if not os.path.isdir(os.path.join(self.data_dir, self.split)):
             raise RuntimeError(
                 f"No directory {self.split} under root dir. Refer to "

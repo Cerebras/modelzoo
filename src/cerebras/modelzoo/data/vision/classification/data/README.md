@@ -7,7 +7,6 @@
 We use torchvision.datasets.ImageNet to create our dataset. We assume that the data has already been extracted and pre-processed. Specifically, the dataset root directory must already have the following structure:
 ```
 root_directory
-├── meta.bin
 ├── train/
 │   ├── n01440764
 │   │   ├── n01440764_10026.JPEG
@@ -36,7 +35,13 @@ root_directory
 ```
 
 ### What to do if you are missing one or more files
-If you don't have `meta.bin` in your directory, you should download ILSVRC2012_devkit_t12.tar.gz with:
+If you have the extracted `train/` and/or `val/` directories but no `meta.bin`,
+you can let `torchvision.datasets.ImageNet` create the metadata while it
+initializes the dataset. The ModelZoo loader does not require `meta.bin` to be
+present before constructing the torchvision dataset.
+
+If you need to prepare the directory from the original archives, download
+`ILSVRC2012_devkit_t12.tar.gz` with:
 ```
 wget https://image-net.org/data/ILSVRC/2012/ILSVRC2012_devkit_t12.tar.gz
 ```
