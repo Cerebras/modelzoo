@@ -318,7 +318,7 @@ def split_sequences(tokens, length):
     :param int length: The maximum allowed length of a sample.
 
     :returns: A list of sequences containing exactly the same samples as before
-        split into seperate samples such that no element of the dataset has
+        split into separate samples such that no element of the dataset has
         length longer than specified.
     """
     n_tokens = len(tokens)
