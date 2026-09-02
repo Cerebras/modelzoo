@@ -17,11 +17,13 @@ from typing import Literal, Union
 import torch.nn as nn
 
 from .AttentionLayer import MultiheadAttention
+from .MultiLatentAttentionLayer import MultiLatentAttention
 from .MultiQueryAttentionLayer import MultiQueryAttention
 
 ATTENTION_TYPE_DICT = {
     "aiayn_attention": MultiheadAttention,
     "multiquery_attention": MultiQueryAttention,
+    "multilatent_attention": MultiLatentAttention,
 }
 
 AttentionType = Literal[tuple(ATTENTION_TYPE_DICT)]
