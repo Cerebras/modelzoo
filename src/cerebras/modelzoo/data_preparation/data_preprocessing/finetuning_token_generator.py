@@ -70,13 +70,13 @@ class FinetuningTokenGenerator:
             )
             self.tokenizer.chat_template = default_chat_template()
 
+        self.pad_id = pad_id
         self.eos_id = eos_id
         self.eos_token = (
             self.tokenizer.convert_ids_to_tokens(self.pad_id)
             if self.eos_id is None
             else self.tokenizer.convert_ids_to_tokens(self.eos_id)
         )
-        self.pad_id = pad_id
         self.features = ["input_ids", "attention_mask", "labels"]
         self.semantic_loss_weight = processing_params.pop(
             "semantic_loss_weight", {}
