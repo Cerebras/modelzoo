@@ -2004,6 +2004,8 @@ def save_image_locally(example, idx, image_key, image_dir):
                     image_paths.append(None)
                     continue
                 if isinstance(img_data, Image.Image):
+                    if img_data.mode == "CMYK":
+                        img_data = img_data.convert("RGB")
                     img_data.save(image_path)
                     image_paths.append(f"{idx}_{i}.png")
                 elif isinstance(img_data, str):
@@ -2020,6 +2022,8 @@ def save_image_locally(example, idx, image_key, image_dir):
         else:
             image_path = os.path.join(image_dir, f"{idx}.png")
             if isinstance(image_data, Image.Image):
+                if image_data.mode == "CMYK":
+                    image_data = image_data.convert("RGB")
                 image_data.save(image_path)
                 example[image_key] = f"{idx}.png"
             elif isinstance(image_data, str):
